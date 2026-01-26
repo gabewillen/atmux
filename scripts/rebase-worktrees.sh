@@ -15,23 +15,28 @@ echo "Using main branch: $main_branch"
 git fetch --all --prune
 
 # Collect worktree path + branch pairs using porcelain format for robustness
-mapfile -t worktrees < <(git worktree list --porcelain | awk '
-  /^worktree / { path = $2 }
-  /^branch /   { gsub("refs/heads/", "", $2); print path " " $2 }
-')
+# Use POSIX-compatible shell constructs so this script works even when invoked via `sh`.
+worktrees="$(
+  git worktree list --porcelain | awk '
+    /^worktree / { path = $2 }
+    /^branch /   { gsub("refs/heads/", "", $2); print path " " $2 }
+  '
+)"
 
-for entry in "${worktrees[@]}"; do
-  path="${entry%% *}"
-  branch="${entry##* }"
+# Iterate over each "path branch" pair (one per line)
+printf '%s
+' "$worktrees" | while IFS=' ' read -r path branch; do
+  # Skip empty lines (defensive)
+  [ -z "$path" ] && continue
 
   # Skip the primary worktree (usually the repo root)
-  if [[ "$path" == "$repo_root" ]]; then
+  if [ "$path" = "$repo_root" ]; then
     continue
   fi
 
-  echo "\n=== Rebasing worktree $path (branch $branch) onto $main_branch ==="
+  printf '\n=== Rebasing worktree %s (branch %s) onto %s ===\n' "$path" "$branch" "$main_branch"
   (
-    cd "$path"
+    cd "$path" || exit 1
     git status --short
     git rebase "$main_branch"
   )

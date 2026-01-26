@@ -1,17 +1,13 @@
 # Agent Multiplexer (amux) Specification
 
-**Version:** v1.20
-**Derived from:** spec-v1.19.md
+**Version:** v1.21
+**Derived from:** spec-v1.20.md
 **Applied addendum:** addendum_1.md
 **Change summary:**
-- Specify remote disconnection buffering limits, drop policy, and request timeout behavior.
-- Define replay ordering semantics and require replay after hub reconnection to avoid out-of-order PTY output.
-- Clarify handshake readiness error handling (`not_ready`) and make `spawn` idempotent per `agent_id`.
-- Define `repo_root` canonicalization (including symlink resolution) for deterministic `repo_key` computation.
-- Clarify `liquidgen` model identifiers as logical aliases and specify error behavior for unknown/unavailable models.
-- Impose a per-adapter-instance WASM linear memory cap and specify host recovery behavior.
-- Fix an incorrect bootstrap step cross-reference (step 7 → step 8).
-- Add RFC 3339 to normative references and require TUI XML decoders to reject unsupported schema versions.
+- Add `amux test` CLI subcommand to run Go hygiene, vetting, linting, tests (race and non-race), coverage, and benchmarks and emit a TOML snapshot.
+- Add `--regression` to compare the newly generated snapshot to the previous snapshot and fail on regressions.
+- Add `--no-snapshot` to emit the snapshot to stdout instead of writing to `./snapshots`.
+
 **Status:** Draft
 **Date:** 2026-01-26
 
@@ -5507,6 +5503,133 @@ The daemon MUST treat CLI plugin-initiated operations as distinct from normal CL
 
 - The daemon MUST support permission-scoped operations for CLI plugins as defined in §13.6.
 - The daemon MUST reject any plugin-initiated operation that is not permitted, returning a JSON-RPC error.
+
+### 12.6 CLI-only command: amux test
+
+The `amux` CLI client MUST provide a subcommand:
+
+- `amux test`
+
+The `amux test` command MUST run a standardized Go verification suite for the current Go module and MUST emit a TOML "test snapshot" capturing the results.
+
+#### 12.6.1 Module root selection
+
+- `amux test` MUST determine `module_root` by searching from the current working directory upward for a `go.mod` file.
+- If no `go.mod` is found, `amux test` MUST exit non-zero and MUST print an error indicating that a Go module is required.
+- All commands in §12.6.2 MUST be executed with working directory set to `module_root`.
+
+#### 12.6.2 Required command sequence
+
+`amux test` MUST execute the following commands, in the order listed, capturing stdout, stderr, exit status, and wall-clock duration for each:
+
+1. `go mod tidy`
+2. `go vet ./...`
+3. `golangci-lint run ./...`
+4. `go test -race ./...`
+5. `go test ./...`
+6. `go test ./... -coverprofile=<coverprofile_path>`
+7. `go test -run=^$ -bench=. -benchmem ./...`
+
+`<coverprofile_path>` MUST refer to a file path that is writable by the current user. The implementation MAY use an implementation-defined temporary directory for the coverage profile.
+
+If any command in steps 1–7 returns a non-zero exit status, `amux test` MUST record the failure in the snapshot and SHOULD continue executing subsequent commands.
+
+Missing required executables (at minimum `go` and `golangci-lint`) are fatal: in that case `amux test` MUST exit non-zero and MUST print a clear diagnostic identifying the missing executable.
+
+#### 12.6.3 Snapshot emission
+
+By default, `amux test` MUST write a TOML snapshot file into a directory named `snapshots` under `module_root`:
+
+- `<module_root>/snapshots/`
+
+The snapshots directory MUST be created if it does not exist.
+
+The snapshot file name MUST be:
+
+- `amux-test-<timestamp>.toml`
+
+Where `<timestamp>` MUST be the UTC time formatted as `YYYYMMDDThhmmssZ` (for example `20260126T153012Z`). If the computed file name already exists, the implementation MUST append a numeric suffix `-1`, `-2`, ... before the `.toml` extension to avoid overwriting an existing snapshot.
+
+When `--no-snapshot` is provided, `amux test` MUST NOT write a snapshot file and MUST instead write the TOML snapshot to stdout. In `--no-snapshot` mode, all non-snapshot human-readable logs and regression reports MUST be written to stderr.
+
+#### 12.6.4 Snapshot schema
+
+The snapshot MUST be valid TOML and MUST include the following keys.
+
+Required table:
+
+- `[meta]`
+  - `created_at` (string, RFC 3339 timestamp)
+  - `module_root` (string; the resolved `module_root` path)
+  - `spec_version` (string; MUST equal the spec version implemented by the running `amux` binary)
+
+Required per-step tables (all MUST exist):
+
+- `[steps.go_mod_tidy]`
+- `[steps.go_vet]`
+- `[steps.golangci_lint]`
+- `[steps.tests_race]`
+- `[steps.tests]`
+- `[steps.coverage]`
+- `[steps.benchmarks]`
+
+Each step table MUST include:
+- `argv` (array of strings; argv[0] is the executable)
+- `exit_code` (integer)
+- `duration_ms` (integer; elapsed wall time in milliseconds)
+- `stdout_sha256` (string; lowercase hex SHA-256 of raw stdout bytes)
+- `stderr_sha256` (string; lowercase hex SHA-256 of raw stderr bytes)
+- `stdout_bytes` (integer)
+- `stderr_bytes` (integer)
+
+Coverage-specific field:
+
+If `steps.coverage.exit_code = 0`, `[steps.coverage]` MUST also include:
+- `total_percent` (float; total statement coverage percentage across `./...`, in the range `0.0`–`100.0`)
+
+Benchmark entries:
+
+The snapshot MUST include an array of benchmark result tables:
+
+- `[[benchmarks]]`
+
+Each `[[benchmarks]]` entry MUST include:
+- `name` (string; benchmark name without the `-N` CPU suffix)
+- `pkg` (string; go package import path)
+- `ns_per_op` (float)
+- `iterations` (integer)
+
+If present in the `go test` benchmark output, a `[[benchmarks]]` entry MUST also include:
+- `bytes_per_op` (integer)
+- `allocs_per_op` (integer)
+
+The implementation MUST parse benchmark output lines that begin with `Benchmark` and MUST associate each parsed benchmark with the package under test (for example via the `pkg:` line in `go test` benchmark output).
+
+#### 12.6.5 Regression checking
+
+When `--regression` is provided, `amux test` MUST compare the newly generated snapshot against the previous snapshot in `<module_root>/snapshots/`.
+
+Baseline selection:
+
+- The "previous snapshot" MUST be the lexicographically greatest file name in `<module_root>/snapshots/` that matches the glob `amux-test-*.toml`, excluding the snapshot file currently being written (if any).
+- If no baseline snapshot is found, `amux test` MUST still generate the new snapshot (file or stdout per §12.6.3) and MUST exit non-zero after printing an error indicating that no baseline snapshot exists.
+
+Regression rules:
+
+`amux test --regression` MUST treat each of the following as a regression:
+
+- A step exit regression: for any step present in both snapshots, if the baseline `exit_code` is `0` and the new `exit_code` is non-zero.
+- A coverage regression: if both snapshots report `steps.coverage.exit_code = 0` and the new `total_percent` is less than the baseline `total_percent`.
+- A benchmark regression: for any benchmark present in both snapshots (matched by `(pkg, name)`), if the new value is worse than the baseline value for any of:
+  - `ns_per_op` (higher is worse)
+  - `bytes_per_op` (higher is worse; only compared when both snapshots include the field)
+  - `allocs_per_op` (higher is worse; only compared when both snapshots include the field)
+
+The regression report MUST list each regressed metric with baseline and new values. The regression report MUST be written to stderr.
+
+Exit status:
+
+- If any regressions are detected, `amux test --regression` MUST exit non-zero, even if all commands succeeded.
 
 ## 13. CLI plugin system (WASM and remote)
 

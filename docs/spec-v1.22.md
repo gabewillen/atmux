@@ -1,12 +1,11 @@
 # Agent Multiplexer (amux) Specification
 
-**Version:** v1.21
-**Derived from:** spec-v1.20.md
+**Version:** v1.22
+**Derived from:** spec-v1.21.md
 **Applied addendum:** addendum_1.md
 **Change summary:**
-- Add `amux test` CLI subcommand to run Go hygiene, vetting, linting, tests (race and non-race), coverage, and benchmarks and emit a TOML snapshot.
-- Add `--regression` to compare the newly generated snapshot to the previous snapshot and fail on regressions.
-- Add `--no-snapshot` to emit the snapshot to stdout instead of writing to `./snapshots`.
+- Require Go 1.25.6 (go1.25.6) as the implementation toolchain version.
+- Require inline Go documentation and go-docmd-generated per-package README.md files to keep docs in sync.
 
 **Status:** Draft
 **Date:** 2026-01-26
@@ -240,7 +239,7 @@ The keywords **MUST**, **MUST NOT**, **SHOULD**, **SHOULD NOT**, and **MAY** are
 ### 4.2 Conventions
 
 #### 4.2.1 Implementation language
-The core application shall be implemented in Go (1.25.6+).
+The core application MUST be implemented in Go 1.25.6 (`go1.25.6`).
 
 #### 4.2.2 WASM runtime
 The application shall use wazero as the WebAssembly runtime. wazero is a pure Go implementation requiring no CGO, enabling straightforward cross-compilation.
@@ -307,6 +306,22 @@ amux/
     ├── cursor/         # Cursor adapter source (example)
     └── windsurf/       # Windsurf adapter source (example)
 ```
+
+##### 4.2.6.1 Inline documentation and generated package READMEs
+
+All Go code in this repository MUST be documented inline:
+
+- Every package MUST include a package comment suitable for `go doc`.
+- Every exported identifier (type, function, method, variable, constant) MUST include a Go documentation comment suitable for `go doc`.
+- Non-exported identifiers and blocks that implement core logic, concurrency, parsing, or security-sensitive behavior MUST include inline comments describing intent and invariants.
+
+The implementation MUST use `github.com/agentflare-ai/go-docmd` to generate per-package `README.md` files from the inline Go documentation.
+
+- The canonical generation command MUST be executed at the module root:
+  - `go run github.com/agentflare-ai/go-docmd@latest -cmd -all -inplace ./...`
+
+- Generated `README.md` files MUST be committed to the repository.
+- An automated check (for example CI) MUST run the canonical generation command and MUST fail if it produces any uncommitted changes, ensuring the generated READMEs remain in sync with the inline Go documentation.
 
 **Key invariant:** The `internal/` directory shall never import from or reference specific adapters. All agent-specific patterns, commands, and behaviors must reside in `adapters/`.
 

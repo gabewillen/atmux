@@ -1,19 +1,20 @@
-# Agent Multiplexer (amux) Implementation Plan (plan-v2.3)
+# Agent Multiplexer (amux) Implementation Plan (plan-v2.4)
 
 ## Plan Header
 
-- Version: v2.3
-- Derived from: plan-v2.2.md
+- Version: v2.4
+- Derived from: plan-v2.3.md
 - Applied addendum: plan_addendum_1.md
 - Revision summary:
-  - The plan MUST treat the `liquidgen` inference engine as already implemented in the private `gabewillen/liquidgen` repository and MUST focus Phase 0 on integration (not reimplementation).
-  - The plan SHOULD add GitHub Actions workflows that publish versioned release artifacts and install scripts to Cloudflare R2 so `amux` is installable and upgradable via `curl` (sh) and PowerShell.
+  - The plan MUST be updated to target `spec-v1.22.md` as the authoritative specification, including version-locking checks.
+  - The plan MUST require Go 1.25.6 (`go1.25.6`) for the core toolchain and dependency pinning.
+  - Each phase MUST include documentation work per spec §4.2.6.1, including inline Go doc comments and `go-docmd`-generated per-package `README.md` files with an automated docs sync check.
 
 
 ## Overview
 
 ### Purpose
-Deliver an implementation plan for **Agent Multiplexer (amux)** that is directly traceable to the authoritative specification **spec-v1.21.md**.
+Deliver an implementation plan for **Agent Multiplexer (amux)** that is directly traceable to the authoritative specification **spec-v1.22.md**.
 
 ### How this plan maps to the spec
 - Phases align to major spec sections (Conformance, Agent management, Presence, PTY monitoring, Process tracking, Event system, Adapter interface, LLM coordination, CLI control plane, CLI plugin system).
@@ -29,8 +30,8 @@ Deliver an implementation plan for **Agent Multiplexer (amux)** that is directly
 - Each TODO’s “Acceptance criteria” is **MUST** and defines “done” for that item.
 
 #### Spec references and conflict handling
-- `spec-v1.21.md` **MUST** be present in the repository and treated as the normative source for any referenced requirement.
-- If an implementer identifies a conflict between this plan and `spec-v1.21.md`, they **MUST NOT** silently guess or diverge; they **MUST** record the conflict and resolve it via a plan addendum (or tracked issue) before continuing.
+- `spec-v1.22.md` **MUST** be present in the repository and treated as the normative source for any referenced requirement.
+- If an implementer identifies a conflict between this plan and `spec-v1.22.md`, they **MUST NOT** silently guess or diverge; they **MUST** record the conflict and resolve it via a plan addendum (or tracked issue) before continuing.
 
 #### Phase ordering and stubbing policy (dependency inversion)
 - Phases are ordered by intended dependencies, but some phases reference later-phase implementations.
@@ -62,6 +63,7 @@ The repository **MUST** provide documented, reproducible entrypoints for verific
 
 - Run unit tests (e.g., `go test ./...`).
 - Run lint/static analysis (e.g., `staticcheck` + `go vet`).
+- Run `go-docmd` documentation generation and a docs sync check that MUST fail on diffs (Spec §4.2.6.1).
 - Run integration tests (may require provisioning dependencies such as NATS/JetStream).
 - Run `amux test` to create a Go verification snapshot for the current module (Spec §12.6).
 - Run `amux test --regression` to compare against the previous snapshot and fail on regressions (Spec §12.6.5).
@@ -97,7 +99,7 @@ The repository **MUST** provide documented, reproducible entrypoints for verific
 - **Implementation scope:** Implement amux core binaries (`amux`, `amux-node`), agent management (local and remote), presence/roster, PTY monitoring, process tracking, event system, WASM adapter runtime/interface, LLM coordination loop, JSON-RPC control plane, and CLI plugin system, plus the conformance harness/suite.
 - **Out-of-scope items (explicit):** As listed in Spec §1.4 (CLI presentation details; external LLM provider integration; agent-specific prompting; general authn/z beyond NATS host authentication and local plugin permissions; general persistent storage beyond JetStream and the specified SQLite/sqlite-vec usage; network protocols beyond SSH bootstrap).
 - **Hard constraints (mandatory):**
-  - Core implemented in Go 1.25.6+ (Spec §4.2.1)
+  - Core MUST be implemented in Go 1.25.6 (`go1.25.6`) (Spec §4.2.1)
   - WASM runtime is wazero; adapters compiled with TinyGo (Spec §4.2.2)
   - HSM via hsm-go; IDs via muid (Spec §4.2.3)
   - PTY management via creack/pty (Spec §4.2.4)
@@ -119,8 +121,8 @@ The repository **MUST** provide documented, reproducible entrypoints for verific
 Establish repository structure, build/toolchain, configuration, observability scaffolding, and conformance harness skeleton.
 
 ### Inputs
-- spec-v1.21.md (authoritative)
-- Go 1.25.6+ toolchain, TinyGo, platform toolchains for hook libraries
+- spec-v1.22.md (authoritative)
+- Go 1.25.6 (`go1.25.6`) toolchain, TinyGo, platform toolchains for hook libraries
 - NATS + JetStream for remote features (deployment dependency)
 
 ### Outputs
@@ -134,7 +136,7 @@ Establish repository structure, build/toolchain, configuration, observability sc
   - Spec reference(s): §4.2.6, §1.5.1
   - Acceptance criteria: `cmd/amux` and `cmd/amux-node` exist; `internal/*` packages compile; `internal/*` has no imports from `adapters/*` (enforced by lint or test).
 
-- [ ] Pin core language/runtime dependencies (Go 1.25.6+, wazero, hsm-go/muid, creack/pty)
+- [ ] Pin core language/runtime dependencies (Go 1.25.6 (`go1.25.6`), wazero, hsm-go/muid, creack/pty)
   - Spec reference(s): §4.2.1–§4.2.4
   - Acceptance criteria: `go.mod` pins compatible versions; minimal “smoke” programs demonstrate wazero instantiation, hsm-go event dispatch, and PTY allocation on supported OS targets.
 
@@ -171,9 +173,9 @@ Establish repository structure, build/toolchain, configuration, observability sc
   - Acceptance criteria: `go test` can run a placeholder conformance suite that boots a daemon + CLI client fixture and records structured JSON results per the “Conformance harness output contract (minimum)” section above.
 
 ---
-- [ ] Ensure `spec-v1.21.md` is present and version-locked for this plan
+- [ ] Ensure `spec-v1.22.md` is present and version-locked for this plan
   - Spec reference(s): §4.3.1, §4.2.6
-  - Acceptance criteria: `spec-v1.21.md` exists in-repo; a guard test or startup check fails fast with a clear error if the file is missing or the expected version marker does not match.
+  - Acceptance criteria: `spec-v1.22.md` exists in-repo; a guard test or startup check fails fast with a clear error if the file is missing or the expected version marker does not match.
 
 - [ ] Implement shared path resolver (`internal/paths`) and repo-scoped `.amux/` invariants
   - Spec reference(s): §4.2.6, §4.2.8
@@ -194,6 +196,10 @@ Establish repository structure, build/toolchain, configuration, observability sc
 - [ ] Introduce stable interfaces + noop implementations to unblock phased work (event dispatch + adapter hooks)
   - Spec reference(s): §1.5.1, §4.2.6, §9.1, §10.4
   - Acceptance criteria: Phase 4–6 code can emit/subscribe to events via the interface in local/noop mode; Phase 5 can call a pattern/action interface that returns no matches by default; the repo compiles/tests without implementing Phase 7/Phase 8 yet.
+
+- [ ] The implementation MUST maintain inline Go documentation and MUST generate per-package `README.md` files via `go-docmd`, enforced by automated docs-check
+  - Spec reference(s): §4.2.6.1
+  - Acceptance criteria: all packages and exported identifiers implemented in Phase 0 MUST have `go doc`-suitable comments; `go run github.com/agentflare-ai/go-docmd@latest -cmd -all -inplace ./...` MUST run successfully at the module root and MUST update per-package `README.md` files in place; generated `README.md` files MUST be committed; a CI job or verification entrypoint MUST run the canonical command and MUST fail if it produces any uncommitted changes.
 
 - [ ] Run `amux test --regression` at the end of Phase 0 to verify no regressions relative to the Phase 0 baseline snapshot
   - Spec reference(s): §12.6.5
@@ -240,6 +246,10 @@ Implement authoritative types, identifiers, and HSM-driven lifecycle and presenc
   - Spec reference(s): §4.2.3, §6.1, §6.5
   - Acceptance criteria: presence transitions follow spec rules; PTY and process events can trigger presence changes through `hsm.Dispatch()`.
 
+
+- [ ] The implementation MUST maintain inline Go documentation and MUST regenerate per-package `README.md` files via `go-docmd`
+  - Spec reference(s): §4.2.6.1
+  - Acceptance criteria: every package and exported identifier added or modified in this phase MUST include `go doc`-suitable comments; running `go run github.com/agentflare-ai/go-docmd@latest -cmd -all -inplace ./...` at the module root MUST produce no uncommitted changes; generated per-package `README.md` files MUST be committed.
 
 - [ ] Run `amux test --regression` at the end of Phase 1 to verify no regressions relative to the Phase 1 baseline snapshot
   - Spec reference(s): §12.6.5
@@ -289,6 +299,10 @@ Support adding/removing local agents, worktree isolation, local spawn/attach, gr
   - Spec reference(s): §5.7, §5.7.1
   - Acceptance criteria: selected strategy produces expected git operations in dry-run tests; defaulting rules validated against config examples.
 
+
+- [ ] The implementation MUST maintain inline Go documentation and MUST regenerate per-package `README.md` files via `go-docmd`
+  - Spec reference(s): §4.2.6.1
+  - Acceptance criteria: every package and exported identifier added or modified in this phase MUST include `go doc`-suitable comments; running `go run github.com/agentflare-ai/go-docmd@latest -cmd -all -inplace ./...` at the module root MUST produce no uncommitted changes; generated per-package `README.md` files MUST be committed.
 
 - [ ] Run `amux test --regression` at the end of Phase 2 to verify no regressions relative to the Phase 2 baseline snapshot
   - Spec reference(s): §12.6.5
@@ -368,6 +382,10 @@ Implement remote host manager/director roles, NATS subjects, handshake, request-
   - Acceptance criteria: unexpected agent exit emits event; optional remediation actions (if enabled) emit events describing actions taken.
 
 
+- [ ] The implementation MUST maintain inline Go documentation and MUST regenerate per-package `README.md` files via `go-docmd`
+  - Spec reference(s): §4.2.6.1
+  - Acceptance criteria: every package and exported identifier added or modified in this phase MUST include `go doc`-suitable comments; running `go run github.com/agentflare-ai/go-docmd@latest -cmd -all -inplace ./...` at the module root MUST produce no uncommitted changes; generated per-package `README.md` files MUST be committed.
+
 - [ ] Run `amux test --regression` at the end of Phase 3 to verify no regressions relative to the Phase 3 baseline snapshot
   - Spec reference(s): §12.6.5
   - Acceptance criteria: `amux test --regression` exits 0; any regressions are fixed before Phase 3 is considered complete; the new snapshot is written to `<module_root>/snapshots/`.
@@ -411,6 +429,10 @@ Provide presence state model, roster listing, presence awareness, and inter-agen
   - Spec reference(s): §6.4
   - Acceptance criteria: messages are addressed and delivered per spec; notification gating and batching integrate with process notification pipelines where applicable.
 
+
+- [ ] The implementation MUST maintain inline Go documentation and MUST regenerate per-package `README.md` files via `go-docmd`
+  - Spec reference(s): §4.2.6.1
+  - Acceptance criteria: every package and exported identifier added or modified in this phase MUST include `go doc`-suitable comments; running `go run github.com/agentflare-ai/go-docmd@latest -cmd -all -inplace ./...` at the module root MUST produce no uncommitted changes; generated per-package `README.md` files MUST be committed.
 
 - [ ] Run `amux test --regression` at the end of Phase 4 to verify no regressions relative to the Phase 4 baseline snapshot
   - Spec reference(s): §12.6.5
@@ -460,6 +482,10 @@ Own PTYs for agents, monitor output for activity and patterns, and decode TUI sc
   - Spec reference(s): §7.7, §11.2.1
   - Acceptance criteria: full-screen TUIs decode to screen model; XML output matches schema expectations; conformance suite “menu flows” can verify decoding.
 
+
+- [ ] The implementation MUST maintain inline Go documentation and MUST regenerate per-package `README.md` files via `go-docmd`
+  - Spec reference(s): §4.2.6.1
+  - Acceptance criteria: every package and exported identifier added or modified in this phase MUST include `go doc`-suitable comments; running `go run github.com/agentflare-ai/go-docmd@latest -cmd -all -inplace ./...` at the module root MUST produce no uncommitted changes; generated per-package `README.md` files MUST be committed.
 
 - [ ] Run `amux test --regression` at the end of Phase 5 to verify no regressions relative to the Phase 5 baseline snapshot
   - Spec reference(s): §12.6.5
@@ -539,6 +565,10 @@ Track spawned processes, intercept exec where required, emit process and I/O eve
   - Acceptance criteria: capture modes selectable by config; events dispatched correctly; conformance suite “notification flows” pass.
 
 
+- [ ] The implementation MUST maintain inline Go documentation and MUST regenerate per-package `README.md` files via `go-docmd`
+  - Spec reference(s): §4.2.6.1
+  - Acceptance criteria: every package and exported identifier added or modified in this phase MUST include `go doc`-suitable comments; running `go run github.com/agentflare-ai/go-docmd@latest -cmd -all -inplace ./...` at the module root MUST produce no uncommitted changes; generated per-package `README.md` files MUST be committed.
+
 - [ ] Run `amux test --regression` at the end of Phase 6 to verify no regressions relative to the Phase 6 baseline snapshot
   - Spec reference(s): §12.6.5
   - Acceptance criteria: `amux test --regression` exits 0; any regressions are fixed before Phase 6 is considered complete; the new snapshot is written to `<module_root>/snapshots/`.
@@ -586,6 +616,10 @@ Implement event types, dispatch, handlers, deferral, and network-aware routing a
   - Spec reference(s): §9.5–§9.7
   - Acceptance criteria: deferred events resume; tasks model can run and complete; tests cover handler ordering and retries.
 
+
+- [ ] The implementation MUST maintain inline Go documentation and MUST regenerate per-package `README.md` files via `go-docmd`
+  - Spec reference(s): §4.2.6.1
+  - Acceptance criteria: every package and exported identifier added or modified in this phase MUST include `go doc`-suitable comments; running `go run github.com/agentflare-ai/go-docmd@latest -cmd -all -inplace ./...` at the module root MUST produce no uncommitted changes; generated per-package `README.md` files MUST be committed.
 
 - [ ] Run `amux test --regression` at the end of Phase 7 to verify no regressions relative to the Phase 7 baseline snapshot
   - Spec reference(s): §12.6.5
@@ -645,6 +679,10 @@ Load adapters as WASM modules, expose host functions, and integrate adapters for
   - Acceptance criteria: adapters installed into registry layout; embedded default adapter (if used) is shipped as WASM asset, not Go code; discovery works across configured paths.
 
 
+- [ ] The implementation MUST maintain inline Go documentation and MUST regenerate per-package `README.md` files via `go-docmd`
+  - Spec reference(s): §4.2.6.1
+  - Acceptance criteria: every package and exported identifier added or modified in this phase MUST include `go doc`-suitable comments; running `go run github.com/agentflare-ai/go-docmd@latest -cmd -all -inplace ./...` at the module root MUST produce no uncommitted changes; generated per-package `README.md` files MUST be committed.
+
 - [ ] Run `amux test --regression` at the end of Phase 8 to verify no regressions relative to the Phase 8 baseline snapshot
   - Spec reference(s): §12.6.5
   - Acceptance criteria: `amux test --regression` exits 0; any regressions are fixed before Phase 8 is considered complete; the new snapshot is written to `<module_root>/snapshots/`.
@@ -691,6 +729,10 @@ Run the observation loop, produce snapshots, and perform coordination actions us
   - Acceptance criteria: manual mode disables automated actions; configuration changes take effect via config actor without restart.
 
 
+- [ ] The implementation MUST maintain inline Go documentation and MUST regenerate per-package `README.md` files via `go-docmd`
+  - Spec reference(s): §4.2.6.1
+  - Acceptance criteria: every package and exported identifier added or modified in this phase MUST include `go doc`-suitable comments; running `go run github.com/agentflare-ai/go-docmd@latest -cmd -all -inplace ./...` at the module root MUST produce no uncommitted changes; generated per-package `README.md` files MUST be committed.
+
 - [ ] Run `amux test --regression` at the end of Phase 9 to verify no regressions relative to the Phase 9 baseline snapshot
   - Spec reference(s): §12.6.5
   - Acceptance criteria: `amux test --regression` exits 0; any regressions are fixed before Phase 9 is considered complete; the new snapshot is written to `<module_root>/snapshots/`.
@@ -735,6 +777,10 @@ Expose a JSON-RPC control plane for CLI clients and plugins, including required 
   - Spec reference(s): §12.5, §13.6
   - Acceptance criteria: plugin calls are restricted by declared permissions; denied calls return explicit errors; tests cover least-privilege defaults.
 
+
+- [ ] The implementation MUST maintain inline Go documentation and MUST regenerate per-package `README.md` files via `go-docmd`
+  - Spec reference(s): §4.2.6.1
+  - Acceptance criteria: every package and exported identifier added or modified in this phase MUST include `go doc`-suitable comments; running `go run github.com/agentflare-ai/go-docmd@latest -cmd -all -inplace ./...` at the module root MUST produce no uncommitted changes; generated per-package `README.md` files MUST be committed.
 
 - [ ] Run `amux test --regression` at the end of Phase 10 to verify no regressions relative to the Phase 10 baseline snapshot
   - Spec reference(s): §12.6.5
@@ -788,6 +834,10 @@ Implement plugin management commands, plugin registry and installation sources, 
   - Spec reference(s): §13.7–§13.9
   - Acceptance criteria: built-in plugin behaviors match spec; `amux agent` and `amux chat` plugin commands operate end to end using JSON-RPC.
 
+
+- [ ] The implementation MUST maintain inline Go documentation and MUST regenerate per-package `README.md` files via `go-docmd`
+  - Spec reference(s): §4.2.6.1
+  - Acceptance criteria: every package and exported identifier added or modified in this phase MUST include `go doc`-suitable comments; running `go run github.com/agentflare-ai/go-docmd@latest -cmd -all -inplace ./...` at the module root MUST produce no uncommitted changes; generated per-package `README.md` files MUST be committed.
 
 - [ ] Run `amux test --regression` at the end of Phase 11 to verify no regressions relative to the Phase 11 baseline snapshot
   - Spec reference(s): §12.6.5
@@ -844,6 +894,10 @@ Complete the conformance suite, validate required E2E flows, and ensure cross-pl
   - Spec reference(s): N/A (release engineering requirement)
   - Acceptance criteria: a CI job runs `install.sh` on linux and macOS runners and runs `install.ps1` via PowerShell; each job verifies `amux --version` matches the expected tag; each job re-runs the installer to confirm the upgrade path remains functional.
 
+- [ ] The implementation MUST maintain inline Go documentation and MUST regenerate per-package `README.md` files via `go-docmd`
+  - Spec reference(s): §4.2.6.1
+  - Acceptance criteria: every package and exported identifier added or modified in this phase MUST include `go doc`-suitable comments; running `go run github.com/agentflare-ai/go-docmd@latest -cmd -all -inplace ./...` at the module root MUST produce no uncommitted changes; generated per-package `README.md` files MUST be committed.
+
 - [ ] Run `amux test --regression` at the end of Phase 12 to verify no regressions relative to the Phase 12 baseline snapshot
   - Spec reference(s): §12.6.5
   - Acceptance criteria: `amux test --regression` exits 0; any regressions are fixed before Phase 12 is considered complete; the new snapshot is written to `<module_root>/snapshots/`.
@@ -877,7 +931,7 @@ Complete the conformance suite, validate required E2E flows, and ensure cross-pl
 ## Explicit assumptions & risks
 
 ### Assumptions (explicit)
-- **Authoritative spec selection:** Only `spec-v1.21.md` was provided, so it is treated as authoritative for major version v1.
+- **Authoritative spec selection:** `spec-v1.22.md` is present in-repo and is treated as authoritative for major version v1.
 - NATS + JetStream infrastructure is available for remote agent features (Spec §5.5, §9.1).
 - OS support targets are Linux and macOS on amd64 and arm64, per explicit cross-compilation commands (Spec §4.2.7, §8.3.9).
 - The private `gabewillen/liquidgen` repository is accessible from development machines and is treated as the authoritative implementation of the local inference engine used by `amux`.
@@ -894,8 +948,9 @@ Complete the conformance suite, validate required E2E flows, and ensure cross-pl
 ## Plan Stability Declaration
 
 ### Locked assumptions
-- `spec-v1.21.md` is the authoritative specification for major version v1 (see plan Overview assumptions).
-- Core implementation is Go 1.25.6+ and uses the mandated libraries and conventions: wazero + TinyGo, hsm-go/muid, creack/pty, explicit error handling, and agent-agnostic `internal/` boundaries (Spec §4.2.1–§4.2.6, §1.5).
+- `spec-v1.22.md` is the authoritative specification for major version v1 (see plan Overview assumptions).
+- Inline Go documentation and `go-docmd`-generated per-package `README.md` files are required and MUST remain in sync via an automated docs-check (Spec §4.2.6.1).
+- Core implementation is Go 1.25.6 (`go1.25.6`) and uses the mandated libraries and conventions: wazero + TinyGo, hsm-go/muid, creack/pty, explicit error handling, and agent-agnostic `internal/` boundaries (Spec §4.2.1–§4.2.6, §1.5).
 - Remote orchestration uses the NATS + JetStream design, including per-host credentials, per-host subject authorization, JetStream KV durable state, and the normative request-reply/replay/buffering semantics (Spec §5.5.6–§5.5.8).
 - Observability uses OpenTelemetry per spec, and local inference uses `liquidgen` with the required logical model IDs (Spec §4.2.9–§4.2.10).
 - Build targets are the platforms explicitly enumerated by the spec’s cross-compilation guidance (Spec §4.2.7, §8.3.9).

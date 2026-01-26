@@ -97,7 +97,7 @@ The repository **MUST** provide documented, reproducible entrypoints for verific
 - **Implementation scope:** Implement amux core binaries (`amux`, `amux-node`), agent management (local and remote), presence/roster, PTY monitoring, process tracking, event system, WASM adapter runtime/interface, LLM coordination loop, JSON-RPC control plane, and CLI plugin system, plus the conformance harness/suite.
 - **Out-of-scope items (explicit):** As listed in Spec §1.4 (CLI presentation details; external LLM provider integration; agent-specific prompting; general authn/z beyond NATS host authentication and local plugin permissions; general persistent storage beyond JetStream and the specified SQLite/sqlite-vec usage; network protocols beyond SSH bootstrap).
 - **Hard constraints (mandatory):**
-  - Core implemented in Go 1.22+ (Spec §4.2.1)
+  - Core implemented in Go 1.25.6+ (Spec §4.2.1)
   - WASM runtime is wazero; adapters compiled with TinyGo (Spec §4.2.2)
   - HSM via hsm-go; IDs via muid (Spec §4.2.3)
   - PTY management via creack/pty (Spec §4.2.4)
@@ -120,7 +120,7 @@ Establish repository structure, build/toolchain, configuration, observability sc
 
 ### Inputs
 - spec-v1.21.md (authoritative)
-- Go 1.22+ toolchain, TinyGo, platform toolchains for hook libraries
+- Go 1.25.6+ toolchain, TinyGo, platform toolchains for hook libraries
 - NATS + JetStream for remote features (deployment dependency)
 
 ### Outputs
@@ -134,7 +134,7 @@ Establish repository structure, build/toolchain, configuration, observability sc
   - Spec reference(s): §4.2.6, §1.5.1
   - Acceptance criteria: `cmd/amux` and `cmd/amux-node` exist; `internal/*` packages compile; `internal/*` has no imports from `adapters/*` (enforced by lint or test).
 
-- [ ] Pin core language/runtime dependencies (Go 1.22+, wazero, hsm-go/muid, creack/pty)
+- [ ] Pin core language/runtime dependencies (Go 1.25.6+, wazero, hsm-go/muid, creack/pty)
   - Spec reference(s): §4.2.1–§4.2.4
   - Acceptance criteria: `go.mod` pins compatible versions; minimal “smoke” programs demonstrate wazero instantiation, hsm-go event dispatch, and PTY allocation on supported OS targets.
 
@@ -895,7 +895,7 @@ Complete the conformance suite, validate required E2E flows, and ensure cross-pl
 
 ### Locked assumptions
 - `spec-v1.21.md` is the authoritative specification for major version v1 (see plan Overview assumptions).
-- Core implementation is Go 1.22+ and uses the mandated libraries and conventions: wazero + TinyGo, hsm-go/muid, creack/pty, explicit error handling, and agent-agnostic `internal/` boundaries (Spec §4.2.1–§4.2.6, §1.5).
+- Core implementation is Go 1.25.6+ and uses the mandated libraries and conventions: wazero + TinyGo, hsm-go/muid, creack/pty, explicit error handling, and agent-agnostic `internal/` boundaries (Spec §4.2.1–§4.2.6, §1.5).
 - Remote orchestration uses the NATS + JetStream design, including per-host credentials, per-host subject authorization, JetStream KV durable state, and the normative request-reply/replay/buffering semantics (Spec §5.5.6–§5.5.8).
 - Observability uses OpenTelemetry per spec, and local inference uses `liquidgen` with the required logical model IDs (Spec §4.2.9–§4.2.10).
 - Build targets are the platforms explicitly enumerated by the spec’s cross-compilation guidance (Spec §4.2.7, §8.3.9).

@@ -240,7 +240,7 @@ The keywords **MUST**, **MUST NOT**, **SHOULD**, **SHOULD NOT**, and **MAY** are
 ### 4.2 Conventions
 
 #### 4.2.1 Implementation language
-The core application shall be implemented in Go (1.22+).
+The core application shall be implemented in Go (1.25.6+).
 
 #### 4.2.2 WASM runtime
 The application shall use wazero as the WebAssembly runtime. wazero is a pure Go implementation requiring no CGO, enabling straightforward cross-compilation.

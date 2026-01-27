@@ -1,1 +1,1 @@
-/Users/gabrielwillen/VSCode/amux/AGENTS.md
+AGENTS.md

@@ -6,7 +6,7 @@ set -euo pipefail
 
 main_branch="main"
 repo_root="$(git rev-parse --show-toplevel)"
-vscode_root="/Users/gabrielwillen/VSCode"
+vscode_root="/shared"
 
 # Hardcoded list of branches for worktrees
 branches=(

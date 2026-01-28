@@ -1,0 +1,77 @@
+{
+  "run_id": "amux-conformance-1769631163",
+  "spec_version": "v1.22",
+  "started_at": "2026-01-28T20:12:43.902287313Z",
+  "finished_at": "2026-01-28T20:12:43.902299743Z",
+  "flows": [
+    {
+      "name": "agent-management",
+      "status": "skip",
+      "error": "Flow not yet implemented",
+      "started_at": "2026-01-28T20:12:43.902297793Z",
+      "finished_at": "2026-01-28T20:12:43.902298003Z"
+    },
+    {
+      "name": "presence-status",
+      "status": "skip",
+      "error": "Flow not yet implemented",
+      "started_at": "2026-01-28T20:12:43.902298193Z",
+      "finished_at": "2026-01-28T20:12:43.902298633Z"
+    },
+    {
+      "name": "pty-monitoring",
+      "status": "skip",
+      "error": "Flow not yet implemented",
+      "started_at": "2026-01-28T20:12:43.902298753Z",
+      "finished_at": "2026-01-28T20:12:43.902298843Z"
+    },
+    {
+      "name": "process-tracking",
+      "status": "skip",
+      "error": "Flow not yet implemented",
+      "started_at": "2026-01-28T20:12:43.902298923Z",
+      "finished_at": "2026-01-28T20:12:43.902299003Z"
+    },
+    {
+      "name": "event-system",
+      "status": "skip",
+      "error": "Flow not yet implemented",
+      "started_at": "2026-01-28T20:12:43.902299053Z",
+      "finished_at": "2026-01-28T20:12:43.902299123Z"
+    },
+    {
+      "name": "adapter-interface",
+      "status": "skip",
+      "error": "Flow not yet implemented",
+      "started_at": "2026-01-28T20:12:43.902299213Z",
+      "finished_at": "2026-01-28T20:12:43.902299283Z"
+    },
+    {
+      "name": "coordination-loop",
+      "status": "skip",
+      "error": "Flow not yet implemented",
+      "started_at": "2026-01-28T20:12:43.902299333Z",
+      "finished_at": "2026-01-28T20:12:43.902299413Z"
+    },
+    {
+      "name": "control-plane",
+      "status": "skip",
+      "error": "Flow not yet implemented",
+      "started_at": "2026-01-28T20:12:43.902299463Z",
+      "finished_at": "2026-01-28T20:12:43.902299523Z"
+    },
+    {
+      "name": "plugin-system",
+      "status": "skip",
+      "error": "Flow not yet implemented",
+      "started_at": "2026-01-28T20:12:43.902299573Z",
+      "finished_at": "2026-01-28T20:12:43.902299643Z"
+    }
+  ],
+  "summary": {
+    "total": 9,
+    "passed": 0,
+    "failed": 0,
+    "skipped": 9
+  }
+}

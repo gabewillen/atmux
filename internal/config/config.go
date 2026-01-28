@@ -2,7 +2,9 @@
 package config
 
 import (
+	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -272,19 +274,134 @@ func setDefaults(config *Config) {
 
 // loadAdapterConfigs loads adapter-specific configurations.
 func loadAdapterConfigs(config *Config) error {
-	// TODO: implement adapter config discovery from registry paths
+	// For Phase 0, load from standard discovery paths
+	configPaths := []string{
+		"~/.config/amux/adapters",
+		".amux/adapters",
+	}
+
+	loadedConfigs := make(map[string]map[string]interface{})
+
+	for _, configPath := range configPaths {
+		// Expand ~ to home directory
+		if strings.HasPrefix(configPath, "~/") {
+			home, err := os.UserHomeDir()
+			if err != nil {
+				continue
+			}
+			configPath = filepath.Join(home, configPath[2:])
+		}
+
+		// Check if directory exists
+		if _, err := os.Stat(configPath); os.IsNotExist(err) {
+			continue
+		}
+
+		// Read adapter configs
+		entries, err := os.ReadDir(configPath)
+		if err != nil {
+			continue
+		}
+
+		for _, entry := range entries {
+			if !entry.IsDir() {
+				continue
+			}
+
+			adapterPath := filepath.Join(configPath, entry.Name(), "config.toml")
+			if _, err := os.Stat(adapterPath); err != nil {
+				continue
+			}
+
+			data, err := os.ReadFile(adapterPath)
+			if err != nil {
+				continue
+			}
+
+			var adapterConfig map[string]interface{}
+			if err := toml.Unmarshal(data, &adapterConfig); err != nil {
+				continue
+			}
+
+			loadedConfigs[entry.Name()] = adapterConfig
+		}
+	}
+
+	config.Adapters = loadedConfigs
 	return nil
 }
 
 // loadUserConfig loads user configuration from standard paths.
 func loadUserConfig(config *Config) error {
-	// TODO: implement user config loading from XDG config dirs
+	// For Phase 0, check standard XDG config locations
+	configPaths := []string{
+		"~/.config/amux/config.toml",
+		"~/.amux/config.toml",
+	}
+
+	for _, configPath := range configPaths {
+		// Expand ~ to home directory
+		if strings.HasPrefix(configPath, "~/") {
+			home, err := os.UserHomeDir()
+			if err != nil {
+				continue
+			}
+			configPath = filepath.Join(home, configPath[2:])
+		}
+
+		// Check if file exists
+		if _, err := os.Stat(configPath); os.IsNotExist(err) {
+			continue
+		}
+
+		// Load and merge configuration
+		data, err := os.ReadFile(configPath)
+		if err != nil {
+			continue
+		}
+
+		if err := toml.Unmarshal(data, config); err != nil {
+			return amuxerrors.Wrap("parsing user config", err)
+		}
+
+		// Found and loaded successfully
+		return nil
+	}
+
+	// No user config found - use defaults
 	return nil
 }
 
 // loadProjectConfig loads project-specific configuration from git repo.
 func loadProjectConfig(config *Config) error {
-	// TODO: implement project config loading from .amux/config.toml
+	// For Phase 0, check for .amux/config.toml in current directory and parent directories
+	projectConfig := ".amux/config.toml"
+
+	// Check if file exists
+	if _, err := os.Stat(projectConfig); os.IsNotExist(err) {
+		// Try parent directories (for nested git repos)
+		for i := 0; i < 5; i++ {
+			projectConfig = filepath.Join("..", projectConfig)
+			if _, err := os.Stat(projectConfig); os.IsNotExist(err) {
+				continue
+			}
+			break
+		}
+
+		// Still not found, that's ok for Phase 0
+		return nil
+	}
+
+	// Load and merge configuration
+	data, err := os.ReadFile(projectConfig)
+	if err != nil {
+		return amuxerrors.Wrap("reading project config", err)
+	}
+
+	if err := toml.Unmarshal(data, config); err != nil {
+		return amuxerrors.Wrap("parsing project config", err)
+	}
+
 	return nil
 }
 
@@ -313,22 +430,122 @@ func applyEnvOverrides(config *Config) error {
 
 // setEnvOverride sets a single environment variable override.
 func setEnvOverride(config *Config, key, value string) error {
-	// TODO: implement proper env override parsing based on key hierarchy
-	// For now, just handle common cases
-	switch key {
-	case "LOG_LEVEL":
-		config.Core.LogLevel = value
-	case "DEBUG":
-		config.Core.Debug = value == "true"
-	case "DATA_DIR":
-		config.Core.DataDir = value
-	case "RUNTIME_DIR":
-		config.Core.RuntimeDir = value
-	default:
-		// TODO: implement nested key parsing (CORE__LOG_LEVEL, REMOTE__SERVER_URL, etc.)
+	// Parse AMUX__KEY format with nested hierarchy
+	parts := strings.Split(key, "__")
+	if len(parts) < 2 {
+		return nil // Skip invalid keys
+	}
+
+	// Normalize key parts to lowercase
+	for i, part := range parts {
+		parts[i] = strings.ToLower(part)
+	}
+
+	// Set nested configuration based on key path
+	switch parts[0] {
+	case "core":
+		if len(parts) >= 2 {
+			switch parts[1] {
+			case "log_level":
+				config.Core.LogLevel = value
+			case "debug":
+				config.Core.Debug = value == "true"
+			case "data_dir":
+				config.Core.DataDir = value
+			case "runtime_dir":
+				config.Core.RuntimeDir = value
+			}
+		}
+	case "remote":
+		if len(parts) >= 2 {
+			switch parts[1] {
+			case "server_url":
+				config.Remote.ServerURL = value
+			case "creds_path":
+				config.Remote.CredsPath = value
+			case "subject_prefix":
+				config.Remote.SubjectPrefix = value
+			case "request_timeout":
+				if dur, err := time.ParseDuration(value); err == nil {
+					config.Remote.RequestTimeout = dur
+				}
+			case "buffer_size":
+				if size, err := parseByteSize(value); err == nil {
+					config.Remote.BufferSize = size
+				}
+			}
+		}
+	case "otel":
+		if len(parts) >= 2 {
+			switch parts[1] {
+			case "enabled":
+				config.OTel.Enabled = value == "true"
+			case "service_name":
+				config.OTel.ServiceName = value
+			case "service_version":
+				config.OTel.ServiceVersion = value
+			case "exporter":
+				if len(parts) >= 3 {
+					switch parts[2] {
+					case "type":
+						config.OTel.Exporter.Type = value
+					case "endpoint":
+						config.OTel.Exporter.Endpoint = value
+					}
+				}
+			}
+		}
+	case "inference":
+		if len(parts) >= 2 {
+			switch parts[1] {
+			case "enabled":
+				config.Inference.Enabled = value == "true"
+			case "engine":
+				config.Inference.Engine = value
+			}
+		}
 	}
 
 	return nil
+}
+
+// parseByteSize parses byte size strings like "1MB", "64KB" etc.
+func parseByteSize(s string) (int, error) {
+	// Simple implementation for Phase 0
+	if len(s) == 0 {
+		return 0, amuxerrors.ErrInvalidConfig
+	}
+
+	// Extract numeric part
+	var numStr string
+	var unit string
+
+	for i, r := range s {
+		if r >= '0' && r <= '9' || r == '.' {
+			numStr += string(r)
+		} else {
+			unit = s[i:]
+			break
+		}
+	}
+
+	// Parse numeric part
+	var value float64
+	fmt.Sscanf(numStr, "%f", &value)
+
+	// Apply unit multiplier
+	switch strings.ToUpper(unit) {
+	case "B", "":
+		return int(value), nil
+	case "KB":
+		return int(value * 1024), nil
+	case "MB":
+		return int(value * 1024 * 1024), nil
+	case "GB":
+		return int(value * 1024 * 1024 * 1024), nil
+	default:
+		return 0, amuxerrors.ErrInvalidConfig
+	}
 }
 
 // Save saves configuration to TOML format.

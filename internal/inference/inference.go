@@ -2,8 +2,14 @@
 package inference
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"time"
 
 	"github.com/agentflare-ai/amux/internal/config"
 	amuxerrors "github.com/agentflare-ai/amux/internal/errors"
@@ -46,11 +52,12 @@ type ModelInfo struct {
 
 // GenerateOptions controls text generation.
 type GenerateOptions struct {
-	MaxTokens   int               `json:"max_tokens,omitempty"`
-	Temperature float64           `json:"temperature,omitempty"`
-	StopTokens  []string          `json:"stop_tokens,omitempty"`
-	Stream      bool              `json:"stream,omitempty"`
-	Metadata    map[string]string `json:"metadata,omitempty"`
+	Model       string                 `json:"model,omitempty"`
+	MaxTokens   int                    `json:"max_tokens,omitempty"`
+	Temperature float64                `json:"temperature,omitempty"`
+	StopTokens  []string               `json:"stop_tokens,omitempty"`
+	Stream      bool                   `json:"stream,omitempty"`
+	Metadata    map[string]interface{} `json:"metadata,omitempty"`
 }
 
 // GenerateResponse contains text generation results.
@@ -183,20 +190,48 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 type liquidgenEngine struct {
 	models map[string]config.ModelConfig
 	info   *EngineInfo
+	server string // liquidgen server endpoint
+	client *http.Client
+}
+
+// LiquidGenRequest represents a request to liquidgen server.
+type LiquidGenRequest struct {
+	Model       string                 `json:"model"`
+	Prompt      string                 `json:"prompt"`
+	MaxTokens   int                    `json:"max_tokens,omitempty"`
+	Temperature float64                `json:"temperature,omitempty"`
+	Stream      bool                   `json:"stream,omitempty"`
+	Options     map[string]interface{} `json:"options,omitempty"`
+}
+
+// LiquidGenResponse represents a response from liquidgen server.
+type LiquidGenResponse struct {
+	Text         string            `json:"text"`
+	Tokens       int               `json:"tokens"`
+	FinishReason string            `json:"finish_reason"`
+	Metadata     map[string]string `json:"metadata,omitempty"`
+	Error        *string           `json:"error,omitempty"`
 }
 
 // NewLiquidgenEngine creates a new liquidgen-based inference engine.
 func NewLiquidgenEngine(models map[string]config.ModelConfig) (Engine, error) {
-	// TODO: implement actual liquidgen integration
-	// For now, return a placeholder engine
+	// Use default liquidgen server endpoint for Phase 0
+	server := "http://localhost:8080" // Default from spec
+	if envServer := os.Getenv("LIQUIDGEN_SERVER"); envServer != "" {
+		server = envServer
+	}
 
 	engine := &liquidgenEngine{
 		models: models,
 		info: &EngineInfo{
 			Name:    "liquidgen",
-			Version: "dev", // TODO: get from liquidgen
+			Version: "1.1.0", // From spec
 			Type:    "local",
 			Models:  make(map[string]*ModelInfo),
+		},
+		server: server,
+		client: &http.Client{
+			Timeout: 30 * time.Second,
 		},
 	}
 
@@ -216,20 +251,162 @@ func NewLiquidgenEngine(models map[string]config.ModelConfig) (Engine, error) {
 
 // Initialize implements Engine interface.
 func (e *liquidgenEngine) Initialize(ctx context.Context, config *config.ModelConfig) error {
-	// TODO: implement liquidgen initialization
-	return amuxerrors.Wrap("liquidgen initialization", amuxerrors.ErrNotReady)
+	// Check if liquidgen server is available
+	req, err := http.NewRequestWithContext(ctx, "GET", e.server+"/health", nil)
+	if err != nil {
+		return amuxerrors.Wrap("creating health check request", err)
+	}
+
+	resp, err := e.client.Do(req)
+	if err != nil {
+		return amuxerrors.Wrap("liquidgen server not available", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return amuxerrors.Wrap("liquidgen server health check failed", amuxerrors.ErrNotReady)
+	}
+
+	return nil
 }
 
 // Generate implements Engine interface.
 func (e *liquidgenEngine) Generate(ctx context.Context, prompt string, options *GenerateOptions) (*GenerateResponse, error) {
-	// TODO: implement liquidgen generation
-	return nil, amuxerrors.Wrap("liquidgen generation", amuxerrors.ErrNotReady)
+	// Default model for Phase 0
+	model := "lfm2.5-thinking"
+	if options != nil && options.Model != "" {
+		model = options.Model
+	}
+
+	// Prepare request
+	req := LiquidGenRequest{
+		Model:       model,
+		Prompt:      prompt,
+		MaxTokens:   1000,
+		Temperature: 0.7,
+		Stream:      false,
+	}
+
+	if options != nil {
+		if options.MaxTokens > 0 {
+			req.MaxTokens = options.MaxTokens
+		}
+		if options.Temperature > 0 {
+			req.Temperature = options.Temperature
+		}
+		req.Stream = options.Stream
+		req.Options = options.Metadata
+	}
+
+	// Send request to liquidgen server
+	jsonData, err := json.Marshal(req)
+	if err != nil {
+		return nil, amuxerrors.Wrap("marshaling liquidgen request", err)
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", e.server+"/v1/generate", bytes.NewBuffer(jsonData))
+	if err != nil {
+		return nil, amuxerrors.Wrap("creating liquidgen request", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	resp, err := e.client.Do(httpReq)
+	if err != nil {
+		return nil, amuxerrors.Wrap("sending liquidgen request", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, amuxerrors.Wrap(fmt.Sprintf("liquidgen request failed: %s", string(body)), amuxerrors.ErrNotReady)
+	}
+
+	// Parse response
+	var liquidResp LiquidGenResponse
+	if err := json.NewDecoder(resp.Body).Decode(&liquidResp); err != nil {
+		return nil, amuxerrors.Wrap("parsing liquidgen response", err)
+	}
+
+	if liquidResp.Error != nil {
+		return nil, amuxerrors.Wrap(fmt.Sprintf("liquidgen generation error: %s", *liquidResp.Error), amuxerrors.ErrNotReady)
+	}
+
+	return &GenerateResponse{
+		Text:         liquidResp.Text,
+		Tokens:       liquidResp.Tokens,
+		FinishReason: liquidResp.FinishReason,
+		Metadata:     liquidResp.Metadata,
+	}, nil
 }
 
 // Embed implements Engine interface.
 func (e *liquidgenEngine) Embed(ctx context.Context, texts []string, options *EmbedOptions) (*EmbedResponse, error) {
-	// TODO: implement liquidgen embedding
-	return nil, amuxerrors.Wrap("liquidgen embedding", amuxerrors.ErrNotReady)
+	// Default model for Phase 0
+	model := "lfm2.5-thinking"
+	if options != nil && options.Model != "" {
+		model = options.Model
+	}
+
+	// Prepare request for embeddings
+	req := map[string]interface{}{
+		"model":   model,
+		"texts":   texts,
+		"options": map[string]interface{}{},
+	}
+
+	if options != nil {
+		if options.Dimensions > 0 {
+			req["options"].(map[string]interface{})["dimensions"] = options.Dimensions
+		}
+		req["options"].(map[string]interface{})["metadata"] = options.Metadata
+	}
+
+	jsonData, err := json.Marshal(req)
+	if err != nil {
+		return nil, amuxerrors.Wrap("marshaling embed request", err)
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", e.server+"/v1/embed", bytes.NewBuffer(jsonData))
+	if err != nil {
+		return nil, amuxerrors.Wrap("creating embed request", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	resp, err := e.client.Do(httpReq)
+	if err != nil {
+		return nil, amuxerrors.Wrap("sending embed request", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, amuxerrors.Wrap(fmt.Sprintf("embed request failed: %s", string(body)), amuxerrors.ErrNotReady)
+	}
+
+	// Parse response
+	var embedResp struct {
+		Embeddings [][]float64 `json:"embeddings"`
+		Dimensions int         `json:"dimensions"`
+		Model      string      `json:"model"`
+		Tokens     []int       `json:"tokens"`
+		Error      *string     `json:"error,omitempty"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&embedResp); err != nil {
+		return nil, amuxerrors.Wrap("parsing embed response", err)
+	}
+
+	if embedResp.Error != nil {
+		return nil, amuxerrors.Wrap(fmt.Sprintf("embed error: %s", *embedResp.Error), amuxerrors.ErrNotReady)
+	}
+
+	return &EmbedResponse{
+		Embeddings: embedResp.Embeddings,
+		Dimensions: embedResp.Dimensions,
+		Model:      embedResp.Model,
+		Tokens:     embedResp.Tokens,
+		Metadata:   options.Metadata,
+	}, nil
 }
 
 // Info implements Engine interface.
@@ -239,6 +416,6 @@ func (e *liquidgenEngine) Info() *EngineInfo {
 
 // Shutdown implements Engine interface.
 func (e *liquidgenEngine) Shutdown(ctx context.Context) error {
-	// TODO: implement liquidgen shutdown
+	// No shutdown needed for HTTP-based client
 	return nil
 }

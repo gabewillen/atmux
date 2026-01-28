@@ -36,6 +36,9 @@ var (
 
 	// ErrDisconnected is returned when a connection is lost.
 	ErrDisconnected = New("disconnected")
+
+	// ErrNotFound is returned when a resource cannot be found.
+	ErrNotFound = New("not found")
 )
 
 // Error represents a sentinel error.

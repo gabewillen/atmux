@@ -10,6 +10,8 @@ Package inference provides local inference engine integration for amux.
 - `type Engine` — Engine represents a local inference engine.
 - `type GenerateOptions` — GenerateOptions controls text generation.
 - `type GenerateResponse` — GenerateResponse contains text generation results.
+- `type LiquidGenRequest` — LiquidGenRequest represents a request to liquidgen server.
+- `type LiquidGenResponse` — LiquidGenResponse represents a response from liquidgen server.
 - `type Manager` — Manager manages local inference engines.
 - `type ModelInfo` — ModelInfo provides information about available models.
 - `type liquidgenEngine` — liquidgenEngine implements Engine interface using liquidgen.
@@ -91,11 +93,12 @@ EngineInfo provides information about the inference engine.
 
 ```go
 type GenerateOptions struct {
-	MaxTokens   int               `json:"max_tokens,omitempty"`
-	Temperature float64           `json:"temperature,omitempty"`
-	StopTokens  []string          `json:"stop_tokens,omitempty"`
-	Stream      bool              `json:"stream,omitempty"`
-	Metadata    map[string]string `json:"metadata,omitempty"`
+	Model       string                 `json:"model,omitempty"`
+	MaxTokens   int                    `json:"max_tokens,omitempty"`
+	Temperature float64                `json:"temperature,omitempty"`
+	StopTokens  []string               `json:"stop_tokens,omitempty"`
+	Stream      bool                   `json:"stream,omitempty"`
+	Metadata    map[string]interface{} `json:"metadata,omitempty"`
 }
 ```
 
@@ -113,6 +116,35 @@ type GenerateResponse struct {
 ```
 
 GenerateResponse contains text generation results.
+
+## type LiquidGenRequest
+
+```go
+type LiquidGenRequest struct {
+	Model       string                 `json:"model"`
+	Prompt      string                 `json:"prompt"`
+	MaxTokens   int                    `json:"max_tokens,omitempty"`
+	Temperature float64                `json:"temperature,omitempty"`
+	Stream      bool                   `json:"stream,omitempty"`
+	Options     map[string]interface{} `json:"options,omitempty"`
+}
+```
+
+LiquidGenRequest represents a request to liquidgen server.
+
+## type LiquidGenResponse
+
+```go
+type LiquidGenResponse struct {
+	Text         string            `json:"text"`
+	Tokens       int               `json:"tokens"`
+	FinishReason string            `json:"finish_reason"`
+	Metadata     map[string]string `json:"metadata,omitempty"`
+	Error        *string           `json:"error,omitempty"`
+}
+```
+
+LiquidGenResponse represents a response from liquidgen server.
 
 ## type Manager
 
@@ -201,6 +233,8 @@ ModelInfo provides information about available models.
 type liquidgenEngine struct {
 	models map[string]config.ModelConfig
 	info   *EngineInfo
+	server string // liquidgen server endpoint
+	client *http.Client
 }
 ```
 

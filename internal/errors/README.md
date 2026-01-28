@@ -4,13 +4,13 @@
 
 Package errors provides common error handling conventions and sentinel errors for amux.
 
-- `ErrInvalidConfig, ErrAgentNotFound, ErrSessionNotFound, ErrHostNotFound, ErrInvalidState, ErrNotReady, ErrTimeout, ErrDisconnected` — Sentinel errors defined at package level.
+- `ErrInvalidConfig, ErrAgentNotFound, ErrSessionNotFound, ErrHostNotFound, ErrInvalidState, ErrNotReady, ErrTimeout, ErrDisconnected, ErrNotFound` — Sentinel errors defined at package level.
 - `func Wrap(context string, err error) error` — Wrap wraps an error with context, following the convention fmt.Errorf("context: %w", err).
 - `type Error` — Error represents a sentinel error.
 
 ### Variables
 
-#### ErrInvalidConfig, ErrAgentNotFound, ErrSessionNotFound, ErrHostNotFound, ErrInvalidState, ErrNotReady, ErrTimeout, ErrDisconnected
+#### ErrInvalidConfig, ErrAgentNotFound, ErrSessionNotFound, ErrHostNotFound, ErrInvalidState, ErrNotReady, ErrTimeout, ErrDisconnected, ErrNotFound
 
 ```go
 var (
@@ -37,6 +37,9 @@ var (
 
 	// ErrDisconnected is returned when a connection is lost.
 	ErrDisconnected = New("disconnected")
+
+	// ErrNotFound is returned when a resource cannot be found.
+	ErrNotFound = New("not found")
 )
 ```
 

@@ -13,6 +13,7 @@ Package config provides configuration loading and management for amux.
 - `func loadAdapterConfigs(config *Config) error` — loadAdapterConfigs loads adapter-specific configurations.
 - `func loadProjectConfig(config *Config) error` — loadProjectConfig loads project-specific configuration from git repo.
 - `func loadUserConfig(config *Config) error` — loadUserConfig loads user configuration from standard paths.
+- `func parseByteSize(s string) (int, error)` — parseByteSize parses byte size strings like "1MB", "64KB" etc.
 - `func setDefaults(config *Config)` — setDefaults sets built-in default values.
 - `func setEnvOverride(config *Config, key, value string) error` — setEnvOverride sets a single environment variable override.
 - `type Actor` — Actor manages configuration with live updates and subscriptions.
@@ -89,6 +90,14 @@ func loadUserConfig(config *Config) error
 ```
 
 loadUserConfig loads user configuration from standard paths.
+
+#### parseByteSize
+
+```go
+func parseByteSize(s string) (int, error)
+```
+
+parseByteSize parses byte size strings like "1MB", "64KB" etc.
 
 #### setDefaults
 

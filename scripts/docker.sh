@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+[ -n "$BASH_VERSION" ] || exec bash "$0" "$@"
 set -euo pipefail
 
 # Repository root (one level up from this script)

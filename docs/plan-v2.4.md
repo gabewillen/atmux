@@ -164,9 +164,9 @@ Establish repository structure, build/toolchain, configuration, observability sc
   - Spec reference(s): §4.2.10
   - Acceptance criteria: interface types compile; unknown model IDs return error; mapping of logical IDs to artifacts is observable via telemetry fields/events.
 
-- [ ] The implementation MUST integrate the pre-existing `liquidgen` inference engine from `gabewillen/liquidgen` (private) as a dependency and MUST wire it to the local inference interface
+- [ ] The implementation MUST integrate the pre-existing `liquidgen` inference engine from `third_party/liquidgen` (local) as a dependency and MUST wire it to the local inference interface
   - Spec reference(s): §4.2.10
-  - Acceptance criteria: `go test ./...` succeeds on a development machine with access to `gabewillen/liquidgen`; the default build uses `liquidgen` behind the Phase 0 interface (no new inference engine implementation is introduced); build and runtime logs MUST include the `liquidgen` module version or commit identifier for traceability.
+  - Acceptance criteria: `go test ./...` succeeds on a development machine; the default build uses `liquidgen` behind the Phase 0 interface (no new inference engine implementation is introduced); build and runtime logs MUST include the `liquidgen` module version or commit identifier for traceability.
 
 - [ ] Create conformance harness skeleton and test runner wiring
   - Spec reference(s): §4.3.1

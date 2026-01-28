@@ -1,0 +1,93 @@
+# amux Phase 0 Baseline Snapshot
+# This file captures the state of the repository at the completion of Phase 0.
+# Generated on: 2026-01-28
+
+[metadata]
+phase = "0"
+version = "v1.22.0-phase0"
+go_version = "go1.23.1"
+spec_version = "v1.22"
+snapshot_format = "toml"
+
+[modules]
+root = "github.com/copilot-claude-sonnet-4/amux"
+
+[dependencies]
+"github.com/BurntSushi/toml" = "v1.6.0"
+"github.com/creack/pty" = "v1.1.24"
+"github.com/nats-io/nats.go" = "v1.48.0"
+"github.com/stateforward/hsm-go" = "v1.0.0"
+"github.com/stateforward/hsm-go/muid" = "v0.0.0-20260124064619-14d9b71481ec"
+"github.com/tetratelabs/wazero" = "v1.11.0"
+"go.opentelemetry.io/otel" = "v1.39.0"
+
+[packages_created]
+# Agent-agnostic core packages per spec §1.5.1, §4.2.6
+"internal/agent" = "Agent orchestration without agent-specific knowledge"
+"internal/adapter" = "WASM adapter runtime and loading"
+"internal/pty" = "PTY creation and I/O operations"
+"internal/monitor" = "PTY observation and timeout detection"
+"internal/process" = "Child process tracking"
+"internal/config" = "Configuration management with TOML support"
+"internal/protocol" = "Remote communication transport"
+"internal/tui" = "Terminal user interface"
+"internal/inference" = "Local inference engine (liquidgen)"
+"internal/paths" = "Shared path resolution"
+"internal/events" = "Event dispatch (stable interface, noop)"
+"internal/pattern" = "Pattern matching interface (noop)"
+"internal/conformance" = "Conformance test harness skeleton"
+"pkg/api" = "Public types (agent-agnostic)"
+
+# Entry points
+"cmd/amux" = "CLI client binary"
+"cmd/amux-node" = "Unified daemon binary"
+
+# Adapter skeletons
+"adapters/claude-code" = "Claude Code adapter (WASM exports)"
+"adapters/cursor" = "Cursor adapter (WASM exports)"
+"adapters/windsurf" = "Windsurf adapter (WASM exports)"
+
+[tests_passing]
+count = 7
+packages = [
+    "cmd/amux",
+    "internal/agent", 
+    "internal/conformance",
+    "internal/paths",
+    "internal/pty"
+]
+
+[verification_status]
+go_mod_tidy = "✅"
+go_vet = "✅"
+staticcheck = "✅"
+unit_tests = "✅"
+race_tests = "✅"
+build = "✅"
+docs_sync = "✅"
+
+[compliance]
+spec_version_locked = "✅"
+repository_structure = "✅"
+core_dependencies_pinned = "✅"
+error_handling_conventions = "✅"
+agent_agnostic_core = "✅"
+stable_interfaces = "✅"
+documentation_generated = "✅"
+
+[phase0_todos_completed]
+# All Phase 0 TODO items from plan-v2.4.md
+repository_layout = "✅"
+dependency_pinning = "✅"
+error_handling = "✅"
+configuration_subsystem = "✅"
+conformance_harness = "✅"
+spec_version_lock = "✅"
+path_resolver = "✅"
+verification_entrypoints = "✅"
+stable_interfaces = "✅"
+documentation = "✅"
+
+[notes]
+phase0_complete = "All Phase 0 requirements satisfied per plan-v2.4.md"
+ready_for_phase1 = "Core scaffolding complete, ready for agent lifecycle implementation"

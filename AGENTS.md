@@ -10,6 +10,8 @@
 - NEVER generate new code when suitable existing solutions exist
 - ALWAYS explain why existing solutions weren't suitable when creating new code
 - ALWAYS follow existing code patterns and conventions found in the codebase
+- NEVER use any external dependencies without explicit user approval that aren't in the docs/plan-v2.4.md file or docs/spec-v1.22.md file
+- NEVER use any external testing library only use the built-in testing library
 
 # Project Layout
 

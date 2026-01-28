@@ -46,27 +46,56 @@ function do_rebase() {
   done
 }
 
+function aggressive_rm() {
+  local path="$1"
+  [ -d "$path" ] || return 0
+  echo "  Aggressively removing: $path"
+  # Attempt to unlock and make writable
+  chmod -R +w "$path" 2>/dev/null || true
+  # Try to delete
+  if ! rm -rf "$path" 2>/dev/null; then
+    # If it still fails, try to delete individual files to reveal more info (don't fail the script)
+    find "$path" -mindepth 1 -delete 2>/dev/null || true
+    rmdir "$path" 2>/dev/null || echo "  Warning: Could not fully delete $path"
+  fi
+}
+
 function do_delete() {
   echo "Deleting all worktrees and branches (except $main_branch)..."
   
-  # Delete worktrees
+  # 1. Delete and clean up registered worktrees
   list_worktrees | while IFS=' ' read -r path branch; do
     [ -z "$path" ] && continue
     if [ "$path" = "$repo_root" ]; then continue; fi
     
-    echo "Removing worktree: $path"
-    git worktree remove --force "$path"
+    echo "Removing worktree: $path (branch $branch)"
+    git worktree remove --force "$path" 2>/dev/null || true
+    aggressive_rm "$path"
   done
 
-  # Delete specified branches
+  # 2. Delete specified branches
   for branch in "${branches[@]}"; do
     if git rev-parse --verify "$branch" >/dev/null 2>&1; then
       echo "Deleting branch: $branch"
-      git branch -D "$branch"
-    else
-      echo "Branch $branch does not exist, skipping..."
+      git branch -D "$branch" || echo "  Failed to delete branch $branch"
     fi
   done
+
+  # 3. Clean up orphaned directories in VSCode root
+  for branch in "${branches[@]}"; do
+    for path in "$vscode_root/$branch" "$vscode_root/amux-$branch"; do
+      if [ -d "$path" ]; then
+        echo "Cleaning up orphaned directory: $path"
+        aggressive_rm "$path"
+      fi
+    done
+  done
+
+  # 4. Clean up the old .worktrees folder if it exists
+  if [ -d "$repo_root/.worktrees" ]; then
+    echo "Cleaning up legacy .worktrees folder..."
+    aggressive_rm "$repo_root/.worktrees"
+  fi
 }
 
 function do_init() {

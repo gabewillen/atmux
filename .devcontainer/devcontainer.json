@@ -1,0 +1,26 @@
+{
+	"name": "Amux Dev Container",
+	"build": {
+		"dockerfile": "Dockerfile"
+	},
+	"workspaceFolder": "/amux",
+	"mounts": [
+		"source=${localWorkspaceFolder}/docs,target=/amux/docs,type=bind,readonly",
+		"source=/Users/gabrielwillen/VSCode/amux-antigravity-gemini-3.0-pro-high,target=/amux/worktrees/jimmy,type=bind,readonly",
+		"source=${localWorkspaceFolder}/.worktrees/claude-code/opus,target=/amux/worktrees/frank,type=bind,readonly",
+		"source=${localWorkspaceFolder}/.worktrees/codex/gpt-5.2-codex-high,target=/amux/worktrees/greg,type=bind,readonly",
+		"source=${localWorkspaceFolder}/.worktrees/cursor-cli/auto,target=/amux/worktrees/curly,type=bind,readonly",
+		"source=${localWorkspaceFolder}/.worktrees/gemini-cli/auto,target=/amux/worktrees/jeremy,type=bind,readonly",
+		"source=${localWorkspaceFolder}/.worktrees/opencode/big-pickle,target=/amux/worktrees/big-pickle,type=bind,readonly",
+		"source=${localWorkspaceFolder}/.worktrees/qoder/auto,target=/amux/worktrees/quaker,type=bind,readonly",
+		"source=${localWorkspaceFolder}/.worktrees/qwen-code/coder-model,target=/amux/worktrees/quinton,type=bind,readonly",
+		"source=${localWorkspaceFolder}/journal,target=/amux/journal,type=bind"
+	],
+	"customizations": {
+		"vscode": {
+			"settings": {},
+			"extensions": []
+		}
+	},
+	"remoteUser": "root"
+}

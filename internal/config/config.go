@@ -431,6 +431,9 @@ func (l *Loader) Load() (*Config, error) {
 		return nil, fmt.Errorf("environment config: %w", err)
 	}
 
+	// Expand all path fields
+	l.expandPaths()
+
 	return l.config, nil
 }
 
@@ -454,28 +457,206 @@ func (l *Loader) loadFile(path string) error {
 // merge merges source config into the loader's config.
 // Non-zero values in source override values in dest.
 func (l *Loader) merge(source *Config) {
-	// Simple merge - override non-zero values
-	// A more sophisticated merge could be implemented if needed
+	// General
 	if source.General.LogLevel != "" {
 		l.config.General.LogLevel = source.General.LogLevel
 	}
 	if source.General.LogFormat != "" {
 		l.config.General.LogFormat = source.General.LogFormat
 	}
+
+	// Timeouts
 	if source.Timeouts.Idle.Duration != 0 {
 		l.config.Timeouts.Idle = source.Timeouts.Idle
 	}
 	if source.Timeouts.Stuck.Duration != 0 {
 		l.config.Timeouts.Stuck = source.Timeouts.Stuck
 	}
-	// Add more merge rules as needed for other fields
+
+	// Process
+	if source.Process.CaptureMode != "" {
+		l.config.Process.CaptureMode = source.Process.CaptureMode
+	}
+	if source.Process.StreamBufferSize.Bytes != 0 {
+		l.config.Process.StreamBufferSize = source.Process.StreamBufferSize
+	}
+	if source.Process.HookMode != "" {
+		l.config.Process.HookMode = source.Process.HookMode
+	}
+	if source.Process.PollInterval.Duration != 0 {
+		l.config.Process.PollInterval = source.Process.PollInterval
+	}
+	if source.Process.HookSocketDir != "" {
+		l.config.Process.HookSocketDir = source.Process.HookSocketDir
+	}
+
+	// Git
+	if source.Git.Merge.Strategy != "" {
+		l.config.Git.Merge.Strategy = source.Git.Merge.Strategy
+	}
+	if source.Git.Merge.AllowDirty {
+		l.config.Git.Merge.AllowDirty = source.Git.Merge.AllowDirty
+	}
+	if source.Git.Merge.TargetBranch != "" {
+		l.config.Git.Merge.TargetBranch = source.Git.Merge.TargetBranch
+	}
+
+	// Events
+	if source.Events.BatchWindow.Duration != 0 {
+		l.config.Events.BatchWindow = source.Events.BatchWindow
+	}
+	if source.Events.BatchMaxEvents != 0 {
+		l.config.Events.BatchMaxEvents = source.Events.BatchMaxEvents
+	}
+	if source.Events.BatchMaxBytes.Bytes != 0 {
+		l.config.Events.BatchMaxBytes = source.Events.BatchMaxBytes
+	}
+	if source.Events.BatchIdleFlush.Duration != 0 {
+		l.config.Events.BatchIdleFlush = source.Events.BatchIdleFlush
+	}
+	// Events.Coalesce - bools can't be distinguished from false, so always merge
+	l.config.Events.Coalesce.IOStreams = source.Events.Coalesce.IOStreams || l.config.Events.Coalesce.IOStreams
+	l.config.Events.Coalesce.Presence = source.Events.Coalesce.Presence || l.config.Events.Coalesce.Presence
+	l.config.Events.Coalesce.Activity = source.Events.Coalesce.Activity || l.config.Events.Coalesce.Activity
+	// Events.Subscriptions
+	if source.Events.Subscriptions.Enabled {
+		l.config.Events.Subscriptions.Enabled = source.Events.Subscriptions.Enabled
+	}
+	if source.Events.Subscriptions.SocketPath != "" {
+		l.config.Events.Subscriptions.SocketPath = source.Events.Subscriptions.SocketPath
+	}
+
+	// Remote
+	if source.Remote.Transport != "" {
+		l.config.Remote.Transport = source.Remote.Transport
+	}
+	if source.Remote.BufferSize.Bytes != 0 {
+		l.config.Remote.BufferSize = source.Remote.BufferSize
+	}
+	if source.Remote.RequestTimeout.Duration != 0 {
+		l.config.Remote.RequestTimeout = source.Remote.RequestTimeout
+	}
+	if source.Remote.ReconnectMaxAttempts != 0 {
+		l.config.Remote.ReconnectMaxAttempts = source.Remote.ReconnectMaxAttempts
+	}
+	if source.Remote.ReconnectBackoffBase.Duration != 0 {
+		l.config.Remote.ReconnectBackoffBase = source.Remote.ReconnectBackoffBase
+	}
+	if source.Remote.ReconnectBackoffMax.Duration != 0 {
+		l.config.Remote.ReconnectBackoffMax = source.Remote.ReconnectBackoffMax
+	}
+	// Remote.NATS
+	if source.Remote.NATS.URL != "" {
+		l.config.Remote.NATS.URL = source.Remote.NATS.URL
+	}
+	if source.Remote.NATS.CredsPath != "" {
+		l.config.Remote.NATS.CredsPath = source.Remote.NATS.CredsPath
+	}
+	if source.Remote.NATS.SubjectPrefix != "" {
+		l.config.Remote.NATS.SubjectPrefix = source.Remote.NATS.SubjectPrefix
+	}
+	if source.Remote.NATS.KVBucket != "" {
+		l.config.Remote.NATS.KVBucket = source.Remote.NATS.KVBucket
+	}
+	if source.Remote.NATS.StreamEvents != "" {
+		l.config.Remote.NATS.StreamEvents = source.Remote.NATS.StreamEvents
+	}
+	if source.Remote.NATS.StreamPTY != "" {
+		l.config.Remote.NATS.StreamPTY = source.Remote.NATS.StreamPTY
+	}
+	if source.Remote.NATS.HeartbeatInterval.Duration != 0 {
+		l.config.Remote.NATS.HeartbeatInterval = source.Remote.NATS.HeartbeatInterval
+	}
+	// Remote.Manager
+	if source.Remote.Manager.Enabled {
+		l.config.Remote.Manager.Enabled = source.Remote.Manager.Enabled
+	}
+	if source.Remote.Manager.Model != "" {
+		l.config.Remote.Manager.Model = source.Remote.Manager.Model
+	}
+
+	// NATS
+	if source.NATS.Mode != "" {
+		l.config.NATS.Mode = source.NATS.Mode
+	}
+	if source.NATS.Topology != "" {
+		l.config.NATS.Topology = source.NATS.Topology
+	}
+	if source.NATS.HubURL != "" {
+		l.config.NATS.HubURL = source.NATS.HubURL
+	}
+	if source.NATS.Listen != "" {
+		l.config.NATS.Listen = source.NATS.Listen
+	}
+	if source.NATS.AdvertiseURL != "" {
+		l.config.NATS.AdvertiseURL = source.NATS.AdvertiseURL
+	}
+	if source.NATS.JetStreamDir != "" {
+		l.config.NATS.JetStreamDir = source.NATS.JetStreamDir
+	}
+
+	// Node
+	if source.Node.Role != "" {
+		l.config.Node.Role = source.Node.Role
+	}
+
+	// Daemon
+	if source.Daemon.SocketPath != "" {
+		l.config.Daemon.SocketPath = source.Daemon.SocketPath
+	}
+	if source.Daemon.AutoStart {
+		l.config.Daemon.AutoStart = source.Daemon.AutoStart
+	}
+
+	// Plugins
+	if source.Plugins.Dir != "" {
+		l.config.Plugins.Dir = source.Plugins.Dir
+	}
+	if source.Plugins.AllowRemote {
+		l.config.Plugins.AllowRemote = source.Plugins.AllowRemote
+	}
+
+	// Telemetry
+	if source.Telemetry.Enabled {
+		l.config.Telemetry.Enabled = source.Telemetry.Enabled
+	}
+	if source.Telemetry.ServiceName != "" {
+		l.config.Telemetry.ServiceName = source.Telemetry.ServiceName
+	}
+	if source.Telemetry.Exporter.Endpoint != "" {
+		l.config.Telemetry.Exporter.Endpoint = source.Telemetry.Exporter.Endpoint
+	}
+	if source.Telemetry.Exporter.Protocol != "" {
+		l.config.Telemetry.Exporter.Protocol = source.Telemetry.Exporter.Protocol
+	}
+	if source.Telemetry.Traces.Enabled {
+		l.config.Telemetry.Traces.Enabled = source.Telemetry.Traces.Enabled
+	}
+	if source.Telemetry.Traces.Sampler != "" {
+		l.config.Telemetry.Traces.Sampler = source.Telemetry.Traces.Sampler
+	}
+	if source.Telemetry.Traces.SamplerArg != 0 {
+		l.config.Telemetry.Traces.SamplerArg = source.Telemetry.Traces.SamplerArg
+	}
+	if source.Telemetry.Metrics.Enabled {
+		l.config.Telemetry.Metrics.Enabled = source.Telemetry.Metrics.Enabled
+	}
+	if source.Telemetry.Metrics.Interval.Duration != 0 {
+		l.config.Telemetry.Metrics.Interval = source.Telemetry.Metrics.Interval
+	}
+	if source.Telemetry.Logs.Enabled {
+		l.config.Telemetry.Logs.Enabled = source.Telemetry.Logs.Enabled
+	}
+	if source.Telemetry.Logs.Level != "" {
+		l.config.Telemetry.Logs.Level = source.Telemetry.Logs.Level
+	}
 
 	// Merge adapters map
 	for k, v := range source.Adapters {
 		l.config.Adapters[k] = v
 	}
 
-	// Merge agents list
+	// Merge agents list (replace if non-empty)
 	if len(source.Agents) > 0 {
 		l.config.Agents = source.Agents
 	}
@@ -527,42 +708,333 @@ func (l *Loader) setConfigValue(path []string, value string) error {
 		return fmt.Errorf("empty path")
 	}
 
-	// Handle common top-level config keys
+	// Handle top-level config keys
 	switch path[0] {
 	case "general":
-		if len(path) > 1 {
-			switch path[1] {
-			case "log_level":
-				l.config.General.LogLevel = value
-			case "log_format":
-				l.config.General.LogFormat = value
-			}
-		}
+		return l.setGeneralConfig(path[1:], value)
 	case "timeouts":
+		return l.setTimeoutsConfig(path[1:], value)
+	case "process":
+		return l.setProcessConfig(path[1:], value)
+	case "git":
+		return l.setGitConfig(path[1:], value)
+	case "events":
+		return l.setEventsConfig(path[1:], value)
+	case "remote":
+		return l.setRemoteConfig(path[1:], value)
+	case "nats":
+		return l.setNATSConfig(path[1:], value)
+	case "node":
+		return l.setNodeConfig(path[1:], value)
+	case "daemon":
+		return l.setDaemonConfig(path[1:], value)
+	case "plugins":
+		return l.setPluginsConfig(path[1:], value)
+	case "telemetry":
+		return l.setTelemetryConfig(path[1:], value)
+	case "adapters":
+		return l.setAdaptersConfig(path[1:], value)
+	}
+
+	return nil
+}
+
+func (l *Loader) setGeneralConfig(path []string, value string) error {
+	if len(path) == 0 {
+		return nil
+	}
+	switch path[0] {
+	case "log_level":
+		l.config.General.LogLevel = value
+	case "log_format":
+		l.config.General.LogFormat = value
+	}
+	return nil
+}
+
+func (l *Loader) setTimeoutsConfig(path []string, value string) error {
+	if len(path) == 0 {
+		return nil
+	}
+	switch path[0] {
+	case "idle":
+		return l.config.Timeouts.Idle.UnmarshalText([]byte(value))
+	case "stuck":
+		return l.config.Timeouts.Stuck.UnmarshalText([]byte(value))
+	}
+	return nil
+}
+
+func (l *Loader) setProcessConfig(path []string, value string) error {
+	if len(path) == 0 {
+		return nil
+	}
+	switch path[0] {
+	case "capture_mode":
+		l.config.Process.CaptureMode = value
+	case "stream_buffer_size":
+		return l.config.Process.StreamBufferSize.UnmarshalText([]byte(value))
+	case "hook_mode":
+		l.config.Process.HookMode = value
+	case "poll_interval":
+		return l.config.Process.PollInterval.UnmarshalText([]byte(value))
+	case "hook_socket_dir":
+		l.config.Process.HookSocketDir = value
+	}
+	return nil
+}
+
+func (l *Loader) setGitConfig(path []string, value string) error {
+	if len(path) == 0 {
+		return nil
+	}
+	if path[0] == "merge" && len(path) > 1 {
+		switch path[1] {
+		case "strategy":
+			l.config.Git.Merge.Strategy = value
+		case "allow_dirty":
+			l.config.Git.Merge.AllowDirty = value == "true"
+		case "target_branch":
+			l.config.Git.Merge.TargetBranch = value
+		}
+	}
+	return nil
+}
+
+func (l *Loader) setEventsConfig(path []string, value string) error {
+	if len(path) == 0 {
+		return nil
+	}
+	switch path[0] {
+	case "batch_window":
+		return l.config.Events.BatchWindow.UnmarshalText([]byte(value))
+	case "batch_max_events":
+		n, err := strconv.Atoi(value)
+		if err != nil {
+			return err
+		}
+		l.config.Events.BatchMaxEvents = n
+	case "batch_max_bytes":
+		return l.config.Events.BatchMaxBytes.UnmarshalText([]byte(value))
+	case "batch_idle_flush":
+		return l.config.Events.BatchIdleFlush.UnmarshalText([]byte(value))
+	case "coalesce":
 		if len(path) > 1 {
 			switch path[1] {
-			case "idle":
-				if err := l.config.Timeouts.Idle.UnmarshalText([]byte(value)); err != nil {
-					return err
-				}
-			case "stuck":
-				if err := l.config.Timeouts.Stuck.UnmarshalText([]byte(value)); err != nil {
-					return err
-				}
+			case "io_streams":
+				l.config.Events.Coalesce.IOStreams = value == "true"
+			case "presence":
+				l.config.Events.Coalesce.Presence = value == "true"
+			case "activity":
+				l.config.Events.Coalesce.Activity = value == "true"
 			}
 		}
-	case "telemetry":
+	case "subscriptions":
 		if len(path) > 1 {
 			switch path[1] {
 			case "enabled":
-				l.config.Telemetry.Enabled = value == "true"
-			case "service_name":
-				l.config.Telemetry.ServiceName = value
+				l.config.Events.Subscriptions.Enabled = value == "true"
+			case "socket_path":
+				l.config.Events.Subscriptions.SocketPath = value
 			}
 		}
-	// Add more cases as needed
+	}
+	return nil
+}
+
+func (l *Loader) setRemoteConfig(path []string, value string) error {
+	if len(path) == 0 {
+		return nil
+	}
+	switch path[0] {
+	case "transport":
+		l.config.Remote.Transport = value
+	case "buffer_size":
+		return l.config.Remote.BufferSize.UnmarshalText([]byte(value))
+	case "request_timeout":
+		return l.config.Remote.RequestTimeout.UnmarshalText([]byte(value))
+	case "reconnect_max_attempts":
+		n, err := strconv.Atoi(value)
+		if err != nil {
+			return err
+		}
+		l.config.Remote.ReconnectMaxAttempts = n
+	case "reconnect_backoff_base":
+		return l.config.Remote.ReconnectBackoffBase.UnmarshalText([]byte(value))
+	case "reconnect_backoff_max":
+		return l.config.Remote.ReconnectBackoffMax.UnmarshalText([]byte(value))
+	case "nats":
+		if len(path) > 1 {
+			switch path[1] {
+			case "url":
+				l.config.Remote.NATS.URL = value
+			case "creds_path":
+				l.config.Remote.NATS.CredsPath = value
+			case "subject_prefix":
+				l.config.Remote.NATS.SubjectPrefix = value
+			case "kv_bucket":
+				l.config.Remote.NATS.KVBucket = value
+			case "stream_events":
+				l.config.Remote.NATS.StreamEvents = value
+			case "stream_pty":
+				l.config.Remote.NATS.StreamPTY = value
+			case "heartbeat_interval":
+				return l.config.Remote.NATS.HeartbeatInterval.UnmarshalText([]byte(value))
+			}
+		}
+	case "manager":
+		if len(path) > 1 {
+			switch path[1] {
+			case "enabled":
+				l.config.Remote.Manager.Enabled = value == "true"
+			case "model":
+				l.config.Remote.Manager.Model = value
+			}
+		}
+	}
+	return nil
+}
+
+func (l *Loader) setNATSConfig(path []string, value string) error {
+	if len(path) == 0 {
+		return nil
+	}
+	switch path[0] {
+	case "mode":
+		l.config.NATS.Mode = value
+	case "topology":
+		l.config.NATS.Topology = value
+	case "hub_url":
+		l.config.NATS.HubURL = value
+	case "listen":
+		l.config.NATS.Listen = value
+	case "advertise_url":
+		l.config.NATS.AdvertiseURL = value
+	case "jetstream_dir":
+		l.config.NATS.JetStreamDir = value
+	}
+	return nil
+}
+
+func (l *Loader) setNodeConfig(path []string, value string) error {
+	if len(path) == 0 {
+		return nil
+	}
+	if path[0] == "role" {
+		l.config.Node.Role = value
+	}
+	return nil
+}
+
+func (l *Loader) setDaemonConfig(path []string, value string) error {
+	if len(path) == 0 {
+		return nil
+	}
+	switch path[0] {
+	case "socket_path":
+		l.config.Daemon.SocketPath = value
+	case "autostart":
+		l.config.Daemon.AutoStart = value == "true"
+	}
+	return nil
+}
+
+func (l *Loader) setPluginsConfig(path []string, value string) error {
+	if len(path) == 0 {
+		return nil
+	}
+	switch path[0] {
+	case "dir":
+		l.config.Plugins.Dir = value
+	case "allow_remote":
+		l.config.Plugins.AllowRemote = value == "true"
+	}
+	return nil
+}
+
+func (l *Loader) setTelemetryConfig(path []string, value string) error {
+	if len(path) == 0 {
+		return nil
+	}
+	switch path[0] {
+	case "enabled":
+		l.config.Telemetry.Enabled = value == "true"
+	case "service_name":
+		l.config.Telemetry.ServiceName = value
+	case "exporter":
+		if len(path) > 1 {
+			switch path[1] {
+			case "endpoint":
+				l.config.Telemetry.Exporter.Endpoint = value
+			case "protocol":
+				l.config.Telemetry.Exporter.Protocol = value
+			}
+		}
+	case "traces":
+		if len(path) > 1 {
+			switch path[1] {
+			case "enabled":
+				l.config.Telemetry.Traces.Enabled = value == "true"
+			case "sampler":
+				l.config.Telemetry.Traces.Sampler = value
+			case "sampler_arg":
+				f, err := strconv.ParseFloat(value, 64)
+				if err != nil {
+					return err
+				}
+				l.config.Telemetry.Traces.SamplerArg = f
+			}
+		}
+	case "metrics":
+		if len(path) > 1 {
+			switch path[1] {
+			case "enabled":
+				l.config.Telemetry.Metrics.Enabled = value == "true"
+			case "interval":
+				return l.config.Telemetry.Metrics.Interval.UnmarshalText([]byte(value))
+			}
+		}
+	case "logs":
+		if len(path) > 1 {
+			switch path[1] {
+			case "enabled":
+				l.config.Telemetry.Logs.Enabled = value == "true"
+			case "level":
+				l.config.Telemetry.Logs.Level = value
+			}
+		}
+	}
+	return nil
+}
+
+func (l *Loader) setAdaptersConfig(path []string, value string) error {
+	if len(path) < 2 {
+		return nil
+	}
+	adapterName := path[0]
+	if l.config.Adapters == nil {
+		l.config.Adapters = make(map[string]any)
 	}
 
+	// Get or create adapter config map
+	adapterConfig, ok := l.config.Adapters[adapterName].(map[string]any)
+	if !ok {
+		adapterConfig = make(map[string]any)
+		l.config.Adapters[adapterName] = adapterConfig
+	}
+
+	// Set nested value
+	current := adapterConfig
+	for i := 1; i < len(path)-1; i++ {
+		key := path[i]
+		next, ok := current[key].(map[string]any)
+		if !ok {
+			next = make(map[string]any)
+			current[key] = next
+		}
+		current = next
+	}
+	current[path[len(path)-1]] = value
 	return nil
 }
 
@@ -571,6 +1043,34 @@ func (l *Loader) Config() *Config {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
 	return l.config
+}
+
+// expandPaths expands all path fields that start with ~/ to the user's home directory.
+func (l *Loader) expandPaths() {
+	homeDir := l.resolver.HomeDir()
+	if homeDir == "" {
+		return
+	}
+
+	expand := func(p string) string {
+		if strings.HasPrefix(p, "~/") {
+			return homeDir + p[1:]
+		}
+		return p
+	}
+
+	// Expand path fields
+	l.config.Process.HookSocketDir = expand(l.config.Process.HookSocketDir)
+	l.config.Remote.NATS.CredsPath = expand(l.config.Remote.NATS.CredsPath)
+	l.config.NATS.JetStreamDir = expand(l.config.NATS.JetStreamDir)
+	l.config.Daemon.SocketPath = expand(l.config.Daemon.SocketPath)
+	l.config.Plugins.Dir = expand(l.config.Plugins.Dir)
+	l.config.Events.Subscriptions.SocketPath = expand(l.config.Events.Subscriptions.SocketPath)
+
+	// Expand agent location paths
+	for i := range l.config.Agents {
+		l.config.Agents[i].Location.RepoPath = expand(l.config.Agents[i].Location.RepoPath)
+	}
 }
 
 // Global functions for default loader

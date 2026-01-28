@@ -101,7 +101,7 @@ The repository **MUST** provide documented, reproducible entrypoints for verific
 - **Hard constraints (mandatory):**
   - Core MUST be implemented in Go 1.25.6 (`go1.25.6`) (Spec §4.2.1)
   - WASM runtime is wazero; adapters compiled with TinyGo (Spec §4.2.2)
-  - HSM via hsm-go; IDs via muid (Spec §4.2.3)
+  - HSM via stateforward/hsm-go; IDs via stateforward/hsm-go/muid (Spec §4.2.3)
   - PTY management via creack/pty (Spec §4.2.4)
   - Explicit error handling and wrapping conventions (Spec §4.2.5)
   - Project structure and agent-agnostic core invariant (Spec §1.5.1, §4.2.6)
@@ -136,7 +136,7 @@ Establish repository structure, build/toolchain, configuration, observability sc
   - Spec reference(s): §4.2.6, §1.5.1
   - Acceptance criteria: `cmd/amux` and `cmd/amux-node` exist; `internal/*` packages compile; `internal/*` has no imports from `adapters/*` (enforced by lint or test).
 
-- [ ] Pin core language/runtime dependencies (Go 1.25.6 (`go1.25.6`), wazero, hsm-go/muid, creack/pty)
+- [ ] Pin core language/runtime dependencies (Go 1.25.6 (`go1.25.6`), wazero, stateforward/hsm-go (including /muid), creack/pty)
   - Spec reference(s): §4.2.1–§4.2.4
   - Acceptance criteria: `go.mod` pins compatible versions; minimal “smoke” programs demonstrate wazero instantiation, hsm-go event dispatch, and PTY allocation on supported OS targets.
 
@@ -218,7 +218,7 @@ Implement authoritative types, identifiers, and HSM-driven lifecycle and presenc
 
 ### Inputs
 - Config subsystem (Phase 0)
-- hsm-go and muid
+- stateforward/hsm-go and /muid
 
 ### Outputs
 - `pkg/api` public types
@@ -950,7 +950,7 @@ Complete the conformance suite, validate required E2E flows, and ensure cross-pl
 ### Locked assumptions
 - `spec-v1.22.md` is the authoritative specification for major version v1 (see plan Overview assumptions).
 - Inline Go documentation and `go-docmd`-generated per-package `README.md` files are required and MUST remain in sync via an automated docs-check (Spec §4.2.6.1).
-- Core implementation is Go 1.25.6 (`go1.25.6`) and uses the mandated libraries and conventions: wazero + TinyGo, hsm-go/muid, creack/pty, explicit error handling, and agent-agnostic `internal/` boundaries (Spec §4.2.1–§4.2.6, §1.5).
+- Core implementation is Go 1.25.6 (`go1.25.6`) and uses the mandated libraries and conventions: wazero + TinyGo, stateforward/hsm-go (including /muid), creack/pty, explicit error handling, and agent-agnostic `internal/` boundaries (Spec §4.2.1–§4.2.6, §1.5).
 - Remote orchestration uses the NATS + JetStream design, including per-host credentials, per-host subject authorization, JetStream KV durable state, and the normative request-reply/replay/buffering semantics (Spec §5.5.6–§5.5.8).
 - Observability uses OpenTelemetry per spec, and local inference uses `liquidgen` with the required logical model IDs (Spec §4.2.9–§4.2.10).
 - Build targets are the platforms explicitly enumerated by the spec’s cross-compilation guidance (Spec §4.2.7, §8.3.9).

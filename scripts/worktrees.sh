@@ -127,6 +127,28 @@ function do_init() {
   done
 }
 
+function do_session() {
+  local mode="${1:-}"
+  if [ "$mode" != "--create" ]; then
+    echo "Usage: $0 session --create"
+    return 1
+  fi
+
+  if [ -z "${ZELLIJ:-}" ]; then
+    echo "Error: Must be run inside a Zellij session."
+    return 1
+  fi
+
+  echo "Creating Zellij tabs for worktrees..."
+  list_worktrees | while IFS=' ' read -r path branch; do
+    [ -z "$path" ] && continue
+    if [ "$path" = "$repo_root" ]; then continue; fi
+
+    echo "  Creating tab: $branch -> $path"
+    zellij action new-tab --name "$branch" --cwd "$path"
+  done
+}
+
 command="${1:-help}"
 shift || true
 
@@ -140,11 +162,15 @@ case "$command" in
   init)
     do_init
     ;;
+  session)
+    do_session "$@"
+    ;;
   *)
-    echo "Usage: $0 {rebase|delete|init}"
+    echo "Usage: $0 {rebase|delete|init|session}"
     echo "  rebase [branch] - Rebase all worktrees onto branch (default: $main_branch)"
     echo "  delete          - Delete all worktrees and branches (except $main_branch)"
     echo "  init            - Create worktrees for specified branches in $vscode_root and init submodules"
+    echo "  session --create - Create Zellij tabs for all worktrees"
     exit 1
     ;;
 esac

@@ -1,0 +1,22 @@
+Timestamp = 2026-01-28T19:46:37.921400578Z
+
+[Results]
+[Results.bench]
+status = 'skipped'
+
+[Results.coverage]
+status = 'skipped'
+
+[Results.test]
+error = 'command failed: signal: broken pipe'
+status = 'failed'
+
+[Results.test_race]
+error = 'command failed: signal: broken pipe'
+status = 'failed'
+
+[Results.tidy]
+status = 'passed'
+
+[Results.vet]
+status = 'passed'

@@ -53,6 +53,8 @@ func loadFile(path string, cfg *Config) error {
 }
 
 func applyEnvOverrides(cfg *Config) error {
+	overrides := make(map[string]any)
+
 	for _, env := range os.Environ() {
 		pair := strings.SplitN(env, "=", 2)
 		key := pair[0]
@@ -62,50 +64,71 @@ func applyEnvOverrides(cfg *Config) error {
 			continue
 		}
 
-		// Parse AMUX__SECTION__KEY -> section.key
-		// Handle adapters special case: AMUX__ADAPTERS__CLAUDE_CODE -> adapters.claude-code
-		
-		// For now, simple TOML overlay
-		tomlKey, err := envKeyToTomlPath(key)
+		// Parse AMUX__SECTION__KEY -> section.key path
+		path, err := envKeyToPath(key)
 		if err != nil {
-			continue 
+			continue
 		}
 
-		// Create a partial TOML document
-		// This is a naive implementation. For deep nesting, we need a better approach or use a library that supports env mapping.
-		// Spec says: "Embed it into a temporary TOML document of the form v = <value> ... and reading v."
-		// But strictly mapping AMUX__GENERAL__LOG_LEVEL to cfg.General.LogLevel requires reflection or recursive map structure.
-		// Given we have a struct, we can use a trick: Generate TOML from the env var and Unmarshal it into the struct?
-		// No, Unmarshal replaces the struct content usually? No, it merges if we unmarshal into existing?
-		// go-toml v2 Unmarshal replaces? We should check. Usually it overwrites fields present in TOML.
-
-		// Constructing a TOML string for a single key is hard (nested tables).
-		// Alternative: Walk the struct and check env vars?
-		// Or: construct a map[string]any from env vars and marshal/unmarshal.
-		
-		_ = tomlKey
-		_ = value
+		// Insert into nested map
+		if err := insertMap(overrides, path, value); err != nil {
+			return fmt.Errorf("failed to process env var %s: %w", key, err)
+		}
 	}
-	return nil
+
+	if len(overrides) == 0 {
+		return nil
+	}
+
+	// Marshal overrides to TOML
+	data, err := toml.Marshal(overrides)
+	if err != nil {
+		return fmt.Errorf("failed to marshal env overrides: %w", err)
+	}
+
+	// Unmarshal back into cfg to apply overrides
+	return toml.Unmarshal(data, cfg)
 }
 
-// envKeyToTomlPath converts AMUX__FOO__BAR to foo.bar
-func envKeyToTomlPath(key string) (string, error) {
+// envKeyToPath converts AMUX__FOO__BAR to []string{"foo", "bar"}
+func envKeyToPath(key string) ([]string, error) {
 	parts := strings.Split(key, "__")
 	if len(parts) < 2 {
-		return "", fmt.Errorf("invalid key")
+		return nil, fmt.Errorf("invalid key")
 	}
 	// Remove AMUX prefix
 	parts = parts[1:]
 	
 	// Normalize
+	normalized := make([]string, len(parts))
 	for i, p := range parts {
 		if i == 1 && parts[0] == "ADAPTERS" {
 			// Handle adapter name: CLAUDE_CODE -> claude-code
-			parts[i] = strings.ToLower(strings.ReplaceAll(p, "_", "-"))
+			normalized[i] = strings.ToLower(strings.ReplaceAll(p, "_", "-"))
 		} else {
-			parts[i] = strings.ToLower(p)
+			normalized[i] = strings.ToLower(p)
 		}
 	}
-	return strings.Join(parts, "."), nil
+	return normalized, nil
+}
+
+func insertMap(m map[string]any, path []string, value string) error {
+	if len(path) == 0 {
+		return nil
+	}
+	key := path[0]
+	if len(path) == 1 {
+		m[key] = value
+		return nil
+	}
+
+	if _, ok := m[key]; !ok {
+		m[key] = make(map[string]any)
+	}
+
+	subMap, ok := m[key].(map[string]any)
+	if !ok {
+		return fmt.Errorf("conflict at key %s", key)
+	}
+	return insertMap(subMap, path[1:], value)
 }

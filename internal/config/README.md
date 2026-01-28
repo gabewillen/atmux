@@ -3,7 +3,9 @@
 `import "github.com/agentflare-ai/amux/internal/config"`
 
 - `func applyEnvOverrides(cfg *Config) error`
-- `func envKeyToTomlPath(key string) (string, error)` — envKeyToTomlPath converts AMUX__FOO__BAR to foo.bar
+- `func envKeyToPath(key string) ([]string, error)` — envKeyToPath converts AMUX__FOO__BAR to []string{"foo", "bar"}
+- `func insertMap(m map[string]any, path []string, value string) error`
+- `func isSensitiveKey(key string) bool`
 - `func loadFile(path string, cfg *Config) error`
 - `type AgentConfig`
 - `type CoalesceConfig`
@@ -37,13 +39,25 @@
 func applyEnvOverrides(cfg *Config) error
 ```
 
-#### envKeyToTomlPath
+#### envKeyToPath
 
 ```go
-func envKeyToTomlPath(key string) (string, error)
+func envKeyToPath(key string) ([]string, error)
 ```
 
-envKeyToTomlPath converts AMUX__FOO__BAR to foo.bar
+envKeyToPath converts AMUX__FOO__BAR to []string{"foo", "bar"}
+
+#### insertMap
+
+```go
+func insertMap(m map[string]any, path []string, value string) error
+```
+
+#### isSensitiveKey
+
+```go
+func isSensitiveKey(key string) bool
+```
 
 #### loadFile
 
@@ -110,6 +124,17 @@ func Load(repoRoot string) (*Config, error)
 ```
 
 Load loads the configuration from all sources.
+
+
+### Methods
+
+#### Config.Redacted
+
+```go
+func () Redacted() Config
+```
+
+Redacted returns a copy of the configuration with sensitive fields redacted.
 
 
 ## type ConfigActor

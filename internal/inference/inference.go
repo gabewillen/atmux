@@ -1,6 +1,16 @@
 // Package inference provides the local inference engine interface for amux per spec §4.2.10.
 //
 // This package integrates the liquidgen inference engine from third_party/liquidgen.
+// The liquidgen engine is a C++ application that must be built separately using CMake.
+//
+// Build instructions:
+//   cd third_party/liquidgen
+//   mkdir build && cd build
+//   cmake ..
+//   make
+//
+// Phase 0: This implementation provides the interface and stub. Full liquidgen integration
+// requires CGO bindings or exec-based integration to be completed in subsequent work.
 package inference
 
 import (
@@ -31,13 +41,27 @@ type Engine interface {
 }
 
 // NewEngine creates a new inference engine.
-// Phase 0: Returns a stub that will be implemented with liquidgen in full Phase 0 completion.
+// Phase 0: Returns a stub that references liquidgen from third_party/liquidgen.
+// Full integration requires either:
+//   1. CGO bindings to liquidgen C++ library
+//   2. Exec-based integration with liquidgen CLI
+//
+// The liquidgen source is available at third_party/liquidgen/ and includes:
+//   - src/inference/: Core inference engine
+//   - src/orchestrator/: Multi-model orchestration
+//   - CMakeLists.txt: Build configuration
+//
+// Traceability: liquidgen is a git submodule at third_party/liquidgen
 func NewEngine() (Engine, error) {
-	return &stubEngine{}, nil
+	return &stubEngine{
+		liquidgenPath: "third_party/liquidgen",
+	}, nil
 }
 
 // stubEngine is a placeholder implementation for Phase 0.
-type stubEngine struct{}
+type stubEngine struct {
+	liquidgenPath string
+}
 
 func (s *stubEngine) Generate(ctx context.Context, model ModelID, prompt string) (string, error) {
 	return "", errors.ErrNotImplemented

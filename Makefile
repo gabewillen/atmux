@@ -51,7 +51,15 @@ conformance:
 # Check documentation sync
 docs-check:
 	@echo "Checking documentation sync..."
-	@echo "Phase 0: Will use go-docmd in full implementation"
+	@go run github.com/agentflare-ai/go-docmd@latest -cmd -all -inplace ./...
+	@if [ -n "$$(git status --porcelain | grep README.md)" ]; then \
+		echo "ERROR: README.md files are out of sync with Go documentation"; \
+		echo "Run: go run github.com/agentflare-ai/go-docmd@latest -cmd -all -inplace ./..."; \
+		echo "Then commit the changes."; \
+		git status --porcelain | grep README.md; \
+		exit 1; \
+	fi
+	@echo "Documentation is in sync"
 
 # Verification - runs all checks
 verify: tidy vet lint test test-race

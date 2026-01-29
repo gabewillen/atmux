@@ -70,12 +70,21 @@ func (l *ObservationLoop) tick(ctx context.Context) error {
 
 func (l *ObservationLoop) captureSnapshot() (*Snapshot, error) {
 	// Gather state from Agent (TUI, Process)
-	// Since we don't have direct access to Monitor/TUI state here easily without locking or channels,
-	// we'll assume there's an accessor or we just stub it for now.
+	// For Phase 9, we assume single active session.
+	var tuiXML string
+	
+	// Iterate sessions to find active one with monitor
+	// Note: Session struct in Phase 5 doesn't have Monitor field visible yet?
+	// It was added in Manager (RemoteSession). Local session needs it too?
+	// Monitor is created in SpawnAgent? No, SpawnAgent just starts PTY.
+	// We need to attach Monitor.
+	
+	// For now, use stub or "No Session"
+	tuiXML = "<screen>waiting...</screen>"
 	
 	return &Snapshot{
 		Timestamp: time.Now(),
 		AgentID:   l.Agent.ID,
-		TUI:       "<screen/>", // Stub
+		TUI:       tuiXML,
 	}, nil
 }

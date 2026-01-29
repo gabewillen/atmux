@@ -27,6 +27,10 @@ github.com/pelletier/go-toml/v2 v2.2.4 h1:mye9XuhQ6gvn5h28+VilKrrPoQVanw5PMw/TB0
 github.com/pelletier/go-toml/v2 v2.2.4/go.mod h1:2gIqNv+qfxSVS7cM2xJQKtLSTLUE9V8t9Stt+h56mCY=
 github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=
 github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
+github.com/stateforward/hsm-go v1.0.0 h1:rtEGhBCUZsI8nO1e4ASc4YtMLxV6/LeUT5sruk7dn20=
+github.com/stateforward/hsm-go v1.0.0/go.mod h1:AqdQUIQ6yuFouuF60nkklUfDWk/AHpu9ioLRmSS47xM=
+github.com/stateforward/hsm-go/kind v0.0.0-20260124060507-9cca10687b7c h1:nVPbItXu7deGLf8TZmWetCbIu8xBysXgb2s/RiMFJSM=
+github.com/stateforward/hsm-go/kind v0.0.0-20260124060507-9cca10687b7c/go.mod h1:uQwbHqVs7NpjSrVYJyaa8cC7vKjq4yIXdudh1ufcfqc=
 github.com/stateforward/hsm-go/muid v0.0.0-20260124060507-9cca10687b7c h1:i3ozKYwJO7R2kJ/2aeiRsTKlovs6XijOEGGoseOFuJk=
 github.com/stateforward/hsm-go/muid v0.0.0-20260124060507-9cca10687b7c/go.mod h1:r7xzw3A1+vWh0VMAggV2rXi+wB7y7pe8xxEXTrCIGZY=
 github.com/stretchr/testify v1.11.1 h1:7s2iGBzp5EwR7/aIZr8ao5+dra3wiQyKjjFuvgVKu7U=

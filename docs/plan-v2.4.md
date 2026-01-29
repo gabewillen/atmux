@@ -708,36 +708,36 @@ Run the observation loop, produce snapshots, and perform coordination actions us
 - Snapshot generation and action execution
 
 ### TODO list
-- [ ] Run `amux test` to capture the baseline snapshot for Phase 9
+- [x] Run `amux test` to capture the baseline snapshot for Phase 9
   - Spec reference(s): §12.6.1–§12.6.3
   - Acceptance criteria: a new `snapshots/amux-test-*.toml` exists under `<module_root>/snapshots/` and is retained as the baseline for Phase 9 regression checking.
 
-- [ ] Implement observation loop orchestration and scheduling
+- [x] Implement observation loop orchestration and scheduling
   - Spec reference(s): §11.1
   - Acceptance criteria: loop runs at configured cadence; backpressure handled; loop emits spans/metrics.
 
-- [ ] Implement snapshot format and serialization, including TUI XML capture
+- [x] Implement snapshot format and serialization, including TUI XML capture
   - Spec reference(s): §11.2, §11.2.1
   - Acceptance criteria: snapshots include required fields; TUI capture included when enabled; fixtures validated.
 
-- [ ] Implement coordination actions and tool invocation paths
+- [x] Implement coordination actions and tool invocation paths
   - Spec reference(s): §11.3, §11.6
   - Acceptance criteria: actions map to concrete operations (input injection, commands, messaging); errors are surfaced; actions audited via logs/metrics.
 
-- [ ] Implement configuration surfaces and manual mode for coordination
+- [x] Implement configuration surfaces and manual mode for coordination
   - Spec reference(s): §11.4–§11.5
   - Acceptance criteria: manual mode disables automated actions; configuration changes take effect via config actor without restart.
 
 
-- [ ] The implementation MUST maintain inline Go documentation and MUST regenerate per-package `README.md` files via `go-docmd`
+- [x] The implementation MUST maintain inline Go documentation and MUST regenerate per-package `README.md` files via `go-docmd`
   - Spec reference(s): §4.2.6.1
   - Acceptance criteria: every package and exported identifier added or modified in this phase MUST include `go doc`-suitable comments; running `go run github.com/agentflare-ai/go-docmd@latest -cmd -all -inplace ./...` at the module root MUST produce no uncommitted changes; generated per-package `README.md` files MUST be committed.
 
-- [ ] Run `amux test --regression` at the end of Phase 9 to verify no regressions relative to the Phase 9 baseline snapshot
+- [x] Run `amux test --regression` at the end of Phase 9 to verify no regressions relative to the Phase 9 baseline snapshot
   - Spec reference(s): §12.6.5
   - Acceptance criteria: `amux test --regression` exits 0; any regressions are fixed before Phase 9 is considered complete; the new snapshot is written to `<module_root>/snapshots/`.
 
-- [ ] Update this plan’s TODOs for Phase 9, remove unused code/scripts, and commit Phase 9 to git
+- [x] Update this plan’s TODOs for Phase 9, remove unused code/scripts, and commit Phase 9 to git
   - Spec reference(s): N/A (plan process requirement)
   - Acceptance criteria: Phase 9 TODOs are updated; `git status` is clean; the Phase 9 baseline + latest snapshots are retained; a Phase 9 commit exists in git history.
 ---

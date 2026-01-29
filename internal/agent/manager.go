@@ -458,15 +458,19 @@ func (m *Manager) UpdatePresence(id muid.MUID, eventName string) error {
 		// Convert string event to legacy event
 		var legacyEvent PresenceEvent
 		switch eventName {
-		case EvtGoOnline:
-			legacyEvent = EventGoOnline
-		case EvtGoBusy:
+		case EvtTaskAssigned:
 			legacyEvent = EventGoBusy
-		case EvtGoOffline:
+		case EvtTaskCompleted:
+			legacyEvent = EventGoOnline
+		case EvtPromptDetected:
+			legacyEvent = EventGoOnline
+		case EvtRateLimit:
 			legacyEvent = EventGoOffline
-		case EvtGoAway:
+		case EvtRateCleared:
+			legacyEvent = EventGoOnline
+		case EvtStuckDetected:
 			legacyEvent = EventGoAway
-		case EvtActivity:
+		case EvtActivityDetected:
 			legacyEvent = EventActivity
 		default:
 			return fmt.Errorf("unknown presence event: %s", eventName)

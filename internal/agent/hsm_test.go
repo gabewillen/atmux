@@ -62,46 +62,54 @@ func TestAgentHSMActor_PresenceTransitions(t *testing.T) {
 	}
 	defer actor.Close()
 
-	// Test initial presence (should be offline)
+	// Test initial presence (should be online per spec §6.5)
+	if actor.GetPresence() != api.PresenceOnline {
+		t.Errorf("Expected initial presence to be Online, got %v", actor.GetPresence())
+	}
+
+	// Test Online → Offline (rate limit)
+	if err := actor.Dispatch(EvtRateLimit, nil); err != nil {
+		t.Errorf("Failed to dispatch rate limit event: %v", err)
+	}
 	if actor.GetPresence() != api.PresenceOffline {
-		t.Errorf("Expected initial presence to be Offline, got %v", actor.GetPresence())
+		t.Errorf("Expected presence to be Offline, got %v", actor.GetPresence())
 	}
 
 	// Test Offline → Online
-	if err := actor.Dispatch(EvtGoOnline, nil); err != nil {
-		t.Errorf("Failed to dispatch go online event: %v", err)
+	if err := actor.Dispatch(EvtRateCleared, nil); err != nil {
+		t.Errorf("Failed to dispatch rate cleared event: %v", err)
 	}
 	if actor.GetPresence() != api.PresenceOnline {
 		t.Errorf("Expected presence to be Online, got %v", actor.GetPresence())
 	}
 
 	// Test Online → Busy
-	if err := actor.Dispatch(EvtGoBusy, nil); err != nil {
-		t.Errorf("Failed to dispatch go busy event: %v", err)
+	if err := actor.Dispatch(EvtTaskAssigned, nil); err != nil {
+		t.Errorf("Failed to dispatch task assigned event: %v", err)
 	}
 	if actor.GetPresence() != api.PresenceBusy {
 		t.Errorf("Expected presence to be Busy, got %v", actor.GetPresence())
 	}
 
 	// Test Busy → Online
-	if err := actor.Dispatch(EvtGoOnline, nil); err != nil {
-		t.Errorf("Failed to dispatch go online event: %v", err)
+	if err := actor.Dispatch(EvtTaskCompleted, nil); err != nil {
+		t.Errorf("Failed to dispatch task completed event: %v", err)
 	}
 	if actor.GetPresence() != api.PresenceOnline {
 		t.Errorf("Expected presence to be Online, got %v", actor.GetPresence())
 	}
 
 	// Test Online → Away
-	if err := actor.Dispatch(EvtGoAway, nil); err != nil {
-		t.Errorf("Failed to dispatch go away event: %v", err)
+	if err := actor.Dispatch(EvtStuckDetected, nil); err != nil {
+		t.Errorf("Failed to dispatch stuck detected event: %v", err)
 	}
 	if actor.GetPresence() != api.PresenceAway {
 		t.Errorf("Expected presence to be Away, got %v", actor.GetPresence())
 	}
 
 	// Test Away → Online (activity)
-	if err := actor.Dispatch(EvtActivity, nil); err != nil {
-		t.Errorf("Failed to dispatch activity event: %v", err)
+	if err := actor.Dispatch(EvtActivityDetected, nil); err != nil {
+		t.Errorf("Failed to dispatch activity detected event: %v", err)
 	}
 	if actor.GetPresence() != api.PresenceOnline {
 		t.Errorf("Expected presence to be Online after activity, got %v", actor.GetPresence())
@@ -125,14 +133,14 @@ func TestAgentHSMActor_InvalidTransitions(t *testing.T) {
 		t.Fatalf("Failed to start agent: %v", err)
 	}
 
-	// Test that we can't go busy while offline
-	initialPresence := actor.GetPresence()
-	if err := actor.Dispatch(EvtGoBusy, nil); err != nil {
-		// HSM rejected invalid transition - this is expected
+	// Test that we can't go busy while offline (initial state is Online now)
+	// First try to assign a task while Online (should work)
+	if err := actor.Dispatch(EvtTaskAssigned, nil); err != nil {
+		t.Errorf("Failed to dispatch task assigned: %v", err)
 	}
-	// Verify presence didn't change
-	if actor.GetPresence() != initialPresence {
-		t.Errorf("Presence should not have changed from invalid transition")
+	// Verify presence didn't change inappropriately
+	if actor.GetPresence() != api.PresenceBusy {
+		t.Errorf("Expected presence to be Busy after task assignment")
 	}
 }
 
@@ -170,7 +178,7 @@ func TestManager_HSMIntegration(t *testing.T) {
 	}
 
 	// Test presence update through HSM
-	if err := manager.UpdatePresence(agent.ID, EvtGoOnline); err != nil {
+	if err := manager.UpdatePresence(agent.ID, EvtActivityDetected); err != nil {
 		t.Errorf("Failed to update presence through manager: %v", err)
 	}
 

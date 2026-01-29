@@ -6,7 +6,7 @@ Package api provides public types for the amux system.
 These types are agent-agnostic - Agent.Adapter is a string reference
 to maintain the separation between core and adapter implementations.
 
-- `type AgentMessage` — AgentMessage represents a message sent between agents.
+- `type AgentMessage` — AgentMessage represents a message sent between agents per spec §6.4.
 - `type AgentState` — AgentState represents agent lifecycle states per HSM pattern.
 - `type Agent` — Agent represents an agent instance in the system.
 - `type Event` — Event represents a system event in the amux architecture.
@@ -59,24 +59,24 @@ type AgentMessage struct {
 	// ID is the unique identifier for this message.
 	ID muid.MUID `json:"id"`
 
-	// FromAgentID is the ID of the sending agent.
-	FromAgentID muid.MUID `json:"from_agent_id"`
+	// From is the sender runtime ID (set by publishing component).
+	From muid.MUID `json:"from"`
 
-	// ToAgentID is the ID of the receiving agent.
-	ToAgentID muid.MUID `json:"to_agent_id"`
+	// To is the recipient runtime ID (set by publishing component, or BroadcastID).
+	To muid.MUID `json:"to"`
+
+	// ToSlug is the recipient token captured from text (typically agent_slug); case-insensitive.
+	ToSlug string `json:"to_slug"`
 
 	// Content is the message content.
 	Content string `json:"content"`
 
 	// Timestamp is when this message was sent.
 	Timestamp time.Time `json:"timestamp"`
-
-	// Metadata contains additional message metadata.
-	Metadata map[string]interface{} `json:"metadata,omitempty"`
 }
 ```
 
-AgentMessage represents a message sent between agents.
+AgentMessage represents a message sent between agents per spec §6.4.
 
 ## type AgentState
 

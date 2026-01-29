@@ -28,18 +28,22 @@ const (
 	EvtRestart = "restart"
 )
 
-// PresenceEvents define the events that can trigger presence transitions.
+// PresenceEvents define the events that can trigger presence transitions per spec §6.5.
 const (
-	// EvtGoOnline triggers transition to Online.
-	EvtGoOnline = "go_online"
-	// EvtGoBusy triggers transition to Busy.
-	EvtGoBusy = "go_busy"
-	// EvtGoOffline triggers transition to Offline.
-	EvtGoOffline = "go_offline"
-	// EvtGoAway triggers transition to Away.
-	EvtGoAway = "go_away"
-	// EvtActivity triggers transition from Away back to Online.
-	EvtActivity = "activity"
+	// EvtTaskAssigned triggers Online → Busy transition.
+	EvtTaskAssigned = "task.assigned"
+	// EvtTaskCompleted triggers Busy → Online transition.
+	EvtTaskCompleted = "task.completed"
+	// EvtPromptDetected triggers Busy → Online transition.
+	EvtPromptDetected = "prompt.detected"
+	// EvtRateLimit triggers any state → Offline transition.
+	EvtRateLimit = "rate.limit"
+	// EvtRateCleared triggers Offline → Online transition.
+	EvtRateCleared = "rate.cleared"
+	// EvtStuckDetected triggers any state → Away transition.
+	EvtStuckDetected = "stuck.detected"
+	// EvtActivityDetected triggers Away → Online transition.
+	EvtActivityDetected = "activity.detected"
 )
 
 // AgentHSM represents an agent with HSM-based state management.
@@ -194,19 +198,11 @@ func (a *AgentHSMActor) initLifecycleHSM(agent *api.Agent) (*AgentHSM, error) {
 	return hsmInstance, nil
 }
 
-// initPresenceHSM initializes the agent presence state machine.
-// Per spec: Online ↔ Busy ↔ Offline ↔ Away
+// initPresenceHSM initializes the agent presence state machine per spec §6.5.
+// The spec requires: Online ↔ Busy, any → Offline/Away, specific transition triggers.
 func (a *AgentHSMActor) initPresenceHSM(agent *api.Agent) (*AgentHSM, error) {
-	// Define presence HSM model
+	// Define presence HSM model per spec §6.5
 	model := hsm.Define("presence",
-		hsm.State("offline",
-			hsm.Entry[*AgentHSM](func(ctx context.Context, hsm *AgentHSM, event hsm.Event) {
-				hsm.mu.Lock()
-				defer hsm.mu.Unlock()
-				hsm.Agent.Presence = api.PresenceOffline
-				hsm.Agent.UpdatedAt = time.Now().UTC()
-			}),
-		),
 		hsm.State("online",
 			hsm.Entry[*AgentHSM](func(ctx context.Context, hsm *AgentHSM, event hsm.Event) {
 				hsm.mu.Lock()
@@ -223,6 +219,14 @@ func (a *AgentHSMActor) initPresenceHSM(agent *api.Agent) (*AgentHSM, error) {
 				hsm.Agent.UpdatedAt = time.Now().UTC()
 			}),
 		),
+		hsm.State("offline",
+			hsm.Entry[*AgentHSM](func(ctx context.Context, hsm *AgentHSM, event hsm.Event) {
+				hsm.mu.Lock()
+				defer hsm.mu.Unlock()
+				hsm.Agent.Presence = api.PresenceOffline
+				hsm.Agent.UpdatedAt = time.Now().UTC()
+			}),
+		),
 		hsm.State("away",
 			hsm.Entry[*AgentHSM](func(ctx context.Context, hsm *AgentHSM, event hsm.Event) {
 				hsm.mu.Lock()
@@ -231,47 +235,73 @@ func (a *AgentHSMActor) initPresenceHSM(agent *api.Agent) (*AgentHSM, error) {
 				hsm.Agent.UpdatedAt = time.Now().UTC()
 			}),
 		),
-		hsm.Transition("go_online",
-			hsm.Source("offline"),
-			hsm.Target("online"),
-			hsm.On(hsm.Event{Name: EvtGoOnline}),
-		),
-		hsm.Transition("go_busy",
+
+		// Online ↔ Busy transitions
+		hsm.Transition("task_assigned",
 			hsm.Source("online"),
 			hsm.Target("busy"),
-			hsm.On(hsm.Event{Name: EvtGoBusy}),
+			hsm.On(hsm.Event{Name: EvtTaskAssigned}),
 		),
-		hsm.Transition("go_away",
+		hsm.Transition("task_completed",
+			hsm.Source("busy"),
+			hsm.Target("online"),
+			hsm.On(hsm.Event{Name: EvtTaskCompleted}),
+		),
+		hsm.Transition("prompt_detected",
+			hsm.Source("busy"),
+			hsm.Target("online"),
+			hsm.On(hsm.Event{Name: EvtPromptDetected}),
+		),
+
+		// Rate limit transitions (any → Offline)
+		hsm.Transition("rate_limit_from_online",
+			hsm.Source("online"),
+			hsm.Target("offline"),
+			hsm.On(hsm.Event{Name: EvtRateLimit}),
+		),
+		hsm.Transition("rate_limit_from_busy",
+			hsm.Source("busy"),
+			hsm.Target("offline"),
+			hsm.On(hsm.Event{Name: EvtRateLimit}),
+		),
+		hsm.Transition("rate_limit_from_away",
+			hsm.Source("away"),
+			hsm.Target("offline"),
+			hsm.On(hsm.Event{Name: EvtRateLimit}),
+		),
+
+		// Rate cleared (Offline → Online)
+		hsm.Transition("rate_cleared",
+			hsm.Source("offline"),
+			hsm.Target("online"),
+			hsm.On(hsm.Event{Name: EvtRateCleared}),
+		),
+
+		// Stuck detection transitions (any → Away)
+		hsm.Transition("stuck_from_online",
 			hsm.Source("online"),
 			hsm.Target("away"),
-			hsm.On(hsm.Event{Name: EvtGoAway}),
+			hsm.On(hsm.Event{Name: EvtStuckDetected}),
 		),
-		hsm.Transition("go_offline_from_online",
-			hsm.Source("online"),
-			hsm.Target("offline"),
-			hsm.On(hsm.Event{Name: EvtGoOffline}),
-		),
-		hsm.Transition("busy_to_online",
+		hsm.Transition("stuck_from_busy",
 			hsm.Source("busy"),
-			hsm.Target("online"),
-			hsm.On(hsm.Event{Name: EvtGoOnline}),
+			hsm.Target("away"),
+			hsm.On(hsm.Event{Name: EvtStuckDetected}),
 		),
-		hsm.Transition("busy_to_offline",
-			hsm.Source("busy"),
-			hsm.Target("offline"),
-			hsm.On(hsm.Event{Name: EvtGoOffline}),
+		hsm.Transition("stuck_from_offline",
+			hsm.Source("offline"),
+			hsm.Target("away"),
+			hsm.On(hsm.Event{Name: EvtStuckDetected}),
 		),
-		hsm.Transition("away_activity",
+
+		// Activity detection (Away → Online)
+		hsm.Transition("activity_detected",
 			hsm.Source("away"),
 			hsm.Target("online"),
-			hsm.On(hsm.Event{Name: EvtActivity}),
+			hsm.On(hsm.Event{Name: EvtActivityDetected}),
 		),
-		hsm.Transition("away_to_offline",
-			hsm.Source("away"),
-			hsm.Target("offline"),
-			hsm.On(hsm.Event{Name: EvtGoOffline}),
-		),
-		hsm.Initial(hsm.Target("offline")),
+
+		hsm.Initial(hsm.Target("online")),
 	)
 
 	// Create the HSM instance (use a copy of agent for presence)
@@ -291,7 +321,7 @@ func (a *AgentHSMActor) Dispatch(eventName string, data interface{}) error {
 		ch := hsm.Dispatch(a.ctx, a.lifecycleHSM, event)
 		<-ch // Wait for dispatch to complete
 		return nil
-	case EvtGoOnline, EvtGoBusy, EvtGoOffline, EvtGoAway, EvtActivity:
+	case EvtTaskAssigned, EvtTaskCompleted, EvtPromptDetected, EvtRateLimit, EvtRateCleared, EvtStuckDetected, EvtActivityDetected:
 		// Use HSM dispatch and wait for completion
 		ch := hsm.Dispatch(a.ctx, a.presenceHSM, event)
 		<-ch // Wait for dispatch to complete

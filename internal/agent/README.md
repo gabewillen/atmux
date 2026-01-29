@@ -16,8 +16,8 @@ via the adapter package.
 This package implements HSM-based state management per spec requirements.
 
 - `ErrAgentNotFound, ErrInvalidState, ErrAdapterLoadFailed, ErrInvalidTransition` — Common sentinel errors for agent operations.
-- `EvtGoOnline, EvtGoBusy, EvtGoOffline, EvtGoAway, EvtActivity` — PresenceEvents define the events that can trigger presence transitions.
 - `EvtStart, EvtStartupComplete, EvtTerminate, EvtError, EvtRestart` — LifecycleEvents define the events that can trigger agent lifecycle transitions.
+- `EvtTaskAssigned, EvtTaskCompleted, EvtPromptDetected, EvtRateLimit, EvtRateCleared, EvtStuckDetected, EvtActivityDetected` — PresenceEvents define the events that can trigger presence transitions per spec §6.5.
 - `type AgentActor` — AgentActor wraps an Agent with simple state machines for lifecycle and presence.
 - `type AgentHSMActor` — AgentHSMActor wraps an Agent with proper HSM-based state machines for lifecycle and presence.
 - `type AgentHSM` — AgentHSM represents an agent with HSM-based state management.
@@ -46,24 +46,28 @@ const (
 
 LifecycleEvents define the events that can trigger agent lifecycle transitions.
 
-#### EvtGoOnline, EvtGoBusy, EvtGoOffline, EvtGoAway, EvtActivity
+#### EvtTaskAssigned, EvtTaskCompleted, EvtPromptDetected, EvtRateLimit, EvtRateCleared, EvtStuckDetected, EvtActivityDetected
 
 ```go
 const (
-	// EvtGoOnline triggers transition to Online.
-	EvtGoOnline = "go_online"
-	// EvtGoBusy triggers transition to Busy.
-	EvtGoBusy = "go_busy"
-	// EvtGoOffline triggers transition to Offline.
-	EvtGoOffline = "go_offline"
-	// EvtGoAway triggers transition to Away.
-	EvtGoAway = "go_away"
-	// EvtActivity triggers transition from Away back to Online.
-	EvtActivity = "activity"
+	// EvtTaskAssigned triggers Online → Busy transition.
+	EvtTaskAssigned = "task.assigned"
+	// EvtTaskCompleted triggers Busy → Online transition.
+	EvtTaskCompleted = "task.completed"
+	// EvtPromptDetected triggers Busy → Online transition.
+	EvtPromptDetected = "prompt.detected"
+	// EvtRateLimit triggers any state → Offline transition.
+	EvtRateLimit = "rate.limit"
+	// EvtRateCleared triggers Offline → Online transition.
+	EvtRateCleared = "rate.cleared"
+	// EvtStuckDetected triggers any state → Away transition.
+	EvtStuckDetected = "stuck.detected"
+	// EvtActivityDetected triggers Away → Online transition.
+	EvtActivityDetected = "activity.detected"
 )
 ```
 
-PresenceEvents define the events that can trigger presence transitions.
+PresenceEvents define the events that can trigger presence transitions per spec §6.5.
 
 
 ### Variables
@@ -282,8 +286,8 @@ Per spec: Pending → Starting → Running → Terminated/Errored
 func () initPresenceHSM(agent *api.Agent) (*AgentHSM, error)
 ```
 
-initPresenceHSM initializes the agent presence state machine.
-Per spec: Online ↔ Busy ↔ Offline ↔ Away
+initPresenceHSM initializes the agent presence state machine per spec §6.5.
+The spec requires: Online ↔ Busy, any → Offline/Away, specific transition triggers.
 
 
 ## type LifecycleEvent

@@ -162,9 +162,9 @@ Establish repository structure, build/toolchain, configuration, observability sc
   - Spec reference(s): §4.2.10
   - Acceptance criteria: interface types compile; unknown model IDs return error; mapping of logical IDs to artifacts is observable via telemetry fields/events.
 
-- [ ] The implementation MUST integrate the pre-existing `liquidgen` inference engine from `gabewillen/liquidgen` (private) as a dependency and MUST wire it to the local inference interface
+- [ ] The implementation MUST integrate the pre-existing `liquidgen` inference engine from `third_party/liquidgen` (private) as a dependency and MUST wire it to the local inference interface
   - Spec reference(s): §4.2.10
-  - Acceptance criteria: `go test ./...` succeeds on a development machine with access to `gabewillen/liquidgen`; the default build uses `liquidgen` behind the Phase 0 interface (no new inference engine implementation is introduced); build and runtime logs MUST include the `liquidgen` module version or commit identifier for traceability.
+  - Acceptance criteria: `go test ./...` succeeds on a development machine with access to `third_party/liquidgen`; the default build uses `liquidgen` behind the Phase 0 interface (no new inference engine implementation is introduced); build and runtime logs MUST include the `liquidgen` module version or commit identifier for traceability.
 
 - [ ] Create conformance harness skeleton and test runner wiring
   - Spec reference(s): §4.3.1
@@ -930,7 +930,7 @@ Complete the conformance suite, validate required E2E flows, and ensure cross-pl
 
 - [ ] The repository SHOULD include GitHub Actions workflows that build release artifacts and publish them to Cloudflare R2 for curl and PowerShell installation
   - Spec reference(s): N/A (release engineering requirement)
-  - Acceptance criteria: a workflow triggers on version tags and builds `amux` and `amux-node` for linux/darwin amd64/arm64; artifacts are packaged with a deterministic naming convention and SHA256 checksums; the workflow uploads artifacts and checksums to an R2 bucket via the S3 API; the workflow configures access to the private `gabewillen/liquidgen` module (for example via `GOPRIVATE` and a GitHub token or deploy key) so release builds do not depend on a developer machine.
+  - Acceptance criteria: a workflow triggers on version tags and builds `amux` and `amux-node` for linux/darwin amd64/arm64; artifacts are packaged with a deterministic naming convention and SHA256 checksums; the workflow uploads artifacts and checksums to an R2 bucket via the S3 API; the workflow configures access to the private `third_party/liquidgen` module (for example via `GOPRIVATE` and a GitHub token or deploy key) so release builds do not depend on a developer machine.
 
 - [ ] The release workflow SHOULD publish install scripts to R2 so users can install and upgrade via `curl` and PowerShell
   - Spec reference(s): N/A (release engineering requirement)
@@ -981,7 +981,7 @@ Complete the conformance suite, validate required E2E flows, and ensure cross-pl
 - **Authoritative spec selection:** `spec-v1.22.md` is present in-repo and is treated as authoritative for major version v1.
 - NATS + JetStream infrastructure is available for remote agent features (Spec §5.5, §9.1).
 - OS support targets are Linux and macOS on amd64 and arm64, per explicit cross-compilation commands (Spec §4.2.7, §8.3.9).
-- The private `gabewillen/liquidgen` repository is accessible from development machines and is treated as the authoritative implementation of the local inference engine used by `amux`.
+- The private `third_party/liquidgen` repository is accessible from development machines and is treated as the authoritative implementation of the local inference engine used by `amux`.
 - A Cloudflare R2 bucket and publish credentials are available to GitHub Actions for hosting versioned release artifacts and installer scripts.
 
 ### Risks

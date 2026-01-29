@@ -646,48 +646,48 @@ Load adapters as WASM modules, expose host functions, and integrate adapters for
 - Adapter discovery and install flows
 
 ### TODO list
-- [ ] Run `amux test` to capture the baseline snapshot for Phase 8
+- [x] Run `amux test` to capture the baseline snapshot for Phase 8
   - Spec reference(s): §12.6.1–§12.6.3
   - Acceptance criteria: a new `snapshots/amux-test-*.toml` exists under `<module_root>/snapshots/` and is retained as the baseline for Phase 8 regression checking.
 
-- [ ] Implement adapter manifest parsing and validation
+- [x] Implement adapter manifest parsing and validation
   - Spec reference(s): §10.2
   - Acceptance criteria: invalid manifests rejected with actionable errors; required fields enforced; tests cover manifest examples.
 
-- [ ] Implement CLI version pinning logic for adapters
+- [x] Implement CLI version pinning logic for adapters
   - Spec reference(s): §10.3
   - Acceptance criteria: incompatible CLI versions fail with clear error; pinning rules unit tested.
 
-- [ ] Implement WASM interface (host functions, memory, ABI) and TinyGo adapter build expectations
+- [x] Implement WASM interface (host functions, memory, ABI) and TinyGo adapter build expectations
   - Spec reference(s): §10.4, §4.2.2
   - Acceptance criteria: sample TinyGo adapter can be loaded; host calls succeed; call spans/metrics emitted per OTel requirements.
 
-- [ ] Add adapter ABI contract tests and fixtures (memory management, return packing, error reporting)
+- [x] Add adapter ABI contract tests and fixtures (memory management, return packing, error reporting)
   - Spec reference(s): §10.4.1, §10.4.2, §4.3.3
   - Acceptance criteria: automated tests validate `memory` export presence, `amux_alloc/amux_free` semantics, packed `(ptr,len)` decoding, and `amux_last_error` behavior; failing adapters are rejected with clear diagnostics.
 
-- [ ] Create a “new adapter bring-up” checklist and conformance fixture proving core remains agent-agnostic
+- [x] Create a “new adapter bring-up” checklist and conformance fixture proving core remains agent-agnostic
   - Spec reference(s): §1.5.2, §1.5.3, §1.5.4, §10.6, §10.8, §4.3.3
   - Acceptance criteria: a newly added adapter (new folder under `adapters/`) is built to WASM, installed via standard discovery, and passes the adapter conformance fixture without any changes to `internal/` packages.
 
-- [ ] Implement event and action types exchanged with adapters
+- [x] Implement event and action types exchanged with adapters
   - Spec reference(s): §10.5, §7.4, §11.3
   - Acceptance criteria: adapter receives PTY/process snapshots; returns actions; actions executed by core; conformance fixtures validate.
 
-- [ ] Implement adapter discovery, packaging, installation, and setup flows
+- [x] Implement adapter discovery, packaging, installation, and setup flows
   - Spec reference(s): §10.6, §10.8, §1.5.4
   - Acceptance criteria: adapters installed into registry layout; embedded default adapter (if used) is shipped as WASM asset, not Go code; discovery works across configured paths.
 
 
-- [ ] The implementation MUST maintain inline Go documentation and MUST regenerate per-package `README.md` files via `go-docmd`
+- [x] The implementation MUST maintain inline Go documentation and MUST regenerate per-package `README.md` files via `go-docmd`
   - Spec reference(s): §4.2.6.1
   - Acceptance criteria: every package and exported identifier added or modified in this phase MUST include `go doc`-suitable comments; running `go run github.com/agentflare-ai/go-docmd@latest -cmd -all -inplace ./...` at the module root MUST produce no uncommitted changes; generated per-package `README.md` files MUST be committed.
 
-- [ ] Run `amux test --regression` at the end of Phase 8 to verify no regressions relative to the Phase 8 baseline snapshot
+- [x] Run `amux test --regression` at the end of Phase 8 to verify no regressions relative to the Phase 8 baseline snapshot
   - Spec reference(s): §12.6.5
   - Acceptance criteria: `amux test --regression` exits 0; any regressions are fixed before Phase 8 is considered complete; the new snapshot is written to `<module_root>/snapshots/`.
 
-- [ ] Update this plan’s TODOs for Phase 8, remove unused code/scripts, and commit Phase 8 to git
+- [x] Update this plan’s TODOs for Phase 8, remove unused code/scripts, and commit Phase 8 to git
   - Spec reference(s): N/A (plan process requirement)
   - Acceptance criteria: Phase 8 TODOs are updated; `git status` is clean; the Phase 8 baseline + latest snapshots are retained; a Phase 8 commit exists in git history.
 ---

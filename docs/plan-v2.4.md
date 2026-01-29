@@ -255,7 +255,7 @@ Implement authoritative types, identifiers, and HSM-driven lifecycle and presenc
   - Spec reference(s): §12.6.5
   - Acceptance criteria: `amux test --regression` exits 0; any regressions are fixed before Phase 1 is considered complete; the new snapshot is written to `<module_root>/snapshots/`.
 
-- [ ] Update this plan’s TODOs for Phase 1, remove unused code/scripts, and commit Phase 1 to git
+- [x] Update this plan’s TODOs for Phase 1, remove unused code/scripts, and commit Phase 1 to git
   - Spec reference(s): N/A (plan process requirement)
   - Acceptance criteria: Phase 1 TODOs are updated; `git status` is clean; the Phase 1 baseline + latest snapshots are retained; a Phase 1 commit exists in git history.
 ---

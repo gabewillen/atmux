@@ -11,6 +11,7 @@
 - [internal/inference](internal/inference/README.md)
 - [internal/monitor](internal/monitor/README.md)
 - [internal/paths](internal/paths/README.md)
+- [internal/plugin](internal/plugin/README.md)
 - [internal/process](internal/process/README.md)
 - [internal/protocol](internal/protocol/README.md) — Package protocol defines the remote communication protocol.
 - [internal/pty](internal/pty/README.md)

@@ -806,44 +806,44 @@ Implement plugin management commands, plugin registry and installation sources, 
 - Built-in plugins defined by the spec
 
 ### TODO list
-- [ ] Run `amux test` to capture the baseline snapshot for Phase 11
+- [x] Run `amux test` to capture the baseline snapshot for Phase 11
   - Spec reference(s): §12.6.1–§12.6.3
   - Acceptance criteria: a new `snapshots/amux-test-*.toml` exists under `<module_root>/snapshots/` and is retained as the baseline for Phase 11 regression checking.
 
-- [ ] Implement plugin management commands and UX-independent surfaces
+- [x] Implement plugin management commands and UX-independent surfaces
   - Spec reference(s): §13.2
   - Acceptance criteria: install/list/remove/enable/disable commands work; outputs match required fields; CLI presentation is flexible per non-goals.
 
-- [ ] Implement plugin manifest (plugin.toml) parsing and validation
+- [x] Implement plugin manifest (plugin.toml) parsing and validation
   - Spec reference(s): §13.3
   - Acceptance criteria: manifests validated; permissions declared and enforced; unit tests cover examples.
 
-- [ ] Implement plugin installation sources (local, registry, git, HTTP(S))
+- [x] Implement plugin installation sources (local, registry, git, HTTP(S))
   - Spec reference(s): §13.4, §12.4.7
   - Acceptance criteria: installs succeed from each supported source type; integrity checks and version selection behave as specified.
 
-- [ ] Implement plugin registry layout and resolution
+- [x] Implement plugin registry layout and resolution
   - Spec reference(s): §13.5
   - Acceptance criteria: registry directory structure matches spec; plugin lookup order deterministic and tested.
 
-- [ ] Implement daemon access mediation and local permission gating for plugins
+- [x] Implement daemon access mediation and local permission gating for plugins
   - Spec reference(s): §13.6, §12.5
   - Acceptance criteria: plugins operate with least privilege; sensitive operations require explicit permissions; audit logs show permission grants/denials.
 
-- [ ] Implement required built-in plugins
+- [x] Implement required built-in plugins
   - Spec reference(s): §13.7–§13.9
   - Acceptance criteria: built-in plugin behaviors match spec; `amux agent` and `amux chat` plugin commands operate end to end using JSON-RPC.
 
 
-- [ ] The implementation MUST maintain inline Go documentation and MUST regenerate per-package `README.md` files via `go-docmd`
+- [x] The implementation MUST maintain inline Go documentation and MUST regenerate per-package `README.md` files via `go-docmd`
   - Spec reference(s): §4.2.6.1
   - Acceptance criteria: every package and exported identifier added or modified in this phase MUST include `go doc`-suitable comments; running `go run github.com/agentflare-ai/go-docmd@latest -cmd -all -inplace ./...` at the module root MUST produce no uncommitted changes; generated per-package `README.md` files MUST be committed.
 
-- [ ] Run `amux test --regression` at the end of Phase 11 to verify no regressions relative to the Phase 11 baseline snapshot
+- [x] Run `amux test --regression` at the end of Phase 11 to verify no regressions relative to the Phase 11 baseline snapshot
   - Spec reference(s): §12.6.5
   - Acceptance criteria: `amux test --regression` exits 0; any regressions are fixed before Phase 11 is considered complete; the new snapshot is written to `<module_root>/snapshots/`.
 
-- [ ] Update this plan’s TODOs for Phase 11, remove unused code/scripts, and commit Phase 11 to git
+- [x] Update this plan’s TODOs for Phase 11, remove unused code/scripts, and commit Phase 11 to git
   - Spec reference(s): N/A (plan process requirement)
   - Acceptance criteria: Phase 11 TODOs are updated; `git status` is clean; the Phase 11 baseline + latest snapshots are retained; a Phase 11 commit exists in git history.
 ---

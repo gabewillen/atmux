@@ -1,0 +1,537 @@
+package hsm // import "github.com/stateforward/hsm-go"
+
+Package hsm provides a powerful hierarchical state machine (HSM) implementation
+for Go.
+
+# Overview
+
+It enables modeling complex state-driven systems with features like hierarchical
+states, entry/exit actions, guard conditions, and event-driven transitions.
+The implementation follows the Unified DSK (Domain Specific Kit) specification,
+ensuring consistency across platforms.
+
+# Features
+
+  - **Hierarchical States**: Support for nested states and regions.
+  - **Event-Driven**: Asynchronous event processing with context propagation.
+  - **Guards & Actions**: Flexible functional definitions for transition guards
+    and state actions.
+  - **Type Safe**: Generics-based implementation for state context.
+
+# Usage
+
+Define your state machine structure and behavior using the declarative builder
+pattern:
+
+    type MyHSM struct {
+        hsm.HSM
+        counter int
+    }
+
+    model := hsm.Define(
+        "example",
+        hsm.State("foo"),
+        hsm.State("bar"),
+        hsm.Transition(
+            hsm.Trigger("moveToBar"),
+            hsm.Source("foo"),
+            hsm.Target("bar"),
+        ),
+        hsm.Initial("foo"),
+    )
+
+    // Start the state machine
+    sm := hsm.Start(context.Background(), &MyHSM{}, &model)
+    sm.Dispatch(hsm.Event{Name: "moveToBar"})
+
+CONSTANTS
+
+const Version = "v1.0.0"
+
+VARIABLES
+
+var (
+	NullKind            = kind.Make()
+	ElementKind         = kind.Make()
+	NamespaceKind       = kind.Make(ElementKind)
+	VertexKind          = kind.Make(ElementKind)
+	ConstraintKind      = kind.Make(ElementKind)
+	BehaviorKind        = kind.Make(ElementKind)
+	ConcurrentKind      = kind.Make(BehaviorKind)
+	StateMachineKind    = kind.Make(ConcurrentKind, NamespaceKind)
+	StateKind           = kind.Make(VertexKind, NamespaceKind)
+	RegionKind          = kind.Make(ElementKind)
+	TransitionKind      = kind.Make(ElementKind)
+	InternalKind        = kind.Make(TransitionKind)
+	ExternalKind        = kind.Make(TransitionKind)
+	LocalKind           = kind.Make(TransitionKind)
+	SelfKind            = kind.Make(TransitionKind)
+	EventKind           = kind.Make(ElementKind)
+	TimeEventKind       = kind.Make(EventKind)
+	CompletionEventKind = kind.Make(EventKind)
+	ErrorEventKind      = kind.Make(CompletionEventKind)
+	PseudostateKind     = kind.Make(VertexKind)
+	InitialKind         = kind.Make(PseudostateKind)
+	FinalStateKind      = kind.Make(StateKind)
+	ChoiceKind          = kind.Make(PseudostateKind)
+	CustomKind          = kind.Make(ElementKind)
+)
+var (
+	ErrNilHSM       = errors.New("hsm is nil")
+	ErrInvalidState = errors.New("invalid state")
+	ErrMissingHSM   = errors.New("missing hsm in context")
+)
+var (
+	InitialEvent = Event{
+		Name: "hsm_initial",
+		Kind: CompletionEventKind,
+	}
+	ErrorEvent = Event{
+		Name: "hsm_error",
+		Kind: ErrorEventKind,
+	}
+	AnyEvent = Event{
+		Name: "*",
+		Kind: EventKind,
+	}
+	FinalEvent = Event{
+		Name: "hsm_final",
+		Kind: CompletionEventKind,
+	}
+	InfiniteDuration = time.Duration(-1)
+)
+var Keys = struct {
+	Instances key[*atomic.Pointer[[]Instance]]
+	Owner     key[Instance]
+	HSM       key[HSM]
+}{
+	Instances: key[*atomic.Pointer[[]Instance]]{},
+	Owner:     key[Instance]{},
+	HSM:       key[HSM]{},
+}
+
+FUNCTIONS
+
+func AfterDispatch(ctx context.Context, hsm Instance, event Event) <-chan struct{}
+func AfterEntry(ctx context.Context, hsm Instance, state string) <-chan struct{}
+func AfterExecuted(ctx context.Context, hsm Instance, state string) <-chan struct{}
+func AfterExit(ctx context.Context, hsm Instance, state string) <-chan struct{}
+func AfterProcess(ctx context.Context, hsm Instance, maybeEvent ...Event) <-chan struct{}
+func Dispatch[T context.Context](ctx T, hsm Instance, event Event) <-chan struct{}
+    Dispatch sends an event to a specific state machine instance. Returns a
+    channel that closes when the event has been fully processed.
+
+    Example:
+
+        sm := hsm.Start(...)
+        done := sm.Dispatch(hsm.Event{Name: "start"})
+        <-done // Wait for event processing to complete
+
+func DispatchAll(ctx context.Context, event Event) <-chan struct{}
+    DispatchAll sends an event to all state machine instances in the current
+    context. Returns a channel that closes when all instances have processed
+    the event. DispatchAll sends an event to all state machine instances in
+    the current context. Returns a channel that closes when all instances have
+    processed the event.
+
+    Example:
+
+        sm1 := hsm.Start(...)
+        sm2 := hsm.Start(...)
+        done := hsm.DispatchAll(context.Background(), hsm.Event{Name: "globalEvent"})
+        <-done // Wait for all instances to process the event
+
+func DispatchTo(ctx context.Context, event Event, maybeIds ...string) <-chan struct{}
+func ID(hsm Instance) string
+func IsAncestor(current, target string) bool
+func LCA(a, b string) string
+    LCA finds the Lowest Common Ancestor between two qualified state names in
+    a hierarchical state machine. It takes two qualified names 'a' and 'b' as
+    strings and returns their closest common ancestor.
+
+    For example: - LCA("/s/s1", "/s/s2") returns "/s" - LCA("/s/s1",
+    "/s/s1/s11") returns "/s/s1" - LCA("/s/s1", "/s/s1") returns "/s/s1"
+
+func Match(value string, patterns ...string) bool
+    Match provides a simple interface, handling basic cases directly and
+    delegating complex matching to the match function.
+
+func Name(hsm Instance) string
+func New[T Instance](sm T, model *Model, maybeConfig ...Config) T
+func QualifiedName(hsm Instance) string
+func Restart(ctx context.Context, hsm Instance, maybeData ...any) <-chan struct{}
+func Start[T Instance](ctx context.Context, sm T, maybeData ...any) T
+func Started[T Instance](ctx context.Context, sm T, model *Model, maybeConfig ...Config) T
+    Started creates and starts a new state machine instance with the given model
+    and configuration. The state machine will begin executing from its initial
+    state.
+
+    Example:
+
+        model := hsm.Define(...)
+        sm := hsm.Started(context.Background(), &MyHSM{}, &model, hsm.Config{
+            Trace: func(ctx context.Context, step string, data ...any) (context.Context, func(...any)) {
+                log.Printf("Step: %s, Data: %v", step, data)
+                return ctx, func(...any) {}
+            },
+            Id: "my-hsm-1",
+        })
+
+func Stop(ctx context.Context, hsm Instance) <-chan struct{}
+    Stop gracefully stops a state machine instance. It cancels any running
+    activities and prevents further event processing.
+
+    Example:
+
+        sm := hsm.Start(...)
+        // ... use state machine ...
+        hsm.Stop(sm)
+
+
+TYPES
+
+type Config struct {
+	// ID is a unique identifier for the state machine instance.
+	ID string
+	// ActivityTimeout is the timeout for the state activity to terminate.
+	ActivityTimeout time.Duration
+	// Name is the name of the state machine.
+	Name string
+	// Data to be passed during initialization
+	Data any
+}
+    Config provides configuration options for state machine initialization.
+
+type Element interface {
+	Id() string
+	Kind() uint64
+	Owner() string
+	QualifiedName() string
+	Name() string
+}
+
+type Event struct {
+	Kind   uint64 `xml:"kind,attr" json:"kind"`
+	Name   string `xml:"name,attr" json:"name"`
+	ID     string `xml:"id,attr" json:"id"`
+	Source string `xml:"source,attr,omitempty" json:"source,omitempty"`
+	Target string `xml:"target,attr,omitempty" json:"target,omitempty"`
+	Data   any    `xml:"data" json:"data"`
+	Schema any    `xml:"schema" json:"schema"`
+}
+
+func (e Event) WithData(data any) Event
+
+func (e Event) WithDataAndID(data any, id string) Event
+
+type EventDetail struct {
+	Event  string
+	Target string
+	Guard  bool
+	Schema any
+}
+
+type Expression[T Instance] func(ctx context.Context, hsm T, event Event) bool
+
+type HSM struct {
+	// Has unexported fields.
+}
+
+type Instance interface {
+	// State returns the current state's qualified name.
+	State() string
+	Context() context.Context
+
+	// Has unexported methods.
+}
+    Instance represents an active state machine instance that can process
+    events and track state. It provides methods for event dispatch and state
+    management.
+
+func FromContext(ctx context.Context) (Instance, bool)
+    FromContext retrieves a state machine instance from a context. Returns the
+    instance and a boolean indicating whether it was found.
+
+    Example:
+
+        if sm, ok := hsm.FromContext(ctx); ok {
+            log.Printf("Current state: %s", sm.State())
+        }
+
+func InstancesFromContext(ctx context.Context) ([]Instance, bool)
+
+type Model struct {
+
+	// TransitionMap provides fast lookup of transitions by state and event name
+	TransitionMap map[string]map[string][]*transition // stateQualifiedName -> eventName -> transitions
+	// DeferredMap provides fast lookup of deferred events by state
+	DeferredMap map[string]map[string]struct{} // stateQualifiedName -> Set<deferredEventNames>
+	// Has unexported fields.
+}
+    Model represents the complete state machine model definition. It contains
+    the root state and maintains a namespace of all elements.
+
+func Define(name string, redefinableElements ...RedefinableElement) Model
+    Define creates a new state machine model with the given name and elements.
+    The first argument can be either a string name or a RedefinableElement.
+    Additional elements are added to the model in the order they are specified.
+
+    Example:
+
+        model := hsm.Define(
+            "traffic_light",
+            hsm.State("red"),
+            hsm.State("yellow"),
+            hsm.State("green"),
+            hsm.Initial("red")
+        )
+
+func (state *Model) Activities() []string
+
+func (state *Model) Entry() []string
+
+func (state *Model) Exit() []string
+
+func (element *Model) Id() string
+
+func (element *Model) Kind() uint64
+
+func (model *Model) Members() map[string]Element
+
+func (element *Model) Name() string
+
+func (element *Model) Owner() string
+
+func (element *Model) QualifiedName() string
+
+func (vertex *Model) Transitions() []string
+
+type Operation[T Instance] func(ctx context.Context, hsm T, event Event)
+
+type RedefinableElement = func(model *Model, stack []Element) Element
+    RedefinableElement is a function type that modifies a Model by adding or
+    updating elements. It's used to build the state machine structure in a
+    declarative way.
+
+func Activity[T Instance](funcs ...func(ctx context.Context, hsm T, event Event)) RedefinableElement
+    Activity defines a long-running action that is executed while in a state.
+    The activity is started after the entry action and stopped before the exit
+    action.
+
+    Example:
+
+        hsm.Activity(func(ctx context.Context, hsm *MyHSM, event Event) {
+            for {
+                select {
+                case <-ctx.Done():
+                    return
+                case <-time.After(time.Second):
+                    log.Println("Activity tick")
+                }
+            }
+        })
+
+func After[T Instance](expr func(ctx context.Context, hsm T, event Event) time.Duration) RedefinableElement
+    After creates a time-based transition that occurs after a specified
+    duration. The duration can be dynamically computed based on the state
+    machine's context.
+
+    Example:
+
+        hsm.Transition(
+            hsm.After(func(ctx context.Context, hsm *MyHSM, event Event) time.Duration {
+                return time.Second * 30
+            }),
+            hsm.Source("active"),
+            hsm.Target("timeout")
+        )
+
+func Choice[T interface{ RedefinableElement | string }](elementOrName T, partialElements ...RedefinableElement) RedefinableElement
+    Choice creates a pseudo-state that enables dynamic branching based on guard
+    conditions. The first transition with a satisfied guard condition is taken.
+
+    Example:
+
+        hsm.Choice(
+            hsm.Transition(
+                hsm.Target("approved"),
+                hsm.Guard(func(ctx context.Context, hsm *MyHSM, event Event) bool {
+                    return hsm.score > 700
+                })
+            ),
+            hsm.Transition(
+                hsm.Target("rejected")
+            )
+        )
+
+func Defer[T interface {
+	string | *Event | Event
+}](events ...T) RedefinableElement
+    Defer schedules events to be processed after the current state is exited.
+
+    Example:
+
+        hsm.Defer(hsm.Event{Name: "event_name"})
+
+func Effect[T Instance](funcs ...func(ctx context.Context, hsm T, event Event)) RedefinableElement
+    Effect defines an action to be executed during a transition. The effect
+    function is called after exiting the source state and before entering the
+    target state.
+
+    Example:
+
+        hsm.Effect(func(ctx context.Context, hsm *MyHSM, event Event) {
+            log.Printf("Transitioning with event: %s", event.Name)
+        })
+
+func Entry[T Instance](funcs ...func(ctx context.Context, hsm T, event Event)) RedefinableElement
+    Entry defines an action to be executed when entering a state. The entry
+    action is executed before any internal activities are started.
+
+    Example:
+
+        hsm.Entry(func(ctx context.Context, hsm *MyHSM, event Event) {
+            log.Printf("Entering state with event: %s", event.Name)
+        })
+
+func Every[T Instance](expr func(ctx context.Context, hsm T, event Event) time.Duration) RedefinableElement
+    Every schedules events to be processed on an interval.
+
+    Example:
+
+        hsm.Every(func(ctx context.Context, hsm T, event Event) time.Duration {
+            return time.Second * 30
+        })
+
+func Exit[T Instance](funcs ...func(ctx context.Context, hsm T, event Event)) RedefinableElement
+    Exit defines an action to be executed when exiting a state. The exit action
+    is executed after any internal activities are stopped.
+
+    Example:
+
+        hsm.Exit(func(ctx context.Context, hsm *MyHSM, event Event) {
+            log.Printf("Exiting state with event: %s", event.Name)
+        })
+
+func Final(name string) RedefinableElement
+    Final creates a final state that represents the completion of a composite
+    state or the entire state machine. When a final state is entered,
+    a completion event is generated.
+
+    Example:
+
+        hsm.State("process",
+            hsm.State("working"),
+            hsm.Final("done"),
+            hsm.Transition(
+                hsm.Source("working"),
+                hsm.Target("done")
+            )
+        )
+
+func Guard[T Instance](fn func(ctx context.Context, hsm T, event Event) bool) RedefinableElement
+    Guard defines a condition that must be true for a transition to be taken.
+    If multiple transitions are possible, the first one with a satisfied guard
+    is chosen.
+
+    Example:
+
+        hsm.Guard(func(ctx context.Context, hsm *MyHSM, event Event) bool {
+            return hsm.counter > 10
+        })
+
+func Initial(partialElements ...RedefinableElement) RedefinableElement
+    Initial defines the initial state for a composite state or the entire
+    state machine. When a composite state is entered, its initial state is
+    automatically entered.
+
+    Example:
+
+        hsm.State("operational",
+            hsm.State("idle"),
+            hsm.State("running"),
+            hsm.Initial("idle")
+        )
+
+func On[T interface{ *Event | Event }](events ...T) RedefinableElement
+    On defines the events that can cause a transition. Multiple events can be
+    specified for a single transition.
+
+    Example:
+
+        hsm.Transition(
+            hsm.On("start", "resume"),
+            hsm.Source("idle"),
+            hsm.Target("running")
+        )
+
+func Source[T interface{ RedefinableElement | string }](nameOrPartialElement T) RedefinableElement
+    Source specifies the source state of a transition. It can be used within a
+    Transition definition.
+
+    Example:
+
+        hsm.Transition(
+            hsm.Source("idle"),
+            hsm.Target("running")
+        )
+
+func State(name string, partialElements ...RedefinableElement) RedefinableElement
+    State creates a new state element with the given name and optional child
+    elements. States can have entry/exit actions, activities, and transitions.
+
+    Example:
+
+        hsm.State("active",
+            hsm.Entry(func(ctx context.Context, hsm *MyHSM, event Event) {
+                log.Println("Entering active state")
+            }),
+            hsm.Activity(func(ctx context.Context, hsm *MyHSM, event Event) {
+                // Long-running activity
+            }),
+            hsm.Exit(func(ctx context.Context, hsm *MyHSM, event Event) {
+                log.Println("Exiting active state")
+            })
+        )
+
+func Target[T interface{ RedefinableElement | string }](nameOrPartialElement T) RedefinableElement
+    Target specifies the target state of a transition. It can be used within a
+    Transition definition.
+
+    Example:
+
+        hsm.Transition(
+            hsm.Source("idle"),
+            hsm.Target("running")
+        )
+
+func Transition[T interface{ RedefinableElement | string }](nameOrPartialElement T, partialElements ...RedefinableElement) RedefinableElement
+    Transition creates a new transition between states. Transitions can have
+    triggers, guards, and effects.
+
+    Example:
+
+        hsm.Transition(
+            hsm.Trigger("submit"),
+            hsm.Source("draft"),
+            hsm.Target("review"),
+            hsm.Guard(func(ctx context.Context, hsm *MyHSM, event Event) bool {
+                return hsm.IsValid()
+            }),
+            hsm.Effect(func(ctx context.Context, hsm *MyHSM, event Event) {
+                log.Println("Transitioning from draft to review")
+            })
+        )
+
+func When[T Instance](expr func(ctx context.Context, hsm T, event Event) <-chan struct{}) RedefinableElement
+
+type Snapshot struct {
+	ID            string
+	QualifiedName string
+	State         string
+	QueueLen      int
+	Events        []EventDetail
+}
+
+func TakeSnapshot(ctx context.Context, hsm Instance) Snapshot
+

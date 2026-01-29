@@ -47,6 +47,38 @@ func (r *Resolver) Resolve(path string) (string, error) {
 	return abs, nil
 }
 
+// CanonicalizeRepoRoot resolves a repository root path to its canonical absolute form.
+// Rules (§3.23):
+// 1. Expand ~/ to home directory.
+// 2. Convert to absolute path.
+// 3. Clean . and .. segments (implied by Abs).
+// 4. Resolve symbolic links via EvalSymlinks.
+func (r *Resolver) CanonicalizeRepoRoot(path string) (string, error) {
+	expanded := r.Expand(path)
+
+	// Convert to absolute first to handle relative paths correctly before EvalSymlinks
+	abs, err := filepath.Abs(expanded)
+	if err != nil {
+		return "", errors.Wrap(err, "failed to resolve absolute path")
+	}
+
+	// Check if it exists before trying to resolve symlinks
+	// EvalSymlinks returns error if path doesn't exist
+	_, err = os.Stat(abs)
+	if err != nil {
+		return "", errors.Wrap(err, "repository root does not exist")
+	}
+
+	realPath, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		// If symlink resolution fails but path exists (e.g. permissions),
+		// fall back to the absolute path as permitted by spec §3.23.
+		return abs, nil
+	}
+
+	return realPath, nil
+}
+
 // ConfigDir returns the default configuration directory.
 // Linux: ~/.config/amux
 // macOS: ~/Library/Application Support/amux (or ~/.config/amux if preferred, spec says ~/.config/amux)

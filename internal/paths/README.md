@@ -40,6 +40,19 @@ NewResolver creates a new path resolver.
 
 ### Methods
 
+#### Resolver.CanonicalizeRepoRoot
+
+```go
+func () CanonicalizeRepoRoot(path string) (string, error)
+```
+
+CanonicalizeRepoRoot resolves a repository root path to its canonical absolute form.
+Rules (§3.23):
+1. Expand ~/ to home directory.
+2. Convert to absolute path.
+3. Clean . and .. segments (implied by Abs).
+4. Resolve symbolic links via EvalSymlinks.
+
 #### Resolver.ConfigDir
 
 ```go

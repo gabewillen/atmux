@@ -1,33 +1,56 @@
 package api
 
 import (
-	"time"
+	"os"
 
 	"github.com/stateforward/hsm-go/muid"
 )
 
+// Presence represents the availability state of an agent.
+type Presence string
+
+const (
+	PresenceOnline  Presence = "online"
+	PresenceBusy    Presence = "busy"
+	PresenceOffline Presence = "offline"
+	PresenceAway    Presence = "away"
+)
+
+// AgentState represents the lifecycle state of an agent.
+type AgentState string
+
+const (
+	StatePending    AgentState = "pending"
+	StateStarting   AgentState = "starting"
+	StateRunning    AgentState = "running"
+	StateTerminated AgentState = "terminated"
+	StateErrored    AgentState = "errored"
+)
+
 // Agent represents a managed agent instance.
+// This struct exposes public state; internal logic resides in the actor.
 type Agent struct {
-	ID       muid.MUID `json:"id"`
-	Name     string    `json:"name"`
-	About    string    `json:"about,omitempty"`
-	Adapter  string    `json:"adapter"` // String reference to adapter name
-	RepoPath string    `json:"repo_path,omitempty"`
-	Location Location  `json:"location"`
-	Presence string    `json:"presence"` // Online, Busy, Offline, Away
-	Status   string    `json:"status"`   // Pending, Starting, Running, Terminated, Errored
+	ID       muid.MUID  `json:"id"`
+	Slug     AgentSlug  `json:"slug"`
+	Name     string     `json:"name"`
+	Adapter  string     `json:"adapter"` // Name of the adapter (e.g., "claude-code")
+	State    AgentState `json:"state"`
+	Presence Presence   `json:"presence"`
+	RepoRoot string     `json:"repo_root"` // Canonical absolute path
+	Worktree string     `json:"worktree"`  // Absolute path to worktree
 }
 
-// Location defines where the agent runs.
-type Location struct {
-	Type string `json:"type"` // "local", "ssh"
-	Host string `json:"host,omitempty"`
-}
-
-// Session represents an active PTY session.
+// Session represents an active PTY session for an agent.
 type Session struct {
-	ID        muid.MUID `json:"id"`
-	AgentID   muid.MUID `json:"agent_id"`
-	HostID    string    `json:"host_id"` // Node ID where session runs
-	StartedAt time.Time `json:"started_at"`
+	ID      muid.MUID `json:"id"`
+	AgentID muid.MUID `json:"agent_id"`
+	PTY     *os.File  `json:"-"` // PTY file descriptor (not serialized)
+}
+
+// RosterEntry represents a simplified view of an agent for listing.
+type RosterEntry struct {
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Status   string `json:"status"` // Combined state/presence summary
+	Location string `json:"location"`
 }

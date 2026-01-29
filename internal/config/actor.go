@@ -48,13 +48,20 @@ func (a *Actor) Update(newConfig *Config) error {
 	configCopy := *newConfig
 
 	a.mu.Lock()
-	defer a.mu.Unlock()
 
 	// Update the config
 	a.config = newConfig
 
-	// Notify all subscribers
+	// Get a snapshot of current subscribers to notify
+	subscriberChannels := make([]chan Config, 0, len(a.subscribers))
 	for _, ch := range a.subscribers {
+		subscriberChannels = append(subscriberChannels, ch)
+	}
+
+	a.mu.Unlock()
+
+	// Notify all subscribers (outside the lock to avoid deadlocks)
+	for _, ch := range subscriberChannels {
 		// Use a timeout to prevent indefinite blocking
 		select {
 		case ch <- configCopy:
@@ -69,7 +76,6 @@ func (a *Actor) Update(newConfig *Config) error {
 // Subscribe registers a subscriber to receive configuration updates
 func (a *Actor) Subscribe() (<-chan Config, func()) {
 	a.mu.Lock()
-	defer a.mu.Unlock()
 
 	id := strconv.Itoa(a.nextID)
 	a.nextID++
@@ -78,21 +84,32 @@ func (a *Actor) Subscribe() (<-chan Config, func()) {
 	ch := make(chan Config, 10)
 	a.subscribers[id] = ch
 
+	// Make a copy of the current config to send
+	configCopy := *a.config
+
+	a.mu.Unlock()
+
+	// Send the current config immediately in a goroutine to avoid blocking
+	// This ensures Subscribe() returns immediately while the initial config is delivered
+	go func() {
+		defer func() {
+			// Recover from panic in case the channel is closed
+			if r := recover(); r != nil {
+				// Channel was closed, just return
+			}
+		}()
+
+		// Attempt to send the config to the channel
+		// If the channel is closed, this will cause a panic which we recover from
+		ch <- configCopy
+	}()
+
+	// Return the unsubscribe function (which will acquire the lock when called)
 	unsubscribe := func() {
 		a.mu.Lock()
 		defer a.mu.Unlock()
 		delete(a.subscribers, id)
 		close(ch)
-	}
-
-	// Send the current config immediately
-	// Make a copy to avoid race conditions
-	configCopy := *a.config
-	// Use a non-blocking send for the initial value
-	select {
-	case ch <- configCopy:
-	default:
-		// If the channel is full, skip sending the initial value
 	}
 
 	return ch, unsubscribe

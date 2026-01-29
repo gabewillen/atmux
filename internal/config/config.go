@@ -256,7 +256,7 @@ func mergeConfig(dst *Config, src *Config) {
 // Validate validates the configuration
 func (c *Config) Validate() error {
 	if c.Core.RepoRoot == "" {
-		return errors.New("repo_root cannot be empty")
+		return fmt.Errorf("repo_root cannot be empty: %w", errors.New("validation error"))
 	}
 
 	// Expand ~ in paths

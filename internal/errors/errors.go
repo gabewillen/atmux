@@ -19,7 +19,16 @@ var (
 )
 
 // Wrapf wraps an error with additional context using fmt.Errorf
-// Usage: errors.Wrapf(err, "context: %w", err) - following spec convention
+// Usage: errors.Wrapf(err, "processing file %s", filename) - following spec convention
 func Wrapf(err error, format string, args ...interface{}) error {
-	return fmt.Errorf(format+": %w", append(args, err)...)
+	// Append the error as the last argument and add the wrapping directive
+	allArgs := append(args, err)
+	fullFormat := format + ": %w"
+	return fmt.Errorf(fullFormat, allArgs...)
+}
+
+// Wrap wraps an error with additional context
+// Usage: errors.Wrap(err, "context") - following spec convention
+func Wrap(err error, context string) error {
+	return fmt.Errorf("%s: %w", context, err)
 }

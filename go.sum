@@ -25,8 +25,12 @@ github.com/stateforward/hsm-go v1.0.0 h1:rtEGhBCUZsI8nO1e4ASc4YtMLxV6/LeUT5sruk7
 github.com/stateforward/hsm-go v1.0.0/go.mod h1:AqdQUIQ6yuFouuF60nkklUfDWk/AHpu9ioLRmSS47xM=
 github.com/stateforward/hsm-go/kind v0.0.0-20260124060507-9cca10687b7c h1:nVPbItXu7deGLf8TZmWetCbIu8xBysXgb2s/RiMFJSM=
 github.com/stateforward/hsm-go/kind v0.0.0-20260124060507-9cca10687b7c/go.mod h1:uQwbHqVs7NpjSrVYJyaa8cC7vKjq4yIXdudh1ufcfqc=
+github.com/stateforward/hsm-go/kind v0.0.0-20260128183217-6f66c61e6fd9 h1:UBCien77L4QaYaIOL146Y48t9BXJ/CayJ2H9xCWAid8=
+github.com/stateforward/hsm-go/kind v0.0.0-20260128183217-6f66c61e6fd9/go.mod h1:uQwbHqVs7NpjSrVYJyaa8cC7vKjq4yIXdudh1ufcfqc=
 github.com/stateforward/hsm-go/muid v0.0.0-20260124060507-9cca10687b7c h1:i3ozKYwJO7R2kJ/2aeiRsTKlovs6XijOEGGoseOFuJk=
 github.com/stateforward/hsm-go/muid v0.0.0-20260124060507-9cca10687b7c/go.mod h1:r7xzw3A1+vWh0VMAggV2rXi+wB7y7pe8xxEXTrCIGZY=
+github.com/stateforward/hsm-go/muid v0.0.0-20260128183217-6f66c61e6fd9 h1:vO3NYTKv56ZZCgcbJ5DJzk22qe7rO2mZfIjyKI91DR0=
+github.com/stateforward/hsm-go/muid v0.0.0-20260128183217-6f66c61e6fd9/go.mod h1:r7xzw3A1+vWh0VMAggV2rXi+wB7y7pe8xxEXTrCIGZY=
 github.com/stretchr/testify v1.11.1 h1:7s2iGBzp5EwR7/aIZr8ao5+dra3wiQyKjjFuvgVKu7U=
 github.com/stretchr/testify v1.11.1/go.mod h1:wZwfW3scLgRK+23gO65QZefKpKQRnfz6sD981Nm4B6U=
 github.com/tetratelabs/wazero v1.11.0 h1:+gKemEuKCTevU4d7ZTzlsvgd1uaToIDtlQlmNbwqYhA=

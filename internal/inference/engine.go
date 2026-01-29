@@ -4,6 +4,7 @@ package inference
 import (
 	"context"
 	"errors"
+	"fmt"
 )
 
 // ModelID represents a logical identifier for an inference model
@@ -80,12 +81,12 @@ func (e *LiquidGenEngine) Infer(ctx context.Context, req InferenceRequest) (Infe
 	// Check if the model exists
 	modelInfo, exists := e.models[req.ModelID]
 	if !exists {
-		return InferenceResponse{}, errors.New("unknown model ID: " + string(req.ModelID))
+		return InferenceResponse{}, fmt.Errorf("unknown model ID: %s: %w", req.ModelID, errors.New("unknown model ID"))
 	}
 	
 	// Check if the model is loaded
 	if !modelInfo.Loaded {
-		return InferenceResponse{}, errors.New("model not loaded: " + string(req.ModelID))
+		return InferenceResponse{}, fmt.Errorf("model not loaded: %s: %w", req.ModelID, errors.New("model not loaded"))
 	}
 	
 	// Simulate inference operation
@@ -116,7 +117,7 @@ func (e *LiquidGenEngine) ListModels() []ModelID {
 func (e *LiquidGenEngine) GetModelInfo(modelID ModelID) (ModelInfo, error) {
 	info, exists := e.models[modelID]
 	if !exists {
-		return ModelInfo{}, errors.New("model not found: " + string(modelID))
+		return ModelInfo{}, fmt.Errorf("model not found: %s: %w", modelID, errors.New("model not found"))
 	}
 	
 	return *info, nil
@@ -135,7 +136,7 @@ func (e *LiquidGenEngine) IsModelLoaded(modelID ModelID) bool {
 func (e *LiquidGenEngine) LoadModel(ctx context.Context, modelID ModelID) error {
 	info, exists := e.models[modelID]
 	if !exists {
-		return errors.New("model not found: " + string(modelID))
+		return fmt.Errorf("model not found: %s: %w", modelID, errors.New("model not found"))
 	}
 	
 	// In a real implementation, this would load the model from disk into memory
@@ -150,7 +151,7 @@ func (e *LiquidGenEngine) LoadModel(ctx context.Context, modelID ModelID) error 
 func (e *LiquidGenEngine) UnloadModel(modelID ModelID) error {
 	info, exists := e.models[modelID]
 	if !exists {
-		return errors.New("model not found: " + string(modelID))
+		return fmt.Errorf("model not found: %s: %w", modelID, errors.New("model not found"))
 	}
 	
 	// In a real implementation, this would unload the model from memory

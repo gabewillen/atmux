@@ -4,21 +4,22 @@ import (
 	"testing"
 )
 
-func TestPluginLifecycle(t *testing.T) {
-	mgr := NewManager()
+func TestManager_Lifecycle(t *testing.T) {
+	m := NewManager()
+	
 	manifest := Manifest{
 		Name:       "test-plugin",
-		Version:    "1.0",
-		Entrypoint: "main.wasm",
+		Version:    "1.0.0",
+		Entrypoint: "test.wasm",
 	}
-
+	
 	// Install
-	if err := mgr.Install(manifest, "/path/to/plugin"); err != nil {
+	if err := m.Install(manifest, "/path/to/plugin"); err != nil {
 		t.Fatalf("Install failed: %v", err)
 	}
-
+	
 	// List
-	list := mgr.List()
+	list := m.List()
 	if len(list) != 1 {
 		t.Errorf("Expected 1 plugin, got %d", len(list))
 	}
@@ -26,30 +27,30 @@ func TestPluginLifecycle(t *testing.T) {
 		t.Errorf("Name mismatch")
 	}
 	if !list[0].Enabled {
-		t.Error("Plugin should be enabled by default")
+		t.Error("Should be enabled by default")
 	}
-
+	
 	// Disable
-	if err := mgr.Disable("test-plugin"); err != nil {
-		t.Fatalf("Disable failed: %v", err)
+	if err := m.Disable("test-plugin"); err != nil {
+		t.Errorf("Disable failed: %v", err)
 	}
-	if mgr.registry["test-plugin"].Enabled {
-		t.Error("Plugin should be disabled")
+	if m.registry["test-plugin"].Enabled {
+		t.Error("Should be disabled")
 	}
-
+	
 	// Enable
-	if err := mgr.Enable("test-plugin"); err != nil {
-		t.Fatalf("Enable failed: %v", err)
+	if err := m.Enable("test-plugin"); err != nil {
+		t.Errorf("Enable failed: %v", err)
 	}
-	if !mgr.registry["test-plugin"].Enabled {
-		t.Error("Plugin should be enabled")
+	if !m.registry["test-plugin"].Enabled {
+		t.Error("Should be enabled")
 	}
-
+	
 	// Remove
-	if err := mgr.Remove("test-plugin"); err != nil {
-		t.Fatalf("Remove failed: %v", err)
+	if err := m.Remove("test-plugin"); err != nil {
+		t.Errorf("Remove failed: %v", err)
 	}
-	if len(mgr.List()) != 0 {
-		t.Error("Registry should be empty")
+	if len(m.List()) != 0 {
+		t.Error("Should be empty after remove")
 	}
 }

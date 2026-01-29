@@ -2,9 +2,31 @@
 
 `import "github.com/agentflare-ai/amux/internal/plugin"`
 
+- `type DefaultGater` — DefaultGater implements default permission checking.
 - `type Manager` — Manager manages installed plugins.
 - `type Manifest` — Manifest describes a CLI plugin.
+- `type PermissionGater` — PermissionGater checks if a plugin has the required permissions.
 - `type Plugin` — Plugin represents an installed plugin.
+
+## type DefaultGater
+
+```go
+type DefaultGater struct{}
+```
+
+DefaultGater implements default permission checking.
+
+### Methods
+
+#### DefaultGater.HasPermission
+
+```go
+func () HasPermission(p *Plugin, permission string) bool
+```
+
+HasPermission checks if the plugin's manifest declares the permission.
+Supports basic globbing (e.g. "agent.*").
+
 
 ## type Manager
 
@@ -106,6 +128,16 @@ func () Validate() error
 
 Validate checks required fields.
 
+
+## type PermissionGater
+
+```go
+type PermissionGater interface {
+	HasPermission(plugin *Plugin, permission string) bool
+}
+```
+
+PermissionGater checks if a plugin has the required permissions.
 
 ## type Plugin
 

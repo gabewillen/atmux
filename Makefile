@@ -49,9 +49,8 @@ conformance: ## Run conformance tests (placeholder)
 	@echo "Conformance suite not yet implemented (Phase 0)"
 	@exit 1
 
-amux-test: ## Run amux test to create baseline snapshot
-	@echo "amux test command not yet implemented (Phase 0)"
-	@exit 1
+amux-test: build ## Run amux test to create baseline snapshot
+	./bin/amux test
 
 # Combined verification target for CI
 verify: tidy vet lint test test-race build docs-check ## Run all verification steps

@@ -10,6 +10,7 @@
 - [internal/config](internal/config/README.md) — Package config provides configuration management with TOML format support.
 - [internal/conformance](internal/conformance/README.md) — Package conformance provides the conformance test harness.
 - [internal/events](internal/events/README.md) — Package events provides event dispatch functionality.
+- [internal/ids](internal/ids/README.md) — Package ids provides identifier and normalization utilities for the amux system.
 - [internal/inference](internal/inference/README.md) — Package inference provides local inference engine (liquidgen) functionality.
 - [internal/monitor](internal/monitor/README.md) — Package monitor provides PTY observation and timeout detection.
 - [internal/paths](internal/paths/README.md) — Package paths provides shared path resolution functionality.

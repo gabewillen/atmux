@@ -16,6 +16,8 @@ func NewAgent(cfg config.AgentConfig, repoRoot api.RepoRoot) (*Agent, error) {
 		ID:       id,
 		Slug:     slug,
 		Name:     cfg.Name,
+		About:    cfg.About,
+		Adapter:  cfg.Adapter,
 		RepoRoot: repoRoot,
 		Config:   cfg,
 		Sessions: make(map[api.SessionID]*Session),

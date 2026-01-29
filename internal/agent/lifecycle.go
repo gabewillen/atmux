@@ -28,6 +28,7 @@ func SpawnAgent(ctx context.Context, a *Agent) error {
 		hsm.Dispatch(ctx, a.Lifecycle, hsm.Event{Name: EventError})
 		return fmt.Errorf("failed to ensure worktree: %w", err)
 	}
+	a.Worktree = worktreePath
 
 	// Prepare command
 	// Ideally, the command comes from the adapter or config.

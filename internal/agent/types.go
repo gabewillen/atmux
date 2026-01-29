@@ -15,7 +15,10 @@ type Agent struct {
 	ID       api.AgentID
 	Slug     api.AgentSlug
 	Name     string
+	About    string
+	Adapter  string
 	RepoRoot api.RepoRoot
+	Worktree string // Absolute path to the agent's working directory
 	Config   config.AgentConfig
 
 	// State machines

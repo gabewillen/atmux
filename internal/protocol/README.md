@@ -16,6 +16,8 @@ Package protocol defines the remote communication protocol.
 - `type EventMessage` — EventMessage represents an event envelope over NATS.
 - `type HandshakeRequest` — HandshakeRequest is the payload for the handshake request.
 - `type HandshakeResponse` — HandshakeResponse is the payload for the handshake response.
+- `type HsmNetDispatcher` — HsmNetDispatcher manages event routing.
+- `type LocalBus` — LocalBus is an interface for the local event bus (e.g., internal/agent/bus.go).
 - `type SpawnPayload` — SpawnPayload is the payload for the spawn command.
 - `type SpawnResponsePayload` — SpawnResponsePayload is the payload for the spawn response.
 
@@ -158,6 +160,61 @@ type HandshakeResponse struct {
 ```
 
 HandshakeResponse is the payload for the handshake response.
+
+## type HsmNetDispatcher
+
+```go
+type HsmNetDispatcher struct {
+	mu            sync.RWMutex
+	localBus      LocalBus // Simplified interface for local bus
+	natsConn      *nats.Conn
+	peerID        api.PeerID
+	hostID        api.HostID
+	subjectPrefix string
+}
+```
+
+HsmNetDispatcher manages event routing.
+
+### Functions returning HsmNetDispatcher
+
+#### NewDispatcher
+
+```go
+func NewDispatcher(peerID api.PeerID, hostID api.HostID, nc *nats.Conn) *HsmNetDispatcher
+```
+
+NewDispatcher creates a new dispatcher.
+
+
+### Methods
+
+#### HsmNetDispatcher.Dispatch
+
+```go
+func () Dispatch(ctx context.Context, event EventMessage) error
+```
+
+Dispatch sends an event.
+
+#### HsmNetDispatcher.SetLocalBus
+
+```go
+func () SetLocalBus(bus LocalBus)
+```
+
+SetLocalBus attaches the local bus.
+
+
+## type LocalBus
+
+```go
+type LocalBus interface {
+	Publish(event interface{})
+}
+```
+
+LocalBus is an interface for the local event bus (e.g., internal/agent/bus.go).
 
 ## type SpawnPayload
 

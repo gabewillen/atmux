@@ -592,40 +592,40 @@ Implement event types, dispatch, handlers, deferral, and network-aware routing a
 - Event envelopes and routing over NATS subjects
 
 ### TODO list
-- [ ] Run `amux test` to capture the baseline snapshot for Phase 7
+- [x] Run `amux test` to capture the baseline snapshot for Phase 7
   - Spec reference(s): §12.6.1–§12.6.3
   - Acceptance criteria: a new `snapshots/amux-test-*.toml` exists under `<module_root>/snapshots/` and is retained as the baseline for Phase 7 regression checking.
 
-- [ ] Implement hsmnet network-aware dispatch foundation
+- [x] Implement hsmnet network-aware dispatch foundation
   - Spec reference(s): §9.1
   - Acceptance criteria: local and remote event buses can be created; events route with correct scoping; unit tests cover local-only mode.
 
-- [ ] Implement hsmnet peer connection lifecycle and ID routing
+- [x] Implement hsmnet peer connection lifecycle and ID routing
   - Spec reference(s): §9.1.4, §9.1.5
   - Acceptance criteria: peers are tracked by `peer_id`; unicast/multicast/broadcast routes to the correct local or remote targets; connection lost/recovered updates routing tables.
 
-- [ ] Implement hsmnet wire format and required host event payload schemas
+- [x] Implement hsmnet wire format and required host event payload schemas
   - Spec reference(s): §9.1.3, §9.1.3.1, §9.1.3.2, §5.5.7.5
   - Acceptance criteria: EventMessage envelopes serialize/deserialize; scalar encodings use base-10 ID strings; `connection.*` and `process.*` event payloads conform to the required schemas; `data_b64` is base64 for I/O events; unknown events are treated as opaque JSON.
 
-- [ ] Implement event dispatch pipeline, event types, and event structure schemas
+- [x] Implement event dispatch pipeline, event types, and event structure schemas
   - Spec reference(s): §9.2–§9.4
   - Acceptance criteria: events serialize/deserialize; required fields present; schema fixtures validated.
 
-- [ ] Implement event handlers, deferral, and task model integration
+- [x] Implement event handlers, deferral, and task model integration
   - Spec reference(s): §9.5–§9.7
   - Acceptance criteria: deferred events resume; tasks model can run and complete; tests cover handler ordering and retries.
 
 
-- [ ] The implementation MUST maintain inline Go documentation and MUST regenerate per-package `README.md` files via `go-docmd`
+- [x] The implementation MUST maintain inline Go documentation and MUST regenerate per-package `README.md` files via `go-docmd`
   - Spec reference(s): §4.2.6.1
   - Acceptance criteria: every package and exported identifier added or modified in this phase MUST include `go doc`-suitable comments; running `go run github.com/agentflare-ai/go-docmd@latest -cmd -all -inplace ./...` at the module root MUST produce no uncommitted changes; generated per-package `README.md` files MUST be committed.
 
-- [ ] Run `amux test --regression` at the end of Phase 7 to verify no regressions relative to the Phase 7 baseline snapshot
+- [x] Run `amux test --regression` at the end of Phase 7 to verify no regressions relative to the Phase 7 baseline snapshot
   - Spec reference(s): §12.6.5
   - Acceptance criteria: `amux test --regression` exits 0; any regressions are fixed before Phase 7 is considered complete; the new snapshot is written to `<module_root>/snapshots/`.
 
-- [ ] Update this plan’s TODOs for Phase 7, remove unused code/scripts, and commit Phase 7 to git
+- [x] Update this plan’s TODOs for Phase 7, remove unused code/scripts, and commit Phase 7 to git
   - Spec reference(s): N/A (plan process requirement)
   - Acceptance criteria: Phase 7 TODOs are updated; `git status` is clean; the Phase 7 baseline + latest snapshots are retained; a Phase 7 commit exists in git history.
 ---

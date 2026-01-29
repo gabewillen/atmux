@@ -42,6 +42,28 @@ Transitions:
   - "stop" event: Running → Terminated
   - "error" event: Any → Errored
 
+Messaging provides inter-agent messaging for amux.
+
+This package implements the messaging system defined in spec §6.4,
+including message routing, ToSlug resolution, and message events.
+
+Messages flow through NATS P.comm.* subjects:
+  - P.comm.director: director channel
+  - P.comm.manager.<host_id>: host manager channel
+  - P.comm.agent.<host_id>.<agent_id>: agent channel
+  - P.comm.broadcast: broadcast to all participants
+
+See spec §6.4 for the complete messaging specification.
+
+Package agent - persist.go provides disk persistence for agent definitions.
+
+Per spec, agent definitions must survive daemon restarts. This file implements
+a persistence layer that saves agents to ~/.amux/agents.json using the
+paths.Resolver for directory resolution.
+
+The persistence format is JSON with api.Agent types. On startup, the manager
+loads persisted agents. On Add/Remove, the persistence file is updated.
+
 Presence provides the HSM-based agent presence state machine.
 
 The presence HSM implements the state transitions defined in spec §6.1 and §6.5:
@@ -66,6 +88,14 @@ Transitions:
   - stuck.detected: * → Away
   - activity.detected: Away → Online
 
+Roster provides the roster management for amux.
+
+The roster contains all participants in a session: agents, host managers,
+and the director. It is updated in real-time as presence changes occur
+and broadcast via roster.updated events.
+
+See spec §6.2 for roster requirements and §6.3 for presence awareness.
+
 - `LifecycleEventStart, LifecycleEventReady, LifecycleEventStop, LifecycleEventError` — LifecycleEvent names for lifecycle state transitions.
 - `LifecycleModel` — LifecycleModel defines the HSM model for agent lifecycle.
 - `PresenceEventTaskAssigned, PresenceEventTaskCompleted, PresenceEventPromptDetected, PresenceEventRateLimit, PresenceEventRateCleared, PresenceEventStuckDetected, PresenceEventActivityDetected` — PresenceEvent names for presence state transitions.
@@ -81,13 +111,21 @@ Transitions:
 - `func DispatchStuckDetected(ctx context.Context, instance hsm.Instance) <-chan struct{}` — DispatchStuckDetected sends a "stuck.detected" event to transition to Away state.
 - `func DispatchTaskAssigned(ctx context.Context, instance hsm.Instance) <-chan struct{}` — DispatchTaskAssigned sends a "task.assigned" event to transition from Online to Busy.
 - `func DispatchTaskCompleted(ctx context.Context, instance hsm.Instance) <-chan struct{}` — DispatchTaskCompleted sends a "task.completed" event to transition from Busy to Online.
+- `func FromEnvelope(env *MessageEnvelope) (*api.AgentMessage, error)` — FromEnvelope converts a wire-format envelope to an AgentMessage.
+- `func IsBroadcast(msg *api.AgentMessage) bool` — IsBroadcast returns true if the message is a broadcast message.
+- `func equalFoldASCII(a, b string) bool` — equalFoldASCII compares two strings case-insensitively (ASCII only).
+- `persistFilename` — persistFilename is the name of the agents persistence file.
 - `type Agent` — Agent represents a managed agent instance.
 - `type LifecycleHSM` — LifecycleHSM wraps an agent with HSM-driven lifecycle management.
 - `type Manager` — Manager manages agents, including worktree isolation and lifecycle tracking.
+- `type MessageEnvelope` — MessageEnvelope wraps an AgentMessage for wire transmission.
+- `type MessageRouter` — MessageRouter handles inter-agent message routing per spec §6.4.
 - `type PresenceHSM` — PresenceHSM wraps an agent with HSM-driven presence management.
+- `type Roster` — Roster manages all participants in a session.
 - `type SessionHandle` — SessionHandle represents a running session.
 - `type SessionSpawner` — SessionSpawner is the interface that the agent control plane uses to spawn, stop, and kill sessions.
 - `type agentHSMs` — agentHSMs holds the per-agent lifecycle and presence HSMs plus control state.
+- `type persister` — persister handles reading and writing agent definitions to disk.
 
 ### Constants
 
@@ -119,6 +157,14 @@ const (
 ```
 
 PresenceEvent names for presence state transitions.
+
+#### persistFilename
+
+```go
+const persistFilename = "agents.json"
+```
+
+persistFilename is the name of the agents persistence file.
 
 
 ### Variables
@@ -376,6 +422,31 @@ func DispatchTaskCompleted(ctx context.Context, instance hsm.Instance) <-chan st
 
 DispatchTaskCompleted sends a "task.completed" event to transition from Busy to Online.
 
+#### FromEnvelope
+
+```go
+func FromEnvelope(env *MessageEnvelope) (*api.AgentMessage, error)
+```
+
+FromEnvelope converts a wire-format envelope to an AgentMessage.
+
+#### IsBroadcast
+
+```go
+func IsBroadcast(msg *api.AgentMessage) bool
+```
+
+IsBroadcast returns true if the message is a broadcast message.
+
+#### equalFoldASCII
+
+```go
+func equalFoldASCII(a, b string) bool
+```
+
+equalFoldASCII compares two strings case-insensitively (ASCII only).
+This is faster than strings.EqualFold for ASCII-only slugs.
+
 
 ## type Agent
 
@@ -552,6 +623,7 @@ type Manager struct {
 	dispatcher event.Dispatcher
 	resolver   *paths.Resolver
 	worktrees  *worktree.Manager
+	persist    *persister
 
 	// baseBranches tracks the base_branch per repo_root, recorded at the time
 	// the first agent for that repository is added (spec §5.7.1).
@@ -561,6 +633,12 @@ type Manager struct {
 	// Per spec §5.7.1, when git symbolic-ref fails (detached HEAD), base_branch
 	// MUST be set to this value. If this is also empty, the add operation MUST fail.
 	mergeTargetBranch string
+
+	// monitorUnsub is the unsubscribe function for the monitor event subscription.
+	monitorUnsub func()
+
+	// connectionUnsub is the unsubscribe function for the connection event subscription.
+	connectionUnsub func()
 }
 ```
 
@@ -652,6 +730,16 @@ func () List() []*Agent
 
 List returns all agents.
 
+#### Manager.LoadPersisted
+
+```go
+func () LoadPersisted(ctx context.Context) error
+```
+
+LoadPersisted loads agent definitions from disk and registers them.
+This should be called on daemon startup to restore agents that survived a restart.
+Agents are loaded in their persisted state (lifecycle=pending, presence=online).
+
 #### Manager.PresenceHSMFor
 
 ```go
@@ -727,6 +815,36 @@ Stop gracefully stops an agent's session and waits for it to exit.
 The stopping flag is set so watchSession knows this was intentional
 and transitions to Terminated (not Errored).
 
+#### Manager.handleConnectionEvent
+
+```go
+func () handleConnectionEvent(ctx context.Context, evt event.Event)
+```
+
+handleConnectionEvent maps connection events to presence HSM transitions
+for remote agents per spec §5.5.8 and §6.5.
+
+#### Manager.handleMonitorEvent
+
+```go
+func () handleMonitorEvent(ctx context.Context, evt event.Event)
+```
+
+handleMonitorEvent maps PTY monitor events to presence HSM transitions.
+Per spec §7.6:
+  - TypePTYActivity  -> task.assigned   (Online -> Busy)
+  - TypePTYIdle      -> prompt.detected (Busy -> Online)
+  - TypePTYStuck     -> stuck.detected  (* -> Away)
+
+#### Manager.persistAgents
+
+```go
+func () persistAgents()
+```
+
+persistAgents saves the current agent definitions to disk.
+Must be called with m.mu held (at least RLock).
+
 #### Manager.resolveLocalRepoRoot
 
 ```go
@@ -736,6 +854,32 @@ func () resolveLocalRepoRoot(loc api.Location) (string, error)
 resolveLocalRepoRoot resolves the repo_root for a local agent.
 If location.RepoPath is set, it is validated; otherwise the current
 working directory's repo root is used.
+
+#### Manager.setupConnectionSubscription
+
+```go
+func () setupConnectionSubscription()
+```
+
+setupConnectionSubscription subscribes to connection events and dispatches
+the appropriate presence HSM transitions per spec §5.5.8 and §6.5:
+  - connection.lost      -> stuck.detected  (* -> Away)
+  - connection.recovered -> activity.detected (Away -> Online)
+
+Remote agents transition to Away when hub connection is lost and return
+to Online when the connection is recovered and replay is complete.
+
+#### Manager.setupMonitorSubscription
+
+```go
+func () setupMonitorSubscription()
+```
+
+setupMonitorSubscription subscribes to PTY monitor events and dispatches
+the appropriate presence HSM transitions per spec §7.6:
+  - pty.activity  -> ActivityDetected -> Busy
+  - pty.idle      -> PromptDetected   -> Online
+  - pty.stuck     -> StuckDetected    -> Away
 
 #### Manager.watchSession
 
@@ -750,6 +894,142 @@ that launched it. The caller's context may be canceled independently.
 
 If stopping is true (intentional Stop/Kill), lifecycle → Terminated.
 If stopping is false (unexpected crash), lifecycle → Errored.
+
+
+## type MessageEnvelope
+
+```go
+type MessageEnvelope struct {
+	// ID is the message ID (base-10 string per spec §9.1.3.1).
+	ID string `json:"id"`
+
+	// From is the sender runtime ID (base-10 string).
+	From string `json:"from"`
+
+	// To is the recipient runtime ID (base-10 string).
+	// "0" indicates broadcast.
+	To string `json:"to"`
+
+	// ToSlug is the original recipient token from the message.
+	ToSlug string `json:"to_slug"`
+
+	// Content is the message body.
+	Content string `json:"content"`
+
+	// Timestamp is the message timestamp (RFC 3339 UTC).
+	Timestamp string `json:"timestamp"`
+}
+```
+
+MessageEnvelope wraps an AgentMessage for wire transmission.
+This is the JSON format used on NATS P.comm.* subjects.
+
+See spec §5.5.7.1 and §9.1.3.1 for wire format requirements.
+
+### Functions returning MessageEnvelope
+
+#### ToEnvelope
+
+```go
+func ToEnvelope(msg *api.AgentMessage) *MessageEnvelope
+```
+
+ToEnvelope converts an AgentMessage to a wire-format envelope.
+
+
+## type MessageRouter
+
+```go
+type MessageRouter struct {
+	roster     *Roster
+	dispatcher event.Dispatcher
+	localID    muid.MUID // ID of local participant (manager or director)
+	hostID     string    // host_id for this router (empty for director)
+}
+```
+
+MessageRouter handles inter-agent message routing per spec §6.4.
+
+The router resolves ToSlug to runtime IDs, enriches messages with
+sender information, and dispatches to the appropriate channels.
+
+### Functions returning MessageRouter
+
+#### NewMessageRouter
+
+```go
+func NewMessageRouter(roster *Roster, dispatcher event.Dispatcher, localID muid.MUID, hostID string) *MessageRouter
+```
+
+NewMessageRouter creates a new message router.
+localID is the runtime ID of the local participant (manager or director).
+hostID is the host identifier (empty string for director).
+
+
+### Methods
+
+#### MessageRouter.BroadcastMessage
+
+```go
+func () BroadcastMessage(ctx context.Context, senderID muid.MUID, content string) (*api.AgentMessage, error)
+```
+
+BroadcastMessage broadcasts a message to all participants.
+This is typically used by the director.
+
+Dispatches message.broadcast event with the message data.
+
+See spec §6.4.1.
+
+#### MessageRouter.DeliverMessage
+
+```go
+func () DeliverMessage(ctx context.Context, msg *api.AgentMessage) error
+```
+
+DeliverMessage delivers an inbound message to a recipient.
+This is called by the host manager when a message arrives for a local participant.
+
+Dispatches message.inbound event with the message data.
+
+See spec §6.4.1.
+
+#### MessageRouter.ResolveToSlug
+
+```go
+func () ResolveToSlug(toSlug string) (muid.MUID, error)
+```
+
+ResolveToSlug resolves a ToSlug string to a recipient runtime ID.
+Returns (recipient ID, error). BroadcastID (0) is returned for broadcast targets.
+
+Resolution rules per spec §6.4.1.3:
+  - "all", "broadcast", "*" -> BroadcastID
+  - "director" -> director runtime ID
+  - "manager" -> local host manager runtime ID
+  - "manager@<host_id>" -> specific host manager runtime ID
+  - Otherwise -> agent_slug lookup
+
+#### MessageRouter.RouteMessage
+
+```go
+func () RouteMessage(ctx context.Context, senderID muid.MUID, toSlug, content string) (*api.AgentMessage, error)
+```
+
+RouteMessage routes an outbound message from an agent.
+This is called by the host manager when it detects an outbound message
+from an agent's PTY output (via adapter pattern matching).
+
+The router:
+ 1. Sets From to the sender runtime ID
+ 2. Generates a unique message ID
+ 3. Sets Timestamp to current time (UTC)
+ 4. Resolves ToSlug to a recipient runtime ID
+ 5. Dispatches message.outbound event
+
+Returns the enriched message or an error if resolution fails.
+
+See spec §6.4.1.
 
 
 ## type PresenceHSM
@@ -846,6 +1126,154 @@ func () setPresenceState(state api.PresenceState)
 setPresenceState updates the internal state and synchronizes with the agent.
 
 
+## type Roster
+
+```go
+type Roster struct {
+	mu           sync.RWMutex
+	participants map[muid.MUID]*api.Participant
+	slugIndex    map[string]muid.MUID // slug -> participant ID for lookups
+	dispatcher   event.Dispatcher
+	directorID   muid.MUID
+}
+```
+
+Roster manages all participants in a session.
+The roster includes agents, host managers (manager agents), and the director.
+
+See spec §6.2.
+
+### Functions returning Roster
+
+#### NewRoster
+
+```go
+func NewRoster(dispatcher event.Dispatcher) *Roster
+```
+
+NewRoster creates a new roster with the given event dispatcher.
+
+
+### Methods
+
+#### Roster.AddAgent
+
+```go
+func () AddAgent(agent *api.Agent, lifecycle api.LifecycleState, presence api.PresenceState)
+```
+
+AddAgent registers an agent in the roster.
+
+#### Roster.AddManager
+
+```go
+func () AddManager(id muid.MUID, name, hostID, about string)
+```
+
+AddManager registers a host manager in the roster.
+The slug is "manager@<hostID>" for remote managers, or "manager" for local.
+
+#### Roster.DirectorID
+
+```go
+func () DirectorID() muid.MUID
+```
+
+DirectorID returns the director's runtime ID, or 0 if no director is registered.
+
+#### Roster.Get
+
+```go
+func () Get(id muid.MUID) *api.Participant
+```
+
+Get returns a participant by ID.
+
+#### Roster.GetBySlug
+
+```go
+func () GetBySlug(slug string) *api.Participant
+```
+
+GetBySlug returns a participant by slug.
+Slug lookup is case-insensitive per spec §6.4.1.3.
+
+#### Roster.List
+
+```go
+func () List() []api.Participant
+```
+
+List returns all participants in the roster.
+
+#### Roster.ListAgents
+
+```go
+func () ListAgents() []api.Participant
+```
+
+ListAgents returns all agent participants.
+
+#### Roster.ListManagers
+
+```go
+func () ListManagers() []api.Participant
+```
+
+ListManagers returns all manager participants.
+
+#### Roster.RemoveParticipant
+
+```go
+func () RemoveParticipant(id muid.MUID)
+```
+
+RemoveParticipant removes a participant from the roster.
+
+#### Roster.SetDirector
+
+```go
+func () SetDirector(id muid.MUID, name, about string)
+```
+
+SetDirector registers the director in the roster.
+There can only be one director; calling this replaces any existing director.
+
+#### Roster.UpdateCurrentTask
+
+```go
+func () UpdateCurrentTask(id muid.MUID, task string)
+```
+
+UpdateCurrentTask updates the current task of a busy participant.
+Per spec §6.3, this enables other agents to know what busy agents are working on.
+
+#### Roster.UpdateLifecycle
+
+```go
+func () UpdateLifecycle(id muid.MUID, lifecycle api.LifecycleState)
+```
+
+UpdateLifecycle updates the lifecycle state of an agent participant.
+
+#### Roster.UpdatePresence
+
+```go
+func () UpdatePresence(id muid.MUID, presence api.PresenceState)
+```
+
+UpdatePresence updates the presence state of a participant.
+
+#### Roster.emitRosterUpdated
+
+```go
+func () emitRosterUpdated()
+```
+
+emitRosterUpdated dispatches a roster.updated event.
+Must be called with r.mu held.
+
+
 ## type SessionHandle
 
 ```go
@@ -923,5 +1351,56 @@ func () setStopping(v bool)
 ```
 
 setStopping atomically sets the stopping flag.
+
+
+## type persister
+
+```go
+type persister struct {
+	mu       sync.Mutex
+	resolver *paths.Resolver
+}
+```
+
+persister handles reading and writing agent definitions to disk.
+
+### Functions returning persister
+
+#### newPersister
+
+```go
+func newPersister(resolver *paths.Resolver) *persister
+```
+
+newPersister creates a new persister with the given resolver.
+
+
+### Methods
+
+#### persister.filePath
+
+```go
+func () filePath() string
+```
+
+filePath returns the full path to the persistence file.
+
+#### persister.load
+
+```go
+func () load() ([]api.Agent, error)
+```
+
+load reads persisted agent definitions from disk.
+Returns an empty slice (not an error) if the file does not exist.
+
+#### persister.save
+
+```go
+func () save(agents []api.Agent) error
+```
+
+save writes agent definitions to disk atomically.
+It creates the data directory if it does not exist.
 
 

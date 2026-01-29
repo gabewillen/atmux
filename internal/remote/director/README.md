@@ -39,6 +39,10 @@ type Director struct {
 	kv     *natsconn.KVStore
 	cfg    *config.Config
 	prefix string
+
+	// peerMUID is the director's runtime ID (non-zero, per spec §3.22).
+	peerMUID muid.MUID
+	// peerID is peerMUID encoded as a base-10 string for wire use.
 	peerID string
 
 	// hosts tracks connected remote hosts by host_id.
@@ -115,6 +119,19 @@ Replay sends a replay request to a remote host.
 
 Per spec §5.5.7.2.1: the director MUST fail fast if the host is disconnected.
 
+#### Director.ReplayWithSubscription
+
+```go
+func () ReplayWithSubscription(ctx context.Context, hostID, sessionID string, handler func(data []byte)) (*protocol.ReplayResponse, error)
+```
+
+ReplayWithSubscription subscribes to PTY output first, then sends a replay
+request. This ordering prevents the race window where the manager publishes
+replay bytes before the director has subscribed to the PTY output subject.
+
+Callers that use Replay and SubscribePTYOutput separately MUST ensure
+SubscribePTYOutput is called before Replay.
+
 #### Director.SendPing
 
 ```go
@@ -139,6 +156,9 @@ func () SetHostDisconnected(hostID string)
 
 SetHostDisconnected marks a host as disconnected.
 Called when the NATS connection to a host is lost.
+
+Per spec §5.5.7.2.1: when a host disconnects, agents running on that host
+should transition to Away state. This is signaled via connection.lost event.
 
 #### Director.Spawn
 
@@ -175,6 +195,9 @@ func () SubscribePTYOutput(hostID, sessionID string, handler func(data []byte)) 
 SubscribePTYOutput subscribes to PTY output for a session on a remote host.
 The handler receives raw PTY output bytes.
 
+When used with Replay, this MUST be called before Replay to avoid missing
+replay bytes. Prefer ReplayWithSubscription which enforces this ordering.
+
 #### Director.handleHandshake
 
 ```go
@@ -194,6 +217,10 @@ func () handleHostEvent(msg *nats.Msg)
 ```
 
 handleHostEvent processes an event from a remote host.
+
+Per spec §9.1.4: the director routes events based on the EventMessage
+Type field: broadcast to all subscribers, multicast to specified targets,
+unicast to a single target.
 
 #### Director.replyControl
 

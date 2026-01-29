@@ -7,6 +7,7 @@ package api
 
 import (
 	"strings"
+	"time"
 
 	"github.com/stateforward/hsm-go/muid"
 )
@@ -332,6 +333,132 @@ type RosterEntry struct {
 
 	// Presence is the current presence state.
 	Presence PresenceState
+}
+
+// ParticipantType indicates the type of a roster participant.
+// See spec §6.2 and §6.4.
+type ParticipantType string
+
+const (
+	// ParticipantAgent indicates a subordinate agent.
+	ParticipantAgent ParticipantType = "agent"
+
+	// ParticipantManager indicates a host manager (manager agent).
+	ParticipantManager ParticipantType = "manager"
+
+	// ParticipantDirector indicates the director.
+	ParticipantDirector ParticipantType = "director"
+)
+
+// Participant represents an entity in the roster that can send and receive messages.
+// This includes agents, host managers, and the director.
+// See spec §6.2 and §6.4.
+type Participant struct {
+	// ID is the runtime ID of this participant.
+	// Must be non-zero (0 is reserved for BroadcastID per spec §3.22).
+	ID muid.MUID
+
+	// Type indicates whether this is an agent, manager, or director.
+	Type ParticipantType
+
+	// Name is the display name of the participant.
+	Name string
+
+	// Slug is the addressable identifier.
+	// For agents: agent_slug (e.g., "backend-dev")
+	// For managers: "manager@<host_id>" or just "manager" for local
+	// For director: "director"
+	Slug string
+
+	// About is a description of the participant's purpose.
+	About string
+
+	// HostID is the host identifier for managers and remote agents.
+	// Empty for local agents and the director.
+	HostID string
+
+	// Presence is the current presence state.
+	Presence PresenceState
+
+	// Lifecycle is the current lifecycle state (only applicable to agents).
+	Lifecycle LifecycleState
+
+	// CurrentTask is the current task description if the participant is busy.
+	// Per spec §6.3, this enables other agents to know what busy agents are working on.
+	CurrentTask string
+}
+
+// AgentMessage represents a message between participants.
+// See spec §6.4 for the inter-agent messaging specification.
+type AgentMessage struct {
+	// ID is the unique message identifier.
+	// Must be non-zero (0 is reserved per spec §3.22).
+	ID muid.MUID
+
+	// From is the sender runtime ID (set by publishing component).
+	From muid.MUID
+
+	// To is the recipient runtime ID (set by publishing component, or BroadcastID).
+	// BroadcastID (0) indicates a broadcast message.
+	To muid.MUID
+
+	// ToSlug is the recipient token captured from text (typically agent_slug).
+	// Case-insensitive. Used for resolution per spec §6.4.1.3.
+	// Special values: "all", "broadcast", "*" → BroadcastID
+	//                 "director" → director runtime ID
+	//                 "manager" → local host manager runtime ID
+	//                 "manager@<host_id>" → specific host manager runtime ID
+	ToSlug string
+
+	// Content is the message body.
+	Content string
+
+	// Timestamp is when the message was created (UTC).
+	Timestamp time.Time
+}
+
+// BroadcastID is the sentinel ID value (0) used for broadcast messages.
+// See spec §3.22 and §6.4.
+const BroadcastID muid.MUID = 0
+
+// DirectorSlug is the reserved slug for addressing the director.
+// See spec §6.4.
+const DirectorSlug = "director"
+
+// ManagerSlug is the reserved slug for addressing the local host manager.
+// See spec §6.4.
+const ManagerSlug = "manager"
+
+// IsBroadcastSlug returns true if the slug represents a broadcast target.
+// Broadcast slugs are: "all", "broadcast", "*" (case-insensitive).
+// See spec §6.4.1.3.
+func IsBroadcastSlug(slug string) bool {
+	s := strings.ToLower(slug)
+	return s == "all" || s == "broadcast" || s == "*"
+}
+
+// IsDirectorSlug returns true if the slug addresses the director.
+// See spec §6.4.1.3.
+func IsDirectorSlug(slug string) bool {
+	return strings.ToLower(slug) == DirectorSlug
+}
+
+// IsManagerSlug returns true if the slug addresses a host manager.
+// This includes "manager" (local) and "manager@<host_id>" (specific).
+// See spec §6.4.1.3.
+func IsManagerSlug(slug string) bool {
+	s := strings.ToLower(slug)
+	return s == ManagerSlug || strings.HasPrefix(s, "manager@")
+}
+
+// ParseManagerHostID extracts the host_id from a "manager@<host_id>" slug.
+// Returns empty string if not a manager@host_id format.
+func ParseManagerHostID(slug string) string {
+	s := strings.ToLower(slug)
+	if strings.HasPrefix(s, "manager@") {
+		return slug[8:] // preserve original case for host_id
+	}
+	return ""
 }
 
 // SpecVersion is the version of the specification this implementation targets.

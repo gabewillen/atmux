@@ -8,20 +8,57 @@ This package contains the stable API types that may be imported by external
 packages. All types in this package are agent-agnostic; the Agent.Adapter
 field is a string reference to an adapter name, not a typed dependency.
 
+- `BroadcastID` — BroadcastID is the sentinel ID value (0) used for broadcast messages.
+- `DirectorSlug` — DirectorSlug is the reserved slug for addressing the director.
+- `ManagerSlug` — ManagerSlug is the reserved slug for addressing the local host manager.
 - `SpecVersion` — SpecVersion is the version of the specification this implementation targets.
+- `func IsBroadcastSlug(slug string) bool` — IsBroadcastSlug returns true if the slug represents a broadcast target.
+- `func IsDirectorSlug(slug string) bool` — IsDirectorSlug returns true if the slug addresses the director.
+- `func IsManagerSlug(slug string) bool` — IsManagerSlug returns true if the slug addresses a host manager.
+- `func ParseManagerHostID(slug string) string` — ParseManagerHostID extracts the host_id from a "manager@<host_id>" slug.
 - `func itoa(i int) string` — itoa converts an integer to a string without importing strconv.
+- `type AgentMessage` — AgentMessage represents a message between participants.
 - `type AgentValidationError` — AgentValidationError represents an error validating an Agent.
 - `type Agent` — Agent represents an active agent instance with a name, description, assigned adapter, and dedicated worktree.
 - `type InvalidLocationTypeError` — InvalidLocationTypeError is returned when parsing an invalid location type string.
 - `type LifecycleState` — LifecycleState represents the state of an agent's lifecycle.
 - `type LocationType` — LocationType indicates whether an agent runs locally or via SSH.
 - `type Location` — Location specifies where an agent runs.
+- `type ParticipantType` — ParticipantType indicates the type of a roster participant.
+- `type Participant` — Participant represents an entity in the roster that can send and receive messages.
 - `type PresenceState` — PresenceState represents the availability state of an agent.
 - `type RosterEntry` — RosterEntry represents an agent in the roster with presence information.
 - `type SessionValidationError` — SessionValidationError represents an error validating a Session.
 - `type Session` — Session represents an amux session containing one or more agent PTYs.
 
 ### Constants
+
+#### BroadcastID
+
+```go
+const BroadcastID muid.MUID = 0
+```
+
+BroadcastID is the sentinel ID value (0) used for broadcast messages.
+See spec §3.22 and §6.4.
+
+#### DirectorSlug
+
+```go
+const DirectorSlug = "director"
+```
+
+DirectorSlug is the reserved slug for addressing the director.
+See spec §6.4.
+
+#### ManagerSlug
+
+```go
+const ManagerSlug = "manager"
+```
+
+ManagerSlug is the reserved slug for addressing the local host manager.
+See spec §6.4.
 
 #### SpecVersion
 
@@ -33,6 +70,44 @@ SpecVersion is the version of the specification this implementation targets.
 
 
 ### Functions
+
+#### IsBroadcastSlug
+
+```go
+func IsBroadcastSlug(slug string) bool
+```
+
+IsBroadcastSlug returns true if the slug represents a broadcast target.
+Broadcast slugs are: "all", "broadcast", "*" (case-insensitive).
+See spec §6.4.1.3.
+
+#### IsDirectorSlug
+
+```go
+func IsDirectorSlug(slug string) bool
+```
+
+IsDirectorSlug returns true if the slug addresses the director.
+See spec §6.4.1.3.
+
+#### IsManagerSlug
+
+```go
+func IsManagerSlug(slug string) bool
+```
+
+IsManagerSlug returns true if the slug addresses a host manager.
+This includes "manager" (local) and "manager@<host_id>" (specific).
+See spec §6.4.1.3.
+
+#### ParseManagerHostID
+
+```go
+func ParseManagerHostID(slug string) string
+```
+
+ParseManagerHostID extracts the host_id from a "manager@<host_id>" slug.
+Returns empty string if not a manager@host_id format.
 
 #### itoa
 
@@ -104,6 +179,40 @@ Validate checks that the Agent meets all invariants:
 
 Returns nil if valid, or an AgentValidationError describing the first violation.
 
+
+## type AgentMessage
+
+```go
+type AgentMessage struct {
+	// ID is the unique message identifier.
+	// Must be non-zero (0 is reserved per spec §3.22).
+	ID muid.MUID
+
+	// From is the sender runtime ID (set by publishing component).
+	From muid.MUID
+
+	// To is the recipient runtime ID (set by publishing component, or BroadcastID).
+	// BroadcastID (0) indicates a broadcast message.
+	To muid.MUID
+
+	// ToSlug is the recipient token captured from text (typically agent_slug).
+	// Case-insensitive. Used for resolution per spec §6.4.1.3.
+	// Special values: "all", "broadcast", "*" → BroadcastID
+	//                 "director" → director runtime ID
+	//                 "manager" → local host manager runtime ID
+	//                 "manager@<host_id>" → specific host manager runtime ID
+	ToSlug string
+
+	// Content is the message body.
+	Content string
+
+	// Timestamp is when the message was created (UTC).
+	Timestamp time.Time
+}
+```
+
+AgentMessage represents a message between participants.
+See spec §6.4 for the inter-agent messaging specification.
 
 ## type AgentValidationError
 
@@ -273,6 +382,76 @@ func () String() string
 ```
 
 String returns the string representation of the location type.
+
+
+## type Participant
+
+```go
+type Participant struct {
+	// ID is the runtime ID of this participant.
+	// Must be non-zero (0 is reserved for BroadcastID per spec §3.22).
+	ID muid.MUID
+
+	// Type indicates whether this is an agent, manager, or director.
+	Type ParticipantType
+
+	// Name is the display name of the participant.
+	Name string
+
+	// Slug is the addressable identifier.
+	// For agents: agent_slug (e.g., "backend-dev")
+	// For managers: "manager@<host_id>" or just "manager" for local
+	// For director: "director"
+	Slug string
+
+	// About is a description of the participant's purpose.
+	About string
+
+	// HostID is the host identifier for managers and remote agents.
+	// Empty for local agents and the director.
+	HostID string
+
+	// Presence is the current presence state.
+	Presence PresenceState
+
+	// Lifecycle is the current lifecycle state (only applicable to agents).
+	Lifecycle LifecycleState
+
+	// CurrentTask is the current task description if the participant is busy.
+	// Per spec §6.3, this enables other agents to know what busy agents are working on.
+	CurrentTask string
+}
+```
+
+Participant represents an entity in the roster that can send and receive messages.
+This includes agents, host managers, and the director.
+See spec §6.2 and §6.4.
+
+## type ParticipantType
+
+```go
+type ParticipantType string
+```
+
+ParticipantType indicates the type of a roster participant.
+See spec §6.2 and §6.4.
+
+### Constants
+
+#### ParticipantAgent, ParticipantManager, ParticipantDirector
+
+```go
+const (
+	// ParticipantAgent indicates a subordinate agent.
+	ParticipantAgent ParticipantType = "agent"
+
+	// ParticipantManager indicates a host manager (manager agent).
+	ParticipantManager ParticipantType = "manager"
+
+	// ParticipantDirector indicates the director.
+	ParticipantDirector ParticipantType = "director"
+)
+```
 
 
 ## type PresenceState

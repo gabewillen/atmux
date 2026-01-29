@@ -352,3 +352,125 @@ func TestParseLocationType(t *testing.T) {
 		})
 	}
 }
+
+func TestIsBroadcastSlug(t *testing.T) {
+	tests := []struct {
+		slug   string
+		expect bool
+	}{
+		{"all", true},
+		{"ALL", true},
+		{"All", true},
+		{"broadcast", true},
+		{"BROADCAST", true},
+		{"Broadcast", true},
+		{"*", true},
+		{"director", false},
+		{"manager", false},
+		{"test-agent", false},
+		{"", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.slug, func(t *testing.T) {
+			if got := IsBroadcastSlug(tt.slug); got != tt.expect {
+				t.Errorf("IsBroadcastSlug(%q) = %v, want %v", tt.slug, got, tt.expect)
+			}
+		})
+	}
+}
+
+func TestIsDirectorSlug(t *testing.T) {
+	tests := []struct {
+		slug   string
+		expect bool
+	}{
+		{"director", true},
+		{"DIRECTOR", true},
+		{"Director", true},
+		{"manager", false},
+		{"test-agent", false},
+		{"", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.slug, func(t *testing.T) {
+			if got := IsDirectorSlug(tt.slug); got != tt.expect {
+				t.Errorf("IsDirectorSlug(%q) = %v, want %v", tt.slug, got, tt.expect)
+			}
+		})
+	}
+}
+
+func TestIsManagerSlug(t *testing.T) {
+	tests := []struct {
+		slug   string
+		expect bool
+	}{
+		{"manager", true},
+		{"MANAGER", true},
+		{"Manager", true},
+		{"manager@host-1", true},
+		{"MANAGER@HOST-1", true},
+		{"manager@", true}, // edge case: empty host_id
+		{"director", false},
+		{"test-agent", false},
+		{"managerfoo", false}, // not a prefix match
+		{"", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.slug, func(t *testing.T) {
+			if got := IsManagerSlug(tt.slug); got != tt.expect {
+				t.Errorf("IsManagerSlug(%q) = %v, want %v", tt.slug, got, tt.expect)
+			}
+		})
+	}
+}
+
+func TestParseManagerHostID(t *testing.T) {
+	tests := []struct {
+		slug   string
+		expect string
+	}{
+		{"manager@host-1", "host-1"},
+		{"MANAGER@HOST-1", "HOST-1"}, // preserves original case
+		{"manager@", ""},
+		{"manager", ""},
+		{"director", ""},
+		{"test-agent", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.slug, func(t *testing.T) {
+			if got := ParseManagerHostID(tt.slug); got != tt.expect {
+				t.Errorf("ParseManagerHostID(%q) = %q, want %q", tt.slug, got, tt.expect)
+			}
+		})
+	}
+}
+
+func TestBroadcastID(t *testing.T) {
+	if BroadcastID != 0 {
+		t.Errorf("BroadcastID = %v, want 0", BroadcastID)
+	}
+}
+
+func TestParticipantType(t *testing.T) {
+	tests := []struct {
+		pt     ParticipantType
+		expect string
+	}{
+		{ParticipantAgent, "agent"},
+		{ParticipantManager, "manager"},
+		{ParticipantDirector, "director"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.expect, func(t *testing.T) {
+			if string(tt.pt) != tt.expect {
+				t.Errorf("ParticipantType = %q, want %q", tt.pt, tt.expect)
+			}
+		})
+	}
+}

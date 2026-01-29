@@ -23,6 +23,7 @@
 - [internal/remote/bootstrap](internal/remote/bootstrap/README.md) — Package bootstrap implements SSH-based bootstrapping of remote hosts.
 - [internal/remote/buffer](internal/remote/buffer/README.md) — Package buffer provides a ring buffer for PTY output replay.
 - [internal/remote/director](internal/remote/director/README.md) — Package director implements the director-side remote orchestration for amux.
+- [internal/remote/hub](internal/remote/hub/README.md) — Package hub provides an embedded NATS hub server for the director role.
 - [internal/remote/manager](internal/remote/manager/README.md) — Package manager implements the manager-role daemon for amux remote agents.
 - [internal/remote/natsconn](internal/remote/natsconn/README.md) — Package natsconn provides NATS connection management for amux.
 - [internal/session](internal/session/README.md) — Adapter bridges the session.Manager to the agent.SessionSpawner interface, breaking the import cycle between agent and session packages.

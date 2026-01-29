@@ -214,11 +214,11 @@ func GenerateAuthConfig(prefix string, hosts map[string]string) string {
 	cfg += "  users = [\n"
 
 	for hostID, nkeyPub := range hosts {
-		cfg += fmt.Sprintf("    {\n")
+		cfg += "    {\n"
 		cfg += fmt.Sprintf("      nkey: %s\n", nkeyPub)
-		cfg += fmt.Sprintf("      permissions: {\n")
-		cfg += fmt.Sprintf("        publish: {\n")
-		cfg += fmt.Sprintf("          allow: [\n")
+		cfg += "      permissions: {\n"
+		cfg += "        publish: {\n"
+		cfg += "          allow: [\n"
 		cfg += fmt.Sprintf("            \"%s.handshake.%s\",\n", prefix, hostID)
 		cfg += fmt.Sprintf("            \"%s.events.%s\",\n", prefix, hostID)
 		cfg += fmt.Sprintf("            \"%s.pty.%s.*.out\",\n", prefix, hostID)
@@ -226,20 +226,20 @@ func GenerateAuthConfig(prefix string, hosts map[string]string) string {
 		cfg += fmt.Sprintf("            \"%s.comm.manager.*\",\n", prefix)
 		cfg += fmt.Sprintf("            \"%s.comm.agent.*.>\",\n", prefix)
 		cfg += fmt.Sprintf("            \"%s.comm.broadcast\"\n", prefix)
-		cfg += fmt.Sprintf("          ]\n")
-		cfg += fmt.Sprintf("        }\n")
-		cfg += fmt.Sprintf("        subscribe: {\n")
-		cfg += fmt.Sprintf("          allow: [\n")
+		cfg += "          ]\n"
+		cfg += "        }\n"
+		cfg += "        subscribe: {\n"
+		cfg += "          allow: [\n"
 		cfg += fmt.Sprintf("            \"%s.ctl.%s\",\n", prefix, hostID)
 		cfg += fmt.Sprintf("            \"%s.pty.%s.*.in\",\n", prefix, hostID)
 		cfg += fmt.Sprintf("            \"%s.comm.manager.%s\",\n", prefix, hostID)
 		cfg += fmt.Sprintf("            \"%s.comm.agent.%s.>\",\n", prefix, hostID)
 		cfg += fmt.Sprintf("            \"%s.comm.broadcast\",\n", prefix)
-		cfg += fmt.Sprintf("            \"_INBOX.>\"\n")
-		cfg += fmt.Sprintf("          ]\n")
-		cfg += fmt.Sprintf("        }\n")
-		cfg += fmt.Sprintf("      }\n")
-		cfg += fmt.Sprintf("    },\n")
+		cfg += "            \"_INBOX.>\"\n"
+		cfg += "          ]\n"
+		cfg += "        }\n"
+		cfg += "      }\n"
+		cfg += "    },\n"
 	}
 
 	cfg += "  ]\n"

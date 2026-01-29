@@ -15,7 +15,6 @@ See spec §5.7 for merge strategy requirements.
 
 - `func isConflictError(err error) bool` — isConflictError checks if a git error indicates merge conflicts.
 - `func isDirtyWorktree(gitPath, dir string) (bool, error)` — isDirtyWorktree checks if a worktree has uncommitted changes.
-- `func isGitRepo(dir string) bool` — isGitRepo returns true if the directory is a git repository root.
 - `type Executor` — Executor executes git merge operations.
 - `type Request` — Request represents a merge integration request.
 - `type Result` — Result represents the result of a merge operation.
@@ -38,14 +37,6 @@ func isDirtyWorktree(gitPath, dir string) (bool, error)
 ```
 
 isDirtyWorktree checks if a worktree has uncommitted changes.
-
-#### isGitRepo
-
-```go
-func isGitRepo(dir string) bool
-```
-
-isGitRepo returns true if the directory is a git repository root.
 
 
 ## type Executor
@@ -160,6 +151,14 @@ func () gitMergeAbort(repoRoot string) error
 ```
 
 gitMergeAbort aborts a merge in progress.
+
+#### Executor.isGitRepo
+
+```go
+func () isGitRepo(dir string) bool
+```
+
+isGitRepo returns true if the directory is a git repository root.
 
 #### Executor.validatePreconditions
 

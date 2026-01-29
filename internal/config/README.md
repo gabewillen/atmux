@@ -20,6 +20,7 @@ This package follows the configuration conventions in spec §4.2.8.
 - `defaultLoader`
 - `func HotReloadableKeys() []string` — HotReloadableKeys returns the list of config keys that can be hot-reloaded.
 - `func IsHotReloadable(path string) bool` — IsHotReloadable checks if a config key path is hot-reloadable.
+- `func RedactedAdapters(adapters map[string]any) map[string]any` — RedactedAdapters returns a copy of the adapters config with sensitive values replaced by "[REDACTED]".
 - `func SetDefaultActor(a *Actor)` — SetDefaultActor sets the global config actor.
 - `func Subscribe(handler func(ctx context.Context, change ConfigChange)) func()` — Subscribe registers a handler for config change events using the default dispatcher.
 - `func SubscribeAll(
@@ -29,6 +30,9 @@ This package follows the configuration conventions in spec §4.2.8.
 	onReloadFailed func(ctx context.Context, err string),
 ) func()` — SubscribeAll registers handlers for all config events.
 - `func WatchFile(path string)` — WatchFile adds a file to the watch list for the default actor.
+- `func isSensitiveKey(key string) bool` — isSensitiveKey returns true if the key name suggests a sensitive value.
+- `func redactValue(key string, value any) any` — redactValue recursively redacts sensitive values in adapter config maps.
+- `sensitiveKeys` — sensitiveKeys contains key patterns that should be redacted in config display.
 - `type ActorClosedError` — ActorClosedError indicates the actor is closed.
 - `type Actor` — Actor is the configuration actor that manages config loading and live updates.
 - `type AgentConfig` — AgentConfig holds agent definition settings.
@@ -77,6 +81,17 @@ ErrActorClosed is returned when operating on a closed actor.
 var defaultLoader = NewLoader(nil)
 ```
 
+#### sensitiveKeys
+
+```go
+var sensitiveKeys = []string{
+	"api_key", "token", "secret", "password", "creds",
+	"seed", "private_key", "auth_token", "access_key",
+}
+```
+
+sensitiveKeys contains key patterns that should be redacted in config display.
+
 
 ### Functions
 
@@ -96,6 +111,18 @@ func IsHotReloadable(path string) bool
 ```
 
 IsHotReloadable checks if a config key path is hot-reloadable.
+
+#### RedactedAdapters
+
+```go
+func RedactedAdapters(adapters map[string]any) map[string]any
+```
+
+RedactedAdapters returns a copy of the adapters config with sensitive
+values replaced by "[REDACTED]".
+
+Per spec: adapter configuration may contain secrets (API keys, tokens)
+that MUST NOT be displayed in logs, status output, or debug dumps.
 
 #### SetDefaultActor
 
@@ -135,6 +162,22 @@ func WatchFile(path string)
 ```
 
 WatchFile adds a file to the watch list for the default actor.
+
+#### isSensitiveKey
+
+```go
+func isSensitiveKey(key string) bool
+```
+
+isSensitiveKey returns true if the key name suggests a sensitive value.
+
+#### redactValue
+
+```go
+func redactValue(key string, value any) any
+```
+
+redactValue recursively redacts sensitive values in adapter config maps.
 
 
 ## type Actor
@@ -607,7 +650,38 @@ Config returns the current configuration.
 func () Load() (*Config, error)
 ```
 
-Load loads configuration from all sources in order.
+Load loads configuration from all sources in order per spec §4.2.8:
+ 1. Built-in defaults
+ 2. Adapter defaults (currently not loaded - requires WASM registry)
+ 3. User config (~/.config/amux/config.toml)
+ 4. User adapter config (~/.config/amux/adapters/{name}/config.toml)
+ 5. Project config (.amux/config.toml)
+ 6. Project adapter config (.amux/adapters/{name}/config.toml)
+ 7. Environment variables (AMUX__* prefix)
+
+#### Loader.Reload
+
+```go
+func () Reload() (*Config, error)
+```
+
+Reload re-reads configuration from all sources and updates the loader.
+Returns the new configuration and emits a config.reloaded event on the
+provided dispatcher (if non-nil).
+
+Per spec §4.2.8: configuration reload MUST re-read all layers in order
+and apply environment overrides last.
+
+#### Loader.Watch
+
+```go
+func () Watch(onChange func(*Config)) (cancel func())
+```
+
+Watch starts polling config files for changes and calls onChange when
+a modification is detected. Call the returned cancel function to stop.
+
+The check interval defaults to 5 seconds.
 
 #### Loader.expandPaths
 
@@ -616,6 +690,24 @@ func () expandPaths()
 ```
 
 expandPaths expands all path fields that start with ~/ to the user's home directory.
+
+#### Loader.loadAdapterConfigFile
+
+```go
+func () loadAdapterConfigFile(adapterName, path string) error
+```
+
+loadAdapterConfigFile loads a single adapter config file and merges it
+into the adapters map.
+
+#### Loader.loadAdapterConfigs
+
+```go
+func () loadAdapterConfigs(pathFn func(name string) string)
+```
+
+loadAdapterConfigs loads adapter-specific config files for all known adapters.
+The pathFn is called for each adapter name to get the config file path.
 
 #### Loader.loadEnv
 

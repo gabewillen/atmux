@@ -27,12 +27,24 @@ first when the limit is exceeded. Per-subject publish order MUST be preserved.
 
 Package manager - pty.go provides PTY creation for managed sessions.
 
+- `Version` — Version is the manager daemon version string.
 - `func extractSessionIDFromPTYSubject(subject, prefix, hostID string) string` — extractSessionIDFromPTYSubject extracts the session_id from a PTY input subject.
 - `func startPTY(cmd *exec.Cmd) (io.ReadWriteCloser, error)` — startPTY starts a command in a new PTY and returns the master file descriptor.
 - `type ManagedSession` — ManagedSession represents a PTY session managed by this host manager.
 - `type Manager` — Manager implements the manager-role daemon on a remote host.
 - `type OutboundBuffer` — OutboundBuffer buffers cross-host NATS publications during hub disconnection.
 - `type outboundEntry` — outboundEntry holds a single buffered publication.
+
+### Constants
+
+#### Version
+
+```go
+const Version = "0.1.0-dev"
+```
+
+Version is the manager daemon version string.
+
 
 ### Functions
 
@@ -85,6 +97,9 @@ type ManagedSession struct {
 	// done is closed when the session exits.
 	done chan struct{}
 
+	// startedAt records when the session was created (UTC).
+	startedAt time.Time
+
 	// running indicates whether the session is active.
 	running bool
 
@@ -92,7 +107,15 @@ type ManagedSession struct {
 	// While true, live PTY output MUST NOT be published.
 	replayPending bool
 
-	// liveBuf holds PTY output produced during a replay operation.
+	// awaitingReplay indicates whether the session is waiting for a replay
+	// request after hub reconnection. While true, live PTY output MUST NOT
+	// be published; instead it is buffered in liveBuf.
+	// Per spec §5.5.7.3: after reconnect, the manager MUST NOT publish
+	// live PTY output until a replay request is received for each session.
+	awaitingReplay bool
+
+	// liveBuf holds PTY output produced during a replay operation or
+	// while awaiting a replay request after reconnection.
 	liveBuf []byte
 }
 ```
@@ -119,6 +142,10 @@ type Manager struct {
 	cfg    *config.Config
 	prefix string
 	hostID string
+
+	// peerMUID is the manager's runtime ID (non-zero, per spec §3.22).
+	peerMUID muid.MUID
+	// peerID is peerMUID encoded as a base-10 string for wire use.
 	peerID string
 
 	// handshakeComplete indicates whether the handshake exchange is done.
@@ -170,6 +197,10 @@ func () SetHubConnected(connected bool)
 
 SetHubConnected updates the hub connection state.
 Called by the NATS disconnect/reconnect handlers.
+
+When reconnecting (connected=true), all active sessions are marked as
+awaitingReplay. Live PTY output MUST NOT be published for those sessions
+until a replay request is received, per spec §5.5.7.3.
 
 #### Manager.Start
 
@@ -244,6 +275,18 @@ func () handleSpawn(msg *nats.Msg, ctlMsg *protocol.ControlMessage)
 handleSpawn creates a new PTY session for an agent.
 
 Per spec §5.5.7.3: spawn MUST be idempotent for a given agent_id.
+
+#### Manager.heartbeatLoop
+
+```go
+func () heartbeatLoop(ctx context.Context)
+```
+
+heartbeatLoop sends periodic heartbeat pings to the director at the configured
+interval. If a ping fails (timeout), a warning is logged but the loop continues.
+
+Per spec: after handshake, the manager MUST send heartbeat pings at the
+configured heartbeat_interval to maintain presence.
 
 #### Manager.performHandshake
 

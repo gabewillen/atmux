@@ -41,6 +41,9 @@ type AuthFlow struct{}
 
 AuthFlow tests authentication flows.
 
+Validates: daemon socket connectivity, NKey credential generation,
+credential file permissions.
+
 ### Methods
 
 #### AuthFlow.Name
@@ -67,6 +70,9 @@ type ControlPlaneFlow struct{}
 ```
 
 ControlPlaneFlow tests JSON-RPC control plane flows.
+
+Validates: all required JSON-RPC methods are available, error codes
+follow spec §12, permission enforcement works.
 
 ### Methods
 
@@ -135,6 +141,8 @@ type MenuFlow struct{}
 
 MenuFlow tests menu/TUI navigation flows.
 
+Validates: adapter manifest describes at least one menu structure.
+
 ### Methods
 
 #### MenuFlow.Name
@@ -161,6 +169,8 @@ type NotificationFlow struct{}
 ```
 
 NotificationFlow tests notification/messaging flows.
+
+Validates: event types are well-formed, event dispatch reaches subscribers.
 
 ### Methods
 
@@ -268,6 +278,9 @@ type StatusFlow struct{}
 ```
 
 StatusFlow tests status/presence/lifecycle flows.
+
+Validates: lifecycle state transitions follow the HSM model,
+presence state transitions are valid.
 
 ### Methods
 

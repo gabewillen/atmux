@@ -32,6 +32,7 @@ EventMessage envelopes are published on the host events subject
 - `func PTYInputSubject(prefix, hostID, sessionID string) string` — PTYInputSubject returns the PTY input subject for a session.
 - `func PTYInputWildcard(prefix, hostID string) string` — PTYInputWildcard returns the wildcard subscription for all PTY input on a host.
 - `func PTYOutputSubject(prefix, hostID, sessionID string) string` — PTYOutputSubject returns the PTY output subject for a session.
+- `type AgentTerminatedEvent` — AgentTerminatedEvent is the payload for "agent.terminated" events.
 - `type ConnectionEstablishedEvent` — ConnectionEstablishedEvent is the payload for "connection.established" events.
 - `type ConnectionLostEvent` — ConnectionLostEvent is the payload for "connection.lost" events.
 - `type ConnectionRecoveredEvent` — ConnectionRecoveredEvent is the payload for "connection.recovered" events.
@@ -39,6 +40,7 @@ EventMessage envelopes are published on the host events subject
 - `type ErrorPayload` — ErrorPayload is the error response payload.
 - `type EventMessage` — EventMessage is the wire envelope for events transported over NATS.
 - `type HandshakePayload` — HandshakePayload is the handshake request/response payload.
+- `type HostInfoPayload` — HostInfoPayload carries host metadata in the handshake.
 - `type KillRequest` — KillRequest is the kill request payload.
 - `type KillResponse` — KillResponse is the kill response payload.
 - `type MessageType` — MessageType represents the event message routing type.
@@ -192,6 +194,17 @@ PTYOutputSubject returns the PTY output subject for a session.
 Format: P.pty.<host_id>.<session_id>.out
 
 
+## type AgentTerminatedEvent
+
+```go
+type AgentTerminatedEvent struct {
+	SessionID string `json:"session_id"`
+	AgentID   string `json:"agent_id"`
+}
+```
+
+AgentTerminatedEvent is the payload for "agent.terminated" events.
+
 ## type ConnectionEstablishedEvent
 
 ```go
@@ -207,9 +220,11 @@ ConnectionEstablishedEvent is the payload for "connection.established" events.
 
 ```go
 type ConnectionLostEvent struct {
-	PeerID    string `json:"peer_id"`
-	Timestamp string `json:"timestamp"`
-	Reason    string `json:"reason"`
+	PeerID    string   `json:"peer_id"`
+	HostID    string   `json:"host_id,omitempty"`
+	Timestamp string   `json:"timestamp"`
+	Reason    string   `json:"reason,omitempty"`
+	Sessions  []string `json:"sessions,omitempty"`
 }
 ```
 
@@ -322,6 +337,14 @@ func NewBroadcastEvent(name string, data any) (*EventMessage, error)
 
 NewBroadcastEvent creates a broadcast EventMessage.
 
+#### NewMulticastEvent
+
+```go
+func NewMulticastEvent(name string, targets []string, data any) (*EventMessage, error)
+```
+
+NewMulticastEvent creates a multicast EventMessage routed to specified targets.
+
 #### NewUnicastEvent
 
 ```go
@@ -346,12 +369,33 @@ type HandshakePayload struct {
 
 	// HostID is the host identifier.
 	HostID string `json:"host_id"`
+
+	// HostInfo contains optional host metadata (version, OS, arch).
+	// Populated by the manager during handshake.
+	HostInfo *HostInfoPayload `json:"host_info,omitempty"`
 }
 ```
 
 HandshakePayload is the handshake request/response payload.
 
 See spec §5.5.7.3.
+
+## type HostInfoPayload
+
+```go
+type HostInfoPayload struct {
+	// Version is the daemon version string.
+	Version string `json:"version"`
+
+	// OS is the operating system (runtime.GOOS).
+	OS string `json:"os"`
+
+	// Arch is the CPU architecture (runtime.GOARCH).
+	Arch string `json:"arch"`
+}
+```
+
+HostInfoPayload carries host metadata in the handshake.
 
 ## type KillRequest
 

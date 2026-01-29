@@ -241,6 +241,7 @@ type Steps struct {
 	GoModTidy    *StepResult `toml:"go_mod_tidy"`
 	GoVet        *StepResult `toml:"go_vet"`
 	GolangciLint *StepResult `toml:"golangci_lint"`
+	Staticcheck  *StepResult `toml:"staticcheck"`
 	TestsRace    *StepResult `toml:"tests_race"`
 	Tests        *StepResult `toml:"tests"`
 	Coverage     *StepResult `toml:"coverage"`

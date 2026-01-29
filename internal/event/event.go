@@ -36,6 +36,12 @@ const (
 
 	// Presence events
 	TypePresenceChanged Type = "presence.changed"
+	TypeRosterUpdated   Type = "roster.updated"
+
+	// Message events (inter-agent messaging per spec §6.4.2)
+	TypeMessageOutbound  Type = "message.outbound"  // Agent → Host manager: Agent sent a message
+	TypeMessageInbound   Type = "message.inbound"   // Host manager → Agent/Manager/Director: Message delivered
+	TypeMessageBroadcast Type = "message.broadcast" // Director → All: Broadcast to all participants
 
 	// PTY events
 	TypePTYOutput   Type = "pty.output"

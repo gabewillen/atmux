@@ -12,6 +12,15 @@ The package provides stable interfaces that can be implemented with
 either local/noop dispatch (during early development) or full
 network-aware dispatch (Phase 7 and beyond).
 
+Package event - nats.go provides NATS-routed event dispatch.
+
+Per CLAUDE.md: "ALWAYS route all events through NATS subjects;
+never dispatch locally bypassing NATS."
+
+The NATSDispatcher publishes events to a configurable NATS subject
+prefix and subscribes for events on that same prefix. This ensures
+that events are visible to all nodes in the cluster.
+
 - `ErrDispatcherClosed` — ErrDispatcherClosed is returned when dispatching to a closed dispatcher.
 - `func Dispatch(ctx context.Context, event Event) error` — Dispatch sends an event using the default dispatcher.
 - `func SetDefaultDispatcher(d Dispatcher)` — SetDefaultDispatcher sets the global event dispatcher.
@@ -21,9 +30,12 @@ network-aware dispatch (Phase 7 and beyond).
 - `type Event` — Event represents an immutable event record.
 - `type Handler` — Handler is a function that handles an event.
 - `type LocalDispatcher` — LocalDispatcher is a simple in-process event dispatcher.
+- `type NATSDispatcherOption` — NATSDispatcherOption configures a NATSDispatcher.
+- `type NATSDispatcher` — NATSDispatcher routes events through NATS subjects per spec §9.1.4.
 - `type NoopDispatcher` — NoopDispatcher is a no-op dispatcher for testing.
 - `type Subscription` — Subscription represents an event subscription.
 - `type Type` — Type represents an event type identifier.
+- `type jsonEvent` — jsonEvent is the intermediate representation for JSON serialization.
 
 ### Variables
 
@@ -176,6 +188,15 @@ func () MarshalJSON() ([]byte, error)
 MarshalJSON implements json.Marshaler for wire encoding.
 IDs are encoded as base-10 strings per spec §4.2.3.
 
+#### Event.UnmarshalJSON
+
+```go
+func () UnmarshalJSON(data []byte) error
+```
+
+UnmarshalJSON implements json.Unmarshaler for wire decoding.
+Reverses MarshalJSON: parses base-10 string IDs back to muid.MUID.
+
 #### Event.WithTarget
 
 ```go
@@ -260,6 +281,122 @@ func () matches(sub *Subscription, event Event) bool
 matches checks if a subscription matches an event.
 
 
+## type NATSDispatcher
+
+```go
+type NATSDispatcher struct {
+	mu          sync.RWMutex
+	nc          *nats.Conn
+	prefix      string
+	localPeerID string // base-10 encoded muid.MUID
+	subscribers map[muid.MUID]*Subscription
+	natsSubs    []*nats.Subscription
+	closed      bool
+}
+```
+
+NATSDispatcher routes events through NATS subjects per spec §9.1.4.
+
+Events are published using the hsmnet subject hierarchy:
+
+	{prefix}.hsmnet.broadcast - for broadcast events (Target == 0)
+	{prefix}.hsmnet.{peer_id} - for unicast events (Target != 0)
+
+Subscribers receive events by subscribing to both the broadcast subject
+and their own peer-specific subject.
+
+### Functions returning NATSDispatcher
+
+#### NewNATSDispatcher
+
+```go
+func NewNATSDispatcher(nc *nats.Conn, opts ...NATSDispatcherOption) (*NATSDispatcher, error)
+```
+
+NewNATSDispatcher creates a dispatcher that routes events through NATS.
+
+The nc parameter must be an established NATS connection. Events are
+published to hsmnet subjects per spec §9.1.4:
+  - {prefix}.hsmnet.broadcast - for broadcast events
+  - {prefix}.hsmnet.{peer_id} - for unicast events
+
+The dispatcher subscribes to both broadcast and its own peer-specific subject.
+
+
+### Methods
+
+#### NATSDispatcher.Close
+
+```go
+func () Close() error
+```
+
+Close shuts down the NATS dispatcher and unsubscribes from all subjects.
+
+#### NATSDispatcher.Dispatch
+
+```go
+func () Dispatch(ctx context.Context, evt Event) error
+```
+
+Dispatch publishes an event to NATS per hsmnet subject hierarchy (§9.1.4).
+
+Broadcast events (Target == 0) are published to {prefix}.hsmnet.broadcast.
+Unicast events (Target != 0) are published to {prefix}.hsmnet.{target_peer_id}.
+
+#### NATSDispatcher.Subscribe
+
+```go
+func () Subscribe(sub Subscription) (unsubscribe func())
+```
+
+Subscribe registers a handler for events received from NATS.
+
+#### NATSDispatcher.handleMessage
+
+```go
+func () handleMessage(msg *nats.Msg)
+```
+
+handleMessage processes incoming NATS event messages and dispatches
+them to matching local subscribers.
+
+#### NATSDispatcher.matches
+
+```go
+func () matches(sub *Subscription, evt Event) bool
+```
+
+matches checks if a subscription matches an event.
+
+
+## type NATSDispatcherOption
+
+```go
+type NATSDispatcherOption func(*NATSDispatcher)
+```
+
+NATSDispatcherOption configures a NATSDispatcher.
+
+### Functions returning NATSDispatcherOption
+
+#### WithLocalPeerID
+
+```go
+func WithLocalPeerID(peerID string) NATSDispatcherOption
+```
+
+WithLocalPeerID sets the local peer ID for unicast event reception.
+
+#### WithSubjectPrefix
+
+```go
+func WithSubjectPrefix(prefix string) NATSDispatcherOption
+```
+
+WithSubjectPrefix sets the NATS subject prefix (default: "amux").
+
+
 ## type NoopDispatcher
 
 ```go
@@ -333,7 +470,7 @@ Type represents an event type identifier.
 
 ### Constants
 
-#### TypeAgentAdded, TypeAgentStarting, TypeAgentStarted, TypeAgentStopping, TypeAgentStopped, TypeAgentTerminated, TypeAgentErrored, TypePresenceChanged, TypePTYOutput, TypePTYActivity, TypePTYIdle, TypeProcessSpawned, TypeProcessCompleted, TypeProcessIO, TypeConfigFileChanged, TypeConfigReloaded, TypeConfigUpdated, TypeConfigReloadFailed, TypeConnectionEstablished, TypeConnectionLost, TypeConnectionRecovered, TypeShutdownInitiated, TypeShutdownForce, TypeDrainComplete, TypeDrainTimeout, TypeTerminateComplete, TypeGitMergeRequested, TypeGitMergeCompleted, TypeGitMergeConflict, TypeGitMergeFailed, TypeWorktreeCreated, TypeWorktreeRemoved, TypeTaskCancel, TypeAdapterLoaded, TypeAdapterUnloaded
+#### TypeAgentAdded, TypeAgentStarting, TypeAgentStarted, TypeAgentStopping, TypeAgentStopped, TypeAgentTerminated, TypeAgentErrored, TypePresenceChanged, TypeRosterUpdated, TypeMessageOutbound, TypeMessageInbound, TypeMessageBroadcast, TypePTYOutput, TypePTYActivity, TypePTYIdle, TypePTYStuck, TypeProcessSpawned, TypeProcessCompleted, TypeProcessIO, TypeConfigFileChanged, TypeConfigReloaded, TypeConfigUpdated, TypeConfigReloadFailed, TypeConnectionEstablished, TypeConnectionLost, TypeConnectionRecovered, TypeShutdownInitiated, TypeShutdownForce, TypeDrainComplete, TypeDrainTimeout, TypeTerminateComplete, TypeGitMergeRequested, TypeGitMergeCompleted, TypeGitMergeConflict, TypeGitMergeFailed, TypeWorktreeCreated, TypeWorktreeRemoved, TypeTaskCancel, TypeAdapterLoaded, TypeAdapterUnloaded
 
 ```go
 const (
@@ -348,11 +485,18 @@ const (
 
 	// Presence events
 	TypePresenceChanged Type = "presence.changed"
+	TypeRosterUpdated   Type = "roster.updated"
+
+	// Message events (inter-agent messaging per spec §6.4.2)
+	TypeMessageOutbound  Type = "message.outbound"  // Agent → Host manager: Agent sent a message
+	TypeMessageInbound   Type = "message.inbound"   // Host manager → Agent/Manager/Director: Message delivered
+	TypeMessageBroadcast Type = "message.broadcast" // Director → All: Broadcast to all participants
 
 	// PTY events
 	TypePTYOutput   Type = "pty.output"
 	TypePTYActivity Type = "pty.activity"
 	TypePTYIdle     Type = "pty.idle"
+	TypePTYStuck    Type = "pty.stuck"
 
 	// Process events
 	TypeProcessSpawned   Type = "process.spawned"
@@ -398,4 +542,21 @@ const (
 
 Standard event types for the amux system.
 
+
+## type jsonEvent
+
+```go
+type jsonEvent struct {
+	ID        string          `json:"id"`
+	Type      Type            `json:"type"`
+	Source    string          `json:"source"`
+	Target    string          `json:"target,omitempty"`
+	Timestamp string          `json:"timestamp"`
+	Data      json.RawMessage `json:"data,omitempty"`
+	TraceID   string          `json:"trace_id,omitempty"`
+}
+```
+
+jsonEvent is the intermediate representation for JSON serialization.
+IDs are base-10 strings per spec §4.2.3, timestamps are RFC 3339 UTC.
 

@@ -24,6 +24,8 @@ runtime ID for agents, processes, sessions, or peers.
 - `func IsValidRuntimeID(id muid.MUID) bool` — IsValidRuntimeID returns true if the ID is valid for runtime use.
 - `func NewID() muid.MUID` — NewID generates a new globally unique runtime ID.
 - `func NormalizeAgentSlug(name string) string` — NormalizeAgentSlug normalizes an agent name into a filesystem-safe slug.
+- `func ParseID(s string) muid.MUID` — ParseID decodes a base-10 string to a muid.MUID, returning 0 on failure.
+- `func ParseIDStrict(s string) (muid.MUID, error)` — ParseIDStrict decodes a base-10 string to a muid.MUID and returns an error if the string is not a valid base-10 unsigned integer.
 - `func RepoKey(location api.Location, repoRoot string) string` — RepoKey computes the stable repository key from location and repo_root.
 - `func RepoKeyHash(location api.Location, repoRoot string) string` — RepoKeyHash returns a truncated SHA-256 hash of the repo_key.
 - `func UniqueAgentSlug(name string, exists func(slug string) bool) string` — UniqueAgentSlug returns a unique agent_slug by appending numeric suffixes if needed.
@@ -146,6 +148,26 @@ The normalization follows spec §5.3.1:
   - Trim leading and trailing "-"
   - Truncate to at most 63 characters
   - If the result is empty, use "agent"
+
+#### ParseID
+
+```go
+func ParseID(s string) muid.MUID
+```
+
+ParseID decodes a base-10 string to a muid.MUID, returning 0 on failure.
+This is a convenience wrapper around DecodeID for contexts where an
+invalid ID should be treated as the zero/broadcast sentinel.
+
+#### ParseIDStrict
+
+```go
+func ParseIDStrict(s string) (muid.MUID, error)
+```
+
+ParseIDStrict decodes a base-10 string to a muid.MUID and returns an error
+if the string is not a valid base-10 unsigned integer. Unlike ParseID, this
+function does not silently return 0 on failure.
 
 #### RepoKey
 

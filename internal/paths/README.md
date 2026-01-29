@@ -18,7 +18,6 @@ Path resolution follows these rules:
 - `func ExpandHome(path string) string` — ExpandHome expands ~/ using the default resolver.
 - `func FindModuleRoot(startDir string) (string, error)` — FindModuleRoot finds the Go module root using the default resolver.
 - `func FindRepoRoot(startDir string) (string, error)` — FindRepoRoot finds the repository root using the default resolver.
-- `func NormalizeAgentSlug(name string) string` — NormalizeAgentSlug normalizes an agent name to a filesystem-safe slug.
 - `func Resolve(path string) (string, error)` — Resolve resolves a path using the default resolver.
 - `func init()`
 - `type Resolver` — Resolver handles filesystem path resolution.
@@ -60,21 +59,6 @@ func FindRepoRoot(startDir string) (string, error)
 
 FindRepoRoot finds the repository root using the default resolver.
 
-#### NormalizeAgentSlug
-
-```go
-func NormalizeAgentSlug(name string) string
-```
-
-NormalizeAgentSlug normalizes an agent name to a filesystem-safe slug.
-Rules per spec §5.3.1:
-- Convert to lowercase
-- Replace any character not in [a-z0-9-] with -
-- Collapse consecutive - characters to a single -
-- Trim leading and trailing -
-- Truncate to at most 63 characters
-- If the result is empty, use "agent"
-
 #### Resolve
 
 ```go
@@ -111,6 +95,18 @@ type Resolver struct {
 ```
 
 Resolver handles filesystem path resolution.
+
+### Functions returning Resolver
+
+#### NewResolverWithDataDir
+
+```go
+func NewResolverWithDataDir(dataDir string) *Resolver
+```
+
+NewResolverWithDataDir creates a Resolver with a custom data directory.
+This is primarily used in tests to avoid writing to ~/.amux.
+
 
 ### Methods
 
@@ -197,6 +193,15 @@ func () PluginDir() string
 
 PluginDir returns the plugin registry directory.
 
+#### Resolver.ProjectAdapterConfigFile
+
+```go
+func () ProjectAdapterConfigFile(name string) string
+```
+
+ProjectAdapterConfigFile returns the project adapter config file path.
+Layer 6: .amux/adapters/{name}/config.toml
+
 #### Resolver.ProjectAdapterDir
 
 ```go
@@ -245,6 +250,15 @@ func () SnapshotsDir() string
 ```
 
 SnapshotsDir returns the test snapshots directory.
+
+#### Resolver.UserAdapterConfigFile
+
+```go
+func () UserAdapterConfigFile(name string) string
+```
+
+UserAdapterConfigFile returns the user adapter config file path.
+Layer 4: ~/.config/amux/adapters/{name}/config.toml
 
 #### Resolver.UserConfigFile
 

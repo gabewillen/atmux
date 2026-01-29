@@ -2,9 +2,14 @@
 package snapshot
 
 import (
+	"bytes"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"regexp"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/pelletier/go-toml/v2"
@@ -25,21 +30,74 @@ type Snapshot struct {
 	BenchResults map[string]string `toml:"bench_results,omitempty"`
 }
 
-// Create creates a new snapshot by running the test suite.
+// Create creates a new snapshot by running the verification sequence per spec §12.6.
 func Create(moduleRoot string) (*Snapshot, error) {
 	snapshot := &Snapshot{
 		Timestamp:    time.Now(),
-		GoVersion:    "1.25.6", // Phase 0: hardcoded
+		GoVersion:    "1.25.6", // Toolchain version per spec
 		Module:       "github.com/stateforward/amux",
-		TidyStatus:   "pass",
-		VetStatus:    "pass",
-		LintStatus:   "pass",
-		TestStatus:   "pass",
-		RaceStatus:   "pass",
+		TidyStatus:   "unknown",
+		VetStatus:    "unknown",
+		LintStatus:   "unknown",
+		TestStatus:   "unknown",
+		RaceStatus:   "unknown",
 		Coverage:     0.0,
 		BenchResults: make(map[string]string),
 	}
-	
+
+	// Helper to run a command in the module root and return "pass" or "fail".
+	run := func(name string, args ...string) string {
+		cmd := exec.Command(name, args...)
+		cmd.Dir = moduleRoot
+		cmd.Stdout = os.Stderr
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			return "fail"
+		}
+		return "pass"
+	}
+
+	// Run tidy → vet → lint → test -race → test per plan §12.6.
+	snapshot.TidyStatus = run("go", "mod", "tidy")
+	snapshot.VetStatus = run("go", "vet", "./...")
+
+	// Lint via staticcheck when available; otherwise mark as "skip".
+	if _, err := exec.LookPath("staticcheck"); err == nil {
+		snapshot.LintStatus = run("staticcheck", "./...")
+	} else {
+		snapshot.LintStatus = "skip"
+	}
+
+	snapshot.RaceStatus = run("go", "test", "-race", "./...")
+	snapshot.TestStatus = run("go", "test", "./...")
+
+	// Coverage: run `go test -cover ./...` and parse the reported percentage.
+	covCmd := exec.Command("go", "test", "-cover", "./...")
+	covCmd.Dir = moduleRoot
+	var buf bytes.Buffer
+	covCmd.Stdout = &buf
+	covCmd.Stderr = os.Stderr
+	if err := covCmd.Run(); err == nil {
+		lines := strings.Split(buf.String(), "\n")
+		re := regexp.MustCompile(`coverage:\s+([0-9.]+)%`)
+		for _, line := range lines {
+			matches := re.FindStringSubmatch(line)
+			if len(matches) == 2 {
+				if v, err := strconv.ParseFloat(matches[1], 64); err == nil {
+					snapshot.Coverage = v
+					break
+				}
+			}
+		}
+	}
+
+	// Benchmarks: best-effort; failures do not affect other statuses.
+	benchCmd := exec.Command("go", "test", "-run=^$", "-bench=.", "./...")
+	benchCmd.Dir = moduleRoot
+	benchCmd.Stdout = os.Stderr
+	benchCmd.Stderr = os.Stderr
+	_ = benchCmd.Run()
+
 	return snapshot, nil
 }
 

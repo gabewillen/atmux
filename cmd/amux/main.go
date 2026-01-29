@@ -9,6 +9,8 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/pelletier/go-toml/v2"
+
 	"github.com/stateforward/amux/internal/agent"
 	"github.com/stateforward/amux/internal/config"
 	"github.com/stateforward/amux/internal/errors"
@@ -61,6 +63,17 @@ func handleTestCommand() {
 		os.Exit(1)
 	}
 
+	// Helper to determine if any step failed.
+	anyFailed := func() bool {
+		statuses := []string{snap.TidyStatus, snap.VetStatus, snap.LintStatus, snap.TestStatus, snap.RaceStatus}
+		for _, s := range statuses {
+			if s == "fail" {
+				return true
+			}
+		}
+		return false
+	}
+
 	if *regression {
 		// Regression mode: compare with latest snapshot
 		latestPath, err := snapshot.FindLatestSnapshot(moduleRoot)
@@ -94,9 +107,16 @@ func handleTestCommand() {
 		}
 		fmt.Fprintf(os.Stderr, "Snapshot written: %s\n", outPath)
 	} else if *noSnapshot {
-		// No-snapshot mode: write to stdout
-		// (This is a stub for Phase 0)
-		fmt.Fprintln(os.Stderr, "Phase 0: --no-snapshot writes to stdout")
+		// No-snapshot mode: write TOML snapshot to stdout; logs remain on stderr.
+		data, err := toml.Marshal(snap)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: marshal snapshot: %v\n", err)
+			os.Exit(1)
+		}
+		if _, err := os.Stdout.Write(data); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: write snapshot to stdout: %v\n", err)
+			os.Exit(1)
+		}
 	} else {
 		// Normal mode: write snapshot
 		outPath := snapshot.GenerateSnapshotPath(moduleRoot)
@@ -105,6 +125,11 @@ func handleTestCommand() {
 			os.Exit(1)
 		}
 		fmt.Fprintf(os.Stderr, "Snapshot written: %s\n", outPath)
+	}
+
+	if anyFailed() {
+		fmt.Fprintln(os.Stderr, "One or more verification steps failed; see logs above.")
+		os.Exit(1)
 	}
 }
 
@@ -157,15 +182,21 @@ func handleAgentAddCommand() {
 
 	ctx := context.Background()
 
-	// Load project configuration
+	// Load user + project configuration per spec §4.2.8.2 hierarchy.
 	resolver, err := paths.NewResolver(repoRoot)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: create path resolver: %v\n", err)
 		os.Exit(1)
 	}
 
+	userConfigPath, err := paths.UserConfigFile()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: determine user config path: %v\n", err)
+		os.Exit(1)
+	}
+
 	projectConfigPath := resolver.ProjectConfig()
-	cfg, err := config.Load(projectConfigPath)
+	cfg, err := config.Load(userConfigPath, projectConfigPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: load project config: %v\n", err)
 		os.Exit(1)

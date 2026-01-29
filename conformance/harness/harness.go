@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"time"
 
 	"github.com/stateforward/amux/internal/errors"
@@ -27,19 +28,63 @@ type FlowResult struct {
 	Duration string `json:"duration"`
 }
 
-// Run executes the conformance suite.
-// Phase 0: Placeholder implementation.
+// Run executes a minimal conformance suite against the local amux binaries.
+//
+// Phase 0: This boots the daemon stub and runs a couple of CLI flows, then
+// records structured JSON results per the output contract.
 func Run(ctx context.Context) (*RunResult, error) {
+	start := time.Now()
 	result := &RunResult{
-		RunID:       "phase0-stub",
+		RunID:       "phase0-local",
 		SpecVersion: "v1.22",
-		StartedAt:   time.Now(),
-		Flows:       []FlowResult{},
+		StartedAt:   start,
 	}
-	
-	// Phase 0: No actual tests yet
+
+	var flows []FlowResult
+
+	// Flow 1: Boot the daemon stub (amux-node).
+	{
+		flowStart := time.Now()
+		cmd := exec.CommandContext(ctx, "amux-node")
+		if err := cmd.Run(); err != nil {
+			flows = append(flows, FlowResult{
+				Name:     "daemon.stub",
+				Status:   "fail",
+				Error:    err.Error(),
+				Duration: time.Since(flowStart).String(),
+			})
+		} else {
+			flows = append(flows, FlowResult{
+				Name:     "daemon.stub",
+				Status:   "pass",
+				Duration: time.Since(flowStart).String(),
+			})
+		}
+	}
+
+	// Flow 2: Run a simple CLI command (amux version).
+	{
+		flowStart := time.Now()
+		cmd := exec.CommandContext(ctx, "amux", "version")
+		if err := cmd.Run(); err != nil {
+			flows = append(flows, FlowResult{
+				Name:     "cli.version",
+				Status:   "fail",
+				Error:    err.Error(),
+				Duration: time.Since(flowStart).String(),
+			})
+		} else {
+			flows = append(flows, FlowResult{
+				Name:     "cli.version",
+				Status:   "pass",
+				Duration: time.Since(flowStart).String(),
+			})
+		}
+	}
+
+	result.Flows = flows
 	result.FinishedAt = time.Now()
-	
+
 	return result, nil
 }
 

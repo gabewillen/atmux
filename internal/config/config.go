@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -357,10 +358,61 @@ func DefaultConfig() *Config {
 
 // applyEnvOverrides applies environment variable overrides to the config.
 // Environment variables follow the pattern: AMUX__<path>__<path>...
+// See spec §4.2.8.3 for the mapping rules.
 func applyEnvOverrides(cfg *Config) error {
-	// This is a placeholder for Phase 0.
-	// Full implementation requires reflection and path traversal.
-	// For now, we'll just validate the approach.
+	for _, env := range os.Environ() {
+		if !strings.HasPrefix(env, "AMUX__") {
+			continue
+		}
+
+		parts := strings.SplitN(env, "=", 2)
+		if len(parts) != 2 {
+			continue
+		}
+
+		keyPart := parts[0][len("AMUX__"):]
+		valuePart := parts[1]
+		if keyPart == "" {
+			continue
+		}
+
+		segmentsRaw := strings.Split(keyPart, "__")
+		if len(segmentsRaw) == 0 {
+			continue
+		}
+
+		segments := make([]string, len(segmentsRaw))
+		for i, seg := range segmentsRaw {
+			lower := strings.ToLower(seg)
+			// Adapter name normalization: adapters.<name> with _ → - in the name segment only.
+			if i == 1 && len(segmentsRaw) >= 2 && strings.EqualFold(segmentsRaw[0], "adapters") {
+				lower = strings.ReplaceAll(lower, "_", "-")
+			}
+			segments[i] = lower
+		}
+
+		// Build a minimal TOML document for this override and merge it into cfg.
+		// Example: AMUX__GENERAL__LOG_LEVEL=info →
+		// [general]
+		// log_level = "info"
+		last := segments[len(segments)-1]
+		header := ""
+		if len(segments) > 1 {
+			header = "[" + strings.Join(segments[:len(segments)-1], ".") + "]\n"
+		}
+
+		// First, try to let TOML interpret the raw value as-is.
+		doc := header + last + " = " + valuePart + "\n"
+		if err := toml.Unmarshal([]byte(doc), cfg); err != nil {
+			// If that fails, treat the value as a raw string.
+			quoted := strconv.Quote(valuePart)
+			doc = header + last + " = " + quoted + "\n"
+			if err2 := toml.Unmarshal([]byte(doc), cfg); err2 != nil {
+				return errors.Wrapf(err2, "parse env var %s", parts[0])
+			}
+		}
+	}
+
 	return nil
 }
 

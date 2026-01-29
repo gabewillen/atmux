@@ -11,6 +11,11 @@ func New(message string) error {
 	return errors.New(message)
 }
 
+// Errorf returns a new error with the given format and args.
+func Errorf(format string, args ...any) error {
+	return fmt.Errorf(format, args...)
+}
+
 // Wrap returns an error annotating err with a stack trace
 // at the point Wrap is called, and the supplied message.
 // If err is nil, Wrap returns nil.
@@ -18,6 +23,17 @@ func Wrap(err error, message string) error {
 	if err == nil {
 		return nil
 	}
+	return fmt.Errorf("%s: %w", message, err)
+}
+
+// Wrapf returns an error annotating err with a stack trace
+// at the point Wrapf is called, and the format specifier.
+// If err is nil, Wrapf returns nil.
+func Wrapf(err error, format string, args ...any) error {
+	if err == nil {
+		return nil
+	}
+	message := fmt.Sprintf(format, args...)
 	return fmt.Errorf("%s: %w", message, err)
 }
 
@@ -34,7 +50,7 @@ func As(err error, target any) bool {
 
 // Common sentinel errors
 var (
-	ErrNotFound      = New("not found")
-	ErrInvalidConfig = New("invalid configuration")
+	ErrNotFound       = New("not found")
+	ErrInvalidConfig  = New("invalid configuration")
 	ErrNotImplemented = New("not implemented")
 )

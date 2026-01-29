@@ -2,7 +2,9 @@ package agent
 
 import (
 	"context"
+	"os"
 
+	"github.com/agentflare-ai/amux/internal/worktree"
 	"github.com/agentflare-ai/amux/pkg/api"
 	"github.com/stateforward/hsm-go"
 	"github.com/stateforward/hsm-go/muid"
@@ -11,11 +13,13 @@ import (
 // AgentActor wraps the public Agent struct and manages its state via HSM.
 type AgentActor struct {
 	hsm.HSM
-	data api.Agent
+	data     api.Agent
+	worktree *worktree.Manager
+	ptyFile  *os.File
 }
 
 // NewAgent creates a new AgentActor.
-func NewAgent(name, adapter, repoRoot string) *AgentActor {
+func NewAgent(name, adapter, repoRoot string, wtMgr *worktree.Manager) *AgentActor {
 	id := muid.Make() // 64-bit snowflake ID
 	slug := api.NewAgentSlug(name)
 
@@ -29,6 +33,7 @@ func NewAgent(name, adapter, repoRoot string) *AgentActor {
 			State:    api.StatePending,
 			Presence: api.PresenceOffline,
 		},
+		worktree: wtMgr,
 	}
 
 	// Initialize HSM
@@ -63,4 +68,9 @@ func (a *AgentActor) Stop() {
 // SendActivity signals activity to the agent presence HSM.
 func (a *AgentActor) SendActivity() {
 	hsm.Dispatch(context.Background(), a, hsm.Event{Name: EventActivityDetected})
+}
+
+// PtyFile returns the underlying PTY file descriptor if started.
+func (a *AgentActor) PtyFile() *os.File {
+	return a.ptyFile
 }

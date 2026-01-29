@@ -25,7 +25,7 @@ func waitForState(t *testing.T, a *AgentActor, targetState string, timeout time.
 }
 
 func TestAgentNew(t *testing.T) {
-	a := NewAgent("Test Agent", "dummy-adapter", "/tmp/repo")
+	a := NewAgent("Test Agent", "dummy-adapter", "/tmp/repo", nil)
 	if a.ID() == 0 {
 		t.Error("agent ID should not be 0")
 	}
@@ -39,7 +39,7 @@ func TestAgentNew(t *testing.T) {
 }
 
 func TestAgentLifecycle(t *testing.T) {
-	a := NewAgent("LifecycleAgent", "dummy", "/tmp")
+	a := NewAgent("LifecycleAgent", "dummy", "/tmp", nil)
 	waitForState(t, a, "/agent/pending", time.Second)
 
 	// Start

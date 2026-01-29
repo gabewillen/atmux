@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 
+	"github.com/agentflare-ai/amux/internal/pty"
 	"github.com/agentflare-ai/amux/pkg/api"
 	"github.com/stateforward/hsm-go"
 )
@@ -38,6 +39,43 @@ func on(name string) hsm.RedefinableElement {
 	return hsm.On(hsm.Event{Name: name})
 }
 
+// StartAction handles the agent start sequence.
+func StartAction(ctx context.Context, a *AgentActor, event hsm.Event) {
+	if a.worktree == nil {
+		// In tests with nil manager, just simulate immediate success
+		hsm.Dispatch(ctx, a, hsm.Event{Name: EventStarted})
+		return
+	}
+
+	// 1. Ensure Worktree
+	path, err := a.worktree.Ensure(a.data)
+	if err != nil {
+		hsm.Dispatch(ctx, a, hsm.Event{Name: EventError, Data: err})
+		return
+	}
+	a.data.Worktree = path
+
+	// 2. Spawn PTY (default to bash for now)
+	ptmx, err := pty.Start("bash", nil, path)
+	if err != nil {
+		hsm.Dispatch(ctx, a, hsm.Event{Name: EventError, Data: err})
+		return
+	}
+	a.ptyFile = ptmx
+
+	// 3. Emit Started
+	hsm.Dispatch(ctx, a, hsm.Event{Name: EventStarted})
+}
+
+// StopAction handles the agent stop sequence.
+func StopAction(ctx context.Context, a *AgentActor, event hsm.Event) {
+	if a.ptyFile != nil {
+		pty.Close(a.ptyFile)
+		a.ptyFile = nil
+	}
+	// We don't remove worktree on stop, only on agent remove.
+}
+
 // AgentModel defines the combined agent state machine.
 // Pending -> Starting -> Running (containing Presence) -> Terminated / Errored
 var AgentModel = hsm.Define("agent",
@@ -45,6 +83,7 @@ var AgentModel = hsm.Define("agent",
 		hsm.Transition(on(EventStart), hsm.Target("/agent/starting")),
 	),
 	hsm.State("starting",
+		hsm.Entry[*AgentActor](StartAction),
 		hsm.Transition(on(EventStarted), hsm.Target("/agent/running")),
 		hsm.Transition(on(EventError), hsm.Target("/agent/errored")),
 		hsm.Transition(on(EventStop), hsm.Target("/agent/terminated")),
@@ -81,12 +120,17 @@ var AgentModel = hsm.Define("agent",
 		hsm.Initial(hsm.Target("/agent/running/online")),
 
 		// Parent transitions
-		hsm.Transition(on(EventStop), hsm.Target("/agent/terminated")),
-		hsm.Transition(on(EventError), hsm.Target("/agent/errored")),
-		hsm.Transition(on(EventTerminated), hsm.Target("/agent/terminated")),
+		// Use Effect for actions on transition
+		hsm.Transition(on(EventStop), hsm.Target("/agent/terminated"), hsm.Effect[*AgentActor](StopAction)),
+		hsm.Transition(on(EventError), hsm.Target("/agent/errored"), hsm.Effect[*AgentActor](StopAction)),
+		hsm.Transition(on(EventTerminated), hsm.Target("/agent/terminated"), hsm.Effect[*AgentActor](StopAction)),
 	),
-	hsm.State("terminated"),
-	hsm.State("errored"),
+	hsm.State("terminated",
+		hsm.Entry[*AgentActor](StopAction), // Ensure stopped if entering directly
+	),
+	hsm.State("errored",
+		hsm.Entry[*AgentActor](StopAction), // Ensure stopped if entering directly
+	),
 
 	hsm.Initial(hsm.Target("pending")),
 )

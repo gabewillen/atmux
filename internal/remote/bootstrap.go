@@ -1,14 +1,13 @@
 package remote
 
 import (
+	"bytes"
 	"fmt"
-	"io"
 	"os"
 	"time"
 
 	"github.com/agentflare-ai/amux/internal/config"
 	"github.com/agentflare-ai/amux/pkg/api"
-	"github.com/nats-io/nkeys"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -28,7 +27,7 @@ func BootstrapRemote(cfg config.AgentConfig, hostID api.HostID) error {
 		Host: cfg.Location.Host,
 		User: cfg.Location.User,
 		Port: cfg.Location.Port,
-		// KeyPath/Password would come from global config or agent config if supported
+		// In a real app, we'd load keys from ~/.ssh/id_rsa or agent
 	}
 	if sshCfg.Port == 0 {
 		sshCfg.Port = 22
@@ -37,28 +36,19 @@ func BootstrapRemote(cfg config.AgentConfig, hostID api.HostID) error {
 		sshCfg.User = os.Getenv("USER")
 	}
 
-	// 2. Generate NATS Creds for this host
-	// In a real implementation, we'd sign this with the System/Account operator key.
-	// Here we simulate generating a user key pair.
-	user, err := nkeys.CreateUser()
+	// 2. Load Amux Account Key (Director's signing key)
+	accountKP, err := LoadAmuxAccountKey()
 	if err != nil {
-		return fmt.Errorf("failed to create user nkey: %w", err)
+		return fmt.Errorf("failed to load amux account key (director must be configured): %w", err)
 	}
-	seed, _ := user.Seed()
-	pub, _ := user.PublicKey()
-	
-	// Create a dummy creds content (JWT + Seed)
-	// Real implementation requires JWT signing.
-	// For simulation, we just send the seed or a placeholder.
-	// Spec says: "credential copied to remote.nats.creds_path with permissions <= 0600"
-	credsContent := fmt.Sprintf("# HostID: %s\n# Pub: %s\n%s", hostID, pub, string(seed))
 
-	// 3. Connect SSH (simulated or real)
-	// We'll define an interface or just implement the logic.
-	// For testing in this environment without SSH, we might need to mock this.
-	// Let's implement the logic but wrap it in a function we can swap out or check.
-	
-	// If we are in a test environment, we might skip actual SSH dial.
+	// 3. Generate NATS Creds for this host
+	credsContent, _, err := GenerateHostCredentials(accountKP, hostID, "amux")
+	if err != nil {
+		return fmt.Errorf("failed to generate host credentials: %w", err)
+	}
+
+	// 4. Connect SSH (simulated or real)
 	if os.Getenv("AMUX_TEST_SKIP_SSH") == "1" {
 		return nil
 	}
@@ -68,13 +58,22 @@ func BootstrapRemote(cfg config.AgentConfig, hostID api.HostID) error {
 
 func executeSSHBootstrap(cfg SSHConfig, credsContent string, hostID api.HostID) error {
 	authMethods := []ssh.AuthMethod{}
-	// Add key or password auth here
+	
+	// Try loading default key
+	keyPath := os.Getenv("HOME") + "/.ssh/id_rsa"
+	if key, err := os.ReadFile(keyPath); err == nil {
+		signer, err := ssh.ParsePrivateKey(key)
+		if err == nil {
+			authMethods = append(authMethods, ssh.PublicKeys(signer))
+		}
+	}
+	// Also support agent? For now, keep it simple.
 	
 	clientConfig := &ssh.ClientConfig{
 		User:            cfg.User,
 		Auth:            authMethods,
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(), // Insecure for bootstrap phase 1
-		Timeout:         5 * time.Second,
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(), // TODO: meaningful host key verification
+		Timeout:         10 * time.Second,
 	}
 
 	addr := fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)
@@ -84,37 +83,67 @@ func executeSSHBootstrap(cfg SSHConfig, credsContent string, hostID api.HostID) 
 	}
 	defer client.Close()
 
-	// 4. Copy creds
-	// We'd use SFTP or cat > file.
-	// Simple cat approach:
+	// 5. Setup Remote Environment
 	session, err := client.NewSession()
 	if err != nil {
-		return fmt.Errorf("ssh new session failed: %w", err)
+		return fmt.Errorf("failed to create ssh session: %w", err)
 	}
 	defer session.Close()
 
-	// Determine remote path (default ~/.amux/nats.creds or from config)
 	remoteCredsPath := fmt.Sprintf(".amux/nats/%s.creds", hostID)
-	
-	// Ensure dir exists
-	cmd := fmt.Sprintf("mkdir -p $(dirname %s) && cat > %s && chmod 600 %s", remoteCredsPath, remoteCredsPath, remoteCredsPath)
-	
-	stdin, err := session.StdinPipe()
-	if err != nil {
-		return err
-	}
-	
-	go func() {
-		defer stdin.Close()
-		io.WriteString(stdin, credsContent)
-	}()
+	// We also need a minimal config file for the manager
+	remoteConfigPath := ".amux/config.toml"
+	managerConfig := `
+[node]
+role = "manager"
 
-	if err := session.Run(cmd); err != nil {
-		return fmt.Errorf("failed to write creds: %w", err)
-	}
+[remote.manager]
+enabled = true
 
-	// 5. Start daemon (if not running)
-	// ... logic to start amux-node ...
+[remote.nats]
+creds_path = "~/.amux/nats/` + string(hostID) + `.creds"
+`
+
+	// Combine commands:
+	// 1. Mkdir
+	// 2. Write creds
+	// 3. Write config
+	// 4. Start daemon if not running
+	
+	// We'll stream the content via stdin to a script
+	script := fmt.Sprintf(`
+set -e
+mkdir -p .amux/nats
+cat > %s <<EOF
+%s
+EOF
+chmod 600 %s
+
+cat > %s <<EOF
+%s
+EOF
+
+if ! pgrep amux-node >/dev/null; then
+  echo "Starting amux-node..."
+  nohup amux-node --config %s > .amux/amux.log 2>&1 &
+  # Wait a bit to ensure it started
+  sleep 1
+  if ! pgrep amux-node >/dev/null; then
+    echo "Failed to start amux-node"
+    exit 1
+  fi
+else
+  echo "amux-node already running"
+fi
+`, remoteCredsPath, credsContent, remoteCredsPath, remoteConfigPath, managerConfig, remoteConfigPath)
+
+	var stdout, stderr bytes.Buffer
+	session.Stdout = &stdout
+	session.Stderr = &stderr
+
+	if err := session.Run(script); err != nil {
+		return fmt.Errorf("remote bootstrap failed: %w, stderr: %s", err, stderr.String())
+	}
 
 	return nil
 }

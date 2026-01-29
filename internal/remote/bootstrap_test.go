@@ -1,6 +1,7 @@
 package remote
 
 import (
+	"path/filepath"
 	"testing"
 
 	"github.com/agentflare-ai/amux/internal/config"
@@ -8,6 +9,18 @@ import (
 )
 
 func TestBootstrapRemote_Simulation(t *testing.T) {
+	// Setup temp home for keys
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tmpHome, ".config"))
+
+	// Generate keys via ConfigureEmbeddedHub
+	dummyCfg := config.DefaultConfig()
+	dummyCfg.NATS.Mode = "embedded"
+	if err := ConfigureEmbeddedHub(&dummyCfg); err != nil {
+		t.Fatalf("Failed to setup NATS keys: %v", err)
+	}
+
 	// Skip actual SSH
 	t.Setenv("AMUX_TEST_SKIP_SSH", "1")
 

@@ -12,7 +12,12 @@ func TestGenerateHostCredentials(t *testing.T) {
 	hostID := api.HostID("test-host")
 	prefix := "amux"
 
-	creds, token, err := GenerateHostCredentials(hostID, prefix)
+	accKP, err := GenerateAccountKey()
+	if err != nil {
+		t.Fatalf("Failed to generate account key: %v", err)
+	}
+
+	creds, token, err := GenerateHostCredentials(accKP, hostID, prefix)
 	if err != nil {
 		t.Fatalf("GenerateHostCredentials failed: %v", err)
 	}

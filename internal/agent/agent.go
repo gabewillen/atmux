@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 
+	"github.com/agentflare-ai/amux/internal/monitor"
 	"github.com/agentflare-ai/amux/internal/worktree"
 	"github.com/agentflare-ai/amux/pkg/api"
 	"github.com/stateforward/hsm-go"
@@ -16,6 +17,7 @@ type AgentActor struct {
 	data     api.Agent
 	worktree *worktree.Manager
 	ptyFile  *os.File
+	monitor  *monitor.Monitor
 }
 
 // NewAgent creates a new AgentActor.

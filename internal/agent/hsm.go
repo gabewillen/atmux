@@ -18,6 +18,7 @@ const (
 	EventActivityDetected = "agent.presence.activity"
 	EventInactivity       = "agent.presence.inactivity"
 	EventSetPresence      = "agent.presence.set" // Manual override
+	EventRemoteDisconnect = "remote.disconnect"  // Remote host disconnected
 )
 
 // Guards helpers
@@ -69,11 +70,22 @@ func StartAction(ctx context.Context, a *AgentActor, event hsm.Event) {
 
 // StopAction handles the agent stop sequence.
 func StopAction(ctx context.Context, a *AgentActor, event hsm.Event) {
+	if a.monitor != nil {
+		a.monitor.Stop()
+		a.monitor = nil
+	}
 	if a.ptyFile != nil {
 		pty.Close(a.ptyFile)
 		a.ptyFile = nil
 	}
 	// We don't remove worktree on stop, only on agent remove.
+}
+
+// SetPresenceAction updates the agent's presence data.
+func SetPresenceAction(p api.Presence) func(context.Context, *AgentActor, hsm.Event) {
+	return func(ctx context.Context, a *AgentActor, e hsm.Event) {
+		a.data.Presence = p
+	}
 }
 
 // AgentModel defines the combined agent state machine.
@@ -91,14 +103,20 @@ var AgentModel = hsm.Define("agent",
 	hsm.State("running",
 		// Presence Sub-states
 		hsm.State("online",
+			hsm.Entry(SetPresenceAction(api.PresenceOnline)),
 			hsm.Transition(on(EventActivityDetected), hsm.Target("/agent/running/busy")),
 			hsm.Transition(on(EventInactivity), hsm.Target("/agent/running/away")),
+			hsm.Transition(on(EventRemoteDisconnect), hsm.Target("/agent/running/away")),
 		),
 		hsm.State("busy",
+			hsm.Entry(SetPresenceAction(api.PresenceBusy)),
 			hsm.Transition(on(EventInactivity), hsm.Target("/agent/running/online")),
+			hsm.Transition(on(EventRemoteDisconnect), hsm.Target("/agent/running/away")),
 		),
 		hsm.State("away",
+			hsm.Entry(SetPresenceAction(api.PresenceAway)),
 			hsm.Transition(on(EventActivityDetected), hsm.Target("/agent/running/online")),
+			// Remote disconnect while away stays away
 		),
 		// Manual presence overrides using Guards
 		hsm.Transition(

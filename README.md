@@ -7,11 +7,11 @@
 - [internal/cli](internal/cli/README.md)
 - [internal/config](internal/config/README.md)
 - [internal/inference](internal/inference/README.md)
-- [internal/monitor](internal/monitor/README.md) — Package monitor observes PTY output to detect activity and patterns.
+- [internal/monitor](internal/monitor/README.md)
 - [internal/paths](internal/paths/README.md)
 - [internal/process](internal/process/README.md) — Package process tracks child processes spawned by agents.
 - [internal/protocol](internal/protocol/README.md) — Package protocol defines the remote communication protocol.
-- [internal/pty](internal/pty/README.md) — Package pty manages pseudo-terminal operations.
+- [internal/pty](internal/pty/README.md)
 - [internal/remote](internal/remote/README.md)
 - [internal/snapshot](internal/snapshot/README.md)
 - [internal/telemetry](internal/telemetry/README.md) — Package telemetry configures OpenTelemetry for traces, metrics, and logs.

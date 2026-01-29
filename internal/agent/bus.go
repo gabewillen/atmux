@@ -12,6 +12,7 @@ type EventType string
 const (
 	EventPresenceUpdate EventType = "presence.update"
 	EventMessage        EventType = "message"
+	EventActivity       EventType = "activity"
 )
 
 // BusEvent represents an event on the bus.

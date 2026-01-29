@@ -406,12 +406,13 @@ EventType represents the type of event.
 
 ### Constants
 
-#### EventPresenceUpdate, EventMessage
+#### EventPresenceUpdate, EventMessage, EventActivity
 
 ```go
 const (
 	EventPresenceUpdate EventType = "presence.update"
 	EventMessage        EventType = "message"
+	EventActivity       EventType = "activity"
 )
 ```
 

@@ -458,40 +458,40 @@ Own PTYs for agents, monitor output for activity and patterns, and decode TUI sc
 - `internal/tui` decoding and XML encoding
 
 ### TODO list
-- [ ] Run `amux test` to capture the baseline snapshot for Phase 5
+- [x] Run `amux test` to capture the baseline snapshot for Phase 5
   - Spec reference(s): §12.6.1–§12.6.3
   - Acceptance criteria: a new `snapshots/amux-test-*.toml` exists under `<module_root>/snapshots/` and is retained as the baseline for Phase 5 regression checking.
 
-- [ ] Implement PTY creation, window sizing, and lifecycle management
+- [x] Implement PTY creation, window sizing, and lifecycle management
   - Spec reference(s): §4.2.4
   - Acceptance criteria: PTY can be created and attached; size changes apply; PTY closes cleanly on shutdown.
 
-- [ ] Implement PTY monitor responsibilities and event emission pipeline
+- [x] Implement PTY monitor responsibilities and event emission pipeline
   - Spec reference(s): §7.2, §9.3
   - Acceptance criteria: monitor reads PTY output continuously; emits activity and pattern match events; integrates with HSM dispatch.
 
-- [ ] Implement activity detection, pattern matching hooks, and timeout configuration
+- [x] Implement activity detection, pattern matching hooks, and timeout configuration
   - Spec reference(s): §7.3, §7.4, §7.5
   - Acceptance criteria: activity triggers are detected; pattern matching delegates to adapter-provided patterns; timeouts are configurable and unit tested.
 
-- [ ] Implement presence inference from PTY signals
+- [x] Implement presence inference from PTY signals
   - Spec reference(s): §7.6, §6.5
   - Acceptance criteria: presence inference rules map observed activity/idle to presence changes in tests.
 
-- [ ] Implement TUI decoding and XML capture format for snapshots
+- [x] Implement TUI decoding and XML capture format for snapshots
   - Spec reference(s): §7.7, §11.2.1
   - Acceptance criteria: full-screen TUIs decode to screen model; XML output matches schema expectations; conformance suite “menu flows” can verify decoding.
 
 
-- [ ] The implementation MUST maintain inline Go documentation and MUST regenerate per-package `README.md` files via `go-docmd`
+- [x] The implementation MUST maintain inline Go documentation and MUST regenerate per-package `README.md` files via `go-docmd`
   - Spec reference(s): §4.2.6.1
   - Acceptance criteria: every package and exported identifier added or modified in this phase MUST include `go doc`-suitable comments; running `go run github.com/agentflare-ai/go-docmd@latest -cmd -all -inplace ./...` at the module root MUST produce no uncommitted changes; generated per-package `README.md` files MUST be committed.
 
-- [ ] Run `amux test --regression` at the end of Phase 5 to verify no regressions relative to the Phase 5 baseline snapshot
+- [x] Run `amux test --regression` at the end of Phase 5 to verify no regressions relative to the Phase 5 baseline snapshot
   - Spec reference(s): §12.6.5
   - Acceptance criteria: `amux test --regression` exits 0; any regressions are fixed before Phase 5 is considered complete; the new snapshot is written to `<module_root>/snapshots/`.
 
-- [ ] Update this plan’s TODOs for Phase 5, remove unused code/scripts, and commit Phase 5 to git
+- [x] Update this plan’s TODOs for Phase 5, remove unused code/scripts, and commit Phase 5 to git
   - Spec reference(s): N/A (plan process requirement)
   - Acceptance criteria: Phase 5 TODOs are updated; `git status` is clean; the Phase 5 baseline + latest snapshots are retained; a Phase 5 commit exists in git history.
 ---

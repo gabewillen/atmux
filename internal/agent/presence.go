@@ -18,15 +18,17 @@ const (
 	PresenceAway     = "/agent.presence/away"
 )
 
-// Presence event names for dispatch (spec §6.5).
+// Presence event names for dispatch (spec §6.5, §5.5.8).
 const (
-	EventPresenceTaskAssigned   = "task.assigned"
-	EventPresenceTaskCompleted  = "task.completed"
-	EventPresencePromptDetected = "prompt.detected"
-	EventPresenceRateLimit      = "rate.limit"
-	EventPresenceRateCleared    = "rate.cleared"
-	EventPresenceStuckDetected  = "stuck.detected"
-	EventPresenceActivityDetected = "activity.detected"
+	EventPresenceTaskAssigned        = "task.assigned"
+	EventPresenceTaskCompleted      = "task.completed"
+	EventPresencePromptDetected      = "prompt.detected"
+	EventPresenceRateLimit          = "rate.limit"
+	EventPresenceRateCleared        = "rate.cleared"
+	EventPresenceStuckDetected      = "stuck.detected"
+	EventPresenceActivityDetected   = "activity.detected"
+	EventPresenceConnectionLost    = "connection.lost"    // Remote disconnect → Away (spec §5.5.8)
+	EventPresenceConnectionRecovered = "connection.recovered" // Reconnect + replay → Online (spec §5.5.8)
 )
 
 // presenceActor holds HSM state and dispatch hook for agent presence.
@@ -86,6 +88,25 @@ var PresenceModel = hsm.Define("agent.presence",
 			emitPresenceChanged(ctx, a.Dispatcher, a.AgentID, PresenceAway)
 		})),
 	hsm.Transition(hsm.On(hsm.Event{Name: EventPresenceActivityDetected}), hsm.Source("away"), hsm.Target("online"),
+		hsm.Effect(func(ctx context.Context, a *presenceActor, _ hsm.Event) {
+			emitPresenceChanged(ctx, a.Dispatcher, a.AgentID, PresenceOnline)
+		})),
+
+	// Remote disconnect → Away from any state (spec §5.5.8)
+	hsm.Transition(hsm.On(hsm.Event{Name: EventPresenceConnectionLost}), hsm.Source("online"), hsm.Target("away"),
+		hsm.Effect(func(ctx context.Context, a *presenceActor, _ hsm.Event) {
+			emitPresenceChanged(ctx, a.Dispatcher, a.AgentID, PresenceAway)
+		})),
+	hsm.Transition(hsm.On(hsm.Event{Name: EventPresenceConnectionLost}), hsm.Source("busy"), hsm.Target("away"),
+		hsm.Effect(func(ctx context.Context, a *presenceActor, _ hsm.Event) {
+			emitPresenceChanged(ctx, a.Dispatcher, a.AgentID, PresenceAway)
+		})),
+	hsm.Transition(hsm.On(hsm.Event{Name: EventPresenceConnectionLost}), hsm.Source("offline"), hsm.Target("away"),
+		hsm.Effect(func(ctx context.Context, a *presenceActor, _ hsm.Event) {
+			emitPresenceChanged(ctx, a.Dispatcher, a.AgentID, PresenceAway)
+		})),
+	// Reconnect + replay → Online from Away (spec §5.5.8)
+	hsm.Transition(hsm.On(hsm.Event{Name: EventPresenceConnectionRecovered}), hsm.Source("away"), hsm.Target("online"),
 		hsm.Effect(func(ctx context.Context, a *presenceActor, _ hsm.Event) {
 			emitPresenceChanged(ctx, a.Dispatcher, a.AgentID, PresenceOnline)
 		})),

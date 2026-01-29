@@ -76,3 +76,26 @@ func TestPresenceOfflineAway(t *testing.T) {
 		t.Errorf("want at least 4 presence.changed events, got %d", len(events))
 	}
 }
+
+func TestPresenceConnectionLostRecovered(t *testing.T) {
+	ctx := context.Background()
+	agent := &api.Agent{ID: api.NextRuntimeID(), Name: "test", Adapter: "test"}
+	disp := &capturingDispatcher{}
+	act, err := NewActor(agent, disp)
+	if err != nil {
+		t.Fatalf("NewActor: %v", err)
+	}
+	act.Start(ctx)
+
+	// online → away (connection.lost, spec §5.5.8)
+	act.DispatchPresence(ctx, EventPresenceConnectionLost, nil)
+	if st := act.PresenceState(); st != PresenceAway {
+		t.Errorf("after connection.lost: state = %q, want %q", st, PresenceAway)
+	}
+
+	// away → online (connection.recovered, spec §5.5.8)
+	act.DispatchPresence(ctx, EventPresenceConnectionRecovered, nil)
+	if st := act.PresenceState(); st != PresenceOnline {
+		t.Errorf("after connection.recovered: state = %q, want %q", st, PresenceOnline)
+	}
+}

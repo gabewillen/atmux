@@ -1,0 +1,71 @@
+benchmarks = []
+
+[meta]
+created_at = '2026-01-29T19:34:57Z'
+module_root = '/shared/cursor-cli-auto'
+spec_version = 'v1.22'
+
+[steps]
+[steps.go_mod_tidy]
+argv = ['go', 'mod', 'tidy']
+exit_code = 0
+duration_ms = 39
+stdout_sha256 = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'
+stderr_sha256 = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'
+stdout_bytes = 0
+stderr_bytes = 0
+
+[steps.go_vet]
+argv = ['go', 'vet', './...']
+exit_code = 0
+duration_ms = 179
+stdout_sha256 = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'
+stderr_sha256 = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'
+stdout_bytes = 0
+stderr_bytes = 0
+
+[steps.golangci_lint]
+argv = ['golangci-lint', 'run', './...']
+exit_code = 1
+duration_ms = 256
+stdout_sha256 = 'ccb66d8ee3e88662336905991c6632d4021a4fc6b25ef2ed12159bb12fea1a1a'
+stderr_sha256 = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'
+stdout_bytes = 560
+stderr_bytes = 0
+
+[steps.tests_race]
+argv = ['go', 'test', '-race', './...']
+exit_code = 0
+duration_ms = 360
+stdout_sha256 = 'edb68a353862fd56d6bec867e0a375310c6f03743508d95493deadfb482387d1'
+stderr_sha256 = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'
+stdout_bytes = 1012
+stderr_bytes = 0
+
+[steps.tests]
+argv = ['go', 'test', './...']
+exit_code = 0
+duration_ms = 279
+stdout_sha256 = 'edb68a353862fd56d6bec867e0a375310c6f03743508d95493deadfb482387d1'
+stderr_sha256 = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'
+stdout_bytes = 1012
+stderr_bytes = 0
+
+[steps.coverage]
+argv = ['go', 'test', './...', '-coverprofile=/shared/cursor-cli-auto/.amux-test-cover.out']
+exit_code = 0
+duration_ms = 414
+stdout_sha256 = '1e49b59709bfb3c89b74d64e01492741b1c84a9e4f9704d5f34a0c658639fbfb'
+stderr_sha256 = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'
+stdout_bytes = 1313
+stderr_bytes = 0
+total_percent = 20.1
+
+[steps.benchmarks]
+argv = ['go', 'test', '-run=^$', '-bench=.', '-benchmem', './...']
+exit_code = 0
+duration_ms = 317
+stdout_sha256 = '1f1c8dc0b634b95675ef82cb86f0d780495c6db34b488932e2d1db072c32549b'
+stderr_sha256 = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'
+stdout_bytes = 1033
+stderr_bytes = 0

@@ -9,7 +9,7 @@ Package api provides public API types for amux.
 ids.go implements identifiers and normalization rules per spec §3, §4.2.3, §5.3.1.
 
 Package api provides public API types for amux.
-types.go defines Agent, Session, and Location per spec §5.1, §5.5.9.
+types.go defines Agent, Session, Location, AgentMessage, and Roster types per spec §5.1, §5.5.9, §6.2–§6.4.
 
 - `DefaultAgentSlug` — DefaultAgentSlug is the slug used when normalization yields an empty string (spec §5.3.1).
 - `ErrNotFound, ErrInvalidConfig, ErrNotReady` — Sentinel errors for common failure modes.
@@ -18,10 +18,14 @@ types.go defines Agent, Session, and Location per spec §5.1, §5.5.9.
 - `func NormalizeAgentSlug(name string) string` — NormalizeAgentSlug derives a stable, filesystem-safe agent_slug from the agent name (spec §5.3.1).
 - `func UniquifyAgentSlug(baseSlug string, existing map[string]struct{}) string` — UniquifyAgentSlug returns a slug that does not collide with existing.
 - `func ValidRuntimeID(id ID) bool` — ValidRuntimeID returns true if id is non-zero and may be used as a runtime ID.
+- `type AgentMessage` — AgentMessage is the inter-agent message payload (spec §6.4).
 - `type Agent` — Agent is the core data structure for an agent instance (spec §5.1).
 - `type ID` — ID is the runtime identifier type for agents, sessions, peers, and hosts.
 - `type LocationType` — LocationType is the agent location kind (spec §5.1).
 - `type Location` — Location describes where an agent runs: local or SSH (spec §5.1).
+- `type RosterEntry` — RosterEntry is one participant in the roster (spec §6.2, §6.3).
+- `type RosterKind` — RosterKind is the participant type in the roster (spec §6.2).
+- `type Roster` — Roster is the full list of participants (spec §6.2).
 - `type Session` — Session holds session identity and reference to an agent (spec §5.5.9).
 
 ### Constants
@@ -119,6 +123,22 @@ type Agent struct {
 Agent is the core data structure for an agent instance (spec §5.1).
 Lifecycle and presence are managed by HSMs in internal/agent; query via agent actor.
 
+## type AgentMessage
+
+```go
+type AgentMessage struct {
+	ID        ID
+	From      ID
+	To        ID
+	ToSlug    string
+	Content   string
+	Timestamp time.Time // RFC 3339 UTC per spec §9.1.3.1
+}
+```
+
+AgentMessage is the inter-agent message payload (spec §6.4).
+From/To are set by the publishing component; ToSlug is the captured recipient token (e.g. agent_slug).
+
 ## type ID
 
 ```go
@@ -209,6 +229,53 @@ LocationType is the agent location kind (spec §5.1).
 const (
 	LocationLocal LocationType = iota
 	LocationSSH
+)
+```
+
+
+## type Roster
+
+```go
+type Roster []RosterEntry
+```
+
+Roster is the full list of participants (spec §6.2).
+
+## type RosterEntry
+
+```go
+type RosterEntry struct {
+	AgentID     ID
+	Name        string
+	About       string
+	Adapter     string
+	Presence    string // HSM state name e.g. /agent.presence/online
+	RepoRoot    string
+	Kind        RosterKind
+	CurrentTask string // Optional; for busy agents
+}
+```
+
+RosterEntry is one participant in the roster (spec §6.2, §6.3).
+At minimum: agent_id, name, adapter, presence, repo_root (§12); About and CurrentTask for presence awareness.
+
+## type RosterKind
+
+```go
+type RosterKind int
+```
+
+RosterKind is the participant type in the roster (spec §6.2).
+
+### Constants
+
+#### RosterKindAgent, RosterKindManager, RosterKindDirector
+
+```go
+const (
+	RosterKindAgent RosterKind = iota
+	RosterKindManager
+	RosterKindDirector
 )
 ```
 

@@ -17,10 +17,13 @@ local.go implements local agent lifecycle operations: spawn, stop, restart (spec
 Package agent provides agent orchestration: lifecycle, presence, and messaging.
 presence.go implements the Presence HSM per spec §4.2.3, §6.1, §6.5.
 
+Package agent provides agent orchestration: lifecycle, presence, roster, and messaging.
+roster.go implements the roster store and listing per spec §6.2, §6.3.
+
 - `ErrInvalidLocation` — ErrInvalidLocation is returned when location type is invalid.
 - `ErrNotInRepo` — ErrNotInRepo is returned when adding an agent outside a git repository.
 - `EventLifecycleStart, EventLifecycleReady, EventLifecycleStop, EventLifecycleError` — Lifecycle event names for dispatch (spec §5.4).
-- `EventPresenceTaskAssigned, EventPresenceTaskCompleted, EventPresencePromptDetected, EventPresenceRateLimit, EventPresenceRateCleared, EventPresenceStuckDetected, EventPresenceActivityDetected` — Presence event names for dispatch (spec §6.5).
+- `EventPresenceTaskAssigned, EventPresenceTaskCompleted, EventPresencePromptDetected, EventPresenceRateLimit, EventPresenceRateCleared, EventPresenceStuckDetected, EventPresenceActivityDetected, EventPresenceConnectionLost, EventPresenceConnectionRecovered` — Presence event names for dispatch (spec §6.5, §5.5.8).
 - `LifecycleModel` — LifecycleModel defines the agent lifecycle HSM (spec §5.4).
 - `LifecyclePending, LifecycleStarting, LifecycleRunning, LifecycleTerminated, LifecycleErrored` — Lifecycle state names (spec §5.4); HSM returns qualified names like /agent.lifecycle/pending.
 - `PresenceModel` — PresenceModel defines the presence HSM (spec §6.5).
@@ -32,6 +35,7 @@ presence.go implements the Presence HSM per spec §4.2.3, §6.1, §6.5.
 - `type Actor` — Actor holds an agent's data and its lifecycle and presence state machines.
 - `type AddInput` — AddInput holds validated inputs for adding an agent (spec §5.2).
 - `type LocalSession` — LocalSession holds a local agent's actor, PTY session, and worktree path (spec §5.4, §7).
+- `type RosterStore` — RosterStore maintains the roster of all agents, host managers, and the director (spec §6.2).
 - `type lifecycleActor` — lifecycleActor holds HSM state and dispatch hook for agent lifecycle.
 - `type presenceActor` — presenceActor holds HSM state and dispatch hook for agent presence.
 
@@ -77,21 +81,23 @@ const (
 
 Presence state names (spec §6.1); HSM returns qualified names like /agent.presence/online.
 
-#### EventPresenceTaskAssigned, EventPresenceTaskCompleted, EventPresencePromptDetected, EventPresenceRateLimit, EventPresenceRateCleared, EventPresenceStuckDetected, EventPresenceActivityDetected
+#### EventPresenceTaskAssigned, EventPresenceTaskCompleted, EventPresencePromptDetected, EventPresenceRateLimit, EventPresenceRateCleared, EventPresenceStuckDetected, EventPresenceActivityDetected, EventPresenceConnectionLost, EventPresenceConnectionRecovered
 
 ```go
 const (
-	EventPresenceTaskAssigned     = "task.assigned"
-	EventPresenceTaskCompleted    = "task.completed"
-	EventPresencePromptDetected   = "prompt.detected"
-	EventPresenceRateLimit        = "rate.limit"
-	EventPresenceRateCleared      = "rate.cleared"
-	EventPresenceStuckDetected    = "stuck.detected"
-	EventPresenceActivityDetected = "activity.detected"
+	EventPresenceTaskAssigned        = "task.assigned"
+	EventPresenceTaskCompleted       = "task.completed"
+	EventPresencePromptDetected      = "prompt.detected"
+	EventPresenceRateLimit           = "rate.limit"
+	EventPresenceRateCleared         = "rate.cleared"
+	EventPresenceStuckDetected       = "stuck.detected"
+	EventPresenceActivityDetected    = "activity.detected"
+	EventPresenceConnectionLost      = "connection.lost"      // Remote disconnect → Away (spec §5.5.8)
+	EventPresenceConnectionRecovered = "connection.recovered" // Reconnect + replay → Online (spec §5.5.8)
 )
 ```
 
-Presence event names for dispatch (spec §6.5).
+Presence event names for dispatch (spec §6.5, §5.5.8).
 
 
 ### Variables
@@ -203,6 +209,24 @@ var PresenceModel = hsm.Define("agent.presence",
 			emitPresenceChanged(ctx, a.Dispatcher, a.AgentID, PresenceAway)
 		})),
 	hsm.Transition(hsm.On(hsm.Event{Name: EventPresenceActivityDetected}), hsm.Source("away"), hsm.Target("online"),
+		hsm.Effect(func(ctx context.Context, a *presenceActor, _ hsm.Event) {
+			emitPresenceChanged(ctx, a.Dispatcher, a.AgentID, PresenceOnline)
+		})),
+
+	hsm.Transition(hsm.On(hsm.Event{Name: EventPresenceConnectionLost}), hsm.Source("online"), hsm.Target("away"),
+		hsm.Effect(func(ctx context.Context, a *presenceActor, _ hsm.Event) {
+			emitPresenceChanged(ctx, a.Dispatcher, a.AgentID, PresenceAway)
+		})),
+	hsm.Transition(hsm.On(hsm.Event{Name: EventPresenceConnectionLost}), hsm.Source("busy"), hsm.Target("away"),
+		hsm.Effect(func(ctx context.Context, a *presenceActor, _ hsm.Event) {
+			emitPresenceChanged(ctx, a.Dispatcher, a.AgentID, PresenceAway)
+		})),
+	hsm.Transition(hsm.On(hsm.Event{Name: EventPresenceConnectionLost}), hsm.Source("offline"), hsm.Target("away"),
+		hsm.Effect(func(ctx context.Context, a *presenceActor, _ hsm.Event) {
+			emitPresenceChanged(ctx, a.Dispatcher, a.AgentID, PresenceAway)
+		})),
+
+	hsm.Transition(hsm.On(hsm.Event{Name: EventPresenceConnectionRecovered}), hsm.Source("away"), hsm.Target("online"),
 		hsm.Effect(func(ctx context.Context, a *presenceActor, _ hsm.Event) {
 			emitPresenceChanged(ctx, a.Dispatcher, a.AgentID, PresenceOnline)
 		})),
@@ -427,6 +451,79 @@ func () Stop(ctx context.Context) error
 ```
 
 Stop drains the lifecycle to Terminated and closes the PTY (spec §5.6).
+
+
+## type RosterStore
+
+```go
+type RosterStore struct {
+	Dispatcher protocol.Dispatcher
+	mu         sync.RWMutex
+	entries    map[api.ID]api.RosterEntry
+}
+```
+
+RosterStore maintains the roster of all agents, host managers, and the director (spec §6.2).
+Mutations emit roster.updated via the configured Dispatcher so presence awareness is real-time (§6.3).
+
+### Functions returning RosterStore
+
+#### NewRosterStore
+
+```go
+func NewRosterStore(d protocol.Dispatcher) *RosterStore
+```
+
+NewRosterStore creates a roster store that emits roster.updated on changes.
+
+
+### Methods
+
+#### RosterStore.Add
+
+```go
+func () Add(ctx context.Context, e api.RosterEntry)
+```
+
+Add adds or replaces a roster entry and emits roster.updated (spec §6.2).
+
+#### RosterStore.List
+
+```go
+func () List() api.Roster
+```
+
+List returns a copy of the roster, ordered by agent_id (spec §6.2 ordering).
+
+#### RosterStore.Remove
+
+```go
+func () Remove(ctx context.Context, agentID api.ID)
+```
+
+Remove removes a participant by agent_id and emits roster.updated.
+
+#### RosterStore.UpdateCurrentTask
+
+```go
+func () UpdateCurrentTask(ctx context.Context, agentID api.ID, task string)
+```
+
+UpdateCurrentTask updates the current task for the given agent_id (optional, for busy agents §6.3).
+
+#### RosterStore.UpdatePresence
+
+```go
+func () UpdatePresence(ctx context.Context, agentID api.ID, presence string)
+```
+
+UpdatePresence updates the presence state for the given agent_id and emits roster.updated (spec §6.2).
+
+#### RosterStore.emitRosterUpdated
+
+```go
+func () emitRosterUpdated(ctx context.Context)
+```
 
 
 ## type lifecycleActor

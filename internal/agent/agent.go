@@ -388,6 +388,20 @@ func (a *AgentActor) HandleEvent(ctx context.Context, eventType string, eventDat
 		if a.CurrentPresenceState() == PresenceBusy {
 			return a.SetAvailable(ctx)
 		}
+	case "remote_disconnect":
+		// When remote host disconnects, set agent to Away state
+		currentState := a.CurrentPresenceState()
+		if currentState != PresenceAway && currentState != PresenceOffline {
+			return a.SetAway(ctx)
+		}
+	case "remote_reconnect":
+		// When remote host reconnects, restore agent state appropriately
+		if a.CurrentPresenceState() == PresenceAway {
+			// After reconnect and replay, agent transitions Away → Running/Online
+			// For now, we'll set it back to online; in a real implementation,
+			// this would depend on the agent's actual state after replay
+			return a.SetBack(ctx)
+		}
 	}
 
 	return nil

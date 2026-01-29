@@ -6,12 +6,41 @@ Package agent implements agent orchestration (lifecycle, presence, messaging)
 
 Package agent implements agent orchestration (lifecycle, presence, messaging)
 
+Package agent implements agent orchestration (lifecycle, presence, messaging)
+
+Package agent implements agent orchestration (lifecycle, presence, messaging)
+
+The agent package provides core functionality for managing agents including:
+  - Lifecycle management (Pending → Starting → Running → Terminated/Errored)
+  - Presence management (Online ↔ Busy ↔ Offline ↔ Away)
+  - Roster maintenance for tracking all agents and their states
+  - Inter-agent messaging capabilities
+
+- `BroadcastID` — BroadcastID is a special ID for broadcast to all participants
 - `ErrInvalidAgent` — ErrInvalidAgent is returned when an agent is invalid
 - `type AgentActor` — AgentActor manages an agent's lifecycle and presence state machines
 - `type AgentManager` — AgentManager manages multiple agents and their lifecycles
+- `type AgentMessage` — AgentMessage represents a message between agents
 - `type AgentProcess` — AgentProcess represents a running agent process
 - `type LifecycleState` — LifecycleState represents the agent lifecycle state
+- `type MessageRouter` — MessageRouter handles routing of messages between agents
+- `type PresenceChangeCallback` — PresenceChangeCallback is a function that gets called when an agent's presence changes
 - `type PresenceState` — PresenceState represents the agent presence state
+- `type RosterEntry` — RosterEntry represents an entry in the roster
+- `type Roster` — Add a presence subscriptions field to the Roster
+- `type Subscription` — Subscription represents a subscription to presence changes
+- `type presenceSubscriptions` — presenceSubscriptions holds all presence change subscriptions
+
+### Constants
+
+#### BroadcastID
+
+```go
+const BroadcastID muid.MUID = 0
+```
+
+BroadcastID is a special ID for broadcast to all participants
+
 
 ### Variables
 
@@ -341,6 +370,21 @@ func () isGitRepo(path string) bool
 isGitRepo checks if a directory is a git repository
 
 
+## type AgentMessage
+
+```go
+type AgentMessage struct {
+	ID        muid.MUID `json:"id"`
+	From      muid.MUID `json:"from"`    // Sender runtime ID (set by publishing component)
+	To        muid.MUID `json:"to"`      // Recipient runtime ID (set by publishing component, or BroadcastID)
+	ToSlug    string    `json:"to_slug"` // Recipient token captured from text (typically agent_slug); case-insensitive
+	Content   string    `json:"content"`
+	Timestamp time.Time `json:"timestamp"`
+}
+```
+
+AgentMessage represents a message between agents
+
 ## type AgentProcess
 
 ```go
@@ -377,6 +421,123 @@ const (
 ```
 
 
+## type MessageRouter
+
+```go
+type MessageRouter struct {
+	agents map[muid.MUID]*AgentActor
+	roster *Roster
+	// In a real implementation, this would connect to NATS for distributed messaging
+	natsEnabled bool
+}
+```
+
+MessageRouter handles routing of messages between agents
+
+### Functions returning MessageRouter
+
+#### NewMessageRouter
+
+```go
+func NewMessageRouter(roster *Roster) *MessageRouter
+```
+
+NewMessageRouter creates a new message router
+
+
+### Methods
+
+#### MessageRouter.DisableNATS
+
+```go
+func () DisableNATS()
+```
+
+DisableNATS disables NATS-based messaging (fallback to local routing)
+
+#### MessageRouter.EnableNATS
+
+```go
+func () EnableNATS()
+```
+
+EnableNATS enables NATS-based messaging
+
+#### MessageRouter.RegisterAgent
+
+```go
+func () RegisterAgent(agent *AgentActor)
+```
+
+RegisterAgent registers an agent with the message router
+
+#### MessageRouter.SendMessage
+
+```go
+func () SendMessage(ctx context.Context, msg *AgentMessage) error
+```
+
+SendMessage sends a message to a specific agent or broadcasts to all
+Implements the inter-agent messaging routes as specified in the spec
+
+#### MessageRouter.UnregisterAgent
+
+```go
+func () UnregisterAgent(agentID muid.MUID)
+```
+
+UnregisterAgent removes an agent from the message router
+
+#### MessageRouter.broadcastMessage
+
+```go
+func () broadcastMessage(ctx context.Context, msg *AgentMessage) error
+```
+
+broadcastMessage sends a message to all registered agents
+
+#### MessageRouter.handleReceivedMessage
+
+```go
+func () handleReceivedMessage(ctx context.Context, agent *AgentActor, msg *AgentMessage)
+```
+
+handleReceivedMessage simulates handling of a received message by an agent
+
+#### MessageRouter.publishToNATS
+
+```go
+func () publishToNATS(ctx context.Context, msg *AgentMessage) error
+```
+
+publishToNATS publishes the message to NATS subjects for distributed messaging
+This is a placeholder that will be fully implemented in Phase 7
+
+#### MessageRouter.sendToAgent
+
+```go
+func () sendToAgent(ctx context.Context, msg *AgentMessage) error
+```
+
+sendToAgent sends a message to a specific agent
+
+#### MessageRouter.sendToSlug
+
+```go
+func () sendToSlug(ctx context.Context, msg *AgentMessage) error
+```
+
+sendToSlug finds an agent by slug and sends the message
+
+
+## type PresenceChangeCallback
+
+```go
+type PresenceChangeCallback func(*RosterEntry)
+```
+
+PresenceChangeCallback is a function that gets called when an agent's presence changes
+
 ## type PresenceState
 
 ```go
@@ -397,5 +558,228 @@ const (
 	PresenceAway    PresenceState = "away"
 )
 ```
+
+
+## type Roster
+
+```go
+type Roster struct {
+	agents       map[muid.MUID]*RosterEntry
+	mutex        sync.RWMutex
+	presenceSubs *presenceSubscriptions
+}
+```
+
+Add a presence subscriptions field to the Roster
+
+### Functions returning Roster
+
+#### NewRoster
+
+```go
+func NewRoster() *Roster
+```
+
+NewRoster creates a new roster instance
+
+
+### Methods
+
+#### Roster.AddAgent
+
+```go
+func () AddAgent(agent *api.Agent, presence PresenceState)
+```
+
+AddAgent adds an agent to the roster
+
+#### Roster.GetAgent
+
+```go
+func () GetAgent(agentID muid.MUID) (*RosterEntry, bool)
+```
+
+GetAgent returns the roster entry for an agent
+
+#### Roster.GetAgentsByPresence
+
+```go
+func () GetAgentsByPresence(presence PresenceState) []*RosterEntry
+```
+
+GetAgentsByPresence returns agents filtered by presence state
+
+#### Roster.GetAllAgents
+
+```go
+func () GetAllAgents() []*RosterEntry
+```
+
+GetAllAgents returns all agents in the roster
+
+#### Roster.GetAwayAgents
+
+```go
+func () GetAwayAgents() []*RosterEntry
+```
+
+GetAwayAgents returns all agents that are currently away
+
+#### Roster.GetBusyAgents
+
+```go
+func () GetBusyAgents() []*RosterEntry
+```
+
+GetBusyAgents returns all agents that are currently busy
+
+#### Roster.GetOfflineAgents
+
+```go
+func () GetOfflineAgents() []*RosterEntry
+```
+
+GetOfflineAgents returns all agents that are currently offline
+
+#### Roster.GetOnlineAgents
+
+```go
+func () GetOnlineAgents() []*RosterEntry
+```
+
+GetOnlineAgents returns all agents that are currently online
+
+#### Roster.RemoveAgent
+
+```go
+func () RemoveAgent(agentID muid.MUID)
+```
+
+RemoveAgent removes an agent from the roster
+
+#### Roster.Size
+
+```go
+func () Size() int
+```
+
+Size returns the number of agents in the roster
+
+#### Roster.SubscribeToPresenceChanges
+
+```go
+func () SubscribeToPresenceChanges(ctx context.Context, handler func(*RosterEntry)) string
+```
+
+SubscribeToPresenceChanges allows components to subscribe to roster/presence changes
+
+#### Roster.UnsubscribeFromPresenceChanges
+
+```go
+func () UnsubscribeFromPresenceChanges(subID string)
+```
+
+UnsubscribeFromPresenceChanges removes a subscription to presence changes
+
+#### Roster.UpdatePresence
+
+```go
+func () UpdatePresence(agentID muid.MUID, presence PresenceState)
+```
+
+UpdatePresence updates the presence state of an agent in the roster
+
+#### Roster.UpdateTask
+
+```go
+func () UpdateTask(agentID muid.MUID, task string)
+```
+
+UpdateTask updates the current task of an agent in the roster
+
+#### Roster.notifyPresenceChange
+
+```go
+func () notifyPresenceChange(agentID muid.MUID)
+```
+
+notifyPresenceChange notifies all subscribers about a presence change for an agent
+
+
+## type RosterEntry
+
+```go
+type RosterEntry struct {
+	ID       muid.MUID     `json:"id"`
+	Name     string        `json:"name"`
+	Adapter  string        `json:"adapter"`
+	Presence PresenceState `json:"presence"`
+	RepoRoot string        `json:"repo_root"`
+	HostID   muid.MUID     `json:"host_id,omitempty"`
+	Task     string        `json:"task,omitempty"` // Current task if agent is busy
+}
+```
+
+RosterEntry represents an entry in the roster
+
+## type Subscription
+
+```go
+type Subscription struct {
+	id       string
+	callback PresenceChangeCallback
+}
+```
+
+Subscription represents a subscription to presence changes
+
+## type presenceSubscriptions
+
+```go
+type presenceSubscriptions struct {
+	subs   map[string]PresenceChangeCallback
+	nextID int
+	mutex  sync.RWMutex
+}
+```
+
+presenceSubscriptions holds all presence change subscriptions
+
+### Functions returning presenceSubscriptions
+
+#### newPresenceSubscriptions
+
+```go
+func newPresenceSubscriptions() *presenceSubscriptions
+```
+
+newPresenceSubscriptions creates a new presenceSubscriptions instance
+
+
+### Methods
+
+#### presenceSubscriptions.NotifyAll
+
+```go
+func () NotifyAll(entry *RosterEntry)
+```
+
+NotifyAll notifies all subscribers about a presence change
+
+#### presenceSubscriptions.Subscribe
+
+```go
+func () Subscribe(callback PresenceChangeCallback) string
+```
+
+Subscribe adds a new subscription to presence changes
+
+#### presenceSubscriptions.Unsubscribe
+
+```go
+func () Unsubscribe(id string)
+```
+
+Unsubscribe removes a subscription
 
 

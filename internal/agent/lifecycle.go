@@ -12,7 +12,7 @@ import (
 	"github.com/agentflare-ai/amux/pkg/api"
 )
 
-// AgentLifecycle represents the agent lifecycle state machine.
+// AgentLifecycle represents an agent lifecycle state machine.
 // The lifecycle follows: Pending → Starting → Running → Terminated/Errored
 type AgentLifecycle struct {
 	hsm.HSM
@@ -21,8 +21,7 @@ type AgentLifecycle struct {
 	ctx   context.Context
 }
 
-// AgentLifecycleEvent represents events that can trigger state transitions
-// in the agent lifecycle state machine.
+// AgentLifecycleEvent represents events that can trigger state transitions.
 var (
 	// EventStart is triggered when an agent should be started.
 	EventStart = hsm.Event{Name: "start"}
@@ -66,82 +65,81 @@ func (al *AgentLifecycle) buildStateMachine() *hsm.Model {
 	return hsm.Define(
 		"agent_lifecycle_"+agentID,
 
-		// Define states
-		hsm.State("pending",
-			hsm.Transition(
-				hsm.On(EventStart),
-				hsm.Source("pending"),
-				hsm.Target("starting"),
-				hsm.Effect(func(ctx context.Context, hsm *AgentLifecycle, event hsm.Event) {
-					al.logStateChange("pending", "starting")
-				}),
-			),
-		),
-
-		hsm.State("starting",
-			hsm.Transition(
-				hsm.On(EventStarted),
-				hsm.Source("starting"),
-				hsm.Target("running"),
-				hsm.Effect(func(ctx context.Context, hsm *AgentLifecycle, event hsm.Event) {
-					al.logStateChange("starting", "running")
-				}),
-			),
-			hsm.Transition(
-				hsm.On(EventError),
-				hsm.Source("starting"),
-				hsm.Target("errored"),
-				hsm.Effect(func(ctx context.Context, hsm *AgentLifecycle, event hsm.Event) {
-					al.logStateChange("starting", "errored")
-				}),
-			),
-		),
-
-		hsm.State("running",
-			hsm.Transition(
-				hsm.On(EventStop),
-				hsm.Source("running"),
-				hsm.Target("pending"),
-				hsm.Effect(func(ctx context.Context, hsm *AgentLifecycle, event hsm.Event) {
-					al.logStateChange("running", "pending")
-				}),
-			),
-			hsm.Transition(
-				hsm.On(EventStopped),
-				hsm.Source("running"),
-				hsm.Target("terminated"),
-				hsm.Effect(func(ctx context.Context, hsm *AgentLifecycle, event hsm.Event) {
-					al.logStateChange("running", "terminated")
-				}),
-			),
-			hsm.Transition(
-				hsm.On(EventError),
-				hsm.Source("running"),
-				hsm.Target("errored"),
-				hsm.Effect(func(ctx context.Context, hsm *AgentLifecycle, event hsm.Event) {
-					al.logStateChange("running", "errored")
-				}),
-			),
-			hsm.Transition(
-				hsm.On(EventRestart),
-				hsm.Source("running"),
-				hsm.Target("starting"),
-				hsm.Effect(func(ctx context.Context, hsm *AgentLifecycle, event hsm.Event) {
-					al.logStateChange("running", "starting")
-				}),
-			),
-		),
-
+		// Define the states
+		hsm.State("pending"),
+		hsm.State("starting"),
+		hsm.State("running"),
 		hsm.State("terminated"),
-		hsm.State("errored",
-			hsm.Transition(
-				hsm.On(EventRestart),
-				hsm.Source("errored"),
-				hsm.Target("starting"),
-				hsm.Effect(func(ctx context.Context, hsm *AgentLifecycle, event hsm.Event) {
-					al.logStateChange("errored", "starting")
-				}),
-			),
+		hsm.State("errored"),
+
+		// Define transitions from pending to starting
+		hsm.Transition(
+			hsm.On(EventStart),
+			hsm.Source("pending"),
+			hsm.Target("starting"),
+			hsm.Effect(func(ctx context.Context, al *AgentLifecycle, event hsm.Event) {
+				al.logStateChange("pending", "starting")
+			}),
+		),
+
+		// Define transitions from starting to running
+		hsm.Transition(
+			hsm.On(EventStarted),
+			hsm.Source("starting"),
+			hsm.Target("running"),
+			hsm.Effect(func(ctx context.Context, al *AgentLifecycle, event hsm.Event) {
+				al.logStateChange("starting", "running")
+			}),
+		),
+
+		// Define transitions from starting to errored
+		hsm.Transition(
+			hsm.On(EventError),
+			hsm.Source("starting"),
+			hsm.Target("errored"),
+			hsm.Effect(func(ctx context.Context, al *AgentLifecycle, event hsm.Event) {
+				al.logStateChange("starting", "errored")
+			}),
+		),
+
+		// Define transitions from running to terminated
+		hsm.Transition(
+			hsm.On(EventStopped),
+			hsm.Source("running"),
+			hsm.Target("terminated"),
+			hsm.Effect(func(ctx context.Context, al *AgentLifecycle, event hsm.Event) {
+				al.logStateChange("running", "terminated")
+			}),
+		),
+
+		// Define transitions from running to errored
+		hsm.Transition(
+			hsm.On(EventError),
+			hsm.Source("running"),
+			hsm.Target("errored"),
+			hsm.Effect(func(ctx context.Context, al *AgentLifecycle, event hsm.Event) {
+				al.logStateChange("running", "errored")
+			}),
+		),
+
+		// Define transitions from running back to pending
+		hsm.Transition(
+			hsm.On(EventStop),
+			hsm.Source("running"),
+			hsm.Target("pending"),
+			hsm.Effect(func(ctx context.Context, al *AgentLifecycle, event hsm.Event) {
+				al.logStateChange("running", "pending")
+			}),
+		),
+
+		// Define transitions from errored back to starting
+		hsm.Transition(
+			hsm.On(EventRestart),
+			hsm.Source("errored"),
+			hsm.Target("starting"),
+			hsm.Effect(func(ctx context.Context, al *AgentLifecycle, event hsm.Event) {
+				al.logStateChange("errored", "starting")
+			}),
 		),
 
 		// Set the initial state

@@ -9,15 +9,18 @@ import (
 	"path/filepath"
 	"sync"
 
+	"github.com/agentflare-ai/amux/internal/agent"
 	"github.com/agentflare-ai/amux/internal/config"
+	"github.com/agentflare-ai/amux/pkg/api"
 )
 
 // Server is the JSON-RPC daemon server.
 type Server struct {
-	Config  config.DaemonConfig
+	Config   config.DaemonConfig
 	Listener net.Listener
-	mu      sync.Mutex
-	clients map[*ClientConn]struct{}
+	Registry *agent.Registry
+	mu       sync.Mutex
+	clients  map[*ClientConn]struct{}
 }
 
 // ClientConn represents a connected client.
@@ -29,8 +32,9 @@ type ClientConn struct {
 // NewServer creates a new daemon server.
 func NewServer(cfg config.DaemonConfig) *Server {
 	return &Server{
-		Config:  cfg,
-		clients: make(map[*ClientConn]struct{}),
+		Config:   cfg,
+		Registry: agent.GlobalRegistry, // Use global by default or pass in
+		clients:  make(map[*ClientConn]struct{}),
 	}
 }
 
@@ -131,6 +135,42 @@ func (c *ClientConn) processRequest(req jsonRPCRequest) jsonRPCResponse {
 		res.Result = "pong"
 	case "version":
 		res.Result = "v0.0.1"
+	case "agent.list":
+		// Return roster
+		roster := c.srv.Registry.GetRoster()
+		res.Result = roster
+	case "agent.add":
+		// Parse params
+		var params struct {
+			Name     string `json:"name"`
+			Adapter  string `json:"adapter"`
+			RepoPath string `json:"repo_path"`
+		}
+		if err := json.Unmarshal(req.Params, &params); err != nil {
+			res.Error = &jsonRPCError{Code: -32602, Message: "Invalid params"}
+			break
+		}
+		
+		cfg := config.AgentConfig{
+			Name:    params.Name,
+			Adapter: params.Adapter,
+			Location: config.LocationConfig{
+				RepoPath: params.RepoPath,
+			},
+		}
+		
+		// Create agent (and auto-register)
+		// We need an EventBus. Server should have one.
+		// For now creating a new one or assuming server has it.
+		// TODO: Add EventBus to Server struct.
+		bus := agent.NewEventBus() 
+		a, err := agent.NewAgent(cfg, api.RepoRoot(params.RepoPath), bus)
+		if err != nil {
+			res.Error = &jsonRPCError{Code: -32000, Message: err.Error()}
+		} else {
+			res.Result = a.ID
+		}
+
 	default:
 		res.Error = &jsonRPCError{Code: -32601, Message: "Method not found"}
 	}

@@ -40,6 +40,7 @@ func () processRequest(req jsonRPCRequest) jsonRPCResponse
 type Server struct {
 	Config   config.DaemonConfig
 	Listener net.Listener
+	Registry *agent.Registry
 	mu       sync.Mutex
 	clients  map[*ClientConn]struct{}
 }

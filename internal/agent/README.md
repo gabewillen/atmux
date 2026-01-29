@@ -4,13 +4,30 @@
 
 Package agent provides the agent actor model and HSM-driven lifecycle and presence state machines.
 
+Package agent provides the agent actor model and local management helpers.
+
+This file implements Phase 2 local agent management for:
+- Agent add flow (validation, repo required, config persistence) per spec §5.2
+- Worktree isolation and slug-based path layout per spec §5.3.1
+- Git merge strategy selection scaffolding per spec §5.7
+
 - `EventStart, EventReady, EventStop, EventError` — Lifecycle event constants.
 - `EventTaskAssigned, EventTaskCompleted, EventPromptDetected, EventRateLimit, EventRateCleared, EventStuckDetected, EventActivityDetected` — Presence event constants per spec §6.5.
 - `LifecycleModel` — LifecycleModel defines the agent lifecycle state machine per spec §5.4.
 - `PresenceModel` — PresenceModel defines the agent presence state machine per spec §6.5.
 - `StateOnline, StateBusy, StateOffline, StateAway` — Presence state constants matching spec §6.1.
 - `StatePending, StateStarting, StateRunning, StateTerminated, StateErrored` — Lifecycle state constants matching spec §5.4.
+- `func AddLocalAgent(ctx context.Context, cfg *config.Config, opts AddLocalAgentOptions) (*api.Agent, string, error)` — AddLocalAgent adds a new local agent for the given repository root.
+- `func deriveUniqueAgentSlug(cfg *config.Config, name string) string` — deriveUniqueAgentSlug derives a unique agent_slug given the existing config and desired agent name.
+- `func ensureLocalWorktree(ctx context.Context, repoRoot, slug, worktreePath string) error` — ensureLocalWorktree ensures a git worktree exists for the given agent slug.
+- `func flattenEnv(m map[string]string) []string` — flattenEnv flattens a map[string]string into KEY=VALUE strings.
+- `func slugExists(cfg *config.Config, slug string) bool` — slugExists checks whether a slug is already in use by any configured agent.
+- `func verifyGitRepository(ctx context.Context, repoRoot string) error` — verifyGitRepository ensures the given path is a git repository.
+- `func worktreeListed(output, worktreePath string) bool` — worktreeListed checks whether a worktreePath appears in the `git worktree list --porcelain` output.
+- `type AddLocalAgentOptions` — AddLocalAgentOptions holds input parameters for adding a local agent.
 - `type AgentActor` — AgentActor wraps an Agent with HSM-driven lifecycle and presence state machines.
+- `type LocalSession` — LocalSession represents a local PTY-backed agent session.
+- `type MergeStrategy` — AddLocalAgentOptions holds input parameters for adding a local agent.
 - `type PresenceActor` — PresenceActor wraps an Agent with a presence state machine.
 
 ### Constants
@@ -165,6 +182,90 @@ State diagram:
 	               └────────┘
 
 
+### Functions
+
+#### AddLocalAgent
+
+```go
+func AddLocalAgent(ctx context.Context, cfg *config.Config, opts AddLocalAgentOptions) (*api.Agent, string, error)
+```
+
+AddLocalAgent adds a new local agent for the given repository root.
+
+Responsibilities (Phase 2, spec §5.2, §5.3.1, §5.7.1):
+- Validate input and ensure the repoRoot is a git repository
+- Derive a unique agent_slug from Name using NormalizeAgentSlug
+- Ensure a git worktree exists at .amux/worktrees/{agent_slug}/ under repoRoot
+- Append the agent to the provided configuration (Agents slice)
+- Return the instantiated api.Agent with canonical RepoRoot and Worktree
+
+#### deriveUniqueAgentSlug
+
+```go
+func deriveUniqueAgentSlug(cfg *config.Config, name string) string
+```
+
+deriveUniqueAgentSlug derives a unique agent_slug given the existing config
+and desired agent name. Per spec §5.3.1, collisions are resolved by
+appending a numeric suffix -2, -3, ... until unique.
+
+#### ensureLocalWorktree
+
+```go
+func ensureLocalWorktree(ctx context.Context, repoRoot, slug, worktreePath string) error
+```
+
+ensureLocalWorktree ensures a git worktree exists for the given agent slug.
+If the worktree already exists, the function is idempotent and returns nil.
+
+#### flattenEnv
+
+```go
+func flattenEnv(m map[string]string) []string
+```
+
+flattenEnv flattens a map[string]string into KEY=VALUE strings.
+
+#### slugExists
+
+```go
+func slugExists(cfg *config.Config, slug string) bool
+```
+
+slugExists checks whether a slug is already in use by any configured agent.
+
+#### verifyGitRepository
+
+```go
+func verifyGitRepository(ctx context.Context, repoRoot string) error
+```
+
+verifyGitRepository ensures the given path is a git repository.
+It runs `git rev-parse --show-toplevel` and verifies success.
+
+#### worktreeListed
+
+```go
+func worktreeListed(output, worktreePath string) bool
+```
+
+worktreeListed checks whether a worktreePath appears in the
+`git worktree list --porcelain` output.
+
+
+## type AddLocalAgentOptions
+
+```go
+type AddLocalAgentOptions struct {
+	Name     string
+	About    string
+	Adapter  string
+	RepoRoot string
+}
+```
+
+AddLocalAgentOptions holds input parameters for adding a local agent.
+
 ## type AgentActor
 
 ```go
@@ -243,6 +344,87 @@ func () StopAgent(ctx context.Context)
 
 StopAgent transitions the agent from Running to Terminated.
 Per spec §5.4, this is triggered by the "stop" event.
+
+
+## type LocalSession
+
+```go
+type LocalSession struct {
+	Cmd *exec.Cmd
+	PTY *os.File
+}
+```
+
+LocalSession represents a local PTY-backed agent session.
+
+Phase 2 provides basic PTY ownership for local agents; later phases add
+monitoring and process tracking.
+
+### Functions returning LocalSession
+
+#### RestartLocalSession
+
+```go
+func RestartLocalSession(ctx context.Context, ag *api.Agent, prev *LocalSession, command []string, env map[string]string) (*LocalSession, error)
+```
+
+RestartLocalSession stops the previous session (if any) and starts a new one.
+
+#### StartLocalSession
+
+```go
+func StartLocalSession(ctx context.Context, ag *api.Agent, command []string, env map[string]string) (*LocalSession, error)
+```
+
+StartLocalSession starts a new local PTY session for the given agent.
+The process working directory is set to agent.Worktree per spec §5.3.1.
+
+
+### Methods
+
+#### LocalSession.Stop
+
+```go
+func () Stop() error
+```
+
+Stop terminates the local session and waits for the process to exit.
+
+
+## type MergeStrategy
+
+```go
+type MergeStrategy string
+```
+
+AddLocalAgentOptions holds input parameters for adding a local agent.
+
+MergeStrategy represents supported git merge strategies for agent worktrees.
+
+### Constants
+
+#### MergeStrategyMergeCommit, MergeStrategySquash, MergeStrategyRebase, MergeStrategyFFOnly
+
+```go
+const (
+	MergeStrategyMergeCommit MergeStrategy = "merge-commit"
+	MergeStrategySquash      MergeStrategy = "squash"
+	MergeStrategyRebase      MergeStrategy = "rebase"
+	MergeStrategyFFOnly      MergeStrategy = "ff-only"
+)
+```
+
+
+### Functions returning MergeStrategy
+
+#### SelectMergeStrategy
+
+```go
+func SelectMergeStrategy(cfg *config.Config) MergeStrategy
+```
+
+SelectMergeStrategy returns the effective merge strategy based on config,
+defaulting to squash when an unknown or empty value is provided.
 
 
 ## type PresenceActor

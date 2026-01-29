@@ -18,6 +18,7 @@ The configuration supports:
 - HSM-based config actor for updates
 
 - `func ParseByteSize(s string) (int64, error)` — ParseByteSize parses a byte size string (e.g., "1MB", "512KB").
+- `func Save(path string, cfg *Config) error` — Save writes the configuration to the specified path in TOML format.
 - `func applyEnvOverrides(cfg *Config) error` — applyEnvOverrides applies environment variable overrides to the config.
 - `type AgentConfig` — AgentConfig represents a single agent configuration.
 - `type ByteSize` — ByteSize represents a byte size that can be parsed from TOML.
@@ -48,6 +49,15 @@ func ParseByteSize(s string) (int64, error)
 ```
 
 ParseByteSize parses a byte size string (e.g., "1MB", "512KB").
+
+#### Save
+
+```go
+func Save(path string, cfg *Config) error
+```
+
+Save writes the configuration to the specified path in TOML format.
+The directory for the path is created if it does not exist.
 
 #### applyEnvOverrides
 

@@ -363,3 +363,28 @@ func applyEnvOverrides(cfg *Config) error {
 	// For now, we'll just validate the approach.
 	return nil
 }
+
+// Save writes the configuration to the specified path in TOML format.
+// The directory for the path is created if it does not exist.
+func Save(path string, cfg *Config) error {
+	if path == "" {
+		return errors.Wrap(errors.ErrInvalidInput, "config path cannot be empty")
+	}
+
+	// Ensure parent directory exists
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return errors.Wrapf(err, "create config directory: %s", dir)
+	}
+
+	data, err := toml.Marshal(cfg)
+	if err != nil {
+		return errors.Wrap(err, "marshal config")
+	}
+
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		return errors.Wrapf(err, "write config file: %s", path)
+	}
+
+	return nil
+}

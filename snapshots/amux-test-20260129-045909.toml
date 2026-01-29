@@ -1,0 +1,9 @@
+timestamp = 2026-01-29T04:59:09.737813835Z
+go_version = '1.25.6'
+module = 'github.com/stateforward/amux'
+tidy_status = 'pass'
+vet_status = 'pass'
+lint_status = 'pass'
+test_status = 'pass'
+race_status = 'pass'
+coverage = 0.0

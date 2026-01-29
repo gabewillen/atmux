@@ -4,6 +4,8 @@
 //
 // All agent-specific behavior is delegated to WASM adapters loaded
 // via the adapter package.
+//
+// This package implements HSM-based state management per spec requirements.
 package agent
 
 import (
@@ -288,35 +290,65 @@ func (a *AgentActor) triggerEventHandlers(eventType string, data interface{}) {
 
 // Manager orchestrates multiple agents in an agent-agnostic manner.
 // It treats all agents uniformly through the adapter interface.
+// Updated to use HSM-based actors per spec requirements.
 type Manager struct {
-	// agents maps agent IDs to their actors.
-	agents map[muid.MUID]*AgentActor
+	// agents maps agent IDs to their HSM actors.
+	agents map[muid.MUID]*AgentHSMActor
+
+	// legacyAgents maps agent IDs to legacy actors (for backward compatibility during transition).
+	legacyAgents map[muid.MUID]*AgentActor
+
+	// useHSM determines whether to use HSM actors (true) or legacy actors (false).
+	useHSM bool
 
 	// mu protects concurrent access to the manager.
 	mu sync.RWMutex
 }
 
 // NewManager creates a new agent manager instance.
+// By default, uses HSM-based actors per spec requirements.
 func NewManager() (*Manager, error) {
 	return &Manager{
-		agents: make(map[muid.MUID]*AgentActor),
+		agents:       make(map[muid.MUID]*AgentHSMActor),
+		legacyAgents: make(map[muid.MUID]*AgentActor),
+		useHSM:       true, // Use HSM by default per spec
+	}, nil
+}
+
+// NewLegacyManager creates a manager that uses legacy simple state machines.
+// This is provided for backward compatibility during transition.
+func NewLegacyManager() (*Manager, error) {
+	return &Manager{
+		agents:       make(map[muid.MUID]*AgentHSMActor),
+		legacyAgents: make(map[muid.MUID]*AgentActor),
+		useHSM:       false,
 	}, nil
 }
 
 // AddAgent creates and adds a new agent to the manager.
 func (m *Manager) AddAgent(name, adapter, repoRoot string, config map[string]interface{}) (*api.Agent, error) {
-	actor, err := NewAgentActor(name, adapter, repoRoot, config)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create agent actor: %w", err)
-	}
-
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	m.agents[actor.Agent.ID] = actor
-
-	agent := actor.GetAgent()
-	return &agent, nil
+	if m.useHSM {
+		// Use HSM-based actor per spec requirements
+		actor, err := NewAgentHSMActor(name, adapter, repoRoot, config)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create HSM agent actor: %w", err)
+		}
+		m.agents[actor.lifecycleHSM.Agent.ID] = actor
+		agent := actor.GetAgent()
+		return &agent, nil
+	} else {
+		// Use legacy actor for backward compatibility
+		actor, err := NewAgentActor(name, adapter, repoRoot, config)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create legacy agent actor: %w", err)
+		}
+		m.legacyAgents[actor.Agent.ID] = actor
+		agent := actor.GetAgent()
+		return &agent, nil
+	}
 }
 
 // GetAgent returns an agent by ID.
@@ -324,13 +356,21 @@ func (m *Manager) GetAgent(id muid.MUID) (*api.Agent, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	actor, exists := m.agents[id]
-	if !exists {
-		return nil, ErrAgentNotFound
+	if m.useHSM {
+		actor, exists := m.agents[id]
+		if !exists {
+			return nil, ErrAgentNotFound
+		}
+		agent := actor.GetAgent()
+		return &agent, nil
+	} else {
+		actor, exists := m.legacyAgents[id]
+		if !exists {
+			return nil, ErrAgentNotFound
+		}
+		agent := actor.GetAgent()
+		return &agent, nil
 	}
-
-	agent := actor.GetAgent()
-	return &agent, nil
 }
 
 // ListAgents returns all agents managed by this manager.
@@ -338,49 +378,117 @@ func (m *Manager) ListAgents() []api.Agent {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	agents := make([]api.Agent, 0, len(m.agents))
-	for _, actor := range m.agents {
-		agents = append(agents, actor.GetAgent())
+	if m.useHSM {
+		agents := make([]api.Agent, 0, len(m.agents))
+		for _, actor := range m.agents {
+			agents = append(agents, actor.GetAgent())
+		}
+		return agents
+	} else {
+		agents := make([]api.Agent, 0, len(m.legacyAgents))
+		for _, actor := range m.legacyAgents {
+			agents = append(agents, actor.GetAgent())
+		}
+		return agents
 	}
-
-	return agents
 }
 
 // StartAgent starts an agent by sending a start lifecycle event.
+// Uses hsm.Dispatch() for HSM actors per spec requirements.
 func (m *Manager) StartAgent(id muid.MUID) error {
 	m.mu.RLock()
-	actor, exists := m.agents[id]
-	m.mu.RUnlock()
+	defer m.mu.RUnlock()
 
-	if !exists {
-		return ErrAgentNotFound
+	if m.useHSM {
+		actor, exists := m.agents[id]
+		if !exists {
+			return ErrAgentNotFound
+		}
+		// Use HSM dispatch per spec requirements
+		return actor.Dispatch(EvtStart, nil)
+	} else {
+		actor, exists := m.legacyAgents[id]
+		if !exists {
+			return ErrAgentNotFound
+		}
+		return actor.SendLifecycleEvent(EventStart)
 	}
-
-	return actor.SendLifecycleEvent(EventStart)
 }
 
 // TerminateAgent terminates an agent by sending a terminate lifecycle event.
+// Uses hsm.Dispatch() for HSM actors per spec requirements.
 func (m *Manager) TerminateAgent(id muid.MUID) error {
 	m.mu.RLock()
-	actor, exists := m.agents[id]
-	m.mu.RUnlock()
+	defer m.mu.RUnlock()
 
-	if !exists {
-		return ErrAgentNotFound
+	if m.useHSM {
+		actor, exists := m.agents[id]
+		if !exists {
+			return ErrAgentNotFound
+		}
+		// Use HSM dispatch per spec requirements
+		return actor.Dispatch(EvtTerminate, nil)
+	} else {
+		actor, exists := m.legacyAgents[id]
+		if !exists {
+			return ErrAgentNotFound
+		}
+		return actor.SendLifecycleEvent(EventTerminate)
 	}
-
-	return actor.SendLifecycleEvent(EventTerminate)
 }
 
 // UpdatePresence updates an agent's presence state.
-func (m *Manager) UpdatePresence(id muid.MUID, event PresenceEvent) error {
+// Uses hsm.Dispatch() for HSM actors per spec requirements.
+func (m *Manager) UpdatePresence(id muid.MUID, eventName string) error {
 	m.mu.RLock()
-	actor, exists := m.agents[id]
-	m.mu.RUnlock()
+	defer m.mu.RUnlock()
 
-	if !exists {
-		return ErrAgentNotFound
+	if m.useHSM {
+		actor, exists := m.agents[id]
+		if !exists {
+			return ErrAgentNotFound
+		}
+		// Use HSM dispatch per spec requirements
+		return actor.Dispatch(eventName, nil)
+	} else {
+		actor, exists := m.legacyAgents[id]
+		if !exists {
+			return ErrAgentNotFound
+		}
+		// Convert string event to legacy event
+		var legacyEvent PresenceEvent
+		switch eventName {
+		case EvtGoOnline:
+			legacyEvent = EventGoOnline
+		case EvtGoBusy:
+			legacyEvent = EventGoBusy
+		case EvtGoOffline:
+			legacyEvent = EventGoOffline
+		case EvtGoAway:
+			legacyEvent = EventGoAway
+		case EvtActivity:
+			legacyEvent = EventActivity
+		default:
+			return fmt.Errorf("unknown presence event: %s", eventName)
+		}
+		return actor.SendPresenceEvent(legacyEvent)
 	}
+}
 
-	return actor.SendPresenceEvent(event)
+// DispatchEvent dispatches an event to an agent using hsm.Dispatch() per spec requirements.
+// This is the primary method for triggering state transitions.
+func (m *Manager) DispatchEvent(id muid.MUID, eventName string, data interface{}) error {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	if m.useHSM {
+		actor, exists := m.agents[id]
+		if !exists {
+			return ErrAgentNotFound
+		}
+		// Use HSM dispatch per spec requirements
+		return actor.Dispatch(eventName, data)
+	} else {
+		return fmt.Errorf("DispatchEvent not supported for legacy agents; use StartAgent/TerminateAgent/UpdatePresence")
+	}
 }

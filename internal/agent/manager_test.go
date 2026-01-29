@@ -271,7 +271,7 @@ func TestManager(t *testing.T) {
 	}
 
 	// Test updating presence
-	err = manager.UpdatePresence(agent1.ID, EventGoOnline)
+	err = manager.UpdatePresence(agent1.ID, string(EventGoOnline))
 	if err != nil {
 		t.Errorf("UpdatePresence() failed: %v", err)
 	}

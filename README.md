@@ -6,7 +6,7 @@
 - [cmd/amux](cmd/amux/README.md) — Package main provides the amux CLI client.
 - [cmd/amux-node](cmd/amux-node/README.md) — Package main provides the unified daemon binary.
 - [internal/adapter](internal/adapter/README.md) — Package adapter provides WASM adapter runtime and loading functionality.
-- [internal/agent](internal/agent/README.md) — Package agent provides agent-agnostic orchestration functionality.
+- [internal/agent](internal/agent/README.md) — Package agent implements HSM-based agent lifecycle and presence management.
 - [internal/config](internal/config/README.md) — Package config provides configuration management with TOML format support.
 - [internal/conformance](internal/conformance/README.md) — Package conformance provides the conformance test harness.
 - [internal/events](internal/events/README.md) — Package events provides event dispatch functionality.

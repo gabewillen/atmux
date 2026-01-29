@@ -52,5 +52,5 @@ docs-check:
 		exit 1; \
 	fi
 
-# Run all verification steps
-verify: tidy vet lint test-race test docs-check
+# Run all verification steps (includes amux test --regression per plan verification entrypoints)
+verify: tidy vet lint test-race test docs-check test-regression

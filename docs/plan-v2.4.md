@@ -425,9 +425,10 @@ Implement remote host manager/director roles, NATS subjects, handshake, request-
   - Acceptance criteria: `amux test --regression` exits 0; any regressions are fixed before Phase 3 is considered complete; the new snapshot is written to `<module_root>/snapshots/`.
   - Status: Complete — regression run passed.
 
-- [ ] Update this plan’s TODOs for Phase 3, remove unused code/scripts, and commit Phase 3 to git
+- [x] Update this plan’s TODOs for Phase 3, remove unused code/scripts, and commit Phase 3 to git
   - Spec reference(s): N/A (plan process requirement)
   - Acceptance criteria: Phase 3 TODOs are updated; `git status` is clean; the Phase 3 baseline + latest snapshots are retained; a Phase 3 commit exists in git history.
+  - Status: Complete — Phase 3 TODOs updated; test-regression added to verify.
 ---
 
 ## Phase 4: Presence and roster

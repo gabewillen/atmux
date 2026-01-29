@@ -757,36 +757,36 @@ Expose a JSON-RPC control plane for CLI clients and plugins, including required 
 - Stable request/response types and streaming subscription delivery
 
 ### TODO list
-- [ ] Run `amux test` to capture the baseline snapshot for Phase 10
+- [x] Run `amux test` to capture the baseline snapshot for Phase 10
   - Spec reference(s): §12.6.1–§12.6.3
   - Acceptance criteria: a new `snapshots/amux-test-*.toml` exists under `<module_root>/snapshots/` and is retained as the baseline for Phase 10 regression checking.
 
-- [ ] Implement transport and framing for JSON-RPC between CLI and daemon
+- [x] Implement transport and framing for JSON-RPC between CLI and daemon
   - Spec reference(s): §12.2
   - Acceptance criteria: client can connect; request/response framing correct; malformed frames rejected safely.
 
-- [ ] Implement daemon lifecycle and turnkey defaults
+- [x] Implement daemon lifecycle and turnkey defaults
   - Spec reference(s): §12.3
   - Acceptance criteria: daemon starts with sensible defaults; auto-start behavior matches spec; state persisted as required.
 
-- [ ] Implement required JSON-RPC methods: ping, version, events.subscribe, agent.add/list/remove, system.update
+- [x] Implement required JSON-RPC methods: ping, version, events.subscribe, agent.add/list/remove, system.update
   - Spec reference(s): §12.4.1–§12.4.7
   - Acceptance criteria: methods conform to schemas; event subscription delivers events; system.update handles update sources per spec.
 
-- [ ] Implement permissions context for CLI plugins and enforce gating
+- [x] Implement permissions context for CLI plugins and enforce gating
   - Spec reference(s): §12.5, §13.6
   - Acceptance criteria: plugin calls are restricted by declared permissions; denied calls return explicit errors; tests cover least-privilege defaults.
 
 
-- [ ] The implementation MUST maintain inline Go documentation and MUST regenerate per-package `README.md` files via `go-docmd`
+- [x] The implementation MUST maintain inline Go documentation and MUST regenerate per-package `README.md` files via `go-docmd`
   - Spec reference(s): §4.2.6.1
   - Acceptance criteria: every package and exported identifier added or modified in this phase MUST include `go doc`-suitable comments; running `go run github.com/agentflare-ai/go-docmd@latest -cmd -all -inplace ./...` at the module root MUST produce no uncommitted changes; generated per-package `README.md` files MUST be committed.
 
-- [ ] Run `amux test --regression` at the end of Phase 10 to verify no regressions relative to the Phase 10 baseline snapshot
+- [x] Run `amux test --regression` at the end of Phase 10 to verify no regressions relative to the Phase 10 baseline snapshot
   - Spec reference(s): §12.6.5
   - Acceptance criteria: `amux test --regression` exits 0; any regressions are fixed before Phase 10 is considered complete; the new snapshot is written to `<module_root>/snapshots/`.
 
-- [ ] Update this plan’s TODOs for Phase 10, remove unused code/scripts, and commit Phase 10 to git
+- [x] Update this plan’s TODOs for Phase 10, remove unused code/scripts, and commit Phase 10 to git
   - Spec reference(s): N/A (plan process requirement)
   - Acceptance criteria: Phase 10 TODOs are updated; `git status` is clean; the Phase 10 baseline + latest snapshots are retained; a Phase 10 commit exists in git history.
 ---

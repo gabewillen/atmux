@@ -62,10 +62,10 @@ func TestLoad_EnvOverrides(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	// Set env vars
-	os.Setenv("AMUX__GENERAL__LOG_LEVEL", "warn")
-	os.Setenv("AMUX__TIMEOUTS__IDLE", "10m")
+	t.Setenv("AMUX__GENERAL__LOG_LEVEL", "warn")
+	t.Setenv("AMUX__TIMEOUTS__IDLE", "10m")
 	// Test adapter special case
-	os.Setenv("AMUX__ADAPTERS__CLAUDE_CODE__MODEL", "claude-3-opus")
+	t.Setenv("AMUX__ADAPTERS__CLAUDE_CODE__MODEL", "claude-3-opus")
 
 	cfg, err := Load(tmpDir)
 	if err != nil {

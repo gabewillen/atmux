@@ -3,13 +3,22 @@
 `import "github.com/agentflare-ai/amux/internal/agent"`
 
 - `EventSpawn, EventStarted, EventExited, EventError, EventStop, EventConnect, EventDisconnect, EventBusy, EventIdle, EventAway, EventBack` — Events
+- `func AddAgent(cfg *config.Config, newAgent config.AgentConfig) error` — AddAgent validates and persists a new agent configuration.
+- `func EnsureWorktree(repoRoot api.RepoRoot, slug api.AgentSlug, targetBranch string) (string, error)` — EnsureWorktree creates or reuses a worktree for the given agent.
+- `func MessageError(format string, a ...any) error` — MessageError creates a formatted error.
 - `func NewLifecycleHSM(agent *Agent) hsm.Instance` — NewLifecycleHSM creates a new lifecycle HSM for the agent.
 - `func NewPresenceHSM(agent *Agent) hsm.Instance` — NewPresenceHSM creates a new presence HSM for the agent.
+- `func RemoveWorktree(repoRoot api.RepoRoot, slug api.AgentSlug) error` — RemoveWorktree removes the worktree for the given agent.
+- `func SpawnAgent(ctx context.Context, a *Agent) error` — SpawnAgent starts the agent process in a new PTY session.
+- `func StopAgent(ctx context.Context, a *Agent) error` — StopAgent stops the agent process.
+- `func ValidateAgentConfig(c config.AgentConfig) error` — ValidateAgentConfig checks required fields.
+- `func isGitRepo(path string) bool`
 - `lifecycleModel`
 - `presenceModel`
 - `type Agent` — Agent represents the runtime state of an agent.
 - `type LifecycleHSM` — LifecycleHSM manages the agent lifecycle.
 - `type LifecycleState` — LifecycleState represents the lifecycle state of an agent.
+- `type MergeStrategy` — MergeStrategy represents a git merge strategy.
 - `type PresenceHSM` — PresenceHSM manages the agent presence.
 - `type PresenceState` — PresenceState represents the presence state of an agent.
 - `type Session` — Session represents a running session of an agent.
@@ -147,6 +156,32 @@ var presenceModel = hsm.Define("presence",
 
 ### Functions
 
+#### AddAgent
+
+```go
+func AddAgent(cfg *config.Config, newAgent config.AgentConfig) error
+```
+
+AddAgent validates and persists a new agent configuration.
+It requires the location.repo_path to be a valid git repository.
+
+#### EnsureWorktree
+
+```go
+func EnsureWorktree(repoRoot api.RepoRoot, slug api.AgentSlug, targetBranch string) (string, error)
+```
+
+EnsureWorktree creates or reuses a worktree for the given agent.
+It returns the path to the worktree.
+
+#### MessageError
+
+```go
+func MessageError(format string, a ...any) error
+```
+
+MessageError creates a formatted error.
+
 #### NewLifecycleHSM
 
 ```go
@@ -162,6 +197,44 @@ func NewPresenceHSM(agent *Agent) hsm.Instance
 ```
 
 NewPresenceHSM creates a new presence HSM for the agent.
+
+#### RemoveWorktree
+
+```go
+func RemoveWorktree(repoRoot api.RepoRoot, slug api.AgentSlug) error
+```
+
+RemoveWorktree removes the worktree for the given agent.
+
+#### SpawnAgent
+
+```go
+func SpawnAgent(ctx context.Context, a *Agent) error
+```
+
+SpawnAgent starts the agent process in a new PTY session.
+
+#### StopAgent
+
+```go
+func StopAgent(ctx context.Context, a *Agent) error
+```
+
+StopAgent stops the agent process.
+
+#### ValidateAgentConfig
+
+```go
+func ValidateAgentConfig(c config.AgentConfig) error
+```
+
+ValidateAgentConfig checks required fields.
+
+#### isGitRepo
+
+```go
+func isGitRepo(path string) bool
+```
 
 
 ## type Agent
@@ -230,6 +303,39 @@ const (
 ```
 
 
+## type MergeStrategy
+
+```go
+type MergeStrategy string
+```
+
+MergeStrategy represents a git merge strategy.
+
+### Constants
+
+#### MergeSquash, MergeRebase, MergeFFOnly
+
+```go
+const (
+	MergeSquash MergeStrategy = "squash"
+	MergeRebase MergeStrategy = "rebase"
+	MergeFFOnly MergeStrategy = "ff-only"
+)
+```
+
+
+### Functions returning MergeStrategy
+
+#### SelectMergeStrategy
+
+```go
+func SelectMergeStrategy(cfg config.GitConfig, repoRoot api.RepoRoot) (MergeStrategy, string, error)
+```
+
+SelectMergeStrategy determines the merge strategy and target branch.
+It checks repo_root for current HEAD if target_branch is not configured.
+
+
 ## type PresenceHSM
 
 ```go
@@ -271,6 +377,10 @@ type Session struct {
 	AgentID   api.AgentID
 	HostID    api.HostID
 	StartedAt time.Time
+
+	// Runtime
+	Cmd *exec.Cmd
+	PTY *os.File
 }
 ```
 

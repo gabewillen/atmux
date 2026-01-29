@@ -2,11 +2,14 @@
 
 `import "github.com/agentflare-ai/amux/internal/config"`
 
+- `func SaveProjectConfig(cfg *Config, repoRoot string) error` — SaveProjectConfig saves the configuration to the project's config directory.
+- `func SaveUserConfig(cfg *Config) error` — SaveUserConfig saves the configuration to the user's config directory.
 - `func applyEnvOverrides(cfg *Config) error`
 - `func envKeyToPath(key string) ([]string, error)` — envKeyToPath converts AMUX__FOO__BAR to []string{"foo", "bar"}
 - `func insertMap(m map[string]any, path []string, value string) error`
 - `func isSensitiveKey(key string) bool`
 - `func loadFile(path string, cfg *Config) error`
+- `func saveToFile(path string, cfg *Config) error`
 - `type AgentConfig`
 - `type CoalesceConfig`
 - `type ConfigActor`
@@ -32,6 +35,24 @@
 - `type TimeoutsConfig`
 
 ### Functions
+
+#### SaveProjectConfig
+
+```go
+func SaveProjectConfig(cfg *Config, repoRoot string) error
+```
+
+SaveProjectConfig saves the configuration to the project's config directory.
+It writes to <repoRoot>/.amux/config.toml.
+
+#### SaveUserConfig
+
+```go
+func SaveUserConfig(cfg *Config) error
+```
+
+SaveUserConfig saves the configuration to the user's config directory.
+It writes to ~/.config/amux/config.toml (or platform equivalent).
 
 #### applyEnvOverrides
 
@@ -63,6 +84,12 @@ func isSensitiveKey(key string) bool
 
 ```go
 func loadFile(path string, cfg *Config) error
+```
+
+#### saveToFile
+
+```go
+func saveToFile(path string, cfg *Config) error
 ```
 
 

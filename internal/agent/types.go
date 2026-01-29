@@ -1,6 +1,8 @@
 package agent
 
 import (
+	"os"
+	"os/exec"
 	"time"
 
 	"github.com/agentflare-ai/amux/internal/config"
@@ -30,6 +32,10 @@ type Session struct {
 	AgentID   api.AgentID
 	HostID    api.HostID
 	StartedAt time.Time
+	
+	// Runtime
+	Cmd *exec.Cmd
+	PTY *os.File
 }
 
 // LifecycleState represents the lifecycle state of an agent.

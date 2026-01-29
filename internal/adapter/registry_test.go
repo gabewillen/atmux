@@ -65,25 +65,4 @@ func TestWazeroRegistryRejectsMissingExports(t *testing.T) {
 	}
 }
 
-func TestNoopAdapterBehaves(t *testing.T) {
-	adapter := NewNoopAdapter("noop")
-	if adapter.Name() != "noop" {
-		t.Fatalf("unexpected name: %s", adapter.Name())
-	}
-	matcher := adapter.Matcher()
-	matches, err := matcher.Match(context.Background(), []byte("output"))
-	if err != nil {
-		t.Fatalf("match: %v", err)
-	}
-	if len(matches) != 0 {
-		t.Fatalf("expected no matches")
-	}
-	formatter := adapter.Formatter()
-	formatted, err := formatter.Format(context.Background(), "input")
-	if err != nil {
-		t.Fatalf("format: %v", err)
-	}
-	if formatted != "input" {
-		t.Fatalf("expected input, got %s", formatted)
-	}
-}
+// Noop adapter behavior tests removed; core no longer provides built-in adapters.

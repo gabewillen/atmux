@@ -4,7 +4,7 @@
 
 Package remote implements NATS-based remote orchestration for amux.
 
-- `ErrInvalidSubject, ErrInvalidMessage, ErrHostDisconnected, ErrNotReady, ErrSessionConflict, ErrSessionNotFound, ErrReplayDisabled, ErrBootstrapFailed`
+- `ErrInvalidSubject, ErrInvalidMessage, ErrHostDisconnected, ErrNotReady, ErrSessionConflict, ErrSessionNotFound, ErrReplayDisabled, ErrBootstrapFailed, ErrMessageTargetUnknown`
 - `func AgentCommSubject(prefix string, hostID api.HostID, agentID api.AgentID) string` — AgentCommSubject returns the subject for an agent channel.
 - `func BroadcastCommSubject(prefix string) string` — BroadcastCommSubject returns the broadcast channel subject.
 - `func ControlSubject(prefix string, hostID api.HostID) string` — ControlSubject returns the subject for control requests.
@@ -85,7 +85,7 @@ Package remote implements NATS-based remote orchestration for amux.
 
 ### Variables
 
-#### ErrInvalidSubject, ErrInvalidMessage, ErrHostDisconnected, ErrNotReady, ErrSessionConflict, ErrSessionNotFound, ErrReplayDisabled, ErrBootstrapFailed
+#### ErrInvalidSubject, ErrInvalidMessage, ErrHostDisconnected, ErrNotReady, ErrSessionConflict, ErrSessionNotFound, ErrReplayDisabled, ErrBootstrapFailed, ErrMessageTargetUnknown
 
 ```go
 var (
@@ -105,6 +105,8 @@ var (
 	ErrReplayDisabled = errors.New("replay disabled")
 	// ErrBootstrapFailed is returned when SSH bootstrap fails.
 	ErrBootstrapFailed = errors.New("bootstrap failed")
+	// ErrMessageTargetUnknown is returned when a message recipient cannot be resolved.
+	ErrMessageTargetUnknown = errors.New("message target unknown")
 )
 ```
 
@@ -657,6 +659,7 @@ type Director struct {
 	hostID         api.HostID
 	peerID         api.PeerID
 	version        string
+	logger         *log.Logger
 	mu             sync.Mutex
 	hosts          map[api.HostID]*hostState
 	peerIndex      map[string]api.HostID
@@ -840,6 +843,7 @@ type DirectorOptions struct {
 	Version      string
 	HostID       api.HostID
 	Bootstrapper *Bootstrapper
+	Logger       *log.Logger
 }
 ```
 
@@ -939,6 +943,7 @@ type HostManager struct {
 	leaf          *protocol.NATSServer
 	registry      adapter.Registry
 	registryClose func(context.Context) error
+	logger        *log.Logger
 	mu            sync.Mutex
 	sessions      map[api.SessionID]*remoteSession
 	agentIndex    map[api.AgentID]*remoteSession
@@ -991,7 +996,7 @@ Status returns the current connection state for the host manager.
 #### HostManager.buildAgentMessage
 
 ```go
-func () buildAgentMessage(session *remoteSession, payload api.OutboundMessage) (api.AgentMessage, bool)
+func () buildAgentMessage(session *remoteSession, payload api.OutboundMessage) (api.AgentMessage, error)
 ```
 
 #### HostManager.commSubjectForTarget
@@ -1106,6 +1111,12 @@ func () markDisconnected(reason string)
 
 ```go
 func () monitorLeaf(ctx context.Context)
+```
+
+#### HostManager.notifyUnknownRecipient
+
+```go
+func () notifyUnknownRecipient(session *remoteSession, toSlug string)
 ```
 
 #### HostManager.observeSession

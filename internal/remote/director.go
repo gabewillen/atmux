@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"os"
 	"runtime"
@@ -23,6 +24,7 @@ type DirectorOptions struct {
 	Version      string
 	HostID       api.HostID
 	Bootstrapper *Bootstrapper
+	Logger       *log.Logger
 }
 
 type hostState struct {
@@ -52,6 +54,7 @@ type Director struct {
 	hostID         api.HostID
 	peerID         api.PeerID
 	version        string
+	logger         *log.Logger
 	mu             sync.Mutex
 	hosts          map[api.HostID]*hostState
 	peerIndex      map[string]api.HostID
@@ -143,6 +146,10 @@ func NewDirector(cfg config.Config, dispatcher protocol.Dispatcher, options Dire
 	if bootstrapper == nil {
 		bootstrapper = &Bootstrapper{}
 	}
+	logger := options.Logger
+	if logger == nil {
+		logger = log.New(os.Stderr, "amux-director ", log.LstdFlags)
+	}
 	return &Director{
 		cfg:            cfg,
 		dispatcher:     dispatcher,
@@ -154,6 +161,7 @@ func NewDirector(cfg config.Config, dispatcher protocol.Dispatcher, options Dire
 		hostID:         hostID,
 		peerID:         peerID,
 		version:        options.Version,
+		logger:         logger,
 		hosts:          make(map[api.HostID]*hostState),
 		peerIndex:      make(map[string]api.HostID),
 	}, nil
@@ -420,7 +428,14 @@ func (d *Director) handleHostEvent(msg protocol.Message) {
 }
 
 func (d *Director) handleCommMessage(msg protocol.Message) {
-	_ = msg
+	if d == nil || d.logger == nil || len(msg.Data) == 0 {
+		return
+	}
+	var payload api.AgentMessage
+	if err := json.Unmarshal(msg.Data, &payload); err != nil {
+		return
+	}
+	d.logger.Printf("comm observed: from=%s to=%s to_slug=%s bytes=%d", payload.From.String(), payload.To.String(), payload.ToSlug, len(msg.Data))
 }
 
 func (d *Director) setReady(hostID api.HostID, ready bool) {

@@ -65,7 +65,7 @@ func TestLocalSessionStartStop(t *testing.T) {
 		Argv: []string{os.Args[0], "-test.run=TestHelperProcess"},
 		Env:  []string{"AMUX_HELPER=1"},
 	}
-	sess, err := NewLocalSession(sessMeta, runtime, cmd, worktree.Path, &adapter.NoopMatcher{}, dispatcher, Config{DrainTimeout: 2 * time.Second})
+	sess, err := NewLocalSession(sessMeta, runtime, cmd, worktree.Path, stubMatcher{}, dispatcher, Config{DrainTimeout: 2 * time.Second})
 	if err != nil {
 		t.Fatalf("new session: %v", err)
 	}
@@ -105,6 +105,12 @@ func TestHelperProcess(t *testing.T) {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
 	<-sigCh
+}
+
+type stubMatcher struct{}
+
+func (stubMatcher) Match(ctx context.Context, output []byte) ([]adapter.PatternMatch, error) {
+	return nil, nil
 }
 
 func initRepo(t *testing.T) string {

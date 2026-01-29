@@ -183,7 +183,7 @@ func (m *Manager) systemRosterLocked() []api.RosterEntry {
 		})
 	}
 	localHost := m.remoteDirector.HostID()
-	managerID := directorID
+	managerID := m.managerID
 	if !managerID.IsZero() && localHost != "" {
 		entries = append(entries, api.RosterEntry{
 			Kind:      api.RosterManager,

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"os"
 	"path/filepath"
@@ -31,6 +32,8 @@ var (
 	ErrAgentInvalid = errors.New("agent invalid")
 	// ErrRepoPathRequired is returned when repo_path is required by the spec.
 	ErrRepoPathRequired = errors.New("repo path required")
+	// ErrMessageTargetUnknown is returned when a message recipient cannot be resolved.
+	ErrMessageTargetUnknown = errors.New("message target unknown")
 )
 
 // AddRequest describes an agent add request.
@@ -71,6 +74,8 @@ type Manager struct {
 	cfg             config.Config
 	git             *git.Runner
 	remoteDirector  *remote.Director
+	logger          *log.Logger
+	managerID       api.PeerID
 	mu              sync.Mutex
 	agents          map[api.AgentID]*agentState
 	nameIndex       map[string][]api.AgentID
@@ -90,11 +95,14 @@ func NewManager(ctx context.Context, resolver *paths.Resolver, cfg config.Config
 	if dispatcher == nil {
 		return nil, fmt.Errorf("new manager: %w", ErrAgentInvalid)
 	}
+	logger := log.New(os.Stderr, "amux-manager ", log.LstdFlags)
 	mgr := &Manager{
 		resolver:   resolver,
 		dispatcher: dispatcher,
 		cfg:        cfg,
 		git:        git.NewRunner(),
+		logger:     logger,
+		managerID:  api.NewPeerID(),
 		agents:     make(map[api.AgentID]*agentState),
 		nameIndex:  make(map[string][]api.AgentID),
 		bases:      make(map[string]string),

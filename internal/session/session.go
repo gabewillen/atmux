@@ -86,7 +86,11 @@ func NewLocalSession(meta api.Session, runtime *agent.Agent, command Command, wo
 		cfg.DrainTimeout = 30 * time.Second
 	}
 	if matcher == nil {
-		matcher = &adapter.NoopMatcher{}
+		return nil, fmt.Errorf("new session: %w", monitor.ErrMatcherRequired)
+	}
+	mon, err := monitor.NewMonitor(matcher)
+	if err != nil {
+		return nil, fmt.Errorf("new session: %w", err)
 	}
 	return &LocalSession{
 		agent:      runtime,
@@ -94,7 +98,7 @@ func NewLocalSession(meta api.Session, runtime *agent.Agent, command Command, wo
 		command:    command,
 		worktree:   worktree,
 		dispatcher: dispatcher,
-		monitor:    monitor.NewMonitor(matcher),
+		monitor:    mon,
 		tracker:    &process.Tracker{},
 		config:     cfg,
 		outputs:    make(map[uint64]net.Conn),

@@ -4,7 +4,7 @@
 
 Package manager manages local agents, worktrees, and sessions.
 
-- `ErrAgentNotFound, ErrAgentAmbiguous, ErrAgentInvalid, ErrRepoPathRequired`
+- `ErrAgentNotFound, ErrAgentAmbiguous, ErrAgentInvalid, ErrRepoPathRequired, ErrMessageTargetUnknown`
 - `func buildAdapterBundle(resolver *paths.Resolver, name string) (remote.AdapterBundle, error)`
 - `func decodeEventPayload(payload any, dest any) error`
 - `func encodeAgents(agents []config.AgentConfig) []any`
@@ -47,7 +47,7 @@ const (
 
 ### Variables
 
-#### ErrAgentNotFound, ErrAgentAmbiguous, ErrAgentInvalid, ErrRepoPathRequired
+#### ErrAgentNotFound, ErrAgentAmbiguous, ErrAgentInvalid, ErrRepoPathRequired, ErrMessageTargetUnknown
 
 ```go
 var (
@@ -59,6 +59,8 @@ var (
 	ErrAgentInvalid = errors.New("agent invalid")
 	// ErrRepoPathRequired is returned when repo_path is required by the spec.
 	ErrRepoPathRequired = errors.New("repo path required")
+	// ErrMessageTargetUnknown is returned when a message recipient cannot be resolved.
+	ErrMessageTargetUnknown = errors.New("message target unknown")
 )
 ```
 
@@ -204,6 +206,8 @@ type Manager struct {
 	cfg             config.Config
 	git             *git.Runner
 	remoteDirector  *remote.Director
+	logger          *log.Logger
+	managerID       api.PeerID
 	mu              sync.Mutex
 	agents          map[api.AgentID]*agentState
 	nameIndex       map[string][]api.AgentID
@@ -340,7 +344,7 @@ func () baseBranch(ctx context.Context, repoRoot string) (string, error)
 #### Manager.buildAgentMessage
 
 ```go
-func () buildAgentMessage(sender api.AgentID, payload api.OutboundMessage) (api.AgentMessage, bool)
+func () buildAgentMessage(sender api.AgentID, payload api.OutboundMessage) (api.AgentMessage, error)
 ```
 
 #### Manager.cleanupWorktrees
@@ -487,6 +491,12 @@ func () loadFromConfig(ctx context.Context) error
 func () localHostID() api.HostID
 ```
 
+#### Manager.notifyUnknownRecipient
+
+```go
+func () notifyUnknownRecipient(state *agentState, toSlug string)
+```
+
 #### Manager.peerForHost
 
 ```go
@@ -629,6 +639,12 @@ func () updateRemotePresence(ctx context.Context, hostID api.HostID, presence st
 
 ```go
 func () validateMultiRepo(repoRoot string, explicitRepoPath bool) error
+```
+
+#### Manager.warnf
+
+```go
+func () warnf(format string, args ...any)
 ```
 
 

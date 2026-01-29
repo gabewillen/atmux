@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"net/url"
 	"os"
@@ -58,6 +59,7 @@ type HostManager struct {
 	leaf          *protocol.NATSServer
 	registry      adapter.Registry
 	registryClose func(context.Context) error
+	logger        *log.Logger
 	mu            sync.Mutex
 	sessions      map[api.SessionID]*remoteSession
 	agentIndex    map[api.AgentID]*remoteSession
@@ -110,6 +112,7 @@ func NewHostManager(cfg config.Config, resolver *paths.Resolver, version string)
 	if err != nil {
 		return nil, fmt.Errorf("host manager: %w", err)
 	}
+	logger := log.New(os.Stderr, "amux-hostmgr ", log.LstdFlags)
 	return &HostManager{
 		cfg:           cfg,
 		resolver:      resolver,
@@ -119,6 +122,7 @@ func NewHostManager(cfg config.Config, resolver *paths.Resolver, version string)
 		version:       version,
 		bufferSize:    bufferSize,
 		outbox:        NewOutbox(bufferSize),
+		logger:        logger,
 		sessions:      make(map[api.SessionID]*remoteSession),
 		agentIndex:    make(map[api.AgentID]*remoteSession),
 	}, nil
@@ -868,60 +872,53 @@ func (m *HostManager) handleOutboundMessages(session *remoteSession, chunk []byt
 		if payload.ToSlug == "" || payload.Content == "" {
 			continue
 		}
-		msg, ok := m.buildAgentMessage(session, payload)
-		if !ok {
+		msg, err := m.buildAgentMessage(session, payload)
+		if err != nil {
+			if errors.Is(err, ErrMessageTargetUnknown) {
+				m.notifyUnknownRecipient(session, payload.ToSlug)
+			} else if m.logger != nil {
+				m.logger.Printf("message build failed: agent=%s error=%v", session.slug, err)
+			}
 			continue
 		}
 		m.publishAgentMessage(session, msg)
 	}
 }
 
-func (m *HostManager) buildAgentMessage(session *remoteSession, payload api.OutboundMessage) (api.AgentMessage, bool) {
+func (m *HostManager) buildAgentMessage(session *remoteSession, payload api.OutboundMessage) (api.AgentMessage, error) {
 	if session == nil {
-		return api.AgentMessage{}, false
+		return api.AgentMessage{}, fmt.Errorf("message build: %w", ErrInvalidMessage)
 	}
 	msg := api.AgentMessage{
 		ToSlug:  payload.ToSlug,
 		Content: payload.Content,
 	}
-	if payload.ID != "" && payload.ID != "0" {
-		id, err := api.ParseRuntimeID(payload.ID)
-		if err != nil {
-			return api.AgentMessage{}, false
-		}
-		msg.ID = id
-	} else {
-		msg.ID = api.NewRuntimeID()
-	}
-	if payload.From != "" {
-		from, err := api.ParseRuntimeID(payload.From)
-		if err != nil {
-			return api.AgentMessage{}, false
-		}
-		msg.From = from
-	} else {
-		msg.From = session.agentID.RuntimeID
-	}
-	if payload.Timestamp != "" {
-		if ts, err := time.Parse(time.RFC3339Nano, payload.Timestamp); err == nil {
-			msg.Timestamp = ts.UTC()
-		}
-	}
-	if msg.Timestamp.IsZero() {
-		msg.Timestamp = time.Now().UTC()
-	}
-	if payload.To != "" {
-		if target, err := api.ParseTargetID(payload.To); err == nil {
-			msg.To = target
-			return msg, true
-		}
-	}
+	msg.ID = api.NewRuntimeID()
+	msg.From = session.agentID.RuntimeID
+	msg.Timestamp = time.Now().UTC()
 	target, ok := m.resolveToID(payload.ToSlug)
 	if !ok {
-		return api.AgentMessage{}, false
+		return api.AgentMessage{}, fmt.Errorf("message build: %w", ErrMessageTargetUnknown)
 	}
 	msg.To = target
-	return msg, true
+	return msg, nil
+}
+
+func (m *HostManager) notifyUnknownRecipient(session *remoteSession, toSlug string) {
+	if m.logger != nil {
+		m.logger.Printf("message target unresolved: to_slug=%q sender=%s", toSlug, session.slug)
+	}
+	if session == nil || session.runtime == nil {
+		return
+	}
+	text := fmt.Sprintf("amux: unknown recipient %q\n", toSlug)
+	formatted := text
+	if session.formatter != nil {
+		if out, err := session.formatter.Format(context.Background(), text); err == nil && out != "" {
+			formatted = out
+		}
+	}
+	_ = session.runtime.Send([]byte(formatted))
 }
 
 func (m *HostManager) resolveToID(slug string) (api.TargetID, bool) {

@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"os/exec"
 	"strings"
 
 	"go.opentelemetry.io/otel"
@@ -17,11 +18,14 @@ import (
 
 // ErrUnknownModel is returned when a model ID is not mapped.
 var ErrUnknownModel = errors.New("unknown model id")
+// ErrInferenceUnavailable is returned when the liquidgen CLI is unavailable.
+var ErrInferenceUnavailable = errors.New("liquidgen cli unavailable")
 
 // LiquidgenEngine implements Engine using the bundled liquidgen runtime.
 type LiquidgenEngine struct {
 	root      string
 	version   string
+	cliPath   string
 	models    map[string]string
 	logger    *log.Logger
 }
@@ -38,10 +42,14 @@ func NewLiquidgenEngine(root string, logger *log.Logger) (*LiquidgenEngine, erro
 	engine := &LiquidgenEngine{
 		root:    root,
 		version: version,
+		cliPath: findLiquidgenCLI(root),
 		models:  make(map[string]string),
 		logger:  logger,
 	}
 	engine.logger.Printf("liquidgen version=%s", version)
+	if engine.cliPath == "" {
+		engine.logger.Printf("liquidgen cli not found under %s", root)
+	}
 	return engine, nil
 }
 
@@ -76,11 +84,22 @@ func (l *LiquidgenEngine) Models(ctx context.Context) ([]ModelInfo, error) {
 
 // Infer returns an error for unknown models until liquidgen runtime is wired.
 func (l *LiquidgenEngine) Infer(ctx context.Context, req Request) (Response, error) {
-	_, ok := l.models[req.ModelID]
+	modelPath, ok := l.models[req.ModelID]
 	if !ok {
 		return Response{}, fmt.Errorf("infer: %w: %s", ErrUnknownModel, req.ModelID)
 	}
-	return Response{}, fmt.Errorf("infer: liquidgen runtime not yet wired")
+	if l.cliPath == "" {
+		return Response{}, fmt.Errorf("infer: %w", ErrInferenceUnavailable)
+	}
+	if strings.TrimSpace(req.Prompt) != "" && l.logger != nil {
+		l.logger.Printf("liquidgen prompt ignored: model=%s", req.ModelID)
+	}
+	cmd := exec.CommandContext(ctx, l.cliPath, modelPath)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return Response{}, fmt.Errorf("infer: %w", err)
+	}
+	return Response{Output: strings.TrimSpace(string(output))}, nil
 }
 
 func readLiquidgenVersion(root string) (string, error) {
@@ -118,6 +137,25 @@ func extractVersion(line string) string {
 	for i, field := range fields {
 		if strings.EqualFold(field, "VERSION") && i+1 < len(fields) {
 			return strings.Trim(fields[i+1], ")")
+		}
+	}
+	return ""
+}
+
+func findLiquidgenCLI(root string) string {
+	candidates := []string{
+		filepath.Join(root, "build", "bin", "liquidgen_cli"),
+		filepath.Join(root, "build", "liquidgen_cli"),
+		filepath.Join(root, "bin", "liquidgen_cli"),
+		filepath.Join(root, "liquidgen_cli"),
+	}
+	for _, candidate := range candidates {
+		info, err := os.Stat(candidate)
+		if err != nil {
+			continue
+		}
+		if info.Mode().IsRegular() {
+			return candidate
 		}
 	}
 	return ""

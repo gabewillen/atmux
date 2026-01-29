@@ -124,7 +124,7 @@ func TestRemoteHandshakeAndSpawn(t *testing.T) {
 		AgentID:   api.NewAgentID().String(),
 		AgentSlug: "test-agent",
 		RepoPath:  repoRoot,
-		Adapter:   "noop",
+		Adapter:   "stub",
 		Command:   []string{os.Args[0], "-test.run=TestRemoteHelperProcess"},
 		Env: map[string]string{
 			"AMUX_HELPER": "1",
@@ -205,5 +205,37 @@ func execGit(ctx context.Context, dir string, args ...string) (git.ExecResult, e
 type stubRegistry struct{}
 
 func (stubRegistry) Load(ctx context.Context, name string) (adapter.Adapter, error) {
-	return adapter.NewNoopAdapter(name), nil
+	return stubAdapter{name: name}, nil
+}
+
+type stubAdapter struct {
+	name string
+}
+
+func (s stubAdapter) Name() string {
+	return s.name
+}
+
+func (s stubAdapter) Manifest() adapter.Manifest {
+	return adapter.Manifest{Name: s.name}
+}
+
+func (s stubAdapter) Matcher() adapter.PatternMatcher {
+	return stubMatcher{}
+}
+
+func (s stubAdapter) Formatter() adapter.ActionFormatter {
+	return stubFormatter{}
+}
+
+type stubMatcher struct{}
+
+func (stubMatcher) Match(ctx context.Context, output []byte) ([]adapter.PatternMatch, error) {
+	return nil, nil
+}
+
+type stubFormatter struct{}
+
+func (stubFormatter) Format(ctx context.Context, input string) (string, error) {
+	return input, nil
 }

@@ -19,4 +19,6 @@ var (
 	ErrReplayDisabled = errors.New("replay disabled")
 	// ErrBootstrapFailed is returned when SSH bootstrap fails.
 	ErrBootstrapFailed = errors.New("bootstrap failed")
+	// ErrMessageTargetUnknown is returned when a message recipient cannot be resolved.
+	ErrMessageTargetUnknown = errors.New("message target unknown")
 )

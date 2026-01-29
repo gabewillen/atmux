@@ -3,6 +3,7 @@ package manager
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -67,8 +68,13 @@ func (m *Manager) routeOutboundMessage(ctx context.Context, payload api.Outbound
 	if !ok || state == nil || state.remote {
 		return
 	}
-	msg, ok := m.buildAgentMessage(senderID, payload)
-	if !ok {
+	msg, err := m.buildAgentMessage(senderID, payload)
+	if err != nil {
+		if errors.Is(err, ErrMessageTargetUnknown) {
+			m.notifyUnknownRecipient(state, payload.ToSlug)
+		} else {
+			m.warnf("message build failed: agent=%s error=%v", state.slug, err)
+		}
 		return
 	}
 	m.publishAgentMessage(senderID, msg)
@@ -104,50 +110,42 @@ func (m *Manager) resolveSender(payload api.OutboundMessage) (api.AgentID, *agen
 	return api.AgentID{}, nil, false
 }
 
-func (m *Manager) buildAgentMessage(sender api.AgentID, payload api.OutboundMessage) (api.AgentMessage, bool) {
+func (m *Manager) buildAgentMessage(sender api.AgentID, payload api.OutboundMessage) (api.AgentMessage, error) {
 	msg := api.AgentMessage{
 		ToSlug:  payload.ToSlug,
 		Content: payload.Content,
 	}
-	if payload.ID != "" && payload.ID != "0" {
-		id, err := api.ParseRuntimeID(payload.ID)
-		if err != nil {
-			return api.AgentMessage{}, false
-		}
-		msg.ID = id
-	} else {
-		msg.ID = api.NewRuntimeID()
-	}
-	if payload.From != "" {
-		from, err := api.ParseRuntimeID(payload.From)
-		if err != nil {
-			return api.AgentMessage{}, false
-		}
-		msg.From = from
-	} else {
-		msg.From = sender.RuntimeID
-	}
-	if payload.Timestamp != "" {
-		if ts, err := time.Parse(time.RFC3339Nano, payload.Timestamp); err == nil {
-			msg.Timestamp = ts.UTC()
-		}
-	}
-	if msg.Timestamp.IsZero() {
-		msg.Timestamp = time.Now().UTC()
-	}
-	if payload.To != "" {
-		target, err := api.ParseTargetID(payload.To)
-		if err == nil {
-			msg.To = target
-			return msg, true
-		}
-	}
+	msg.ID = api.NewRuntimeID()
+	msg.From = sender.RuntimeID
+	msg.Timestamp = time.Now().UTC()
 	target, ok := m.resolveToID(payload.ToSlug)
 	if !ok {
-		return api.AgentMessage{}, false
+		return api.AgentMessage{}, fmt.Errorf("message build: %w", ErrMessageTargetUnknown)
 	}
 	msg.To = target
-	return msg, true
+	return msg, nil
+}
+
+func (m *Manager) warnf(format string, args ...any) {
+	if m == nil || m.logger == nil {
+		return
+	}
+	m.logger.Printf(format, args...)
+}
+
+func (m *Manager) notifyUnknownRecipient(state *agentState, toSlug string) {
+	m.warnf("message target unresolved: to_slug=%q sender=%s", toSlug, state.slug)
+	if state == nil || state.session == nil {
+		return
+	}
+	text := fmt.Sprintf("amux: unknown recipient %q\n", toSlug)
+	formatted := text
+	if state.formatter != nil {
+		if out, err := state.formatter.Format(context.Background(), text); err == nil && out != "" {
+			formatted = out
+		}
+	}
+	_ = state.session.Send([]byte(formatted))
 }
 
 func (m *Manager) resolveToID(slug string) (api.TargetID, bool) {
@@ -358,7 +356,7 @@ func (m *Manager) peerForHost(hostID api.HostID) (api.PeerID, bool) {
 		return api.PeerID{}, false
 	}
 	if hostID == m.remoteDirector.HostID() {
-		peer := m.remoteDirector.PeerID()
+		peer := m.managerID
 		if peer.IsZero() {
 			return api.PeerID{}, false
 		}

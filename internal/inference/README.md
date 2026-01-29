@@ -6,8 +6,10 @@ Package inference provides local inference engine integration.
 
 The default implementation is backed by the liquidgen engine in third_party.
 
+- `ErrInferenceUnavailable` — ErrInferenceUnavailable is returned when the liquidgen CLI is unavailable.
 - `ErrUnknownModel` — ErrUnknownModel is returned when a model ID is not mapped.
 - `func extractVersion(line string) string`
+- `func findLiquidgenCLI(root string) string`
 - `func readLiquidgenVersion(root string) (string, error)`
 - `type Engine` — Engine defines the local inference interface.
 - `type LiquidgenEngine` — LiquidgenEngine implements Engine using the bundled liquidgen runtime.
@@ -16,6 +18,14 @@ The default implementation is backed by the liquidgen engine in third_party.
 - `type Response` — Response contains the inference output.
 
 ### Variables
+
+#### ErrInferenceUnavailable
+
+```go
+var ErrInferenceUnavailable = errors.New("liquidgen cli unavailable")
+```
+
+ErrInferenceUnavailable is returned when the liquidgen CLI is unavailable.
 
 #### ErrUnknownModel
 
@@ -32,6 +42,12 @@ ErrUnknownModel is returned when a model ID is not mapped.
 
 ```go
 func extractVersion(line string) string
+```
+
+#### findLiquidgenCLI
+
+```go
+func findLiquidgenCLI(root string) string
 ```
 
 #### readLiquidgenVersion
@@ -73,6 +89,7 @@ NewDefaultEngine constructs the default local inference engine.
 type LiquidgenEngine struct {
 	root    string
 	version string
+	cliPath string
 	models  map[string]string
 	logger  *log.Logger
 }

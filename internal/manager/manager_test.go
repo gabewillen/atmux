@@ -54,11 +54,26 @@ func (s *stubAdapter) Manifest() adapter.Manifest {
 }
 
 func (s *stubAdapter) Matcher() adapter.PatternMatcher {
-	return &adapter.NoopMatcher{}
+	return stubMatcher{}
 }
 
 func (s *stubAdapter) Formatter() adapter.ActionFormatter {
-	return &adapter.NoopFormatter{}
+	return stubFormatter{}
+}
+
+type stubMatcher struct{}
+
+func (stubMatcher) Match(ctx context.Context, output []byte) ([]adapter.PatternMatch, error) {
+	_ = ctx
+	_ = output
+	return nil, nil
+}
+
+type stubFormatter struct{}
+
+func (stubFormatter) Format(ctx context.Context, input string) (string, error) {
+	_ = ctx
+	return input, nil
 }
 
 func (r *recordDispatcher) Publish(ctx context.Context, subject string, event protocol.Event) error {

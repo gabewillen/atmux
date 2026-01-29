@@ -2,11 +2,15 @@ package monitor
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 
 	"github.com/agentflare-ai/amux/internal/adapter"
 )
+
+// ErrMatcherRequired is returned when a matcher is missing.
+var ErrMatcherRequired = errors.New("matcher required")
 
 // Monitor scans PTY output with an adapter matcher.
 type Monitor struct {
@@ -14,11 +18,11 @@ type Monitor struct {
 }
 
 // NewMonitor constructs a monitor with the provided matcher.
-func NewMonitor(matcher adapter.PatternMatcher) *Monitor {
+func NewMonitor(matcher adapter.PatternMatcher) (*Monitor, error) {
 	if matcher == nil {
-		matcher = &adapter.NoopMatcher{}
+		return nil, fmt.Errorf("new monitor: %w", ErrMatcherRequired)
 	}
-	return &Monitor{matcher: matcher}
+	return &Monitor{matcher: matcher}, nil
 }
 
 // Scan reads from r and emits pattern matches.

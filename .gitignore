@@ -1,5 +1,8 @@
 journal/
 
+# Runtime worktree directory
+.amux/
+
 # Build artifacts
 bin/
 *.exe

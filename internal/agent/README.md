@@ -8,6 +8,10 @@ This package implements agent lifecycle management, presence tracking,
 and messaging. All operations are agent-agnostic; agent-specific behavior
 is delegated to adapters.
 
+The Add flow validates that the agent's repository exists, computes a
+unique slug, creates an isolated git worktree, and registers the agent
+for lifecycle management.
+
 See spec §5 for agent management requirements.
 
 Lifecycle provides the HSM-based agent lifecycle state machine.
@@ -70,7 +74,7 @@ Transitions:
 - `func DispatchTaskCompleted(ctx context.Context, instance hsm.Instance) <-chan struct{}` — DispatchTaskCompleted sends a "task.completed" event to transition from Busy to Online.
 - `type Agent` — Agent represents a managed agent instance.
 - `type LifecycleHSM` — LifecycleHSM wraps an agent with HSM-driven lifecycle management.
-- `type Manager` — Manager manages agents.
+- `type Manager` — Manager manages agents, including worktree isolation and lifecycle tracking.
 - `type PresenceHSM` — PresenceHSM wraps an agent with HSM-driven presence management.
 
 ### Constants
@@ -532,10 +536,16 @@ type Manager struct {
 	agents     map[muid.MUID]*Agent
 	slugs      map[string]muid.MUID // slug -> agent ID for collision detection
 	dispatcher event.Dispatcher
+	resolver   *paths.Resolver
+	worktrees  *worktree.Manager
+
+	// baseBranches tracks the base_branch per repo_root, recorded at the time
+	// the first agent for that repository is added (spec §5.7.1).
+	baseBranches map[string]string
 }
 ```
 
-Manager manages agents.
+Manager manages agents, including worktree isolation and lifecycle tracking.
 
 ### Functions returning Manager
 
@@ -547,6 +557,14 @@ func NewManager(dispatcher event.Dispatcher) *Manager
 
 NewManager creates a new agent manager.
 
+#### NewManagerWithResolver
+
+```go
+func NewManagerWithResolver(dispatcher event.Dispatcher, resolver *paths.Resolver) *Manager
+```
+
+NewManagerWithResolver creates a new agent manager with a specific path resolver.
+
 
 ### Methods
 
@@ -556,8 +574,21 @@ NewManager creates a new agent manager.
 func () Add(ctx context.Context, cfg api.Agent) (*Agent, error)
 ```
 
-Add adds an agent. The agent's Slug will be computed from Name if not already set.
-Returns an error if the agent fails validation.
+Add adds a new agent. The agent's Slug is computed from Name, a worktree is
+created for isolation, and the agent is registered for lifecycle management.
+
+For local agents, if RepoRoot is empty, it is resolved from the Location.RepoPath
+or from the current working directory. The repo_root must be a valid git repository.
+
+See spec §5.2 for the agent add flow.
+
+#### Manager.BaseBranch
+
+```go
+func () BaseBranch(repoRoot string) (string, bool)
+```
+
+BaseBranch returns the recorded base branch for a repository.
 
 #### Manager.Get
 
@@ -586,10 +617,11 @@ List returns all agents.
 #### Manager.Remove
 
 ```go
-func () Remove(ctx context.Context, id muid.MUID) error
+func () Remove(ctx context.Context, id muid.MUID, deleteBranch bool) error
 ```
 
-Remove removes an agent.
+Remove removes an agent, cleaning up its worktree if configured.
+The deleteBranch parameter controls whether the agent's git branch is deleted.
 
 #### Manager.Roster
 
@@ -606,6 +638,16 @@ func () SlugExists(slug string) bool
 ```
 
 SlugExists returns true if an agent with the given slug exists.
+
+#### Manager.resolveLocalRepoRoot
+
+```go
+func () resolveLocalRepoRoot(loc api.Location) (string, error)
+```
+
+resolveLocalRepoRoot resolves the repo_root for a local agent.
+If location.RepoPath is set, it is validated; otherwise the current
+working directory's repo root is used.
 
 
 ## type PresenceHSM

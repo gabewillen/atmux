@@ -32,6 +32,7 @@ type Config struct {
 	Timeouts  TimeoutsConfig  `toml:"timeouts"`
 	Process   ProcessConfig   `toml:"process"`
 	Git       GitConfig       `toml:"git"`
+	Shutdown  ShutdownConfig  `toml:"shutdown"`
 	Events    EventsConfig    `toml:"events"`
 	Remote    RemoteConfig    `toml:"remote"`
 	NATS      NATSConfig      `toml:"nats"`
@@ -41,6 +42,12 @@ type Config struct {
 	Telemetry TelemetryConfig `toml:"telemetry"`
 	Adapters  map[string]any  `toml:"adapters"`
 	Agents    []AgentConfig   `toml:"agents"`
+}
+
+// ShutdownConfig holds graceful shutdown settings per spec §5.6.
+type ShutdownConfig struct {
+	DrainTimeout     Duration `toml:"drain_timeout"`
+	CleanupWorktrees bool     `toml:"cleanup_worktrees"`
 }
 
 // GeneralConfig holds general application settings.
@@ -230,6 +237,10 @@ func DefaultConfig() *Config {
 				Strategy:   "squash",
 				AllowDirty: false,
 			},
+		},
+		Shutdown: ShutdownConfig{
+			DrainTimeout:     Duration{30 * time.Second},
+			CleanupWorktrees: false,
 		},
 		Events: EventsConfig{
 			BatchWindow:    Duration{50 * time.Millisecond},
@@ -501,6 +512,14 @@ func (l *Loader) merge(source *Config) {
 		l.config.Git.Merge.TargetBranch = source.Git.Merge.TargetBranch
 	}
 
+	// Shutdown
+	if source.Shutdown.DrainTimeout.Duration != 0 {
+		l.config.Shutdown.DrainTimeout = source.Shutdown.DrainTimeout
+	}
+	if source.Shutdown.CleanupWorktrees {
+		l.config.Shutdown.CleanupWorktrees = source.Shutdown.CleanupWorktrees
+	}
+
 	// Events
 	if source.Events.BatchWindow.Duration != 0 {
 		l.config.Events.BatchWindow = source.Events.BatchWindow
@@ -718,6 +737,8 @@ func (l *Loader) setConfigValue(path []string, value string) error {
 		return l.setProcessConfig(path[1:], value)
 	case "git":
 		return l.setGitConfig(path[1:], value)
+	case "shutdown":
+		return l.setShutdownConfig(path[1:], value)
 	case "events":
 		return l.setEventsConfig(path[1:], value)
 	case "remote":
@@ -797,6 +818,19 @@ func (l *Loader) setGitConfig(path []string, value string) error {
 		case "target_branch":
 			l.config.Git.Merge.TargetBranch = value
 		}
+	}
+	return nil
+}
+
+func (l *Loader) setShutdownConfig(path []string, value string) error {
+	if len(path) == 0 {
+		return nil
+	}
+	switch path[0] {
+	case "drain_timeout":
+		return l.config.Shutdown.DrainTimeout.UnmarshalText([]byte(value))
+	case "cleanup_worktrees":
+		l.config.Shutdown.CleanupWorktrees = value == "true"
 	}
 	return nil
 }

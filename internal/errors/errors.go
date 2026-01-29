@@ -96,6 +96,45 @@ var (
 	ErrWorktreeRemoveFailed = errors.New("worktree removal failed")
 )
 
+// Git merge errors
+var (
+	// ErrMergeConflict indicates merge conflicts were detected.
+	ErrMergeConflict = errors.New("merge conflict")
+
+	// ErrMergeFailed indicates a merge operation failed.
+	ErrMergeFailed = errors.New("merge failed")
+
+	// ErrDirtyWorktree indicates the worktree has uncommitted changes.
+	ErrDirtyWorktree = errors.New("worktree has uncommitted changes")
+
+	// ErrBranchNotFound indicates a required branch was not found.
+	ErrBranchNotFound = errors.New("branch not found")
+
+	// ErrDetachedHead indicates the repository is in detached HEAD state.
+	ErrDetachedHead = errors.New("detached HEAD")
+
+	// ErrInvalidStrategy indicates an unsupported merge strategy.
+	ErrInvalidStrategy = errors.New("invalid merge strategy")
+)
+
+// Shutdown errors
+var (
+	// ErrShutdownInProgress indicates shutdown is already in progress.
+	ErrShutdownInProgress = errors.New("shutdown in progress")
+
+	// ErrDrainTimeout indicates the drain timeout was reached.
+	ErrDrainTimeout = errors.New("drain timeout")
+)
+
+// Session errors
+var (
+	// ErrSessionNotFound indicates a session was not found.
+	ErrSessionNotFound = fmt.Errorf("session %w", ErrNotFound)
+
+	// ErrAgentAlreadyRunning indicates the agent already has a running session.
+	ErrAgentAlreadyRunning = errors.New("agent already running")
+)
+
 // Remote errors
 var (
 	// ErrConnectionFailed indicates a connection failed.

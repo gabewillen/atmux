@@ -333,7 +333,7 @@ Type represents an event type identifier.
 
 ### Constants
 
-#### TypeAgentAdded, TypeAgentStarting, TypeAgentStarted, TypeAgentStopping, TypeAgentStopped, TypeAgentTerminated, TypeAgentErrored, TypePresenceChanged, TypePTYOutput, TypePTYActivity, TypePTYIdle, TypeProcessSpawned, TypeProcessCompleted, TypeProcessIO, TypeConfigFileChanged, TypeConfigReloaded, TypeConfigUpdated, TypeConfigReloadFailed, TypeConnectionEstablished, TypeConnectionLost, TypeConnectionRecovered, TypeAdapterLoaded, TypeAdapterUnloaded
+#### TypeAgentAdded, TypeAgentStarting, TypeAgentStarted, TypeAgentStopping, TypeAgentStopped, TypeAgentTerminated, TypeAgentErrored, TypePresenceChanged, TypePTYOutput, TypePTYActivity, TypePTYIdle, TypeProcessSpawned, TypeProcessCompleted, TypeProcessIO, TypeConfigFileChanged, TypeConfigReloaded, TypeConfigUpdated, TypeConfigReloadFailed, TypeConnectionEstablished, TypeConnectionLost, TypeConnectionRecovered, TypeShutdownInitiated, TypeShutdownForce, TypeDrainComplete, TypeDrainTimeout, TypeTerminateComplete, TypeGitMergeRequested, TypeGitMergeCompleted, TypeGitMergeConflict, TypeGitMergeFailed, TypeWorktreeCreated, TypeWorktreeRemoved, TypeTaskCancel, TypeAdapterLoaded, TypeAdapterUnloaded
 
 ```go
 const (
@@ -369,6 +369,26 @@ const (
 	TypeConnectionEstablished Type = "connection.established"
 	TypeConnectionLost        Type = "connection.lost"
 	TypeConnectionRecovered   Type = "connection.recovered"
+
+	// Shutdown events
+	TypeShutdownInitiated Type = "shutdown.initiated"
+	TypeShutdownForce     Type = "shutdown.force"
+	TypeDrainComplete     Type = "drain.complete"
+	TypeDrainTimeout      Type = "drain.timeout"
+	TypeTerminateComplete Type = "terminate.complete"
+
+	// Git merge events
+	TypeGitMergeRequested Type = "git.merge.requested"
+	TypeGitMergeCompleted Type = "git.merge.completed"
+	TypeGitMergeConflict  Type = "git.merge.conflict"
+	TypeGitMergeFailed    Type = "git.merge.failed"
+
+	// Worktree events
+	TypeWorktreeCreated Type = "worktree.created"
+	TypeWorktreeRemoved Type = "worktree.removed"
+
+	// Task events
+	TypeTaskCancel Type = "task.cancel"
 
 	// Adapter events
 	TypeAdapterLoaded   Type = "adapter.loaded"

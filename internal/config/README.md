@@ -51,6 +51,7 @@ This package follows the configuration conventions in spec §4.2.8.
 - `type ProcessConfig` — ProcessConfig holds process tracking settings.
 - `type RemoteConfig` — RemoteConfig holds remote agent settings.
 - `type RemoteNATSConfig` — RemoteNATSConfig holds NATS-specific remote settings.
+- `type ShutdownConfig` — ShutdownConfig holds graceful shutdown settings per spec §5.6.
 - `type State` — State represents the config actor state.
 - `type SubscriptionConfig` — SubscriptionConfig holds event subscription settings.
 - `type TelemetryConfig` — TelemetryConfig holds OpenTelemetry settings.
@@ -407,6 +408,7 @@ type Config struct {
 	Timeouts  TimeoutsConfig  `toml:"timeouts"`
 	Process   ProcessConfig   `toml:"process"`
 	Git       GitConfig       `toml:"git"`
+	Shutdown  ShutdownConfig  `toml:"shutdown"`
 	Events    EventsConfig    `toml:"events"`
 	Remote    RemoteConfig    `toml:"remote"`
 	NATS      NATSConfig      `toml:"nats"`
@@ -709,6 +711,12 @@ func () setProcessConfig(path []string, value string) error
 func () setRemoteConfig(path []string, value string) error
 ```
 
+#### Loader.setShutdownConfig
+
+```go
+func () setShutdownConfig(path []string, value string) error
+```
+
 #### Loader.setTelemetryConfig
 
 ```go
@@ -829,6 +837,17 @@ type RemoteNATSConfig struct {
 ```
 
 RemoteNATSConfig holds NATS-specific remote settings.
+
+## type ShutdownConfig
+
+```go
+type ShutdownConfig struct {
+	DrainTimeout     Duration `toml:"drain_timeout"`
+	CleanupWorktrees bool     `toml:"cleanup_worktrees"`
+}
+```
+
+ShutdownConfig holds graceful shutdown settings per spec §5.6.
 
 ## type State
 

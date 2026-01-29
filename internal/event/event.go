@@ -56,6 +56,26 @@ const (
 	TypeConnectionLost        Type = "connection.lost"
 	TypeConnectionRecovered   Type = "connection.recovered"
 
+	// Shutdown events
+	TypeShutdownInitiated Type = "shutdown.initiated"
+	TypeShutdownForce     Type = "shutdown.force"
+	TypeDrainComplete     Type = "drain.complete"
+	TypeDrainTimeout      Type = "drain.timeout"
+	TypeTerminateComplete Type = "terminate.complete"
+
+	// Git merge events
+	TypeGitMergeRequested Type = "git.merge.requested"
+	TypeGitMergeCompleted Type = "git.merge.completed"
+	TypeGitMergeConflict  Type = "git.merge.conflict"
+	TypeGitMergeFailed    Type = "git.merge.failed"
+
+	// Worktree events
+	TypeWorktreeCreated Type = "worktree.created"
+	TypeWorktreeRemoved Type = "worktree.removed"
+
+	// Task events
+	TypeTaskCancel Type = "task.cancel"
+
 	// Adapter events
 	TypeAdapterLoaded   Type = "adapter.loaded"
 	TypeAdapterUnloaded Type = "adapter.unloaded"

@@ -11,6 +11,7 @@
 - [internal/daemon](internal/daemon/README.md) — Package daemon implements the amux daemon (amuxd) and manager (amux-manager).
 - [internal/errors](internal/errors/README.md) — Package errors provides sentinel errors and error handling conventions for amux.
 - [internal/event](internal/event/README.md) — Package event provides event types and dispatch interfaces for amux.
+- [internal/gitmerge](internal/gitmerge/README.md) — Package gitmerge implements git merge strategy selection and execution for amux.
 - [internal/ids](internal/ids/README.md) — Package ids provides identifier utilities for amux.
 - [internal/inference](internal/inference/README.md) — Package inference provides the local inference engine interface for amux.
 - [internal/monitor](internal/monitor/README.md) — Package monitor provides PTY output monitoring for amux.
@@ -18,7 +19,10 @@
 - [internal/process](internal/process/README.md) — Package process provides process tracking and interception for amux.
 - [internal/protocol](internal/protocol/README.md) — Package protocol provides the remote communication protocol for amux.
 - [internal/pty](internal/pty/README.md) — Package pty provides PTY (pseudo-terminal) management for amux.
+- [internal/session](internal/session/README.md) — Package session provides local agent session management with owned PTYs.
+- [internal/shutdown](internal/shutdown/README.md) — Package shutdown provides HSM-based graceful shutdown for amux.
 - [internal/telemetry](internal/telemetry/README.md) — Package telemetry provides OpenTelemetry instrumentation for amux.
 - [internal/tui](internal/tui/README.md) — Package tui provides terminal screen decoding and TUI XML encoding for amux.
+- [internal/worktree](internal/worktree/README.md) — Package worktree provides git worktree isolation for amux agents.
 - [pkg/api](pkg/api/README.md) — Package api provides public types for the Agent Multiplexer (amux).
 

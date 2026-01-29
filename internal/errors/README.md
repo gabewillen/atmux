@@ -13,9 +13,12 @@ This package follows the error handling conventions specified in §4.2.5:
 - `ErrAgentNotFound, ErrAgentAlreadyExists, ErrAgentNotRunning, ErrAgentSlugCollision` — Agent errors
 - `ErrConfigNotFound, ErrConfigInvalid, ErrConfigParseError` — Configuration errors
 - `ErrConnectionFailed, ErrHandshakeFailed, ErrHostNotConnected, ErrSessionConflict` — Remote errors
+- `ErrMergeConflict, ErrMergeFailed, ErrDirtyWorktree, ErrBranchNotFound, ErrDetachedHead, ErrInvalidStrategy` — Git merge errors
 - `ErrModelNotFound, ErrModelLoadFailed, ErrInferenceUnavailable` — Inference errors
 - `ErrNotFound, ErrAlreadyExists, ErrInvalidInput, ErrNotReady, ErrTimeout, ErrClosed, ErrPermissionDenied, ErrNotImplemented` — Sentinel errors for common error conditions.
 - `ErrNotInRepository, ErrWorktreeCreateFailed, ErrWorktreeRemoveFailed` — Repository errors
+- `ErrSessionNotFound, ErrAgentAlreadyRunning` — Session errors
+- `ErrShutdownInProgress, ErrDrainTimeout` — Shutdown errors
 - `func As(err error, target any) bool` — As finds the first error in err's chain that matches target.
 - `func Is(err, target error) bool` — Is reports whether any error in err's chain matches target.
 - `func Join(errs ...error) error` — Join returns an error that wraps the given errors.
@@ -134,6 +137,60 @@ var (
 ```
 
 Repository errors
+
+#### ErrMergeConflict, ErrMergeFailed, ErrDirtyWorktree, ErrBranchNotFound, ErrDetachedHead, ErrInvalidStrategy
+
+```go
+var (
+	// ErrMergeConflict indicates merge conflicts were detected.
+	ErrMergeConflict = errors.New("merge conflict")
+
+	// ErrMergeFailed indicates a merge operation failed.
+	ErrMergeFailed = errors.New("merge failed")
+
+	// ErrDirtyWorktree indicates the worktree has uncommitted changes.
+	ErrDirtyWorktree = errors.New("worktree has uncommitted changes")
+
+	// ErrBranchNotFound indicates a required branch was not found.
+	ErrBranchNotFound = errors.New("branch not found")
+
+	// ErrDetachedHead indicates the repository is in detached HEAD state.
+	ErrDetachedHead = errors.New("detached HEAD")
+
+	// ErrInvalidStrategy indicates an unsupported merge strategy.
+	ErrInvalidStrategy = errors.New("invalid merge strategy")
+)
+```
+
+Git merge errors
+
+#### ErrShutdownInProgress, ErrDrainTimeout
+
+```go
+var (
+	// ErrShutdownInProgress indicates shutdown is already in progress.
+	ErrShutdownInProgress = errors.New("shutdown in progress")
+
+	// ErrDrainTimeout indicates the drain timeout was reached.
+	ErrDrainTimeout = errors.New("drain timeout")
+)
+```
+
+Shutdown errors
+
+#### ErrSessionNotFound, ErrAgentAlreadyRunning
+
+```go
+var (
+	// ErrSessionNotFound indicates a session was not found.
+	ErrSessionNotFound = fmt.Errorf("session %w", ErrNotFound)
+
+	// ErrAgentAlreadyRunning indicates the agent already has a running session.
+	ErrAgentAlreadyRunning = errors.New("agent already running")
+)
+```
+
+Session errors
 
 #### ErrConnectionFailed, ErrHandshakeFailed, ErrHostNotConnected, ErrSessionConflict
 

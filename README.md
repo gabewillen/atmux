@@ -3,7 +3,7 @@
 - [cmd/amux](cmd/amux/README.md)
 - [cmd/amux-node](cmd/amux-node/README.md)
 - [internal/adapter](internal/adapter/README.md) — Package adapter manages the WASM runtime and adapter loading.
-- [internal/agent](internal/agent/README.md) — Package agent handles the lifecycle, presence, and messaging of agents.
+- [internal/agent](internal/agent/README.md)
 - [internal/cli](internal/cli/README.md)
 - [internal/config](internal/config/README.md)
 - [internal/inference](internal/inference/README.md)
@@ -15,4 +15,5 @@
 - [internal/snapshot](internal/snapshot/README.md)
 - [internal/telemetry](internal/telemetry/README.md) — Package telemetry configures OpenTelemetry for traces, metrics, and logs.
 - [internal/tui](internal/tui/README.md) — Package tui handles terminal screen decoding and XML encoding.
+- [pkg/api](pkg/api/README.md)
 

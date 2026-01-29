@@ -2,10 +2,20 @@
 
 `import "github.com/agentflare-ai/amux/internal/inference"`
 
+- `func init()`
 - `type LiquidgenEngine`
 - `type LiquidgenImpl`
 - `type LiquidgenRequest`
 - `type LiquidgenStream`
+
+### Functions
+
+#### init
+
+```go
+func init()
+```
+
 
 ## type LiquidgenEngine
 

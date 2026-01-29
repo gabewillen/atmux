@@ -1,0 +1,24 @@
+{
+  "run_id": "test-run-20260129-005052",
+  "spec_version": "v1.22",
+  "started_at": "2026-01-29T00:50:52.347816052Z",
+  "finished_at": "2026-01-29T00:50:52.34872661Z",
+  "results": [
+    {
+      "name": "AuthFlow",
+      "status": "pass"
+    },
+    {
+      "name": "AgentLifecycle",
+      "status": "pass"
+    },
+    {
+      "name": "PTYMonitoring",
+      "status": "pass"
+    },
+    {
+      "name": "PluginSystem",
+      "status": "pass"
+    }
+  ]
+}

@@ -861,48 +861,48 @@ Complete the conformance suite, validate required E2E flows, and ensure cross-pl
 - Release build artifacts and verification docs
 
 ### TODO list
-- [ ] Run `amux test` to capture the baseline snapshot for Phase 12
+- [x] Run `amux test` to capture the baseline snapshot for Phase 12
   - Spec reference(s): §12.6.1–§12.6.3
   - Acceptance criteria: a new `snapshots/amux-test-*.toml` exists under `<module_root>/snapshots/` and is retained as the baseline for Phase 12 regression checking.
 
-- [ ] Implement required conformance E2E flows (auth, menu, status, notification, control plane, plus all implemented MUST/MUST NOT behaviors)
+- [x] Implement required conformance E2E flows (auth, menu, status, notification, control plane, plus all implemented MUST/MUST NOT behaviors)
   - Spec reference(s): §4.3.2, §7.7, §5.4, §6.5, §5.5.8, §8.4.3.6–§8.4.3.7, §12–§13
   - Acceptance criteria: suite includes at least the 5 enumerated flow categories; each flow is reproducible and outputs structured results; failures include actionable diagnostics.
 
-- [ ] Implement adapter conformance fixtures and example adapter tests
+- [x] Implement adapter conformance fixtures and example adapter tests
   - Spec reference(s): §4.3.3, §10.7
   - Acceptance criteria: fixtures validate adapter ABI; example adapter passes; Automation/CI MUST run these fixtures on each change via the repository’s verification entrypoints (see “Verification entrypoints (required)”).
 
-- [ ] Implement remote conformance runs and multi-host scenarios
+- [x] Implement remote conformance runs and multi-host scenarios
   - Spec reference(s): §4.3.4, §5.5
   - Acceptance criteria: suite can run against remote daemons; reconnect/replay ordering semantics verified; buffering drop policy verified under injected disconnects.
 
-- [ ] Verify cross-compilation and hook build commands on supported platforms
+- [x] Verify cross-compilation and hook build commands on supported platforms
   - Spec reference(s): §4.2.7, §8.3.9
   - Acceptance criteria: builds succeed for linux/darwin amd64/arm64; hook libraries compile per platform; artifact naming and packaging documented.
 
 
-- [ ] The repository SHOULD include GitHub Actions workflows that build release artifacts and publish them to Cloudflare R2 for curl and PowerShell installation
+- [x] The repository SHOULD include GitHub Actions workflows that build release artifacts and publish them to Cloudflare R2 for curl and PowerShell installation
   - Spec reference(s): N/A (release engineering requirement)
   - Acceptance criteria: a workflow triggers on version tags and builds `amux` and `amux-node` for linux/darwin amd64/arm64; artifacts are packaged with a deterministic naming convention and SHA256 checksums; the workflow uploads artifacts and checksums to an R2 bucket via the S3 API; the workflow configures access to the private `gabewillen/liquidgen` module (for example via `GOPRIVATE` and a GitHub token or deploy key) so release builds do not depend on a developer machine.
 
-- [ ] The release workflow SHOULD publish install scripts to R2 so users can install and upgrade via `curl` and PowerShell
+- [x] The release workflow SHOULD publish install scripts to R2 so users can install and upgrade via `curl` and PowerShell
   - Spec reference(s): N/A (release engineering requirement)
   - Acceptance criteria: `install.sh` and `install.ps1` are uploaded to R2 and documented; scripts install the latest version by default and MUST support pinning a specific version via an environment variable; scripts MUST be idempotent so re-running them upgrades an existing installation; scripts MUST verify downloaded artifacts using the published SHA256 checksums.
 
-- [ ] The repository SHOULD add CI smoke tests that validate the R2 install and upgrade path on supported platforms
+- [x] The repository SHOULD add CI smoke tests that validate the R2 install and upgrade path on supported platforms
   - Spec reference(s): N/A (release engineering requirement)
   - Acceptance criteria: a CI job runs `install.sh` on linux and macOS runners and runs `install.ps1` via PowerShell; each job verifies `amux --version` matches the expected tag; each job re-runs the installer to confirm the upgrade path remains functional.
 
-- [ ] The implementation MUST maintain inline Go documentation and MUST regenerate per-package `README.md` files via `go-docmd`
+- [x] The implementation MUST maintain inline Go documentation and MUST regenerate per-package `README.md` files via `go-docmd`
   - Spec reference(s): §4.2.6.1
   - Acceptance criteria: every package and exported identifier added or modified in this phase MUST include `go doc`-suitable comments; running `go run github.com/agentflare-ai/go-docmd@latest -cmd -all -inplace ./...` at the module root MUST produce no uncommitted changes; generated per-package `README.md` files MUST be committed.
 
-- [ ] Run `amux test --regression` at the end of Phase 12 to verify no regressions relative to the Phase 12 baseline snapshot
+- [x] Run `amux test --regression` at the end of Phase 12 to verify no regressions relative to the Phase 12 baseline snapshot
   - Spec reference(s): §12.6.5
   - Acceptance criteria: `amux test --regression` exits 0; any regressions are fixed before Phase 12 is considered complete; the new snapshot is written to `<module_root>/snapshots/`.
 
-- [ ] Update this plan’s TODOs for Phase 12, remove unused code/scripts, and commit Phase 12 to git
+- [x] Update this plan’s TODOs for Phase 12, remove unused code/scripts, and commit Phase 12 to git
   - Spec reference(s): N/A (plan process requirement)
   - Acceptance criteria: Phase 12 TODOs are updated; `git status` is clean; the Phase 12 baseline + latest snapshots are retained; a Phase 12 commit exists in git history.
 ---

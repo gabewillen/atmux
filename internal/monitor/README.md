@@ -22,11 +22,14 @@ type Monitor struct {
 	Input   io.Reader
 
 	// Configuration
-	ActivityTimeout time.Duration
+	ActivityTimeout time.Duration // idle timeout
+	StuckTimeout    time.Duration
 	CheckInterval   time.Duration
 
 	// State
 	lastActivity time.Time
+	isStuck      bool
+	isIdle       bool
 }
 ```
 

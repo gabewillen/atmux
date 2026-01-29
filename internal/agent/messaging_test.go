@@ -32,6 +32,9 @@ func TestInterAgentMessaging(t *testing.T) {
 		if msg.Content != "hello B" {
 			t.Errorf("Expected content 'hello B', got %s", msg.Content)
 		}
+		if msg.Timestamp.IsZero() {
+			t.Error("Expected timestamp to be set")
+		}
 	case <-time.After(100 * time.Millisecond):
 		t.Error("Timed out waiting for message")
 	}

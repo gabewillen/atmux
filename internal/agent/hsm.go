@@ -15,12 +15,16 @@ const (
 	EventError      = "error"
 	EventStop       = "stop"
 
-	EventConnect    = "connect"
-	EventDisconnect = "disconnect"
-	EventBusy       = "busy"
-	EventIdle       = "idle"
-	EventAway       = "away"
-	EventBack       = "back"
+	EventConnect          = "connect"
+	EventDisconnect       = "disconnect"
+	EventBusy             = "busy"
+	EventIdle             = "idle"
+	EventAway             = "away"
+	EventBack             = "back"
+	EventRateLimit        = "rate.limit"
+	EventRateCleared      = "rate.cleared"
+	EventStuck            = "stuck.detected"
+	EventActivityDetected = "activity.detected"
 )
 
 // LifecycleHSM manages the agent lifecycle.
@@ -105,6 +109,7 @@ var presenceModel = hsm.Define("presence",
 
 	hsm.Initial(hsm.Target(string(PresenceOffline))),
 
+	// Connect/Disconnect (Disconnect -> Away per Spec §5.5.8)
 	hsm.Transition(
 		hsm.On(hsm.Event{Name: EventConnect}),
 		hsm.Source(string(PresenceOffline)),
@@ -113,18 +118,16 @@ var presenceModel = hsm.Define("presence",
 	hsm.Transition(
 		hsm.On(hsm.Event{Name: EventDisconnect}),
 		hsm.Source(string(PresenceOnline)),
-		hsm.Target(string(PresenceOffline)),
+		hsm.Target(string(PresenceAway)),
 	),
 	hsm.Transition(
 		hsm.On(hsm.Event{Name: EventDisconnect}),
 		hsm.Source(string(PresenceBusy)),
-		hsm.Target(string(PresenceOffline)),
+		hsm.Target(string(PresenceAway)),
 	),
-	hsm.Transition(
-		hsm.On(hsm.Event{Name: EventDisconnect}),
-		hsm.Source(string(PresenceAway)),
-		hsm.Target(string(PresenceOffline)),
-	),
+	// Explicitly handle Away->Away for idempotency or ignore
+	
+	// Busy/Idle
 	hsm.Transition(
 		hsm.On(hsm.Event{Name: EventBusy}),
 		hsm.Source(string(PresenceOnline)),
@@ -135,14 +138,48 @@ var presenceModel = hsm.Define("presence",
 		hsm.Source(string(PresenceBusy)),
 		hsm.Target(string(PresenceOnline)),
 	),
+
+	// Away (Stuck) / Back (Activity)
 	hsm.Transition(
 		hsm.On(hsm.Event{Name: EventAway}),
 		hsm.Source(string(PresenceOnline)),
 		hsm.Target(string(PresenceAway)),
 	),
 	hsm.Transition(
+		hsm.On(hsm.Event{Name: EventStuck}),
+		hsm.Source(string(PresenceOnline)),
+		hsm.Target(string(PresenceAway)),
+	),
+	hsm.Transition(
+		hsm.On(hsm.Event{Name: EventStuck}),
+		hsm.Source(string(PresenceBusy)),
+		hsm.Target(string(PresenceAway)),
+	),
+	hsm.Transition(
 		hsm.On(hsm.Event{Name: EventBack}),
 		hsm.Source(string(PresenceAway)),
+		hsm.Target(string(PresenceOnline)),
+	),
+	hsm.Transition(
+		hsm.On(hsm.Event{Name: EventActivityDetected}),
+		hsm.Source(string(PresenceAway)),
+		hsm.Target(string(PresenceOnline)),
+	),
+
+	// Rate Limits (Offline)
+	hsm.Transition(
+		hsm.On(hsm.Event{Name: EventRateLimit}),
+		hsm.Source(string(PresenceOnline)),
+		hsm.Target(string(PresenceOffline)),
+	),
+	hsm.Transition(
+		hsm.On(hsm.Event{Name: EventRateLimit}),
+		hsm.Source(string(PresenceBusy)),
+		hsm.Target(string(PresenceOffline)),
+	),
+	hsm.Transition(
+		hsm.On(hsm.Event{Name: EventRateCleared}),
+		hsm.Source(string(PresenceOffline)),
 		hsm.Target(string(PresenceOnline)),
 	),
 )
@@ -158,3 +195,4 @@ func NewPresenceHSM(agent *Agent, bus *EventBus) hsm.Instance {
 	sm := &PresenceHSM{Agent: agent, Bus: bus}
 	return hsm.Started(context.Background(), sm, &presenceModel)
 }
+

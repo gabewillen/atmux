@@ -4,6 +4,8 @@
 
 - `type EventType` — EventType for process events.
 - `type Event` — Event represents a process event.
+- `type Gater` — Gater uses an LLM to decide if an event should trigger a notification.
+- `type HookMessage` — HookMessage matches the JSON sent by hook.c
 - `type MCPNotification` — MCPNotification represents a notification sent to clients.
 - `type MCPServer` — MCPServer handles notification subscriptions via a Unix socket.
 - `type Process` — Process represents a tracked process.
@@ -41,6 +43,39 @@ const (
 )
 ```
 
+
+## type Gater
+
+```go
+type Gater struct {
+	Engine inference.LiquidgenEngine
+}
+```
+
+Gater uses an LLM to decide if an event should trigger a notification.
+
+### Methods
+
+#### Gater.ShouldNotify
+
+```go
+func () ShouldNotify(ctx context.Context, event Event) bool
+```
+
+ShouldNotify returns true if the LLM thinks the event is noteworthy.
+
+
+## type HookMessage
+
+```go
+type HookMessage struct {
+	PID  int    `json:"pid"`
+	PPID int    `json:"ppid"`
+	Cmd  string `json:"cmd"`
+}
+```
+
+HookMessage matches the JSON sent by hook.c
 
 ## type MCPNotification
 
@@ -145,9 +180,11 @@ Process represents a tracked process.
 
 ```go
 type Tracker struct {
-	mu        sync.RWMutex
-	processes map[int]*Process
-	Events    chan Event
+	mu         sync.RWMutex
+	processes  map[int]*Process
+	Events     chan Event
+	Gater      *Gater
+	SocketPath string
 }
 ```
 
@@ -177,10 +214,18 @@ GetProcess returns a copy of the process info.
 #### Tracker.Start
 
 ```go
-func () Start(ctx context.Context)
+func () Start(ctx context.Context, socketDir string) error
 ```
 
-Start polling/monitoring logic would go here or be driven by hooks.
+Start initiates the hook server.
+
+#### Tracker.StartHookServer
+
+```go
+func () StartHookServer(ctx context.Context, socketDir string) error
+```
+
+StartHookServer starts listening on a Unix socket for exec notifications.
 
 #### Tracker.TrackExit
 
@@ -197,5 +242,17 @@ func () TrackSpawn(proc *Process)
 ```
 
 TrackSpawn records a new process start.
+
+#### Tracker.acceptLoop
+
+```go
+func () acceptLoop(ctx context.Context, l net.Listener)
+```
+
+#### Tracker.handleConnection
+
+```go
+func () handleConnection(conn net.Conn)
+```
 
 

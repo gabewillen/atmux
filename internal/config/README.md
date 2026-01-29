@@ -6,8 +6,9 @@
 - `func SaveUserConfig(cfg *Config) error` — SaveUserConfig saves the configuration to the user's config directory.
 - `func applyEnvOverrides(cfg *Config) error`
 - `func envKeyToPath(key string) ([]string, error)` — envKeyToPath converts AMUX__FOO__BAR to []string{"foo", "bar"}
-- `func insertMap(m map[string]any, path []string, value string) error`
+- `func insertMap(m map[string]any, path []string, value any) error`
 - `func isSensitiveKey(key string) bool`
+- `func loadAdapterConfigs(baseDir string, cfg *Config) error`
 - `func loadFile(path string, cfg *Config) error`
 - `func saveToFile(path string, cfg *Config) error`
 - `type AgentConfig`
@@ -71,13 +72,19 @@ envKeyToPath converts AMUX__FOO__BAR to []string{"foo", "bar"}
 #### insertMap
 
 ```go
-func insertMap(m map[string]any, path []string, value string) error
+func insertMap(m map[string]any, path []string, value any) error
 ```
 
 #### isSensitiveKey
 
 ```go
 func isSensitiveKey(key string) bool
+```
+
+#### loadAdapterConfigs
+
+```go
+func loadAdapterConfigs(baseDir string, cfg *Config) error
 ```
 
 #### loadFile

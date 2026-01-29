@@ -31,43 +31,54 @@ func TestMonitor_Activity(t *testing.T) {
 	sub := bus.Subscribe()
 	defer sub.Close()
 
-	// Write data
+	// 1. Initial state (should be nothing until input)
+	
+	// 2. Write data -> Expect ActivityDetected (only if transitioning back from idle/stuck, OR generally?)
+	// The implementation only emits ActivityDetected if (isStuck || isIdle) is true.
+	// So initially it might NOT emit ActivityDetected unless we force it to Idle first.
+	// Actually, let's wait for Idle first.
+	
+	time.Sleep(200 * time.Millisecond)
+	
+	// Should have received EventIdle
+	foundIdle := false
+LoopIdle:
+	for {
+		select {
+		case event := <-sub.C:
+			if event.Type == agent.EventIdle {
+				foundIdle = true
+				break LoopIdle
+			}
+		default:
+			break LoopIdle
+		}
+	}
+	if !foundIdle {
+		// Try waiting a bit more
+		select {
+		case event := <-sub.C:
+			if event.Type == agent.EventIdle {
+				foundIdle = true
+			}
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+	if !foundIdle {
+		t.Error("Did not receive EventIdle")
+	}
+
+	// 3. Write data -> Expect ActivityDetected (transition from Idle)
 	go func() {
 		pw.Write([]byte("data"))
 	}()
 	
-	// Expect Activity event
 	select {
 	case event := <-sub.C:
-		if event.Type != agent.EventActivity {
-			t.Errorf("Expected Activity event, got %s", event.Type)
+		if event.Type != agent.EventActivityDetected {
+			t.Errorf("Expected ActivityDetected event, got %s", event.Type)
 		}
-	case <-time.After(50 * time.Millisecond):
-		t.Error("Timed out waiting for activity")
-	}
-
-	// Wait for Idle (Online)
-	// Last activity was just now. Timeout is 100ms.
-	time.Sleep(200 * time.Millisecond)
-	
-	foundIdle := false
-	// Drain channel
-Loop:
-	for {
-		select {
-		case event := <-sub.C:
-			if event.Type == agent.EventPresenceUpdate {
-				if state, ok := event.Payload.(api.PresenceState); ok && state == api.PresenceOnline {
-					foundIdle = true
-					break Loop
-				}
-			}
-		default:
-			break Loop
-		}
-	}
-	
-	if !foundIdle {
-		t.Error("Did not receive Idle/Online event after timeout")
+	case <-time.After(100 * time.Millisecond):
+		t.Error("Timed out waiting for activity detected")
 	}
 }

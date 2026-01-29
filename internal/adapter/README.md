@@ -89,6 +89,14 @@ NewWasmRuntime creates a new runtime for the given WASM binary.
 
 ### Methods
 
+#### WasmRuntime.FormatInput
+
+```go
+func () FormatInput(input any) ([]byte, error)
+```
+
+FormatInput invokes the adapter's format_input function.
+
 #### WasmRuntime.Match
 
 ```go

@@ -2,10 +2,11 @@
 
 `import "github.com/agentflare-ai/amux/internal/agent"`
 
-- `EventSpawn, EventStarted, EventExited, EventError, EventStop, EventConnect, EventDisconnect, EventBusy, EventIdle, EventAway, EventBack` — Events
+- `EventSpawn, EventStarted, EventExited, EventError, EventStop, EventConnect, EventDisconnect, EventBusy, EventIdle, EventAway, EventBack, EventRateLimit, EventRateCleared, EventStuck, EventActivityDetected` — Events
 - `GlobalRegistry` — GlobalRegistry is the default instance (singleton pattern for simplicity in this phase).
 - `func AddAgent(cfg *config.Config, newAgent config.AgentConfig) error` — AddAgent validates and persists a new agent configuration.
 - `func EnsureWorktree(repoRoot api.RepoRoot, slug api.AgentSlug, baseBranch string) (string, error)` — EnsureWorktree creates or reuses a worktree for the given agent.
+- `func ExecuteMerge(repoRoot api.RepoRoot, strategy MergeStrategy, targetBranch string, sourceBranch string, allowDirty bool) error` — ExecuteMerge performs the git integration of the source branch into the target branch using the specified strategy.
 - `func GetAgentTargetBranch(a *Agent) (string, error)` — GetAgentTargetBranch helps resolve the branch to use for the worktree.
 - `func MessageError(format string, a ...any) error` — MessageError creates a formatted error.
 - `func NewLifecycleHSM(agent *Agent) hsm.Instance` — NewLifecycleHSM creates a new lifecycle HSM for the agent.
@@ -14,12 +15,16 @@
 - `func SendMessage(bus *EventBus, from, to api.AgentID, content string) error` — SendMessage sends a message from one agent to another.
 - `func SpawnAgent(ctx context.Context, a *Agent) error` — SpawnAgent starts the agent process in a new PTY session.
 - `func StopAgent(ctx context.Context, a *Agent) error` — StopAgent stops the agent process.
-- `func SubscribeToMessages(bus *EventBus, agentID api.AgentID) (<-chan Message, func())` — SubscribeToMessages returns a channel that receives messages for a specific agent.
+- `func SubscribeToMessages(bus *EventBus, agentID api.AgentID) (<-chan AgentMessage, func())` — SubscribeToMessages returns a channel that receives messages for a specific agent.
 - `func ValidateAgentConfig(c config.AgentConfig) error` — ValidateAgentConfig checks required fields.
+- `func getAgentCommand(a *Agent) []string`
+- `func isDirty(repoRoot api.RepoRoot) bool`
 - `func isGitRepo(path string) bool`
+- `func runGit(repoRoot api.RepoRoot, args ...string) error`
 - `func updatePresence(state api.PresenceState) func(context.Context, *PresenceHSM, hsm.Event)`
 - `lifecycleModel`
 - `presenceModel`
+- `type AgentMessage` — AgentMessage represents an inter-agent message.
 - `type Agent` — Agent represents the runtime state of an agent.
 - `type BusEvent` — BusEvent represents an event on the bus.
 - `type EventBus` — EventBus manages subscriptions and event distribution.
@@ -27,7 +32,6 @@
 - `type LifecycleHSM` — LifecycleHSM manages the agent lifecycle.
 - `type LifecycleState` — LifecycleState represents the lifecycle state of an agent.
 - `type MergeStrategy` — MergeStrategy represents a git merge strategy.
-- `type Message` — Message represents an inter-agent message.
 - `type PresenceHSM` — PresenceHSM manages the agent presence.
 - `type PresenceState` — PresenceState represents the presence state of an agent.
 - `type Registry` — Registry manages the set of known agents.
@@ -37,7 +41,7 @@
 
 ### Constants
 
-#### EventSpawn, EventStarted, EventExited, EventError, EventStop, EventConnect, EventDisconnect, EventBusy, EventIdle, EventAway, EventBack
+#### EventSpawn, EventStarted, EventExited, EventError, EventStop, EventConnect, EventDisconnect, EventBusy, EventIdle, EventAway, EventBack, EventRateLimit, EventRateCleared, EventStuck, EventActivityDetected
 
 ```go
 const (
@@ -47,12 +51,16 @@ const (
 	EventError   = "error"
 	EventStop    = "stop"
 
-	EventConnect    = "connect"
-	EventDisconnect = "disconnect"
-	EventBusy       = "busy"
-	EventIdle       = "idle"
-	EventAway       = "away"
-	EventBack       = "back"
+	EventConnect          = "connect"
+	EventDisconnect       = "disconnect"
+	EventBusy             = "busy"
+	EventIdle             = "idle"
+	EventAway             = "away"
+	EventBack             = "back"
+	EventRateLimit        = "rate.limit"
+	EventRateCleared      = "rate.cleared"
+	EventStuck            = "stuck.detected"
+	EventActivityDetected = "activity.detected"
 )
 ```
 
@@ -138,18 +146,14 @@ var presenceModel = hsm.Define("presence",
 	hsm.Transition(
 		hsm.On(hsm.Event{Name: EventDisconnect}),
 		hsm.Source(string(PresenceOnline)),
-		hsm.Target(string(PresenceOffline)),
+		hsm.Target(string(PresenceAway)),
 	),
 	hsm.Transition(
 		hsm.On(hsm.Event{Name: EventDisconnect}),
 		hsm.Source(string(PresenceBusy)),
-		hsm.Target(string(PresenceOffline)),
+		hsm.Target(string(PresenceAway)),
 	),
-	hsm.Transition(
-		hsm.On(hsm.Event{Name: EventDisconnect}),
-		hsm.Source(string(PresenceAway)),
-		hsm.Target(string(PresenceOffline)),
-	),
+
 	hsm.Transition(
 		hsm.On(hsm.Event{Name: EventBusy}),
 		hsm.Source(string(PresenceOnline)),
@@ -160,14 +164,46 @@ var presenceModel = hsm.Define("presence",
 		hsm.Source(string(PresenceBusy)),
 		hsm.Target(string(PresenceOnline)),
 	),
+
 	hsm.Transition(
 		hsm.On(hsm.Event{Name: EventAway}),
 		hsm.Source(string(PresenceOnline)),
 		hsm.Target(string(PresenceAway)),
 	),
 	hsm.Transition(
+		hsm.On(hsm.Event{Name: EventStuck}),
+		hsm.Source(string(PresenceOnline)),
+		hsm.Target(string(PresenceAway)),
+	),
+	hsm.Transition(
+		hsm.On(hsm.Event{Name: EventStuck}),
+		hsm.Source(string(PresenceBusy)),
+		hsm.Target(string(PresenceAway)),
+	),
+	hsm.Transition(
 		hsm.On(hsm.Event{Name: EventBack}),
 		hsm.Source(string(PresenceAway)),
+		hsm.Target(string(PresenceOnline)),
+	),
+	hsm.Transition(
+		hsm.On(hsm.Event{Name: EventActivityDetected}),
+		hsm.Source(string(PresenceAway)),
+		hsm.Target(string(PresenceOnline)),
+	),
+
+	hsm.Transition(
+		hsm.On(hsm.Event{Name: EventRateLimit}),
+		hsm.Source(string(PresenceOnline)),
+		hsm.Target(string(PresenceOffline)),
+	),
+	hsm.Transition(
+		hsm.On(hsm.Event{Name: EventRateLimit}),
+		hsm.Source(string(PresenceBusy)),
+		hsm.Target(string(PresenceOffline)),
+	),
+	hsm.Transition(
+		hsm.On(hsm.Event{Name: EventRateCleared}),
+		hsm.Source(string(PresenceOffline)),
 		hsm.Target(string(PresenceOnline)),
 	),
 )
@@ -194,6 +230,15 @@ func EnsureWorktree(repoRoot api.RepoRoot, slug api.AgentSlug, baseBranch string
 EnsureWorktree creates or reuses a worktree for the given agent.
 It returns the path to the worktree.
 
+#### ExecuteMerge
+
+```go
+func ExecuteMerge(repoRoot api.RepoRoot, strategy MergeStrategy, targetBranch string, sourceBranch string, allowDirty bool) error
+```
+
+ExecuteMerge performs the git integration of the source branch into the target branch
+using the specified strategy. It assumes the repo is clean if allowDirty is false.
+
 #### GetAgentTargetBranch
 
 ```go
@@ -201,7 +246,6 @@ func GetAgentTargetBranch(a *Agent) (string, error)
 ```
 
 GetAgentTargetBranch helps resolve the branch to use for the worktree.
-This duplicates logic from SelectMergeStrategy a bit but for worktree creation.
 
 #### MessageError
 
@@ -262,7 +306,7 @@ StopAgent stops the agent process.
 #### SubscribeToMessages
 
 ```go
-func SubscribeToMessages(bus *EventBus, agentID api.AgentID) (<-chan Message, func())
+func SubscribeToMessages(bus *EventBus, agentID api.AgentID) (<-chan AgentMessage, func())
 ```
 
 SubscribeToMessages returns a channel that receives messages for a specific agent.
@@ -275,10 +319,28 @@ func ValidateAgentConfig(c config.AgentConfig) error
 
 ValidateAgentConfig checks required fields.
 
+#### getAgentCommand
+
+```go
+func getAgentCommand(a *Agent) []string
+```
+
+#### isDirty
+
+```go
+func isDirty(repoRoot api.RepoRoot) bool
+```
+
 #### isGitRepo
 
 ```go
 func isGitRepo(path string) bool
+```
+
+#### runGit
+
+```go
+func runGit(repoRoot api.RepoRoot, args ...string) error
 ```
 
 #### updatePresence
@@ -334,6 +396,21 @@ func () GetPresence() api.PresenceState
 
 GetPresence returns the current presence state of the agent.
 
+
+## type AgentMessage
+
+```go
+type AgentMessage struct {
+	ID        muid.MUID   `json:"id"`
+	From      api.AgentID `json:"from"`
+	To        api.AgentID `json:"to"`
+	ToSlug    string      `json:"to_slug,omitempty"`
+	Content   string      `json:"content"`
+	Timestamp time.Time   `json:"timestamp"`
+}
+```
+
+AgentMessage represents an inter-agent message.
 
 ## type BusEvent
 
@@ -483,20 +560,6 @@ func SelectMergeStrategy(cfg config.GitConfig, repoRoot api.RepoRoot) (MergeStra
 SelectMergeStrategy determines the merge strategy and target branch.
 It checks repo_root for current HEAD if target_branch is not configured.
 
-
-## type Message
-
-```go
-type Message struct {
-	ID        string      `json:"id"`
-	From      api.AgentID `json:"from"`
-	To        api.AgentID `json:"to"`
-	Content   string      `json:"content"`
-	Timestamp int64       `json:"timestamp"`
-}
-```
-
-Message represents an inter-agent message.
 
 ## type PresenceHSM
 

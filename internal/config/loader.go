@@ -128,8 +128,17 @@ func applyEnvOverrides(cfg *Config) error {
 			continue
 		}
 
+		// Spec §4.2.8.3: Attempt to parse value as TOML
+		var parsedValue any = value // Default to string
+		var wrapper struct {
+			V any `toml:"v"`
+		}
+		if err := toml.Unmarshal([]byte("v = "+value), &wrapper); err == nil {
+			parsedValue = wrapper.V
+		}
+
 		// Insert into nested map
-		if err := insertMap(overrides, path, value); err != nil {
+		if err := insertMap(overrides, path, parsedValue); err != nil {
 			return fmt.Errorf("failed to process env var %s: %w", key, err)
 		}
 	}
@@ -170,7 +179,7 @@ func envKeyToPath(key string) ([]string, error) {
 	return normalized, nil
 }
 
-func insertMap(m map[string]any, path []string, value string) error {
+func insertMap(m map[string]any, path []string, value any) error {
 	if len(path) == 0 {
 		return nil
 	}

@@ -114,8 +114,9 @@ ControlResponse is the payload for control operation responses.
 
 ```go
 type Error struct {
-	Code    string `json:"code"`
-	Message string `json:"message"`
+	RequestType string `json:"request_type,omitempty"`
+	Code        string `json:"code"`
+	Message     string `json:"message"`
 }
 ```
 
@@ -232,6 +233,7 @@ type HsmNetDispatcher struct {
 	hostID        api.HostID
 	subjectPrefix string
 	Network       *HsmNet
+	subs          []*nats.Subscription
 }
 ```
 
@@ -265,6 +267,22 @@ func () SetLocalBus(bus LocalBus)
 ```
 
 SetLocalBus attaches the local bus.
+
+#### HsmNetDispatcher.Start
+
+```go
+func () Start(ctx context.Context) error
+```
+
+Start subscribes to NATS subjects to receive remote events.
+
+#### HsmNetDispatcher.Stop
+
+```go
+func () Stop()
+```
+
+Stop closes subscriptions.
 
 
 ## type LocalBus

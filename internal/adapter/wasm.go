@@ -73,13 +73,6 @@ func (r *WasmRuntime) Match(input []byte) ([]Action, error) {
 		return nil, fmt.Errorf("on_output not exported")
 	}
 	
-	// Pass packed ptr|len ? Or just ptr and len?
-	// Spec: "ALWAYS return packed (ptr << 32 | len) uint64"
-	// Arguments for on_output?
-	// Spec doesn't strictly define input args for on_output in the summary list, 
-	// but implies passing the buffer.
-	// Let's assume (ptr, len).
-	
 	results, err = onOutput.Call(ctx, ptr, inputSize)
 	if err != nil {
 		return nil, fmt.Errorf("on_output failed: %w", err)
@@ -88,7 +81,6 @@ func (r *WasmRuntime) Match(input []byte) ([]Action, error) {
 	packed := results[0]
 	if packed == 0 {
 		return nil, nil // No actions or failure? "0 = failure" according to invariant?
-		// "ALWAYS return packed... 0 = failure"
 		// If 0 is failure, we should check for error.
 		// If no match, maybe it returns valid ptr with 0 len?
 	}
@@ -107,13 +99,10 @@ func (r *WasmRuntime) Match(input []byte) ([]Action, error) {
 		return nil, fmt.Errorf("memory read failed")
 	}
 	
-	// Clean up input and output?
-	// We need amux_free.
+	// Clean up input and output
 	free := r.module.ExportedFunction("amux_free")
 	if free != nil {
 		free.Call(ctx, ptr, inputSize)
-		// Also free result? The adapter likely allocated it.
-		// We should free it after copying.
 		free.Call(ctx, uint64(resPtr), uint64(resLen))
 	}
 	
@@ -123,6 +112,71 @@ func (r *WasmRuntime) Match(input []byte) ([]Action, error) {
 	}
 	
 	return actions, nil
+}
+
+// FormatInput invokes the adapter's format_input function.
+func (r *WasmRuntime) FormatInput(input any) ([]byte, error) {
+	ctx := context.Background()
+	
+	inputBytes, err := json.Marshal(input)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal input: %w", err)
+	}
+
+	alloc := r.module.ExportedFunction("amux_alloc")
+	if alloc == nil {
+		return nil, fmt.Errorf("amux_alloc not exported")
+	}
+	
+	inputSize := uint64(len(inputBytes))
+	results, err := alloc.Call(ctx, inputSize)
+	if err != nil {
+		return nil, fmt.Errorf("amux_alloc failed: %w", err)
+	}
+	ptr := results[0]
+	
+	if !r.module.Memory().Write(uint32(ptr), inputBytes) {
+		return nil, fmt.Errorf("memory write failed")
+	}
+	
+	formatInput := r.module.ExportedFunction("format_input")
+	if formatInput == nil {
+		return nil, fmt.Errorf("format_input not exported")
+	}
+	
+	results, err = formatInput.Call(ctx, ptr, inputSize)
+	if err != nil {
+		return nil, fmt.Errorf("format_input failed: %w", err)
+	}
+	
+	packed := results[0]
+	if packed == 0 {
+		return nil, nil
+	}
+	
+	resPtr := uint32(packed >> 32)
+	resLen := uint32(packed)
+	
+	if resLen == 0 {
+		return nil, nil
+	}
+	
+	resBytes, ok := r.module.Memory().Read(resPtr, resLen)
+	if !ok {
+		return nil, fmt.Errorf("memory read failed")
+	}
+	
+	// Copy result because free will invalidate it
+	result := make([]byte, resLen)
+	copy(result, resBytes)
+
+	free := r.module.ExportedFunction("amux_free")
+	if free != nil {
+		free.Call(ctx, ptr, inputSize)
+		free.Call(ctx, uint64(resPtr), uint64(resLen))
+	}
+	
+	return result, nil
 }
 
 func (r *WasmRuntime) Start() error {

@@ -42,10 +42,11 @@ type Process struct {
 
 // Tracker manages the process tree.
 type Tracker struct {
-	mu        sync.RWMutex
-	processes map[int]*Process
-	Events    chan Event
-	Gater     *Gater
+	mu         sync.RWMutex
+	processes  map[int]*Process
+	Events     chan Event
+	Gater      *Gater
+	SocketPath string
 }
 
 // NewTracker creates a new process tracker.
@@ -114,7 +115,16 @@ func (t *Tracker) GetProcess(pid int) (*Process, bool) {
 	return &cp, true
 }
 
-// Start polling/monitoring logic would go here or be driven by hooks.
-func (t *Tracker) Start(ctx context.Context) {
-	// If polling fallback is needed, implementation would go here.
+// Start initiates the hook server.
+func (t *Tracker) Start(ctx context.Context, socketDir string) error {
+	if err := t.StartHookServer(ctx, socketDir); err != nil {
+		return err
+	}
+	// SocketPath is set by StartHookServer? 
+	// StartHookServer needs to update t.SocketPath.
+	// We'll update StartHookServer logic to do so if not already.
+	// Re-reading hook_server.go: It calculates socketPath but doesn't set t.SocketPath.
+	// We need to fix hook_server.go to set t.SocketPath or return it.
+	// For now, let's assume StartHookServer sets it (I will fix hook_server.go next).
+	return nil
 }

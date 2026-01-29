@@ -92,3 +92,35 @@ func TestPresenceTransitions(t *testing.T) {
 		t.Fatalf("expected presence events")
 	}
 }
+
+func TestLifecycleShutdownTransitions(t *testing.T) {
+	dispatcher := &recordDispatcher{}
+	agent := &Agent{Agent: api.Agent{ID: api.NewAgentID()}, dispatcher: dispatcher}
+	lifecycle, err := NewLifecycle(agent, dispatcher)
+	if err != nil {
+		t.Fatalf("new lifecycle: %v", err)
+	}
+	started := hsm.Started(context.Background(), lifecycle, &LifecycleModel)
+	<-hsm.Dispatch(started.Context(), started, hsm.Event{Name: EventStart})
+	<-hsm.Dispatch(started.Context(), started, hsm.Event{Name: EventReady})
+	<-hsm.Dispatch(started.Context(), started, hsm.Event{Name: EventShutdownInitiated})
+	if started.State() != "/agent.lifecycle/terminated" {
+		t.Fatalf("unexpected state: %s", started.State())
+	}
+}
+
+func TestLifecycleShutdownForceTransitions(t *testing.T) {
+	dispatcher := &recordDispatcher{}
+	agent := &Agent{Agent: api.Agent{ID: api.NewAgentID()}, dispatcher: dispatcher}
+	lifecycle, err := NewLifecycle(agent, dispatcher)
+	if err != nil {
+		t.Fatalf("new lifecycle: %v", err)
+	}
+	started := hsm.Started(context.Background(), lifecycle, &LifecycleModel)
+	<-hsm.Dispatch(started.Context(), started, hsm.Event{Name: EventStart})
+	<-hsm.Dispatch(started.Context(), started, hsm.Event{Name: EventReady})
+	<-hsm.Dispatch(started.Context(), started, hsm.Event{Name: EventShutdownForce})
+	if started.State() != "/agent.lifecycle/terminated" {
+		t.Fatalf("unexpected state: %s", started.State())
+	}
+}

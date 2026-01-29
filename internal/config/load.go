@@ -114,7 +114,7 @@ func DefaultConfig(resolver *paths.Resolver) Config {
 			},
 		},
 		Shutdown: ShutdownConfig{
-			DrainTimeout:    mustDuration("30s"),
+			DrainTimeout:     mustDuration("30s"),
 			CleanupWorktrees: false,
 		},
 		Events: EventsConfig{
@@ -219,15 +219,19 @@ func mergeAdapterDefaults(target map[string]any, provider AdapterDefaultsProvide
 		if def.Name == "" {
 			return fmt.Errorf("adapter defaults: missing name")
 		}
+		prefix := def.Name
+		if strings.TrimSpace(def.Source) != "" {
+			prefix = fmt.Sprintf("%s (%s)", def.Name, def.Source)
+		}
 		parsed, err := ParseTOML(def.Data)
 		if err != nil {
-			return fmt.Errorf("adapter defaults: %s: %w", def.Name, err)
+			return fmt.Errorf("adapter defaults: %s: %w", prefix, err)
 		}
 		if err := validateAdapterDefaults(def.Name, parsed); err != nil {
-			return fmt.Errorf("adapter defaults: %s: %w", def.Name, err)
+			return fmt.Errorf("adapter defaults: %s: %w", prefix, err)
 		}
 		if err := MergeMaps(target, parsed); err != nil {
-			return fmt.Errorf("adapter defaults: %s: %w", def.Name, err)
+			return fmt.Errorf("adapter defaults: %s: %w", prefix, err)
 		}
 	}
 	return nil

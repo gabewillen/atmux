@@ -16,6 +16,7 @@
 - `func runAgent(args []string) error`
 - `func runAgentAdd(args []string) error`
 - `func runAgentAttach(args []string) error`
+- `func runAgentKill(args []string) error`
 - `func runAgentList(args []string) error`
 - `func runAgentRefCommand(args []string, method string) error`
 - `func runAgentRemove(args []string) error`
@@ -156,6 +157,12 @@ func runAgentAdd(args []string) error
 
 ```go
 func runAgentAttach(args []string) error
+```
+
+#### runAgentKill
+
+```go
+func runAgentKill(args []string) error
 ```
 
 #### runAgentList

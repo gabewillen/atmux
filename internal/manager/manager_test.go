@@ -7,8 +7,10 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/agentflare-ai/amux/internal/adapter"
 	"github.com/agentflare-ai/amux/internal/config"
@@ -25,6 +27,11 @@ type stubRegistry struct {
 type stubAdapter struct {
 	name string
 	cmd  []string
+}
+
+type recordDispatcher struct {
+	mu     sync.Mutex
+	events []protocol.Event
 }
 
 func (s *stubRegistry) Load(ctx context.Context, name string) (adapter.Adapter, error) {
@@ -51,6 +58,22 @@ func (s *stubAdapter) Matcher() adapter.PatternMatcher {
 
 func (s *stubAdapter) Formatter() adapter.ActionFormatter {
 	return &adapter.NoopFormatter{}
+}
+
+func (r *recordDispatcher) Publish(ctx context.Context, subject string, event protocol.Event) error {
+	_ = ctx
+	_ = subject
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.events = append(r.events, event)
+	return nil
+}
+
+func (r *recordDispatcher) Subscribe(ctx context.Context, subject string, handler func(protocol.Event)) (protocol.Subscription, error) {
+	_ = ctx
+	_ = subject
+	_ = handler
+	return nil, nil
 }
 
 func TestAddAgentWritesConfig(t *testing.T) {
@@ -87,11 +110,11 @@ func TestAddAgentWritesConfig(t *testing.T) {
 		return &stubRegistry{cmd: []string{"env", "AMUX_HELPER=1", os.Args[0], "-test.run=TestManagerHelperProcess"}}, nil
 	})
 	record, err := mgr.AddAgent(context.Background(), AddRequest{
-		Name:    "alpha",
-		About:   "",
-		Adapter: "stub",
+		Name:     "alpha",
+		About:    "",
+		Adapter:  "stub",
 		Location: api.Location{Type: api.LocationLocal},
-		Cwd:     repoRoot,
+		Cwd:      repoRoot,
 	})
 	if err != nil {
 		t.Fatalf("add agent: %v", err)
@@ -147,13 +170,119 @@ func TestAddAgentRequiresRepo(t *testing.T) {
 	})
 	nonRepo := t.TempDir()
 	_, err = mgr.AddAgent(context.Background(), AddRequest{
-		Name:    "alpha",
-		Adapter: "stub",
+		Name:     "alpha",
+		Adapter:  "stub",
 		Location: api.Location{Type: api.LocationLocal},
-		Cwd:     nonRepo,
+		Cwd:      nonRepo,
 	})
 	if err == nil {
 		t.Fatalf("expected error for non-repo cwd")
+	}
+}
+
+func TestAddAgentRequiresRepoPathForMultiRepo(t *testing.T) {
+	repoRoot := initRepo(t)
+	otherRoot := initRepo(t)
+	resolver, err := paths.NewResolver(repoRoot)
+	if err != nil {
+		t.Fatalf("resolver: %v", err)
+	}
+	cfg := config.DefaultConfig(resolver)
+	server, err := protocol.StartEmbeddedServer(context.Background(), "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("start nats: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := server.Close(); err != nil {
+			t.Errorf("close nats: %v", err)
+		}
+	})
+	dispatcher, err := protocol.NewNATSDispatcher(context.Background(), server.URL())
+	if err != nil {
+		t.Fatalf("connect nats: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := dispatcher.Close(context.Background()); err != nil {
+			t.Errorf("close dispatcher: %v", err)
+		}
+	})
+	mgr, err := NewLocalManager(context.Background(), resolver, cfg, dispatcher)
+	if err != nil {
+		t.Fatalf("manager: %v", err)
+	}
+	mgr.SetRegistryFactory(func(resolver *paths.Resolver) (adapter.Registry, error) {
+		_ = resolver
+		return &stubRegistry{cmd: []string{"env", "AMUX_HELPER=1", os.Args[0], "-test.run=TestManagerHelperProcess"}}, nil
+	})
+	alpha, err := mgr.AddAgent(context.Background(), AddRequest{
+		Name:    "alpha",
+		Adapter: "stub",
+		Location: api.Location{
+			Type: api.LocationLocal,
+		},
+		Cwd: repoRoot,
+	})
+	if err != nil {
+		t.Fatalf("add agent alpha: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := mgr.RemoveAgent(context.Background(), RemoveRequest{AgentID: alpha.ID}); err != nil {
+			t.Errorf("remove agent alpha: %v", err)
+		}
+	})
+	if _, err := mgr.AddAgent(context.Background(), AddRequest{
+		Name:    "beta",
+		Adapter: "stub",
+		Location: api.Location{
+			Type: api.LocationLocal,
+		},
+		Cwd: otherRoot,
+	}); err == nil {
+		t.Fatalf("expected repo_path error for multi-repo add")
+	}
+	beta, err := mgr.AddAgent(context.Background(), AddRequest{
+		Name:    "beta",
+		Adapter: "stub",
+		Location: api.Location{
+			Type:     api.LocationLocal,
+			RepoPath: otherRoot,
+		},
+		Cwd: otherRoot,
+	})
+	if err != nil {
+		t.Fatalf("add agent beta: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := mgr.RemoveAgent(context.Background(), RemoveRequest{AgentID: beta.ID}); err != nil {
+			t.Errorf("remove agent beta: %v", err)
+		}
+	})
+}
+
+func TestShutdownEmitsEvents(t *testing.T) {
+	dispatcher := &recordDispatcher{}
+	mgr := &LocalManager{
+		dispatcher: dispatcher,
+		cfg: config.Config{
+			Shutdown: config.ShutdownConfig{
+				DrainTimeout: 10 * time.Millisecond,
+			},
+		},
+	}
+	if err := mgr.Shutdown(context.Background(), false); err != nil {
+		t.Fatalf("shutdown: %v", err)
+	}
+	names := map[string]struct{}{}
+	dispatcher.mu.Lock()
+	for _, event := range dispatcher.events {
+		names[event.Name] = struct{}{}
+	}
+	dispatcher.mu.Unlock()
+	if _, ok := names[shutdownEventRequest]; !ok {
+		t.Fatalf("expected %s event", shutdownEventRequest)
+	}
+	if _, ok := names[shutdownEventDrainComplete]; !ok {
+		t.Fatalf("expected %s event", shutdownEventDrainComplete)
 	}
 }
 

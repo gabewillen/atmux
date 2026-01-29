@@ -6,9 +6,10 @@ Package agent manages agent lifecycle and presence state machines.
 
 - `ErrDispatcherRequired` — ErrDispatcherRequired is returned when a dispatcher is required but missing.
 - `LifecycleModel` — LifecycleModel defines the agent lifecycle state machine.
-- `LifecyclePending, LifecycleStarting, LifecycleRunning, LifecycleTerminated, LifecycleErrored, EventStart, EventReady, EventStop, EventError, PresenceOnline, PresenceBusy, PresenceOffline, PresenceAway, EventTaskAssigned, EventTaskCompleted, EventPromptDetected, EventRateLimit, EventRateCleared, EventStuckDetected, EventActivity, EventAgentStarted, EventAgentStopped, EventPresenceChanged`
+- `LifecyclePending, LifecycleStarting, LifecycleRunning, LifecycleTerminated, LifecycleErrored, EventStart, EventReady, EventStop, EventError, EventShutdownInitiated, EventShutdownForce, PresenceOnline, PresenceBusy, PresenceOffline, PresenceAway, EventTaskAssigned, EventTaskCompleted, EventTaskCancel, EventPromptDetected, EventRateLimit, EventRateCleared, EventStuckDetected, EventActivity, EventAgentStarted, EventAgentStopped, EventPresenceChanged`
 - `PresenceModel` — PresenceModel defines the agent presence state machine.
 - `type Agent` — Agent represents a runtime agent instance with lifecycle and presence state machines.
+- `type EventRouter` — EventRouter routes lifecycle and presence events through NATS subjects.
 - `type LifecycleEvent` — LifecycleEvent describes lifecycle state changes.
 - `type Lifecycle` — Lifecycle drives the agent lifecycle state machine.
 - `type PresenceEvent` — PresenceEvent describes presence state changes.
@@ -16,7 +17,7 @@ Package agent manages agent lifecycle and presence state machines.
 
 ### Constants
 
-#### LifecyclePending, LifecycleStarting, LifecycleRunning, LifecycleTerminated, LifecycleErrored, EventStart, EventReady, EventStop, EventError, PresenceOnline, PresenceBusy, PresenceOffline, PresenceAway, EventTaskAssigned, EventTaskCompleted, EventPromptDetected, EventRateLimit, EventRateCleared, EventStuckDetected, EventActivity, EventAgentStarted, EventAgentStopped, EventPresenceChanged
+#### LifecyclePending, LifecycleStarting, LifecycleRunning, LifecycleTerminated, LifecycleErrored, EventStart, EventReady, EventStop, EventError, EventShutdownInitiated, EventShutdownForce, PresenceOnline, PresenceBusy, PresenceOffline, PresenceAway, EventTaskAssigned, EventTaskCompleted, EventTaskCancel, EventPromptDetected, EventRateLimit, EventRateCleared, EventStuckDetected, EventActivity, EventAgentStarted, EventAgentStopped, EventPresenceChanged
 
 ```go
 const (
@@ -39,6 +40,10 @@ const (
 	EventStop = "stop"
 	// EventError triggers the lifecycle error transition.
 	EventError = "error"
+	// EventShutdownInitiated triggers graceful shutdown.
+	EventShutdownInitiated = "shutdown.initiated"
+	// EventShutdownForce triggers forced shutdown.
+	EventShutdownForce = "shutdown.force"
 
 	// PresenceOnline indicates the agent is available.
 	PresenceOnline = "online"
@@ -53,6 +58,8 @@ const (
 	EventTaskAssigned = "task.assigned"
 	// EventTaskCompleted marks task completion.
 	EventTaskCompleted = "task.completed"
+	// EventTaskCancel requests task cancellation.
+	EventTaskCancel = "task.cancel"
 	// EventPromptDetected indicates a prompt was detected.
 	EventPromptDetected = "prompt.detected"
 	// EventRateLimit indicates rate limiting.
@@ -116,11 +123,59 @@ var LifecycleModel = hsm.Define(
 		}),
 	),
 	hsm.Transition(
+		hsm.On(hsm.Event{Name: EventShutdownInitiated}),
+		hsm.Source(LifecyclePending),
+		hsm.Target(LifecycleTerminated),
+		hsm.Effect(func(ctx context.Context, actor *Lifecycle, event hsm.Event) {
+			actor.onTerminated(ctx)
+		}),
+	),
+	hsm.Transition(
+		hsm.On(hsm.Event{Name: EventShutdownInitiated}),
+		hsm.Source(LifecycleStarting),
+		hsm.Target(LifecycleTerminated),
+		hsm.Effect(func(ctx context.Context, actor *Lifecycle, event hsm.Event) {
+			actor.onTerminated(ctx)
+		}),
+	),
+	hsm.Transition(
+		hsm.On(hsm.Event{Name: EventShutdownInitiated}),
+		hsm.Source(LifecycleRunning),
+		hsm.Target(LifecycleTerminated),
+		hsm.Effect(func(ctx context.Context, actor *Lifecycle, event hsm.Event) {
+			actor.onTerminated(ctx)
+		}),
+	),
+	hsm.Transition(
 		hsm.On(hsm.Event{Name: EventError}),
 		hsm.Source(LifecyclePending),
 		hsm.Target(LifecycleErrored),
 		hsm.Effect(func(ctx context.Context, actor *Lifecycle, event hsm.Event) {
 			actor.onErrored(ctx, event)
+		}),
+	),
+	hsm.Transition(
+		hsm.On(hsm.Event{Name: EventShutdownForce}),
+		hsm.Source(LifecyclePending),
+		hsm.Target(LifecycleTerminated),
+		hsm.Effect(func(ctx context.Context, actor *Lifecycle, event hsm.Event) {
+			actor.onTerminated(ctx)
+		}),
+	),
+	hsm.Transition(
+		hsm.On(hsm.Event{Name: EventShutdownForce}),
+		hsm.Source(LifecycleStarting),
+		hsm.Target(LifecycleTerminated),
+		hsm.Effect(func(ctx context.Context, actor *Lifecycle, event hsm.Event) {
+			actor.onTerminated(ctx)
+		}),
+	),
+	hsm.Transition(
+		hsm.On(hsm.Event{Name: EventShutdownForce}),
+		hsm.Source(LifecycleRunning),
+		hsm.Target(LifecycleTerminated),
+		hsm.Effect(func(ctx context.Context, actor *Lifecycle, event hsm.Event) {
+			actor.onTerminated(ctx)
 		}),
 	),
 	hsm.Transition(
@@ -204,6 +259,7 @@ type Agent struct {
 	api.Agent
 	Lifecycle  *Lifecycle
 	Presence   *Presence
+	router     *EventRouter
 	dispatcher protocol.Dispatcher
 	mu         sync.RWMutex
 	lastErr    error
@@ -225,6 +281,22 @@ NewAgent constructs a new agent with lifecycle and presence state machines.
 
 ### Methods
 
+#### Agent.EmitLifecycle
+
+```go
+func () EmitLifecycle(ctx context.Context, name string, payload any) error
+```
+
+EmitLifecycle publishes a lifecycle event through the dispatcher.
+
+#### Agent.EmitPresence
+
+```go
+func () EmitPresence(ctx context.Context, name string, payload any) error
+```
+
+EmitPresence publishes a presence event through the dispatcher.
+
 #### Agent.LastError
 
 ```go
@@ -245,6 +317,64 @@ Start starts the lifecycle and presence state machines.
 
 ```go
 func () recordError(err error)
+```
+
+
+## type EventRouter
+
+```go
+type EventRouter struct {
+	agent      *Agent
+	dispatcher protocol.Dispatcher
+	mu         sync.Mutex
+	started    bool
+	subs       []protocol.Subscription
+}
+```
+
+EventRouter routes lifecycle and presence events through NATS subjects.
+
+### Functions returning EventRouter
+
+#### NewEventRouter
+
+```go
+func NewEventRouter(agent *Agent, dispatcher protocol.Dispatcher) *EventRouter
+```
+
+NewEventRouter constructs a router for an agent.
+
+
+### Methods
+
+#### EventRouter.EmitLifecycle
+
+```go
+func () EmitLifecycle(ctx context.Context, name string, payload any) error
+```
+
+EmitLifecycle publishes a lifecycle event.
+
+#### EventRouter.EmitPresence
+
+```go
+func () EmitPresence(ctx context.Context, name string, payload any) error
+```
+
+EmitPresence publishes a presence event.
+
+#### EventRouter.Start
+
+```go
+func () Start(ctx context.Context) error
+```
+
+Start subscribes to agent event subjects.
+
+#### EventRouter.emit
+
+```go
+func () emit(ctx context.Context, subject string, name string, payload any) error
 ```
 
 

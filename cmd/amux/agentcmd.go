@@ -13,7 +13,7 @@ import (
 
 func runAgent(args []string) error {
 	if len(args) < 1 {
-		return fmt.Errorf("usage: amux agent <add|list|remove|start|stop|restart|attach>")
+		return fmt.Errorf("usage: amux agent <add|list|remove|start|stop|kill|restart|attach>")
 	}
 	sub := args[0]
 	switch sub {
@@ -27,6 +27,8 @@ func runAgent(args []string) error {
 		return runAgentStart(args[1:])
 	case "stop":
 		return runAgentStop(args[1:])
+	case "kill":
+		return runAgentKill(args[1:])
 	case "restart":
 		return runAgentRestart(args[1:])
 	case "attach":
@@ -119,6 +121,10 @@ func runAgentStart(args []string) error {
 
 func runAgentStop(args []string) error {
 	return runAgentRefCommand(args, "agent.stop")
+}
+
+func runAgentKill(args []string) error {
+	return runAgentRefCommand(args, "agent.kill")
 }
 
 func runAgentRestart(args []string) error {

@@ -4,11 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/agentflare-ai/amux/internal/adapter"
 	"github.com/agentflare-ai/amux/internal/agent"
@@ -27,6 +27,8 @@ var (
 	ErrAgentAmbiguous = errors.New("agent name is ambiguous")
 	// ErrAgentInvalid is returned when an agent request is invalid.
 	ErrAgentInvalid = errors.New("agent invalid")
+	// ErrRepoPathRequired is returned when repo_path is required by the spec.
+	ErrRepoPathRequired = errors.New("repo path required")
 )
 
 // AddRequest describes a local agent add request.
@@ -58,26 +60,29 @@ type AgentRecord struct {
 }
 
 type agentState struct {
-	runtime  *agent.Agent
-	slug     string
-	repoRoot string
-	worktree string
-	session  *session.LocalSession
-	config   config.AgentConfig
+	runtime          *agent.Agent
+	slug             string
+	repoRoot         string
+	worktree         string
+	session          *session.LocalSession
+	config           config.AgentConfig
+	explicitRepoPath bool
 }
 
 // LocalManager manages local agents and sessions.
 type LocalManager struct {
-	resolver   *paths.Resolver
-	dispatcher protocol.Dispatcher
-	cfg        config.Config
-	git        *git.Runner
-	mu         sync.Mutex
-	agents     map[api.AgentID]*agentState
-	nameIndex  map[string][]api.AgentID
-	bases      map[string]string
-	registries map[string]adapter.Registry
+	resolver        *paths.Resolver
+	dispatcher      protocol.Dispatcher
+	cfg             config.Config
+	git             *git.Runner
+	mu              sync.Mutex
+	agents          map[api.AgentID]*agentState
+	nameIndex       map[string][]api.AgentID
+	bases           map[string]string
+	registries      map[string]adapter.Registry
 	registryFactory func(*paths.Resolver) (adapter.Registry, error)
+	shutdownMu      sync.Mutex
+	shutdown        *shutdownController
 }
 
 // NewLocalManager constructs a LocalManager.
@@ -112,11 +117,15 @@ func (m *LocalManager) AddAgent(ctx context.Context, req AddRequest) (AgentRecor
 	if strings.TrimSpace(req.Name) == "" || strings.TrimSpace(req.Adapter) == "" {
 		return AgentRecord{}, fmt.Errorf("add agent: %w", ErrAgentInvalid)
 	}
+	explicitRepoPath := strings.TrimSpace(req.Location.RepoPath) != ""
 	location, repoRoot, err := m.resolveLocation(req)
 	if err != nil {
 		return AgentRecord{}, fmt.Errorf("add agent: %w", err)
 	}
 	if err := ensureGitRepo(repoRoot); err != nil {
+		return AgentRecord{}, fmt.Errorf("add agent: %w", err)
+	}
+	if err := m.validateMultiRepo(repoRoot, explicitRepoPath); err != nil {
 		return AgentRecord{}, fmt.Errorf("add agent: %w", err)
 	}
 	m.mu.Lock()
@@ -153,11 +162,12 @@ func (m *LocalManager) AddAgent(ctx context.Context, req AddRequest) (AgentRecor
 		return AgentRecord{}, fmt.Errorf("add agent: %w", err)
 	}
 	state := &agentState{
-		runtime:  runtime,
-		slug:     slug,
-		repoRoot: repoRoot,
-		worktree: worktree.Path,
-		config:   cfgEntry,
+		runtime:          runtime,
+		slug:             slug,
+		repoRoot:         repoRoot,
+		worktree:         worktree.Path,
+		config:           cfgEntry,
+		explicitRepoPath: explicitRepoPath,
 	}
 	m.mu.Lock()
 	m.agents[agentMeta.ID] = state
@@ -182,7 +192,7 @@ func (m *LocalManager) AddAgent(ctx context.Context, req AddRequest) (AgentRecor
 		m.mu.Unlock()
 		return AgentRecord{}, fmt.Errorf("add agent: %w", err)
 	}
-	m.emit(ctx, "agent.added", AgentRecord{
+	m.emitAgentEvent(ctx, "agent.added", AgentRecord{
 		ID:       agentMeta.ID,
 		Name:     req.Name,
 		About:    req.About,
@@ -226,7 +236,7 @@ func (m *LocalManager) RemoveAgent(ctx context.Context, req RemoveRequest) error
 	m.removeNameIndexLocked(state.config.Name, id)
 	m.removeConfigEntryLocked(state.config)
 	m.mu.Unlock()
-	m.emit(ctx, "agent.removed", AgentRecord{ID: id, Name: state.config.Name, Slug: state.slug, RepoRoot: state.repoRoot})
+	m.emitAgentEvent(ctx, "agent.removed", AgentRecord{ID: id, Name: state.config.Name, Slug: state.slug, RepoRoot: state.repoRoot})
 	return nil
 }
 
@@ -267,6 +277,60 @@ func (m *LocalManager) StopAgent(ctx context.Context, id api.AgentID) error {
 	return nil
 }
 
+// Shutdown drains all running sessions and optionally forces termination.
+func (m *LocalManager) Shutdown(ctx context.Context, force bool) error {
+	if m == nil {
+		return nil
+	}
+	if ctx.Err() != nil {
+		return fmt.Errorf("shutdown: %w", ctx.Err())
+	}
+	controller := m.ensureShutdownController()
+	if controller == nil {
+		return fmt.Errorf("shutdown: %w", ErrAgentInvalid)
+	}
+	defer m.releaseShutdownController(controller)
+	state := lastStateSegment(controller.State())
+	if force {
+		if state == shutdownStateRunning || state == shutdownStateDraining {
+			controller.signal(ctx, shutdownEventForce, map[string]any{})
+		}
+	} else if state == shutdownStateRunning {
+		controller.signal(ctx, shutdownEventRequest, map[string]any{
+			"drain_timeout": m.cfg.Shutdown.DrainTimeout.String(),
+		})
+	}
+	waitErr := controller.wait(ctx)
+	cleanupErr := m.cleanupWorktrees(ctx, m.shutdownTargets())
+	if cleanupErr != nil {
+		controller.recordError(cleanupErr)
+	}
+	errOut := errors.Join(waitErr, controller.error())
+	if errOut != nil {
+		return fmt.Errorf("shutdown: %w", errOut)
+	}
+	return nil
+}
+
+// KillAgent forces a running agent session to stop.
+func (m *LocalManager) KillAgent(ctx context.Context, id api.AgentID) error {
+	m.mu.Lock()
+	state := m.agents[id]
+	if state == nil {
+		m.mu.Unlock()
+		return fmt.Errorf("kill agent: %w", ErrAgentNotFound)
+	}
+	sess := state.session
+	m.mu.Unlock()
+	if sess == nil {
+		return nil
+	}
+	if err := sess.Kill(ctx); err != nil {
+		return fmt.Errorf("kill agent: %w", err)
+	}
+	return nil
+}
+
 // RestartAgent restarts a running agent session.
 func (m *LocalManager) RestartAgent(ctx context.Context, id api.AgentID) error {
 	m.mu.Lock()
@@ -289,7 +353,7 @@ func (m *LocalManager) RestartAgent(ctx context.Context, id api.AgentID) error {
 }
 
 // AttachAgent attaches to a running agent PTY.
-func (m *LocalManager) AttachAgent(id api.AgentID) (*os.File, error) {
+func (m *LocalManager) AttachAgent(id api.AgentID) (net.Conn, error) {
 	m.mu.Lock()
 	state := m.agents[id]
 	sess := (*session.LocalSession)(nil)
@@ -300,11 +364,11 @@ func (m *LocalManager) AttachAgent(id api.AgentID) (*os.File, error) {
 	if sess == nil {
 		return nil, fmt.Errorf("attach agent: %w", ErrAgentNotFound)
 	}
-	file, err := sess.Attach()
+	conn, err := sess.Attach()
 	if err != nil {
 		return nil, fmt.Errorf("attach agent: %w", err)
 	}
-	return file, nil
+	return conn, nil
 }
 
 // MergeAgent integrates an agent branch into a target branch.
@@ -322,7 +386,7 @@ func (m *LocalManager) MergeAgent(ctx context.Context, id api.AgentID, strategy 
 	if err != nil {
 		return git.MergeResult{}, fmt.Errorf("merge agent: %w", err)
 	}
-	m.emit(ctx, "git.merge.requested", map[string]any{
+	m.emitAgentEvent(ctx, "git.merge.requested", map[string]any{
 		"repo_root":     state.repoRoot,
 		"agent_slug":    state.slug,
 		"strategy":      string(strategy),
@@ -342,7 +406,7 @@ func (m *LocalManager) MergeAgent(ctx context.Context, id api.AgentID, strategy 
 		if errors.Is(err, git.ErrMergeConflict) {
 			name = "git.merge.conflict"
 		}
-		m.emit(ctx, name, map[string]any{
+		m.emitAgentEvent(ctx, name, map[string]any{
 			"repo_root":     state.repoRoot,
 			"agent_slug":    state.slug,
 			"strategy":      string(strategy),
@@ -351,7 +415,7 @@ func (m *LocalManager) MergeAgent(ctx context.Context, id api.AgentID, strategy 
 		})
 		return git.MergeResult{}, fmt.Errorf("merge agent: %w", err)
 	}
-	m.emit(ctx, "git.merge.completed", map[string]any{
+	m.emitAgentEvent(ctx, "git.merge.completed", map[string]any{
 		"repo_root":     state.repoRoot,
 		"agent_slug":    state.slug,
 		"strategy":      string(result.Strategy),
@@ -390,7 +454,7 @@ func (m *LocalManager) startSession(ctx context.Context, id api.AgentID) (*sessi
 	if err != nil {
 		return nil, fmt.Errorf("start session: %w", err)
 	}
-	sess, err := session.NewLocalSession(sessionMeta, state.runtime, session.Command{Argv: manifest.Commands.Start}, state.worktree, session.Config{DrainTimeout: m.cfg.Shutdown.DrainTimeout})
+	sess, err := session.NewLocalSession(sessionMeta, state.runtime, session.Command{Argv: manifest.Commands.Start}, state.worktree, adapterInstance.Matcher(), m.dispatcher, session.Config{DrainTimeout: m.cfg.Shutdown.DrainTimeout})
 	if err != nil {
 		return nil, fmt.Errorf("start session: %w", err)
 	}
@@ -431,6 +495,9 @@ func (m *LocalManager) baseBranch(ctx context.Context, repoRoot string) (string,
 	}
 	branch, err := m.git.DetectBaseBranch(ctx, repoRoot, m.cfg.Git.Merge.TargetBranch)
 	if err != nil {
+		if errors.Is(err, git.ErrDetachedHead) && strings.TrimSpace(m.cfg.Git.Merge.TargetBranch) == "" {
+			return "", fmt.Errorf("base branch: %w (set git.merge.target_branch)", err)
+		}
 		return "", fmt.Errorf("base branch: %w", err)
 	}
 	m.mu.Lock()
@@ -505,6 +572,42 @@ func (m *LocalManager) resolveLocation(req AddRequest) (api.Location, string, er
 	return api.Location{}, "", fmt.Errorf("location: %w", ErrAgentInvalid)
 }
 
+func (m *LocalManager) validateMultiRepo(repoRoot string, explicitRepoPath bool) error {
+	if m == nil {
+		return nil
+	}
+	directorRoot := m.resolver.RepoRoot()
+	if strings.TrimSpace(repoRoot) == "" {
+		return fmt.Errorf("repo root: %w", ErrAgentInvalid)
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	distinct := false
+	for _, state := range m.agents {
+		if state == nil {
+			continue
+		}
+		if state.repoRoot != repoRoot {
+			distinct = true
+		}
+	}
+	if !distinct {
+		return nil
+	}
+	if repoRoot != directorRoot && !explicitRepoPath {
+		return fmt.Errorf("repo root: %w", ErrRepoPathRequired)
+	}
+	for _, state := range m.agents {
+		if state == nil {
+			continue
+		}
+		if state.repoRoot != directorRoot && !state.explicitRepoPath {
+			return fmt.Errorf("repo root: %w", ErrRepoPathRequired)
+		}
+	}
+	return nil
+}
+
 func (m *LocalManager) findAgent(req RemoveRequest) (*agentState, api.AgentID, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -537,6 +640,7 @@ func (m *LocalManager) findAgent(req RemoveRequest) (*agentState, api.AgentID, e
 func (m *LocalManager) loadFromConfig(ctx context.Context) error {
 	used := make(map[string]struct{})
 	for _, entry := range m.cfg.Agents {
+		explicitRepoPath := strings.TrimSpace(entry.Location.RepoPath) != ""
 		locTypeRaw := entry.Location.Type
 		if strings.TrimSpace(locTypeRaw) == "" {
 			locTypeRaw = "local"
@@ -550,8 +654,16 @@ func (m *LocalManager) loadFromConfig(ctx context.Context) error {
 		if repoRoot == "" {
 			repoRoot = m.resolver.RepoRoot()
 		}
+		if locType == api.LocationLocal {
+			if err := ensureGitRepo(repoRoot); err != nil {
+				return fmt.Errorf("load agent: %w", err)
+			}
+		}
 		canonical, err := paths.CanonicalizeRepoRoot(repoRoot, m.resolver.HomeDir())
 		if err != nil {
+			return fmt.Errorf("load agent: %w", err)
+		}
+		if err := m.validateMultiRepo(canonical, explicitRepoPath); err != nil {
 			return fmt.Errorf("load agent: %w", err)
 		}
 		location.RepoPath = canonical
@@ -567,11 +679,12 @@ func (m *LocalManager) loadFromConfig(ctx context.Context) error {
 			return fmt.Errorf("load agent: %w", err)
 		}
 		state := &agentState{
-			runtime:  runtime,
-			slug:     slug,
-			repoRoot: canonical,
-			worktree: worktree,
-			config:   entry,
+			runtime:          runtime,
+			slug:             slug,
+			repoRoot:         canonical,
+			worktree:         worktree,
+			config:           entry,
+			explicitRepoPath: explicitRepoPath,
 		}
 		m.agents[agentMeta.ID] = state
 		m.nameIndex[entry.Name] = append(m.nameIndex[entry.Name], agentMeta.ID)
@@ -701,10 +814,23 @@ func ensureGitRepo(repoRoot string) error {
 		return fmt.Errorf("repo root: %w", ErrAgentInvalid)
 	}
 	gitDir := filepath.Join(repoRoot, ".git")
-	if _, err := os.Stat(gitDir); err != nil {
+	info, err := os.Stat(gitDir)
+	if err != nil {
 		return fmt.Errorf("repo root: %w", err)
 	}
-	return nil
+	if info.IsDir() {
+		return nil
+	}
+	if info.Mode().IsRegular() {
+		data, readErr := os.ReadFile(gitDir)
+		if readErr != nil {
+			return fmt.Errorf("repo root: %w", readErr)
+		}
+		if strings.Contains(string(data), "gitdir:") {
+			return nil
+		}
+	}
+	return fmt.Errorf("repo root: %w", ErrAgentInvalid)
 }
 
 func statePresence(runtime *agent.Agent) string {
@@ -724,11 +850,6 @@ func lastStateSegment(state string) string {
 		return state
 	}
 	return state[idx+1:]
-}
-
-func (m *LocalManager) emit(ctx context.Context, name string, payload any) {
-	event := protocol.Event{Name: name, Payload: payload, OccurredAt: time.Now().UTC()}
-	_ = m.dispatcher.Publish(ctx, protocol.Subject("events", "agent"), event)
 }
 
 func (m *LocalManager) removeNameIndexLocked(name string, id api.AgentID) {

@@ -8,11 +8,15 @@ The core loads adapters by string name via the WASM registry.
 
 - `ErrAdapterInvalid, ErrAdapterMissingExport, ErrAdapterManifestMismatch, ErrAdapterExecutionFailed`
 - `ErrAdapterNotFound` — ErrAdapterNotFound is returned when a named adapter cannot be loaded.
+- `func callConfigDefault(ctx context.Context, module api.Module, freeFn api.Function, configFn api.Function) ([]byte, error)`
+- `func firstResult(results []uint64) (uint64, bool)`
+- `func loadAdapterDefaults(ctx context.Context, runtime wazero.Runtime, module adapterModule) ([]byte, string, error)`
 - `type ActionFormatter` — ActionFormatter converts a high-level action into agent input.
 - `type AdapterCommands` — AdapterCommands describes commands used to control the agent.
 - `type AdapterPatterns` — AdapterPatterns defines adapter output detection patterns.
 - `type Adapter` — Adapter is the runtime-facing interface to a loaded adapter.
 - `type CLIRequirement` — CLIRequirement describes the adapter CLI requirements.
+- `type DefaultsProvider` — DefaultsProvider loads adapter default configuration from WASM modules.
 - `type Manifest` — Manifest describes adapter capabilities and requirements.
 - `type NoopAdapter` — NoopAdapter returns no matches and echoes input.
 - `type NoopFormatter` — NoopFormatter returns the input unchanged.
@@ -21,6 +25,7 @@ The core loads adapters by string name via the WASM registry.
 - `type PatternMatcher` — PatternMatcher scans output and returns matches.
 - `type Registry` — Registry loads adapters by name.
 - `type WazeroRegistry` — WazeroRegistry loads adapters from WASM modules using wazero.
+- `type adapterModule`
 - `type wasmAdapter`
 - `type wasmFormatter`
 - `type wasmMatcher`
@@ -59,6 +64,27 @@ var ErrAdapterNotFound = errors.New("adapter not found")
 ```
 
 ErrAdapterNotFound is returned when a named adapter cannot be loaded.
+
+
+### Functions
+
+#### callConfigDefault
+
+```go
+func callConfigDefault(ctx context.Context, module api.Module, freeFn api.Function, configFn api.Function) ([]byte, error)
+```
+
+#### firstResult
+
+```go
+func firstResult(results []uint64) (uint64, bool)
+```
+
+#### loadAdapterDefaults
+
+```go
+func loadAdapterDefaults(ctx context.Context, runtime wazero.Runtime, module adapterModule) ([]byte, string, error)
+```
 
 
 ## type ActionFormatter
@@ -132,6 +158,38 @@ type CLIRequirement struct {
 ```
 
 CLIRequirement describes the adapter CLI requirements.
+
+## type DefaultsProvider
+
+```go
+type DefaultsProvider struct {
+	resolver *paths.Resolver
+}
+```
+
+DefaultsProvider loads adapter default configuration from WASM modules.
+
+### Functions returning DefaultsProvider
+
+#### NewDefaultsProvider
+
+```go
+func NewDefaultsProvider(resolver *paths.Resolver) *DefaultsProvider
+```
+
+NewDefaultsProvider constructs a DefaultsProvider.
+
+
+### Methods
+
+#### DefaultsProvider.AdapterDefaults
+
+```go
+func () AdapterDefaults() ([]config.AdapterDefault, error)
+```
+
+AdapterDefaults returns default TOML blocks for discovered adapters.
+
 
 ## type Manifest
 
@@ -331,6 +389,31 @@ func () compile(ctx context.Context, path string, wasmBytes []byte) (wazero.Comp
 
 ```go
 func () findModule(name string) (string, []byte, error)
+```
+
+
+## type adapterModule
+
+```go
+type adapterModule struct {
+	name   string
+	path   string
+	source string
+}
+```
+
+### Functions returning adapterModule
+
+#### discoverAdapterModules
+
+```go
+func discoverAdapterModules(resolver *paths.Resolver) ([]adapterModule, error)
+```
+
+#### scanAdapterDir
+
+```go
+func scanAdapterDir(dir string, label string, seen map[string]struct{}) ([]adapterModule, error)
 ```
 
 

@@ -60,6 +60,21 @@ func (r *Resolver) WorktreePath(agentSlug string) string {
 	return filepath.Join(r.WorktreesDir(), agentSlug)
 }
 
+// PTYDir returns the repo-scoped PTY socket directory.
+func (r *Resolver) PTYDir() string {
+	return filepath.Join(r.AmuxRoot(), "pty")
+}
+
+// UserAdaptersDir returns the user-scoped adapters directory.
+func (r *Resolver) UserAdaptersDir() string {
+	return filepath.Join(r.homeDir, ".config", "amux", "adapters")
+}
+
+// ProjectAdaptersDir returns the repo-scoped adapters directory.
+func (r *Resolver) ProjectAdaptersDir() string {
+	return filepath.Join(r.AmuxRoot(), "adapters")
+}
+
 // AmuxRootForRepo returns the .amux directory for the provided repo root.
 func AmuxRootForRepo(repoRoot string) string {
 	if repoRoot == "" {
@@ -82,6 +97,14 @@ func WorktreePathForRepo(repoRoot, agentSlug string) string {
 		return ""
 	}
 	return filepath.Join(WorktreesDirForRepo(repoRoot), agentSlug)
+}
+
+// PTYDirForRepo returns the PTY socket directory for the provided repo root.
+func PTYDirForRepo(repoRoot string) string {
+	if repoRoot == "" {
+		return ""
+	}
+	return filepath.Join(AmuxRootForRepo(repoRoot), "pty")
 }
 
 // UserConfigPath returns the user config path (~/.config/amux/config.toml).

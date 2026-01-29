@@ -65,6 +65,8 @@ type Daemon struct {
 	listener   net.Listener
 	embedded   *protocol.EmbeddedServer
 	logger     *log.Logger
+	closeMu    sync.Mutex
+	closed     bool
 }
 ```
 
@@ -86,10 +88,10 @@ New constructs a daemon instance.
 #### Daemon.Close
 
 ```go
-func () Close(ctx context.Context) error
+func () Close(ctx context.Context, force bool) error
 ```
 
-Close shuts down the daemon.
+Close shuts down the daemon, optionally forcing termination.
 
 #### Daemon.Serve
 
@@ -109,6 +111,12 @@ func () handleAgentAdd(ctx context.Context, raw json.RawMessage) (any, *rpc.Erro
 
 ```go
 func () handleAgentAttach(ctx context.Context, raw json.RawMessage) (any, *rpc.Error)
+```
+
+#### Daemon.handleAgentKill
+
+```go
+func () handleAgentKill(ctx context.Context, raw json.RawMessage) (any, *rpc.Error)
 ```
 
 #### Daemon.handleAgentList
@@ -174,7 +182,7 @@ func () resolveAgentID(params agentRefParams) (api.AgentID, error)
 #### Daemon.startAttachProxy
 
 ```go
-func () startAttachProxy(ctx context.Context, repoRoot string, agentID api.AgentID, ptyFile *os.File) (string, error)
+func () startAttachProxy(ctx context.Context, repoRoot string, agentID api.AgentID, stream io.ReadWriteCloser) (string, error)
 ```
 
 

@@ -1,18 +1,26 @@
 package session
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"net"
 	"os"
 	"os/exec"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
+	"github.com/agentflare-ai/amux/internal/adapter"
 	"github.com/agentflare-ai/amux/internal/agent"
+	"github.com/agentflare-ai/amux/internal/monitor"
+	"github.com/agentflare-ai/amux/internal/process"
+	"github.com/agentflare-ai/amux/internal/protocol"
 	"github.com/agentflare-ai/amux/internal/pty"
 	"github.com/agentflare-ai/amux/pkg/api"
-	"github.com/stateforward/hsm-go"
 )
 
 var (
@@ -45,16 +53,23 @@ type LocalSession struct {
 	meta          api.Session
 	command       Command
 	worktree      string
+	dispatcher    protocol.Dispatcher
+	monitor       *monitor.Monitor
+	tracker       *process.Tracker
 	ptyPair       *pty.Pair
 	cmd           *exec.Cmd
 	done          chan error
 	stopRequested bool
 	forcedKill    bool
 	config        Config
+	outputMu      sync.Mutex
+	outputs       map[uint64]net.Conn
+	nextOutputID  uint64
+	writeMu       sync.Mutex
 }
 
 // NewLocalSession constructs a LocalSession for an agent.
-func NewLocalSession(meta api.Session, runtime *agent.Agent, command Command, worktree string, cfg Config) (*LocalSession, error) {
+func NewLocalSession(meta api.Session, runtime *agent.Agent, command Command, worktree string, matcher adapter.PatternMatcher, dispatcher protocol.Dispatcher, cfg Config) (*LocalSession, error) {
 	if runtime == nil {
 		return nil, fmt.Errorf("new session: %w", ErrSessionInvalid)
 	}
@@ -64,15 +79,25 @@ func NewLocalSession(meta api.Session, runtime *agent.Agent, command Command, wo
 	if worktree == "" {
 		return nil, fmt.Errorf("new session: %w", ErrSessionInvalid)
 	}
+	if dispatcher == nil {
+		return nil, fmt.Errorf("new session: %w", ErrSessionInvalid)
+	}
 	if cfg.DrainTimeout <= 0 {
 		cfg.DrainTimeout = 30 * time.Second
 	}
+	if matcher == nil {
+		matcher = &adapter.NoopMatcher{}
+	}
 	return &LocalSession{
-		agent:    runtime,
-		meta:     meta,
-		command:  command,
-		worktree: worktree,
-		config:   cfg,
+		agent:      runtime,
+		meta:       meta,
+		command:    command,
+		worktree:   worktree,
+		dispatcher: dispatcher,
+		monitor:    monitor.NewMonitor(matcher),
+		tracker:    &process.Tracker{},
+		config:     cfg,
+		outputs:    make(map[uint64]net.Conn),
 	}, nil
 }
 
@@ -87,14 +112,21 @@ func (s *LocalSession) Start(ctx context.Context) error {
 		return fmt.Errorf("session start: %w", ErrSessionRunning)
 	}
 	s.agent.Start(ctx)
-	hsm.Dispatch(ctx, s.agent.Lifecycle, hsm.Event{Name: agent.EventStart})
+	if s.tracker != nil {
+		if err := s.tracker.Start(ctx, s.agent.ID.Value()); err != nil {
+			_ = s.agent.EmitLifecycle(ctx, agent.EventError, err)
+			s.mu.Unlock()
+			return fmt.Errorf("session start: %w", err)
+		}
+	}
+	_ = s.agent.EmitLifecycle(ctx, agent.EventStart, nil)
 	cmd := exec.CommandContext(ctx, s.command.Argv[0], s.command.Argv[1:]...)
 	cmd.Dir = s.worktree
 	cmd.Env = append(os.Environ(), s.command.Env...)
 	master, err := pty.Start(cmd)
 	if err != nil {
 		s.mu.Unlock()
-		hsm.Dispatch(ctx, s.agent.Lifecycle, hsm.Event{Name: agent.EventError, Data: err})
+		_ = s.agent.EmitLifecycle(ctx, agent.EventError, err)
 		return fmt.Errorf("session start: %w", err)
 	}
 	s.ptyPair = &pty.Pair{Master: master}
@@ -103,23 +135,26 @@ func (s *LocalSession) Start(ctx context.Context) error {
 	s.stopRequested = false
 	s.forcedKill = false
 	go s.wait(ctx)
+	go s.readOutput(ctx, master)
 	s.mu.Unlock()
-	hsm.Dispatch(ctx, s.agent.Lifecycle, hsm.Event{Name: agent.EventReady})
+	_ = s.agent.EmitLifecycle(ctx, agent.EventReady, nil)
 	return nil
 }
 
-// Attach returns a duplicate of the PTY master for interactive use.
-func (s *LocalSession) Attach() (*os.File, error) {
+// Attach returns a stream for interactive use.
+func (s *LocalSession) Attach() (net.Conn, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.ptyPair == nil || s.ptyPair.Master == nil {
 		return nil, fmt.Errorf("session attach: %w", ErrSessionNotRunning)
 	}
-	dup, err := dupFile(s.ptyPair.Master)
-	if err != nil {
-		return nil, fmt.Errorf("session attach: %w", err)
-	}
-	return dup, nil
+	local, remote := net.Pipe()
+	id := atomic.AddUint64(&s.nextOutputID, 1)
+	s.outputMu.Lock()
+	s.outputs[id] = local
+	s.outputMu.Unlock()
+	go s.forwardInput(local, id)
+	return remote, nil
 }
 
 // Stop requests graceful termination of the session.
@@ -198,10 +233,10 @@ func (s *LocalSession) wait(ctx context.Context) {
 		}
 	}
 	if err != nil && !stopRequested || forcedKill {
-		hsm.Dispatch(ctx, s.agent.Lifecycle, hsm.Event{Name: agent.EventError, Data: err})
+		_ = s.agent.EmitLifecycle(ctx, agent.EventError, err)
 		return
 	}
-	hsm.Dispatch(ctx, s.agent.Lifecycle, hsm.Event{Name: agent.EventStop})
+	_ = s.agent.EmitLifecycle(ctx, agent.EventStop, nil)
 }
 
 func (s *LocalSession) waitForExit(ctx context.Context, allowExitError bool) error {
@@ -239,5 +274,129 @@ func (s *LocalSession) waitForExit(ctx context.Context, allowExitError bool) err
 		}
 	case <-ctx.Done():
 		return fmt.Errorf("session wait: %w", ctx.Err())
+	}
+}
+
+func (s *LocalSession) readOutput(ctx context.Context, master *os.File) {
+	if master == nil {
+		return
+	}
+	buf := make([]byte, 4096)
+	for {
+		n, err := master.Read(buf)
+		if n > 0 {
+			chunk := append([]byte(nil), buf[:n]...)
+			s.fanout(chunk)
+			s.handleOutput(ctx, chunk)
+		}
+		if err != nil {
+			if err == io.EOF {
+				return
+			}
+			return
+		}
+	}
+}
+
+func (s *LocalSession) fanout(chunk []byte) {
+	s.outputMu.Lock()
+	conns := make([]net.Conn, 0, len(s.outputs))
+	for _, conn := range s.outputs {
+		conns = append(conns, conn)
+	}
+	s.outputMu.Unlock()
+	for _, conn := range conns {
+		if _, err := conn.Write(chunk); err != nil {
+			_ = conn.Close()
+			s.removeOutput(conn)
+		}
+	}
+}
+
+func (s *LocalSession) removeOutput(target net.Conn) {
+	s.outputMu.Lock()
+	defer s.outputMu.Unlock()
+	for id, conn := range s.outputs {
+		if conn == target {
+			delete(s.outputs, id)
+			return
+		}
+	}
+}
+
+func (s *LocalSession) forwardInput(conn net.Conn, id uint64) {
+	if conn == nil {
+		return
+	}
+	defer func() {
+		_ = conn.Close()
+		s.outputMu.Lock()
+		delete(s.outputs, id)
+		s.outputMu.Unlock()
+	}()
+	buf := make([]byte, 4096)
+	for {
+		n, err := conn.Read(buf)
+		if n > 0 {
+			_ = s.Send(buf[:n])
+		}
+		if err != nil {
+			return
+		}
+	}
+}
+
+// Send writes input bytes to the PTY.
+func (s *LocalSession) Send(input []byte) error {
+	if len(input) == 0 {
+		return nil
+	}
+	s.mu.Lock()
+	master := (*os.File)(nil)
+	if s.ptyPair != nil {
+		master = s.ptyPair.Master
+	}
+	s.mu.Unlock()
+	if master == nil {
+		return fmt.Errorf("session send: %w", ErrSessionNotRunning)
+	}
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	if _, err := master.Write(input); err != nil {
+		return fmt.Errorf("session send: %w", err)
+	}
+	return nil
+}
+
+func (s *LocalSession) handleOutput(ctx context.Context, chunk []byte) {
+	if s.monitor == nil || len(chunk) == 0 {
+		return
+	}
+	_ = s.agent.EmitPresence(ctx, agent.EventActivity, nil)
+	matches, err := s.monitor.Scan(ctx, bytes.NewReader(chunk))
+	if err != nil {
+		return
+	}
+	for _, match := range matches {
+		pattern := strings.ToLower(strings.TrimSpace(match.Pattern))
+		switch pattern {
+		case "prompt":
+			_ = s.agent.EmitPresence(ctx, agent.EventPromptDetected, match)
+		case "rate_limit":
+			_ = s.agent.EmitPresence(ctx, agent.EventRateLimit, match)
+		case "completion":
+			_ = s.agent.EmitPresence(ctx, agent.EventTaskCompleted, match)
+		case "message":
+			payload := map[string]any{
+				"agent_id": s.agent.ID,
+				"pattern":  match.Pattern,
+				"text":     match.Text,
+			}
+			_ = s.dispatcher.Publish(ctx, protocol.Subject("events", "message"), protocol.Event{
+				Name:       "message.outbound",
+				Payload:    payload,
+				OccurredAt: time.Now().UTC(),
+			})
+		}
 	}
 }

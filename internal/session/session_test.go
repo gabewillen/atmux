@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/agentflare-ai/amux/internal/adapter"
 	"github.com/agentflare-ai/amux/internal/agent"
 	"github.com/agentflare-ai/amux/internal/git"
 	"github.com/agentflare-ai/amux/internal/protocol"
@@ -60,18 +61,18 @@ func TestLocalSessionStartStop(t *testing.T) {
 		Argv: []string{os.Args[0], "-test.run=TestHelperProcess"},
 		Env:  []string{"AMUX_HELPER=1"},
 	}
-	sess, err := NewLocalSession(sessMeta, runtime, cmd, worktree.Path, Config{DrainTimeout: 2 * time.Second})
+	sess, err := NewLocalSession(sessMeta, runtime, cmd, worktree.Path, &adapter.NoopMatcher{}, dispatcher, Config{DrainTimeout: 2 * time.Second})
 	if err != nil {
 		t.Fatalf("new session: %v", err)
 	}
 	if err := sess.Start(ctx); err != nil {
 		t.Fatalf("start session: %v", err)
 	}
-	ptyFile, err := sess.Attach()
+	conn, err := sess.Attach()
 	if err != nil {
 		t.Fatalf("attach session: %v", err)
 	}
-	reader := bufio.NewReader(ptyFile)
+	reader := bufio.NewReader(conn)
 	line, err := reader.ReadString('\n')
 	if err != nil {
 		t.Fatalf("read output: %v", err)
@@ -79,7 +80,7 @@ func TestLocalSessionStartStop(t *testing.T) {
 	if !strings.Contains(line, worktree.Path) {
 		t.Fatalf("unexpected output: %s", line)
 	}
-	if err := ptyFile.Close(); err != nil {
+	if err := conn.Close(); err != nil {
 		t.Fatalf("close pty: %v", err)
 	}
 	if err := sess.Stop(ctx); err != nil {

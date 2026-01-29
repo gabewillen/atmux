@@ -14,6 +14,7 @@ type Agent struct {
 	api.Agent
 	Lifecycle  *Lifecycle
 	Presence   *Presence
+	router     *EventRouter
 	dispatcher protocol.Dispatcher
 	mu         sync.RWMutex
 	lastErr    error
@@ -34,6 +35,7 @@ func NewAgent(meta api.Agent, dispatcher protocol.Dispatcher) (*Agent, error) {
 		Agent:      meta,
 		dispatcher: dispatcher,
 	}
+	agent.router = NewEventRouter(agent, dispatcher)
 	lifecycle, err := NewLifecycle(agent, dispatcher)
 	if err != nil {
 		return nil, fmt.Errorf("new agent: %w", err)
@@ -49,12 +51,41 @@ func NewAgent(meta api.Agent, dispatcher protocol.Dispatcher) (*Agent, error) {
 
 // Start starts the lifecycle and presence state machines.
 func (a *Agent) Start(ctx context.Context) {
+	if a.router != nil {
+		if err := a.router.Start(ctx); err != nil {
+			a.recordError(err)
+		}
+	}
 	if a.Lifecycle != nil {
 		a.Lifecycle.Start(ctx)
 	}
 	if a.Presence != nil {
 		a.Presence.Start(ctx)
 	}
+}
+
+// EmitLifecycle publishes a lifecycle event through the dispatcher.
+func (a *Agent) EmitLifecycle(ctx context.Context, name string, payload any) error {
+	if a.router == nil {
+		return fmt.Errorf("emit lifecycle: %w", ErrDispatcherRequired)
+	}
+	if err := a.router.EmitLifecycle(ctx, name, payload); err != nil {
+		a.recordError(err)
+		return err
+	}
+	return nil
+}
+
+// EmitPresence publishes a presence event through the dispatcher.
+func (a *Agent) EmitPresence(ctx context.Context, name string, payload any) error {
+	if a.router == nil {
+		return fmt.Errorf("emit presence: %w", ErrDispatcherRequired)
+	}
+	if err := a.router.EmitPresence(ctx, name, payload); err != nil {
+		a.recordError(err)
+		return err
+	}
+	return nil
 }
 
 // LastError returns the last error observed by the agent state machines.

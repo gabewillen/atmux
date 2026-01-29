@@ -18,7 +18,7 @@ overrides, and value parsing conventions defined by the spec.
 - `func FindSensitiveKeys(node map[string]any, prefix string) []string` — FindSensitiveKeys returns dot-paths for keys that look sensitive.
 - `func LoadConfigFile(path string) (map[string]any, error)` — LoadConfigFile reads and parses a TOML config file.
 - `func MergeMaps(base map[string]any, override map[string]any) error` — MergeMaps overlays override onto base recursively.
-- `func ParseTOML(data []byte) (map[string]any, error)` — ParseTOML parses a minimal TOML subset into a nested map.
+- `func ParseTOML(data []byte) (map[string]any, error)` — ParseTOML parses a TOML v1.0.0 document into a nested map.
 - `func RedactSensitive(node map[string]any) map[string]any` — RedactSensitive returns a copy of the map with sensitive values replaced.
 - `func ResolveConfigPath(root string, path string) (string, error)` — ResolveConfigPath ensures config paths exist and are within repo when needed.
 - `func ValidateSemverConstraint(expr string) error` — ValidateSemverConstraint validates a conjunction of semver comparisons.
@@ -47,6 +47,7 @@ overrides, and value parsing conventions defined by the spec.
 - `func formatValue(value any) (string, error)`
 - `func getOrCreateArrayTable(root map[string]any, path []string) ([]any, error)`
 - `func getOrCreateTable(root map[string]any, path []string) (map[string]any, error)`
+- `func hasTriple(runes []rune, idx int, target rune) bool`
 - `func isArrayTable(value any) bool`
 - `func isSensitiveKey(key string) bool`
 - `func isTable(value any) bool`
@@ -55,18 +56,25 @@ overrides, and value parsing conventions defined by the spec.
 - `func mergeFile(target map[string]any, path string, logger *log.Logger) error`
 - `func modTime(path string) (time.Time, error)`
 - `func mustDuration(raw string) time.Duration`
-- `func parseArray(raw string) ([]any, error)`
 - `func parseBool(value any) (bool, bool)`
+- `func parseDateTime(raw string) (time.Time, bool)`
 - `func parseDurationValue(value any) (time.Duration, error)`
 - `func parseEnvValue(raw string) (any, error)`
+- `func parseFloat(raw string) (float64, error)`
 - `func parseInt(value any) (int, bool)`
+- `func parseInteger(raw string) (int64, error)`
+- `func parseKeyPath(raw string) ([]string, error)`
 - `func parseString(value any) (string, bool)`
+- `func parseStringValue(raw string) (string, error)`
 - `func parseTablePath(line string, brackets int) ([]string, error)`
 - `func parseValue(raw string) (any, error)`
+- `func setInlineKey(root map[string]any, key string, value any) error`
 - `func setKey(current map[string]any, key string, value any) error`
 - `func setPath(root map[string]any, path []string, value any) error`
 - `func splitKeyValue(line string) (string, string, error)`
-- `func stripTOMLComment(line string) string`
+- `func splitOnDots(raw string) []string`
+- `func splitOnEquals(line string) int`
+- `func stripComments(line string) string`
 - `func uniqueStrings(values []string) []string`
 - `func validateAdapterConstraint(name string, section map[string]any) error`
 - `func validateAdapterDefaults(name string, parsed map[string]any) error`
@@ -104,6 +112,9 @@ overrides, and value parsing conventions defined by the spec.
 - `type TelemetryMetricsConfig` — TelemetryMetricsConfig configures metrics.
 - `type TelemetryTracesConfig` — TelemetryTracesConfig configures traces.
 - `type TimeoutsConfig` — TimeoutsConfig holds idle/stuck timeouts.
+- `type statementState`
+- `type tomlStatement`
+- `type valueParser`
 - `type watcher`
 
 ### Constants
@@ -246,7 +257,7 @@ MergeMaps overlays override onto base recursively.
 func ParseTOML(data []byte) (map[string]any, error)
 ```
 
-ParseTOML parses a minimal TOML subset into a nested map.
+ParseTOML parses a TOML v1.0.0 document into a nested map.
 
 #### RedactSensitive
 
@@ -424,6 +435,12 @@ func getOrCreateArrayTable(root map[string]any, path []string) ([]any, error)
 func getOrCreateTable(root map[string]any, path []string) (map[string]any, error)
 ```
 
+#### hasTriple
+
+```go
+func hasTriple(runes []rune, idx int, target rune) bool
+```
+
 #### isArrayTable
 
 ```go
@@ -472,16 +489,16 @@ func modTime(path string) (time.Time, error)
 func mustDuration(raw string) time.Duration
 ```
 
-#### parseArray
-
-```go
-func parseArray(raw string) ([]any, error)
-```
-
 #### parseBool
 
 ```go
 func parseBool(value any) (bool, bool)
+```
+
+#### parseDateTime
+
+```go
+func parseDateTime(raw string) (time.Time, bool)
 ```
 
 #### parseDurationValue
@@ -496,16 +513,40 @@ func parseDurationValue(value any) (time.Duration, error)
 func parseEnvValue(raw string) (any, error)
 ```
 
+#### parseFloat
+
+```go
+func parseFloat(raw string) (float64, error)
+```
+
 #### parseInt
 
 ```go
 func parseInt(value any) (int, bool)
 ```
 
+#### parseInteger
+
+```go
+func parseInteger(raw string) (int64, error)
+```
+
+#### parseKeyPath
+
+```go
+func parseKeyPath(raw string) ([]string, error)
+```
+
 #### parseString
 
 ```go
 func parseString(value any) (string, bool)
+```
+
+#### parseStringValue
+
+```go
+func parseStringValue(raw string) (string, error)
 ```
 
 #### parseTablePath
@@ -518,6 +559,12 @@ func parseTablePath(line string, brackets int) ([]string, error)
 
 ```go
 func parseValue(raw string) (any, error)
+```
+
+#### setInlineKey
+
+```go
+func setInlineKey(root map[string]any, key string, value any) error
 ```
 
 #### setKey
@@ -538,10 +585,22 @@ func setPath(root map[string]any, path []string, value any) error
 func splitKeyValue(line string) (string, string, error)
 ```
 
-#### stripTOMLComment
+#### splitOnDots
 
 ```go
-func stripTOMLComment(line string) string
+func splitOnDots(raw string) []string
+```
+
+#### splitOnEquals
+
+```go
+func splitOnEquals(line string) int
+```
+
+#### stripComments
+
+```go
+func stripComments(line string) string
 ```
 
 #### uniqueStrings
@@ -1196,6 +1255,143 @@ type TimeoutsConfig struct {
 ```
 
 TimeoutsConfig holds idle/stuck timeouts.
+
+## type statementState
+
+```go
+type statementState struct {
+	inBasic        bool
+	inLiteral      bool
+	inMultiBasic   bool
+	inMultiLiteral bool
+	bracketDepth   int
+	braceDepth     int
+	lastWasEscape  bool
+}
+```
+
+### Methods
+
+#### statementState.complete
+
+```go
+func () complete() bool
+```
+
+#### statementState.scan
+
+```go
+func () scan(line string)
+```
+
+
+## type tomlStatement
+
+```go
+type tomlStatement struct {
+	text string
+	line int
+}
+```
+
+### Functions returning tomlStatement
+
+#### splitStatements
+
+```go
+func splitStatements(data string) ([]tomlStatement, error)
+```
+
+
+## type valueParser
+
+```go
+type valueParser struct {
+	data []rune
+	pos  int
+}
+```
+
+### Methods
+
+#### valueParser.more
+
+```go
+func () more() bool
+```
+
+#### valueParser.next
+
+```go
+func () next() rune
+```
+
+#### valueParser.parseArray
+
+```go
+func () parseArray() ([]any, error)
+```
+
+#### valueParser.parseInlineTable
+
+```go
+func () parseInlineTable() (map[string]any, error)
+```
+
+#### valueParser.parseKey
+
+```go
+func () parseKey() (string, error)
+```
+
+#### valueParser.parseLiteral
+
+```go
+func () parseLiteral() (any, error)
+```
+
+#### valueParser.parseMultiLineString
+
+```go
+func () parseMultiLineString() (any, error)
+```
+
+#### valueParser.parseString
+
+```go
+func () parseString() (any, error)
+```
+
+#### valueParser.parseValue
+
+```go
+func () parseValue() (any, error)
+```
+
+#### valueParser.peek
+
+```go
+func () peek() rune
+```
+
+#### valueParser.readUnicode
+
+```go
+func () readUnicode(length int) (rune, error)
+```
+
+#### valueParser.skipComment
+
+```go
+func () skipComment()
+```
+
+#### valueParser.skipSpace
+
+```go
+func () skipSpace()
+```
+
 
 ## type watcher
 

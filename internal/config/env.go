@@ -51,9 +51,12 @@ func EnvMap() map[string]string {
 }
 
 func parseEnvValue(raw string) (any, error) {
-	parsed, err := parseValue(raw)
+	doc := "v = " + raw
+	parsed, err := ParseTOML([]byte(doc))
 	if err == nil {
-		return parsed, nil
+		if value, ok := parsed["v"]; ok {
+			return value, nil
+		}
 	}
 	return raw, nil
 }

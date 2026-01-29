@@ -2,12 +2,14 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"net"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/agentflare-ai/amux/internal/config"
 	"github.com/agentflare-ai/amux/internal/manager"
@@ -33,6 +35,8 @@ type Daemon struct {
 	listener   net.Listener
 	embedded   *protocol.EmbeddedServer
 	logger     *log.Logger
+	closeMu    sync.Mutex
+	closed     bool
 }
 
 // New constructs a daemon instance.
@@ -116,29 +120,60 @@ func (d *Daemon) Serve(ctx context.Context) error {
 		return fmt.Errorf("daemon serve: %w", err)
 	}
 	d.listener = listener
-	return d.server.Serve(ctx, listener)
+	stop := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = listener.Close()
+		case <-stop:
+		}
+	}()
+	err = d.server.Serve(ctx, listener)
+	close(stop)
+	if ctx.Err() != nil {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
-// Close shuts down the daemon.
-func (d *Daemon) Close(ctx context.Context) error {
+// Close shuts down the daemon, optionally forcing termination.
+func (d *Daemon) Close(ctx context.Context, force bool) error {
 	if d == nil {
 		return nil
 	}
-	var firstErr error
-	if d.listener != nil {
-		if err := d.listener.Close(); err != nil && firstErr == nil {
-			firstErr = fmt.Errorf("daemon close: %w", err)
+	var errOut error
+	if d.manager != nil {
+		if err := d.manager.Shutdown(ctx, force); err != nil {
+			errOut = errors.Join(errOut, fmt.Errorf("daemon shutdown: %w", err))
 		}
 	}
-	if closer, ok := d.dispatcher.(interface{ Close(context.Context) error }); ok {
-		if err := closer.Close(ctx); err != nil && firstErr == nil {
-			firstErr = fmt.Errorf("daemon close: %w", err)
+	d.closeMu.Lock()
+	if d.closed {
+		d.closeMu.Unlock()
+		return errOut
+	}
+	d.closed = true
+	listener := d.listener
+	dispatcher := d.dispatcher
+	embedded := d.embedded
+	d.closeMu.Unlock()
+	if listener != nil {
+		if err := listener.Close(); err != nil {
+			errOut = errors.Join(errOut, fmt.Errorf("daemon close: %w", err))
 		}
 	}
-	if d.embedded != nil {
-		if err := d.embedded.Close(); err != nil && firstErr == nil {
-			firstErr = fmt.Errorf("daemon close: %w", err)
+	if closer, ok := dispatcher.(interface{ Close(context.Context) error }); ok {
+		if err := closer.Close(ctx); err != nil {
+			errOut = errors.Join(errOut, fmt.Errorf("daemon close: %w", err))
 		}
 	}
-	return firstErr
+	if embedded != nil {
+		if err := embedded.Close(); err != nil {
+			errOut = errors.Join(errOut, fmt.Errorf("daemon close: %w", err))
+		}
+	}
+	return errOut
 }

@@ -11,6 +11,7 @@ paths derived from config and environment variables.
 - `func AmuxRootForRepo(repoRoot string) string` — AmuxRootForRepo returns the .amux directory for the provided repo root.
 - `func CanonicalizeRepoRoot(path string, homeDir string) (string, error)` — CanonicalizeRepoRoot applies repo_root canonicalization rules.
 - `func FindRepoRoot(start string) (string, error)` — FindRepoRoot searches upward from start for a git repository root.
+- `func PTYDirForRepo(repoRoot string) string` — PTYDirForRepo returns the PTY socket directory for the provided repo root.
 - `func SlugifyAgent(name string) string` — SlugifyAgent derives the agent slug per the spec rules.
 - `func UniqueAgentSlug(name string, used map[string]struct{}) string` — UniqueAgentSlug ensures the agent slug is unique within the provided set.
 - `func WorktreePathForRepo(repoRoot, agentSlug string) string` — WorktreePathForRepo returns the worktree path for the provided repo root and slug.
@@ -54,6 +55,14 @@ func FindRepoRoot(start string) (string, error)
 ```
 
 FindRepoRoot searches upward from start for a git repository root.
+
+#### PTYDirForRepo
+
+```go
+func PTYDirForRepo(repoRoot string) string
+```
+
+PTYDirForRepo returns the PTY socket directory for the provided repo root.
 
 #### SlugifyAgent
 
@@ -150,6 +159,14 @@ func () HomeDir() string
 
 HomeDir returns the resolved user home directory.
 
+#### Resolver.PTYDir
+
+```go
+func () PTYDir() string
+```
+
+PTYDir returns the repo-scoped PTY socket directory.
+
 #### Resolver.ProjectAdapterConfigPath
 
 ```go
@@ -165,6 +182,14 @@ func () ProjectAdapterWasmPath(adapter string) string
 ```
 
 ProjectAdapterWasmPath returns the per-adapter repo-scoped WASM module path.
+
+#### Resolver.ProjectAdaptersDir
+
+```go
+func () ProjectAdaptersDir() string
+```
+
+ProjectAdaptersDir returns the repo-scoped adapters directory.
 
 #### Resolver.ProjectConfigPath
 
@@ -205,6 +230,14 @@ func () UserAdapterWasmPath(adapter string) string
 ```
 
 UserAdapterWasmPath returns the per-adapter user WASM module path.
+
+#### Resolver.UserAdaptersDir
+
+```go
+func () UserAdaptersDir() string
+```
+
+UserAdaptersDir returns the user-scoped adapters directory.
 
 #### Resolver.UserConfigPath
 

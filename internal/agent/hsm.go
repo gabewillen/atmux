@@ -30,6 +30,10 @@ const (
 	EventStop = "stop"
 	// EventError triggers the lifecycle error transition.
 	EventError = "error"
+	// EventShutdownInitiated triggers graceful shutdown.
+	EventShutdownInitiated = "shutdown.initiated"
+	// EventShutdownForce triggers forced shutdown.
+	EventShutdownForce = "shutdown.force"
 
 	// PresenceOnline indicates the agent is available.
 	PresenceOnline = "online"
@@ -44,6 +48,8 @@ const (
 	EventTaskAssigned = "task.assigned"
 	// EventTaskCompleted marks task completion.
 	EventTaskCompleted = "task.completed"
+	// EventTaskCancel requests task cancellation.
+	EventTaskCancel = "task.cancel"
 	// EventPromptDetected indicates a prompt was detected.
 	EventPromptDetected = "prompt.detected"
 	// EventRateLimit indicates rate limiting.
@@ -93,11 +99,59 @@ var LifecycleModel = hsm.Define(
 		}),
 	),
 	hsm.Transition(
+		hsm.On(hsm.Event{Name: EventShutdownInitiated}),
+		hsm.Source(LifecyclePending),
+		hsm.Target(LifecycleTerminated),
+		hsm.Effect(func(ctx context.Context, actor *Lifecycle, event hsm.Event) {
+			actor.onTerminated(ctx)
+		}),
+	),
+	hsm.Transition(
+		hsm.On(hsm.Event{Name: EventShutdownInitiated}),
+		hsm.Source(LifecycleStarting),
+		hsm.Target(LifecycleTerminated),
+		hsm.Effect(func(ctx context.Context, actor *Lifecycle, event hsm.Event) {
+			actor.onTerminated(ctx)
+		}),
+	),
+	hsm.Transition(
+		hsm.On(hsm.Event{Name: EventShutdownInitiated}),
+		hsm.Source(LifecycleRunning),
+		hsm.Target(LifecycleTerminated),
+		hsm.Effect(func(ctx context.Context, actor *Lifecycle, event hsm.Event) {
+			actor.onTerminated(ctx)
+		}),
+	),
+	hsm.Transition(
 		hsm.On(hsm.Event{Name: EventError}),
 		hsm.Source(LifecyclePending),
 		hsm.Target(LifecycleErrored),
 		hsm.Effect(func(ctx context.Context, actor *Lifecycle, event hsm.Event) {
 			actor.onErrored(ctx, event)
+		}),
+	),
+	hsm.Transition(
+		hsm.On(hsm.Event{Name: EventShutdownForce}),
+		hsm.Source(LifecyclePending),
+		hsm.Target(LifecycleTerminated),
+		hsm.Effect(func(ctx context.Context, actor *Lifecycle, event hsm.Event) {
+			actor.onTerminated(ctx)
+		}),
+	),
+	hsm.Transition(
+		hsm.On(hsm.Event{Name: EventShutdownForce}),
+		hsm.Source(LifecycleStarting),
+		hsm.Target(LifecycleTerminated),
+		hsm.Effect(func(ctx context.Context, actor *Lifecycle, event hsm.Event) {
+			actor.onTerminated(ctx)
+		}),
+	),
+	hsm.Transition(
+		hsm.On(hsm.Event{Name: EventShutdownForce}),
+		hsm.Source(LifecycleRunning),
+		hsm.Target(LifecycleTerminated),
+		hsm.Effect(func(ctx context.Context, actor *Lifecycle, event hsm.Event) {
+			actor.onTerminated(ctx)
 		}),
 	),
 	hsm.Transition(

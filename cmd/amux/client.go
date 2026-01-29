@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"time"
 
+	"github.com/agentflare-ai/amux/internal/adapter"
 	"github.com/agentflare-ai/amux/internal/config"
 	"github.com/agentflare-ai/amux/internal/paths"
 	"github.com/agentflare-ai/amux/internal/rpc"
@@ -18,7 +19,7 @@ func connectDaemon(ctx context.Context) (*rpc.Client, *paths.Resolver, config.Co
 	if err != nil {
 		return nil, nil, config.Config{}, fmt.Errorf("connect daemon: %w", err)
 	}
-	cfg, err := config.Load(config.LoadOptions{Resolver: resolver})
+	cfg, err := config.Load(config.LoadOptions{Resolver: resolver, AdapterDefaults: adapter.NewDefaultsProvider(resolver)})
 	if err != nil {
 		return nil, nil, config.Config{}, fmt.Errorf("connect daemon: %w", err)
 	}

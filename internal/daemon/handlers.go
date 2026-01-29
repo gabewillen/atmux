@@ -12,6 +12,7 @@ import (
 
 	"github.com/agentflare-ai/amux/internal/git"
 	"github.com/agentflare-ai/amux/internal/manager"
+	"github.com/agentflare-ai/amux/internal/paths"
 	"github.com/agentflare-ai/amux/internal/rpc"
 	"github.com/agentflare-ai/amux/pkg/api"
 )
@@ -70,6 +71,7 @@ func (d *Daemon) registerHandlers() {
 	d.server.Register("agent.remove", d.handleAgentRemove)
 	d.server.Register("agent.start", d.handleAgentStart)
 	d.server.Register("agent.stop", d.handleAgentStop)
+	d.server.Register("agent.kill", d.handleAgentKill)
 	d.server.Register("agent.restart", d.handleAgentRestart)
 	d.server.Register("agent.attach", d.handleAgentAttach)
 	d.server.Register("git.merge", d.handleGitMerge)
@@ -178,6 +180,21 @@ func (d *Daemon) handleAgentStop(ctx context.Context, raw json.RawMessage) (any,
 	return map[string]any{"ok": true}, nil
 }
 
+func (d *Daemon) handleAgentKill(ctx context.Context, raw json.RawMessage) (any, *rpc.Error) {
+	var params agentRefParams
+	if err := decodeParams(raw, &params); err != nil {
+		return nil, err
+	}
+	id, err := d.resolveAgentID(params)
+	if err != nil {
+		return nil, rpcInvalidParams(err)
+	}
+	if err := d.manager.KillAgent(ctx, id); err != nil {
+		return nil, rpcInternal(err)
+	}
+	return map[string]any{"ok": true}, nil
+}
+
 func (d *Daemon) handleAgentRestart(ctx context.Context, raw json.RawMessage) (any, *rpc.Error) {
 	var params agentRefParams
 	if err := decodeParams(raw, &params); err != nil {
@@ -216,11 +233,11 @@ func (d *Daemon) handleAgentAttach(ctx context.Context, raw json.RawMessage) (an
 	if repoRoot == "" {
 		return nil, rpcInvalidParams(fmt.Errorf("agent not found"))
 	}
-	ptyFile, err := d.manager.AttachAgent(id)
+	ptyConn, err := d.manager.AttachAgent(id)
 	if err != nil {
 		return nil, rpcInternal(err)
 	}
-	socketPath, err := d.startAttachProxy(ctx, repoRoot, id, ptyFile)
+	socketPath, err := d.startAttachProxy(ctx, repoRoot, id, ptyConn)
 	if err != nil {
 		return nil, rpcInternal(err)
 	}
@@ -274,12 +291,12 @@ func (d *Daemon) resolveAgentID(params agentRefParams) (api.AgentID, error) {
 	return match, nil
 }
 
-func (d *Daemon) startAttachProxy(ctx context.Context, repoRoot string, agentID api.AgentID, ptyFile *os.File) (string, error) {
+func (d *Daemon) startAttachProxy(ctx context.Context, repoRoot string, agentID api.AgentID, stream io.ReadWriteCloser) (string, error) {
 	_ = ctx
-	if ptyFile == nil {
+	if stream == nil {
 		return "", fmt.Errorf("attach: pty file missing")
 	}
-	dir := filepath.Join(repoRoot, ".amux", "pty")
+	dir := paths.PTYDirForRepo(repoRoot)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", fmt.Errorf("attach: %w", err)
 	}
@@ -296,7 +313,7 @@ func (d *Daemon) startAttachProxy(ctx context.Context, repoRoot string, agentID 
 		defer func() {
 			_ = listener.Close()
 			_ = os.Remove(socketPath)
-			_ = ptyFile.Close()
+			_ = stream.Close()
 		}()
 		conn, err := listener.Accept()
 		if err != nil {
@@ -305,11 +322,11 @@ func (d *Daemon) startAttachProxy(ctx context.Context, repoRoot string, agentID 
 		_ = listener.Close()
 		done := make(chan struct{}, 2)
 		go func() {
-			_, _ = io.Copy(conn, ptyFile)
+			_, _ = io.Copy(conn, stream)
 			done <- struct{}{}
 		}()
 		go func() {
-			_, _ = io.Copy(ptyFile, conn)
+			_, _ = io.Copy(stream, conn)
 			done <- struct{}{}
 		}()
 		<-done

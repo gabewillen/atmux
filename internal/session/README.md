@@ -75,12 +75,19 @@ type LocalSession struct {
 	meta          api.Session
 	command       Command
 	worktree      string
+	dispatcher    protocol.Dispatcher
+	monitor       *monitor.Monitor
+	tracker       *process.Tracker
 	ptyPair       *pty.Pair
 	cmd           *exec.Cmd
 	done          chan error
 	stopRequested bool
 	forcedKill    bool
 	config        Config
+	outputMu      sync.Mutex
+	outputs       map[uint64]net.Conn
+	nextOutputID  uint64
+	writeMu       sync.Mutex
 }
 ```
 
@@ -91,7 +98,7 @@ LocalSession owns a PTY and process for a local agent.
 #### NewLocalSession
 
 ```go
-func NewLocalSession(meta api.Session, runtime *agent.Agent, command Command, worktree string, cfg Config) (*LocalSession, error)
+func NewLocalSession(meta api.Session, runtime *agent.Agent, command Command, worktree string, matcher adapter.PatternMatcher, dispatcher protocol.Dispatcher, cfg Config) (*LocalSession, error)
 ```
 
 NewLocalSession constructs a LocalSession for an agent.
@@ -102,10 +109,10 @@ NewLocalSession constructs a LocalSession for an agent.
 #### LocalSession.Attach
 
 ```go
-func () Attach() (*os.File, error)
+func () Attach() (net.Conn, error)
 ```
 
-Attach returns a duplicate of the PTY master for interactive use.
+Attach returns a stream for interactive use.
 
 #### LocalSession.Kill
 
@@ -131,6 +138,14 @@ func () Restart(ctx context.Context) error
 
 Restart stops and starts the session.
 
+#### LocalSession.Send
+
+```go
+func () Send(input []byte) error
+```
+
+Send writes input bytes to the PTY.
+
 #### LocalSession.Start
 
 ```go
@@ -146,6 +161,36 @@ func () Stop(ctx context.Context) error
 ```
 
 Stop requests graceful termination of the session.
+
+#### LocalSession.fanout
+
+```go
+func () fanout(chunk []byte)
+```
+
+#### LocalSession.forwardInput
+
+```go
+func () forwardInput(conn net.Conn, id uint64)
+```
+
+#### LocalSession.handleOutput
+
+```go
+func () handleOutput(ctx context.Context, chunk []byte)
+```
+
+#### LocalSession.readOutput
+
+```go
+func () readOutput(ctx context.Context, master *os.File)
+```
+
+#### LocalSession.removeOutput
+
+```go
+func () removeOutput(target net.Conn)
+```
 
 #### LocalSession.wait
 

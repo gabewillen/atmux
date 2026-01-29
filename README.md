@@ -16,6 +16,7 @@
 - [internal/process](internal/process/README.md) — Package process tracks child processes launched within agent sessions.
 - [internal/protocol](internal/protocol/README.md) — Package protocol defines the event transport interfaces for amux.
 - [internal/pty](internal/pty/README.md) — Package pty provides PTY creation and I/O helpers.
+- [internal/remote](internal/remote/README.md) — Package remote implements NATS-based remote orchestration for amux.
 - [internal/rpc](internal/rpc/README.md) — Package rpc implements JSON-RPC 2.0 transport over Unix sockets.
 - [internal/session](internal/session/README.md) — Package session manages owned PTY sessions for local agents.
 - [internal/telemetry](internal/telemetry/README.md) — Package telemetry provides OpenTelemetry scaffolding for amux.

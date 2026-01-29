@@ -66,13 +66,12 @@ type LocalSession struct {
 	outputs       map[uint64]net.Conn
 	nextOutputID  uint64
 	writeMu       sync.Mutex
+	observerMu    sync.Mutex
+	observers     []func([]byte)
 }
 
 // NewLocalSession constructs a LocalSession for an agent.
 func NewLocalSession(meta api.Session, runtime *agent.Agent, command Command, worktree string, matcher adapter.PatternMatcher, dispatcher protocol.Dispatcher, cfg Config) (*LocalSession, error) {
-	if runtime == nil {
-		return nil, fmt.Errorf("new session: %w", ErrSessionInvalid)
-	}
 	if len(command.Argv) == 0 {
 		return nil, fmt.Errorf("new session: %w", ErrSessionInvalid)
 	}
@@ -111,22 +110,26 @@ func (s *LocalSession) Start(ctx context.Context) error {
 		s.mu.Unlock()
 		return fmt.Errorf("session start: %w", ErrSessionRunning)
 	}
-	s.agent.Start(ctx)
-	if s.tracker != nil {
-		if err := s.tracker.Start(ctx, s.agent.ID.Value()); err != nil {
-			_ = s.agent.EmitLifecycle(ctx, agent.EventError, err)
-			s.mu.Unlock()
-			return fmt.Errorf("session start: %w", err)
+	if s.agent != nil {
+		s.agent.Start(ctx)
+		if s.tracker != nil {
+			if err := s.tracker.Start(ctx, s.agent.ID.Value()); err != nil {
+				_ = s.agent.EmitLifecycle(ctx, agent.EventError, err)
+				s.mu.Unlock()
+				return fmt.Errorf("session start: %w", err)
+			}
 		}
+		_ = s.agent.EmitLifecycle(ctx, agent.EventStart, nil)
 	}
-	_ = s.agent.EmitLifecycle(ctx, agent.EventStart, nil)
 	cmd := exec.CommandContext(ctx, s.command.Argv[0], s.command.Argv[1:]...)
 	cmd.Dir = s.worktree
 	cmd.Env = append(os.Environ(), s.command.Env...)
 	master, err := pty.Start(cmd)
 	if err != nil {
 		s.mu.Unlock()
-		_ = s.agent.EmitLifecycle(ctx, agent.EventError, err)
+		if s.agent != nil {
+			_ = s.agent.EmitLifecycle(ctx, agent.EventError, err)
+		}
 		return fmt.Errorf("session start: %w", err)
 	}
 	s.ptyPair = &pty.Pair{Master: master}
@@ -137,7 +140,9 @@ func (s *LocalSession) Start(ctx context.Context) error {
 	go s.wait(ctx)
 	go s.readOutput(ctx, master)
 	s.mu.Unlock()
-	_ = s.agent.EmitLifecycle(ctx, agent.EventReady, nil)
+	if s.agent != nil {
+		_ = s.agent.EmitLifecycle(ctx, agent.EventReady, nil)
+	}
 	return nil
 }
 
@@ -214,6 +219,13 @@ func (s *LocalSession) Meta() api.Session {
 	return s.meta
 }
 
+// Done returns a channel that closes when the session exits.
+func (s *LocalSession) Done() <-chan error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.done
+}
+
 func (s *LocalSession) wait(ctx context.Context) {
 	err := s.cmd.Wait()
 	s.mu.Lock()
@@ -233,10 +245,14 @@ func (s *LocalSession) wait(ctx context.Context) {
 		}
 	}
 	if err != nil && !stopRequested || forcedKill {
-		_ = s.agent.EmitLifecycle(ctx, agent.EventError, err)
+		if s.agent != nil {
+			_ = s.agent.EmitLifecycle(ctx, agent.EventError, err)
+		}
 		return
 	}
-	_ = s.agent.EmitLifecycle(ctx, agent.EventStop, nil)
+	if s.agent != nil {
+		_ = s.agent.EmitLifecycle(ctx, agent.EventStop, nil)
+	}
 }
 
 func (s *LocalSession) waitForExit(ctx context.Context, allowExitError bool) error {
@@ -287,6 +303,7 @@ func (s *LocalSession) readOutput(ctx context.Context, master *os.File) {
 		if n > 0 {
 			chunk := append([]byte(nil), buf[:n]...)
 			s.fanout(chunk)
+			s.notifyObservers(chunk)
 			s.handleOutput(ctx, chunk)
 		}
 		if err != nil {
@@ -310,6 +327,25 @@ func (s *LocalSession) fanout(chunk []byte) {
 			_ = conn.Close()
 			s.removeOutput(conn)
 		}
+	}
+}
+
+// AddOutputObserver registers a callback for PTY output.
+func (s *LocalSession) AddOutputObserver(observer func([]byte)) {
+	if s == nil || observer == nil {
+		return
+	}
+	s.observerMu.Lock()
+	s.observers = append(s.observers, observer)
+	s.observerMu.Unlock()
+}
+
+func (s *LocalSession) notifyObservers(chunk []byte) {
+	s.observerMu.Lock()
+	observers := append([]func([]byte){}, s.observers...)
+	s.observerMu.Unlock()
+	for _, observer := range observers {
+		observer(chunk)
 	}
 }
 
@@ -372,7 +408,9 @@ func (s *LocalSession) handleOutput(ctx context.Context, chunk []byte) {
 	if s.monitor == nil || len(chunk) == 0 {
 		return
 	}
-	_ = s.agent.EmitPresence(ctx, agent.EventActivity, nil)
+	if s.agent != nil {
+		_ = s.agent.EmitPresence(ctx, agent.EventActivity, nil)
+	}
 	matches, err := s.monitor.Scan(ctx, bytes.NewReader(chunk))
 	if err != nil {
 		return
@@ -381,12 +419,21 @@ func (s *LocalSession) handleOutput(ctx context.Context, chunk []byte) {
 		pattern := strings.ToLower(strings.TrimSpace(match.Pattern))
 		switch pattern {
 		case "prompt":
-			_ = s.agent.EmitPresence(ctx, agent.EventPromptDetected, match)
+			if s.agent != nil {
+				_ = s.agent.EmitPresence(ctx, agent.EventPromptDetected, match)
+			}
 		case "rate_limit":
-			_ = s.agent.EmitPresence(ctx, agent.EventRateLimit, match)
+			if s.agent != nil {
+				_ = s.agent.EmitPresence(ctx, agent.EventRateLimit, match)
+			}
 		case "completion":
-			_ = s.agent.EmitPresence(ctx, agent.EventTaskCompleted, match)
+			if s.agent != nil {
+				_ = s.agent.EmitPresence(ctx, agent.EventTaskCompleted, match)
+			}
 		case "message":
+			if s.agent == nil {
+				continue
+			}
 			payload := map[string]any{
 				"agent_id": s.agent.ID,
 				"pattern":  match.Pattern,

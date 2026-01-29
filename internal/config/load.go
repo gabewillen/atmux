@@ -147,6 +147,7 @@ func DefaultConfig(resolver *paths.Resolver) Config {
 			Manager: RemoteManagerConfig{
 				Enabled: true,
 				Model:   "lfm2.5-thinking",
+				HostID:  "",
 			},
 		},
 		NATS: NATSConfig{

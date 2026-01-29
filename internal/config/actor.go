@@ -13,12 +13,12 @@ import (
 // ConfigActor manages live configuration reloading.
 type ConfigActor struct {
 	hsm.HSM
-	opts       LoadOptions
-	mu         sync.RWMutex
-	current    Config
-	watcher    *watcher
+	opts        LoadOptions
+	mu          sync.RWMutex
+	current     Config
+	watcher     *watcher
 	subscribers map[uint64]func(ConfigChange)
-	nextSubID  uint64
+	nextSubID   uint64
 }
 
 // ConfigModel defines the configuration actor state machine.
@@ -177,11 +177,11 @@ func uniqueStrings(values []string) []string {
 }
 
 type watcher struct {
-	paths      []string
-	onChange   func()
-	pollEvery  time.Duration
-	cancel     context.CancelFunc
-	lastMod    map[string]time.Time
+	paths     []string
+	onChange  func()
+	pollEvery time.Duration
+	cancel    context.CancelFunc
+	lastMod   map[string]time.Time
 }
 
 func newWatcher(paths []string, onChange func(), pollEvery time.Duration) *watcher {

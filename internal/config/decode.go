@@ -279,6 +279,9 @@ func applyRemote(cfg *Config, raw map[string]any, resolver *paths.Resolver) erro
 		if value, ok := parseString(managerRaw["model"]); ok {
 			cfg.Remote.Manager.Model = value
 		}
+		if value, ok := parseString(managerRaw["host_id"]); ok {
+			cfg.Remote.Manager.HostID = value
+		}
 	}
 	return nil
 }

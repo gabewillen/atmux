@@ -9,9 +9,9 @@ type ConfigChange struct {
 
 // Config event names.
 const (
-	ConfigFileChanged = "config.file_changed"
-	ConfigLoaded      = "config.loaded"
-	ConfigReloaded    = "config.reloaded"
+	ConfigFileChanged  = "config.file_changed"
+	ConfigLoaded       = "config.loaded"
+	ConfigReloaded     = "config.reloaded"
 	ConfigReloadFailed = "config.reload_failed"
-	ConfigUpdated     = "config.updated"
+	ConfigUpdated      = "config.updated"
 )

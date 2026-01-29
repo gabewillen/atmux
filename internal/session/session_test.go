@@ -27,7 +27,7 @@ func TestLocalSessionStartStop(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ensure worktree: %v", err)
 	}
-	server, err := protocol.StartEmbeddedServer(ctx, "127.0.0.1:0")
+	server, err := protocol.StartEmbeddedServer(ctx, "127.0.0.1:0", protocol.EmbeddedServerConfig{})
 	if err != nil {
 		t.Fatalf("start nats: %v", err)
 	}
@@ -36,7 +36,7 @@ func TestLocalSessionStartStop(t *testing.T) {
 			t.Errorf("close nats: %v", err)
 		}
 	})
-	dispatcher, err := protocol.NewNATSDispatcher(ctx, server.URL())
+	dispatcher, err := protocol.NewNATSDispatcher(ctx, server.URL(), protocol.NATSOptions{})
 	if err != nil {
 		t.Fatalf("connect nats: %v", err)
 	}

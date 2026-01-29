@@ -59,7 +59,8 @@ func rpcInvalidParams(err error) *rpc.Error
 type Daemon struct {
 	resolver   *paths.Resolver
 	cfg        config.Config
-	manager    *manager.LocalManager
+	manager    *manager.Manager
+	hostMgr    *remote.HostManager
 	dispatcher protocol.Dispatcher
 	server     *rpc.Server
 	listener   net.Listener

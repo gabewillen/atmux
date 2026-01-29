@@ -81,6 +81,8 @@ type LocalSession struct {
 	outputs       map[uint64]net.Conn
 	nextOutputID  uint64
 	writeMu       sync.Mutex
+	observerMu    sync.Mutex
+	observers     []func([]byte)
 }
 ```
 
@@ -99,6 +101,14 @@ NewLocalSession constructs a LocalSession for an agent.
 
 ### Methods
 
+#### LocalSession.AddOutputObserver
+
+```go
+func () AddOutputObserver(observer func([]byte))
+```
+
+AddOutputObserver registers a callback for PTY output.
+
 #### LocalSession.Attach
 
 ```go
@@ -106,6 +116,14 @@ func () Attach() (net.Conn, error)
 ```
 
 Attach returns a stream for interactive use.
+
+#### LocalSession.Done
+
+```go
+func () Done() <-chan error
+```
+
+Done returns a channel that closes when the session exits.
 
 #### LocalSession.Kill
 
@@ -171,6 +189,12 @@ func () forwardInput(conn net.Conn, id uint64)
 
 ```go
 func () handleOutput(ctx context.Context, chunk []byte)
+```
+
+#### LocalSession.notifyObservers
+
+```go
+func () notifyObservers(chunk []byte)
 ```
 
 #### LocalSession.readOutput

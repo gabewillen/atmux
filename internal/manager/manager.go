@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/agentflare-ai/amux/internal/adapter"
 	"github.com/agentflare-ai/amux/internal/agent"
@@ -16,6 +17,7 @@ import (
 	"github.com/agentflare-ai/amux/internal/git"
 	"github.com/agentflare-ai/amux/internal/paths"
 	"github.com/agentflare-ai/amux/internal/protocol"
+	"github.com/agentflare-ai/amux/internal/remote"
 	"github.com/agentflare-ai/amux/internal/session"
 	"github.com/agentflare-ai/amux/pkg/api"
 )
@@ -31,7 +33,7 @@ var (
 	ErrRepoPathRequired = errors.New("repo path required")
 )
 
-// AddRequest describes a local agent add request.
+// AddRequest describes an agent add request.
 type AddRequest struct {
 	Name     string
 	About    string
@@ -65,16 +67,20 @@ type agentState struct {
 	repoRoot         string
 	worktree         string
 	session          *session.LocalSession
+	remoteHost       api.HostID
+	remoteSession    api.SessionID
+	remote           bool
 	config           config.AgentConfig
 	explicitRepoPath bool
 }
 
-// LocalManager manages local agents and sessions.
-type LocalManager struct {
+// Manager manages local and remote agents and sessions.
+type Manager struct {
 	resolver        *paths.Resolver
 	dispatcher      protocol.Dispatcher
 	cfg             config.Config
 	git             *git.Runner
+	remoteDirector  *remote.Director
 	mu              sync.Mutex
 	agents          map[api.AgentID]*agentState
 	nameIndex       map[string][]api.AgentID
@@ -85,15 +91,15 @@ type LocalManager struct {
 	shutdown        *shutdownController
 }
 
-// NewLocalManager constructs a LocalManager.
-func NewLocalManager(ctx context.Context, resolver *paths.Resolver, cfg config.Config, dispatcher protocol.Dispatcher) (*LocalManager, error) {
+// NewManager constructs a Manager.
+func NewManager(ctx context.Context, resolver *paths.Resolver, cfg config.Config, dispatcher protocol.Dispatcher, version string) (*Manager, error) {
 	if resolver == nil {
 		return nil, fmt.Errorf("new manager: %w", ErrAgentInvalid)
 	}
 	if dispatcher == nil {
 		return nil, fmt.Errorf("new manager: %w", ErrAgentInvalid)
 	}
-	mgr := &LocalManager{
+	mgr := &Manager{
 		resolver:   resolver,
 		dispatcher: dispatcher,
 		cfg:        cfg,
@@ -106,6 +112,14 @@ func NewLocalManager(ctx context.Context, resolver *paths.Resolver, cfg config.C
 			return adapter.NewWazeroRegistry(context.Background(), resolver)
 		},
 	}
+	remoteDirector, err := remote.NewDirector(cfg, dispatcher, remote.DirectorOptions{Version: version})
+	if err != nil {
+		return nil, fmt.Errorf("new manager: %w", err)
+	}
+	if err := remoteDirector.Start(ctx); err != nil {
+		return nil, fmt.Errorf("new manager: %w", err)
+	}
+	mgr.remoteDirector = remoteDirector
 	if err := mgr.loadFromConfig(ctx); err != nil {
 		return nil, fmt.Errorf("new manager: %w", err)
 	}
@@ -113,7 +127,7 @@ func NewLocalManager(ctx context.Context, resolver *paths.Resolver, cfg config.C
 }
 
 // AddAgent adds and starts a local agent.
-func (m *LocalManager) AddAgent(ctx context.Context, req AddRequest) (AgentRecord, error) {
+func (m *Manager) AddAgent(ctx context.Context, req AddRequest) (AgentRecord, error) {
 	if strings.TrimSpace(req.Name) == "" || strings.TrimSpace(req.Adapter) == "" {
 		return AgentRecord{}, fmt.Errorf("add agent: %w", ErrAgentInvalid)
 	}
@@ -121,6 +135,9 @@ func (m *LocalManager) AddAgent(ctx context.Context, req AddRequest) (AgentRecor
 	location, repoRoot, err := m.resolveLocation(req)
 	if err != nil {
 		return AgentRecord{}, fmt.Errorf("add agent: %w", err)
+	}
+	if location.Type == api.LocationSSH {
+		return m.addRemoteAgent(ctx, req, location, repoRoot, explicitRepoPath)
 	}
 	if err := ensureGitRepo(repoRoot); err != nil {
 		return AgentRecord{}, fmt.Errorf("add agent: %w", err)
@@ -216,8 +233,102 @@ func (m *LocalManager) AddAgent(ctx context.Context, req AddRequest) (AgentRecor
 	}, nil
 }
 
+func (m *Manager) addRemoteAgent(ctx context.Context, req AddRequest, location api.Location, repoRoot string, explicitRepoPath bool) (AgentRecord, error) {
+	if m.remoteDirector == nil {
+		return AgentRecord{}, fmt.Errorf("add agent: %w", ErrAgentInvalid)
+	}
+	if strings.TrimSpace(location.Host) == "" {
+		return AgentRecord{}, fmt.Errorf("add agent: %w", ErrAgentInvalid)
+	}
+	if strings.TrimSpace(repoRoot) == "" {
+		return AgentRecord{}, fmt.Errorf("add agent: %w", ErrRepoPathRequired)
+	}
+	m.mu.Lock()
+	used := make(map[string]struct{})
+	for _, state := range m.agents {
+		used[state.slug] = struct{}{}
+	}
+	slug := paths.UniqueAgentSlug(req.Name, used)
+	m.mu.Unlock()
+	worktree := paths.WorktreePathForRepo(repoRoot, slug)
+	hostID, _, err := m.remoteDirector.EnsureHost(ctx, location)
+	if err != nil {
+		return AgentRecord{}, fmt.Errorf("add agent: %w", err)
+	}
+	registry, err := m.registry(m.resolver)
+	if err != nil {
+		return AgentRecord{}, fmt.Errorf("add agent: %w", err)
+	}
+	adapterInstance, err := registry.Load(ctx, req.Adapter)
+	if err != nil {
+		return AgentRecord{}, fmt.Errorf("add agent: %w", err)
+	}
+	manifest := adapterInstance.Manifest()
+	if len(manifest.Commands.Start) == 0 {
+		return AgentRecord{}, fmt.Errorf("add agent: %w", ErrAgentInvalid)
+	}
+	agentID := api.NewAgentID()
+	cfgEntry := config.AgentConfig{
+		Name:    req.Name,
+		About:   req.About,
+		Adapter: req.Adapter,
+		Location: config.AgentLocationConfig{
+			Type:     location.Type.String(),
+			Host:     location.Host,
+			RepoPath: repoRoot,
+		},
+	}
+	if err := m.appendAgentConfig(cfgEntry); err != nil {
+		return AgentRecord{}, fmt.Errorf("add agent: %w", err)
+	}
+	spawnReq := remote.SpawnRequest{
+		AgentID:   agentID.String(),
+		AgentSlug: slug,
+		RepoPath:  repoRoot,
+		Command:   manifest.Commands.Start,
+	}
+	resp, err := m.spawnRemote(ctx, hostID, spawnReq)
+	if err != nil {
+		_ = m.removeAgentConfig(cfgEntry)
+		return AgentRecord{}, fmt.Errorf("add agent: %w", err)
+	}
+	sessionID, err := api.ParseSessionID(resp.SessionID)
+	if err != nil {
+		_ = m.removeAgentConfig(cfgEntry)
+		return AgentRecord{}, fmt.Errorf("add agent: %w", err)
+	}
+	state := &agentState{
+		slug:             slug,
+		repoRoot:         repoRoot,
+		worktree:         worktree,
+		config:           cfgEntry,
+		explicitRepoPath: explicitRepoPath,
+		remote:           true,
+		remoteHost:       hostID,
+		remoteSession:    sessionID,
+	}
+	m.mu.Lock()
+	m.agents[agentID] = state
+	m.nameIndex[req.Name] = append(m.nameIndex[req.Name], agentID)
+	m.cfg.Agents = append(m.cfg.Agents, cfgEntry)
+	m.mu.Unlock()
+	record := AgentRecord{
+		ID:       agentID,
+		Name:     req.Name,
+		About:    req.About,
+		Adapter:  req.Adapter,
+		RepoRoot: repoRoot,
+		Worktree: worktree,
+		Slug:     slug,
+		Presence: statePresence(state.runtime),
+		Location: location,
+	}
+	m.emitAgentEvent(ctx, "agent.added", record)
+	return record, nil
+}
+
 // RemoveAgent removes an agent and its worktree.
-func (m *LocalManager) RemoveAgent(ctx context.Context, req RemoveRequest) error {
+func (m *Manager) RemoveAgent(ctx context.Context, req RemoveRequest) error {
 	state, id, err := m.findAgent(req)
 	if err != nil {
 		return fmt.Errorf("remove agent: %w", err)
@@ -228,8 +339,10 @@ func (m *LocalManager) RemoveAgent(ctx context.Context, req RemoveRequest) error
 	if err := m.removeAgentConfig(state.config); err != nil {
 		return fmt.Errorf("remove agent: %w", err)
 	}
-	if err := m.git.RemoveWorktree(ctx, state.repoRoot, state.slug, m.cfg.Shutdown.CleanupWorktrees); err != nil {
-		return fmt.Errorf("remove agent: %w", err)
+	if !state.remote {
+		if err := m.git.RemoveWorktree(ctx, state.repoRoot, state.slug, m.cfg.Shutdown.CleanupWorktrees); err != nil {
+			return fmt.Errorf("remove agent: %w", err)
+		}
 	}
 	m.mu.Lock()
 	delete(m.agents, id)
@@ -241,11 +354,20 @@ func (m *LocalManager) RemoveAgent(ctx context.Context, req RemoveRequest) error
 }
 
 // ListAgents returns the current roster.
-func (m *LocalManager) ListAgents() ([]AgentRecord, error) {
+func (m *Manager) ListAgents() ([]AgentRecord, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	records := make([]AgentRecord, 0, len(m.agents))
 	for id, state := range m.agents {
+		location := api.Location{Type: api.LocationLocal}
+		if state.runtime != nil {
+			location = state.runtime.Location
+		} else if state.config.Location.Type != "" {
+			locType, err := api.ParseLocationType(state.config.Location.Type)
+			if err == nil {
+				location = api.Location{Type: locType, Host: state.config.Location.Host, RepoPath: state.config.Location.RepoPath}
+			}
+		}
 		records = append(records, AgentRecord{
 			ID:       id,
 			Name:     state.config.Name,
@@ -255,14 +377,14 @@ func (m *LocalManager) ListAgents() ([]AgentRecord, error) {
 			Worktree: state.worktree,
 			Slug:     state.slug,
 			Presence: statePresence(state.runtime),
-			Location: state.runtime.Location,
+			Location: location,
 		})
 	}
 	return records, nil
 }
 
 // StartAgent starts an existing agent session.
-func (m *LocalManager) StartAgent(ctx context.Context, id api.AgentID) error {
+func (m *Manager) StartAgent(ctx context.Context, id api.AgentID) error {
 	if _, err := m.startSession(ctx, id); err != nil {
 		return fmt.Errorf("start agent: %w", err)
 	}
@@ -270,7 +392,7 @@ func (m *LocalManager) StartAgent(ctx context.Context, id api.AgentID) error {
 }
 
 // StopAgent stops a running agent session.
-func (m *LocalManager) StopAgent(ctx context.Context, id api.AgentID) error {
+func (m *Manager) StopAgent(ctx context.Context, id api.AgentID) error {
 	if err := m.stopSession(ctx, id); err != nil {
 		return fmt.Errorf("stop agent: %w", err)
 	}
@@ -278,7 +400,7 @@ func (m *LocalManager) StopAgent(ctx context.Context, id api.AgentID) error {
 }
 
 // Shutdown drains all running sessions and optionally forces termination.
-func (m *LocalManager) Shutdown(ctx context.Context, force bool) error {
+func (m *Manager) Shutdown(ctx context.Context, force bool) error {
 	if m == nil {
 		return nil
 	}
@@ -313,12 +435,19 @@ func (m *LocalManager) Shutdown(ctx context.Context, force bool) error {
 }
 
 // KillAgent forces a running agent session to stop.
-func (m *LocalManager) KillAgent(ctx context.Context, id api.AgentID) error {
+func (m *Manager) KillAgent(ctx context.Context, id api.AgentID) error {
 	m.mu.Lock()
 	state := m.agents[id]
 	if state == nil {
 		m.mu.Unlock()
 		return fmt.Errorf("kill agent: %w", ErrAgentNotFound)
+	}
+	if state.remote {
+		m.mu.Unlock()
+		if err := m.stopSession(ctx, id); err != nil {
+			return fmt.Errorf("kill agent: %w", err)
+		}
+		return nil
 	}
 	sess := state.session
 	m.mu.Unlock()
@@ -332,14 +461,23 @@ func (m *LocalManager) KillAgent(ctx context.Context, id api.AgentID) error {
 }
 
 // RestartAgent restarts a running agent session.
-func (m *LocalManager) RestartAgent(ctx context.Context, id api.AgentID) error {
+func (m *Manager) RestartAgent(ctx context.Context, id api.AgentID) error {
 	m.mu.Lock()
 	state := m.agents[id]
 	sess := (*session.LocalSession)(nil)
-	if state != nil {
+	if state != nil && !state.remote {
 		sess = state.session
 	}
 	m.mu.Unlock()
+	if state != nil && state.remote {
+		if err := m.stopSession(ctx, id); err != nil {
+			return fmt.Errorf("restart agent: %w", err)
+		}
+		if _, err := m.startSession(ctx, id); err != nil {
+			return fmt.Errorf("restart agent: %w", err)
+		}
+		return nil
+	}
 	if sess == nil {
 		if _, err := m.startSession(ctx, id); err != nil {
 			return fmt.Errorf("restart agent: %w", err)
@@ -353,7 +491,7 @@ func (m *LocalManager) RestartAgent(ctx context.Context, id api.AgentID) error {
 }
 
 // AttachAgent attaches to a running agent PTY.
-func (m *LocalManager) AttachAgent(id api.AgentID) (net.Conn, error) {
+func (m *Manager) AttachAgent(id api.AgentID) (net.Conn, error) {
 	m.mu.Lock()
 	state := m.agents[id]
 	sess := (*session.LocalSession)(nil)
@@ -361,6 +499,16 @@ func (m *LocalManager) AttachAgent(id api.AgentID) (net.Conn, error) {
 		sess = state.session
 	}
 	m.mu.Unlock()
+	if state != nil && state.remote {
+		if state.remoteSession.IsZero() {
+			return nil, fmt.Errorf("attach agent: %w", ErrAgentNotFound)
+		}
+		conn, err := m.remoteDirector.AttachPTY(context.Background(), state.remoteHost, state.remoteSession)
+		if err != nil {
+			return nil, fmt.Errorf("attach agent: %w", err)
+		}
+		return conn, nil
+	}
 	if sess == nil {
 		return nil, fmt.Errorf("attach agent: %w", ErrAgentNotFound)
 	}
@@ -372,12 +520,15 @@ func (m *LocalManager) AttachAgent(id api.AgentID) (net.Conn, error) {
 }
 
 // MergeAgent integrates an agent branch into a target branch.
-func (m *LocalManager) MergeAgent(ctx context.Context, id api.AgentID, strategy git.MergeStrategy, targetBranch string) (git.MergeResult, error) {
+func (m *Manager) MergeAgent(ctx context.Context, id api.AgentID, strategy git.MergeStrategy, targetBranch string) (git.MergeResult, error) {
 	m.mu.Lock()
 	state := m.agents[id]
 	m.mu.Unlock()
 	if state == nil {
 		return git.MergeResult{}, fmt.Errorf("merge agent: %w", ErrAgentNotFound)
+	}
+	if state.remote {
+		return git.MergeResult{}, fmt.Errorf("merge agent: %w", ErrAgentInvalid)
 	}
 	if strategy == "" {
 		strategy = git.MergeStrategy(m.cfg.Git.Merge.Strategy)
@@ -424,12 +575,18 @@ func (m *LocalManager) MergeAgent(ctx context.Context, id api.AgentID, strategy 
 	return result, nil
 }
 
-func (m *LocalManager) startSession(ctx context.Context, id api.AgentID) (*session.LocalSession, error) {
+func (m *Manager) startSession(ctx context.Context, id api.AgentID) (*session.LocalSession, error) {
 	m.mu.Lock()
 	state := m.agents[id]
 	m.mu.Unlock()
 	if state == nil {
 		return nil, fmt.Errorf("start session: %w", ErrAgentNotFound)
+	}
+	if state.remote {
+		if err := m.startRemoteSession(ctx, id, state); err != nil {
+			return nil, fmt.Errorf("start session: %w", err)
+		}
+		return nil, nil
 	}
 	if state.session != nil {
 		return state.session, nil
@@ -467,12 +624,25 @@ func (m *LocalManager) startSession(ctx context.Context, id api.AgentID) (*sessi
 	return sess, nil
 }
 
-func (m *LocalManager) stopSession(ctx context.Context, id api.AgentID) error {
+func (m *Manager) stopSession(ctx context.Context, id api.AgentID) error {
 	m.mu.Lock()
 	state := m.agents[id]
 	if state == nil {
 		m.mu.Unlock()
 		return fmt.Errorf("stop session: %w", ErrAgentNotFound)
+	}
+	if state.remote {
+		hostID := state.remoteHost
+		sessionID := state.remoteSession
+		state.remoteSession = api.SessionID{}
+		m.mu.Unlock()
+		if sessionID.IsZero() {
+			return nil
+		}
+		if _, err := m.remoteDirector.Kill(ctx, hostID, remote.KillRequest{SessionID: sessionID.String()}); err != nil {
+			return fmt.Errorf("stop session: %w", err)
+		}
+		return nil
 	}
 	sess := state.session
 	state.session = nil
@@ -486,7 +656,70 @@ func (m *LocalManager) stopSession(ctx context.Context, id api.AgentID) error {
 	return nil
 }
 
-func (m *LocalManager) baseBranch(ctx context.Context, repoRoot string) (string, error) {
+func (m *Manager) startRemoteSession(ctx context.Context, id api.AgentID, state *agentState) error {
+	if state == nil {
+		return fmt.Errorf("start remote session: %w", ErrAgentNotFound)
+	}
+	if !state.remoteSession.IsZero() {
+		return nil
+	}
+	registry, err := m.registry(m.resolver)
+	if err != nil {
+		return fmt.Errorf("start remote session: %w", err)
+	}
+	adapterInstance, err := registry.Load(ctx, state.config.Adapter)
+	if err != nil {
+		return fmt.Errorf("start remote session: %w", err)
+	}
+	manifest := adapterInstance.Manifest()
+	if len(manifest.Commands.Start) == 0 {
+		return fmt.Errorf("start remote session: %w", ErrAgentInvalid)
+	}
+	req := remote.SpawnRequest{
+		AgentID:   id.String(),
+		AgentSlug: state.slug,
+		RepoPath:  state.repoRoot,
+		Command:   manifest.Commands.Start,
+	}
+	resp, err := m.spawnRemote(ctx, state.remoteHost, req)
+	if err != nil {
+		return fmt.Errorf("start remote session: %w", err)
+	}
+	sessionID, err := api.ParseSessionID(resp.SessionID)
+	if err != nil {
+		return fmt.Errorf("start remote session: %w", err)
+	}
+	m.mu.Lock()
+	state.remoteSession = sessionID
+	m.mu.Unlock()
+	return nil
+}
+
+func (m *Manager) spawnRemote(ctx context.Context, hostID api.HostID, req remote.SpawnRequest) (remote.SpawnResponse, error) {
+	timeout := m.cfg.Remote.RequestTimeout
+	if timeout <= 0 {
+		timeout = 5 * time.Second
+	}
+	deadline := time.Now().Add(timeout)
+	for {
+		resp, err := m.remoteDirector.Spawn(ctx, hostID, req)
+		if err == nil {
+			return resp, nil
+		}
+		if !errors.Is(err, remote.ErrNotReady) {
+			return remote.SpawnResponse{}, err
+		}
+		if ctx.Err() != nil {
+			return remote.SpawnResponse{}, fmt.Errorf("spawn remote: %w", ctx.Err())
+		}
+		if time.Now().After(deadline) {
+			return remote.SpawnResponse{}, err
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+}
+
+func (m *Manager) baseBranch(ctx context.Context, repoRoot string) (string, error) {
 	m.mu.Lock()
 	base := m.bases[repoRoot]
 	m.mu.Unlock()
@@ -506,7 +739,7 @@ func (m *LocalManager) baseBranch(ctx context.Context, repoRoot string) (string,
 	return branch, nil
 }
 
-func (m *LocalManager) registry(resolver *paths.Resolver) (adapter.Registry, error) {
+func (m *Manager) registry(resolver *paths.Resolver) (adapter.Registry, error) {
 	key := resolver.RepoRoot()
 	m.mu.Lock()
 	reg := m.registries[key]
@@ -531,7 +764,7 @@ func (m *LocalManager) registry(resolver *paths.Resolver) (adapter.Registry, err
 }
 
 // SetRegistryFactory overrides the adapter registry factory.
-func (m *LocalManager) SetRegistryFactory(factory func(*paths.Resolver) (adapter.Registry, error)) {
+func (m *Manager) SetRegistryFactory(factory func(*paths.Resolver) (adapter.Registry, error)) {
 	if m == nil || factory == nil {
 		return
 	}
@@ -540,7 +773,7 @@ func (m *LocalManager) SetRegistryFactory(factory func(*paths.Resolver) (adapter
 	m.registryFactory = factory
 }
 
-func (m *LocalManager) resolveLocation(req AddRequest) (api.Location, string, error) {
+func (m *Manager) resolveLocation(req AddRequest) (api.Location, string, error) {
 	location := req.Location
 	if location.Type == api.LocationLocal {
 		repoRoot := location.RepoPath
@@ -569,10 +802,19 @@ func (m *LocalManager) resolveLocation(req AddRequest) (api.Location, string, er
 		location.RepoPath = canonical
 		return location, canonical, nil
 	}
+	if location.Type == api.LocationSSH {
+		if strings.TrimSpace(location.Host) == "" {
+			return api.Location{}, "", fmt.Errorf("location: %w", ErrAgentInvalid)
+		}
+		if strings.TrimSpace(location.RepoPath) == "" {
+			return api.Location{}, "", fmt.Errorf("location: %w", ErrRepoPathRequired)
+		}
+		return location, location.RepoPath, nil
+	}
 	return api.Location{}, "", fmt.Errorf("location: %w", ErrAgentInvalid)
 }
 
-func (m *LocalManager) validateMultiRepo(repoRoot string, explicitRepoPath bool) error {
+func (m *Manager) validateMultiRepo(repoRoot string, explicitRepoPath bool) error {
 	if m == nil {
 		return nil
 	}
@@ -608,7 +850,7 @@ func (m *LocalManager) validateMultiRepo(repoRoot string, explicitRepoPath bool)
 	return nil
 }
 
-func (m *LocalManager) findAgent(req RemoveRequest) (*agentState, api.AgentID, error) {
+func (m *Manager) findAgent(req RemoveRequest) (*agentState, api.AgentID, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if !req.AgentID.IsZero() {
@@ -637,7 +879,7 @@ func (m *LocalManager) findAgent(req RemoveRequest) (*agentState, api.AgentID, e
 	return state, id, nil
 }
 
-func (m *LocalManager) loadFromConfig(ctx context.Context) error {
+func (m *Manager) loadFromConfig(ctx context.Context) error {
 	used := make(map[string]struct{})
 	for _, entry := range m.cfg.Agents {
 		explicitRepoPath := strings.TrimSpace(entry.Location.RepoPath) != ""
@@ -658,44 +900,75 @@ func (m *LocalManager) loadFromConfig(ctx context.Context) error {
 			if err := ensureGitRepo(repoRoot); err != nil {
 				return fmt.Errorf("load agent: %w", err)
 			}
+			canonical, err := paths.CanonicalizeRepoRoot(repoRoot, m.resolver.HomeDir())
+			if err != nil {
+				return fmt.Errorf("load agent: %w", err)
+			}
+			if err := m.validateMultiRepo(canonical, explicitRepoPath); err != nil {
+				return fmt.Errorf("load agent: %w", err)
+			}
+			location.RepoPath = canonical
+			slug := paths.UniqueAgentSlug(entry.Name, used)
+			used[slug] = struct{}{}
+			worktree := paths.WorktreePathForRepo(canonical, slug)
+			agentMeta, err := api.NewAgent(entry.Name, entry.About, api.AdapterRef(entry.Adapter), canonical, worktree, location)
+			if err != nil {
+				return fmt.Errorf("load agent: %w", err)
+			}
+			runtime, err := agent.NewAgent(agentMeta, m.dispatcher)
+			if err != nil {
+				return fmt.Errorf("load agent: %w", err)
+			}
+			state := &agentState{
+				runtime:          runtime,
+				slug:             slug,
+				repoRoot:         canonical,
+				worktree:         worktree,
+				config:           entry,
+				explicitRepoPath: explicitRepoPath,
+			}
+			m.agents[agentMeta.ID] = state
+			m.nameIndex[entry.Name] = append(m.nameIndex[entry.Name], agentMeta.ID)
+			if _, err := m.baseBranch(ctx, canonical); err != nil {
+				return fmt.Errorf("load agent: %w", err)
+			}
+			continue
 		}
-		canonical, err := paths.CanonicalizeRepoRoot(repoRoot, m.resolver.HomeDir())
-		if err != nil {
-			return fmt.Errorf("load agent: %w", err)
+		if locType == api.LocationSSH {
+			if strings.TrimSpace(location.Host) == "" {
+				return fmt.Errorf("load agent: %w", ErrAgentInvalid)
+			}
+			if strings.TrimSpace(repoRoot) == "" {
+				return fmt.Errorf("load agent: %w", ErrRepoPathRequired)
+			}
+			location.RepoPath = repoRoot
+			slug := paths.UniqueAgentSlug(entry.Name, used)
+			used[slug] = struct{}{}
+			worktree := paths.WorktreePathForRepo(repoRoot, slug)
+			agentID := api.NewAgentID()
+			hostID, err := api.ParseHostID(location.Host)
+			if err != nil {
+				return fmt.Errorf("load agent: %w", err)
+			}
+			state := &agentState{
+				slug:             slug,
+				repoRoot:         repoRoot,
+				worktree:         worktree,
+				config:           entry,
+				explicitRepoPath: explicitRepoPath,
+				remote:           true,
+				remoteHost:       hostID,
+			}
+			m.agents[agentID] = state
+			m.nameIndex[entry.Name] = append(m.nameIndex[entry.Name], agentID)
+			continue
 		}
-		if err := m.validateMultiRepo(canonical, explicitRepoPath); err != nil {
-			return fmt.Errorf("load agent: %w", err)
-		}
-		location.RepoPath = canonical
-		slug := paths.UniqueAgentSlug(entry.Name, used)
-		used[slug] = struct{}{}
-		worktree := paths.WorktreePathForRepo(canonical, slug)
-		agentMeta, err := api.NewAgent(entry.Name, entry.About, api.AdapterRef(entry.Adapter), canonical, worktree, location)
-		if err != nil {
-			return fmt.Errorf("load agent: %w", err)
-		}
-		runtime, err := agent.NewAgent(agentMeta, m.dispatcher)
-		if err != nil {
-			return fmt.Errorf("load agent: %w", err)
-		}
-		state := &agentState{
-			runtime:          runtime,
-			slug:             slug,
-			repoRoot:         canonical,
-			worktree:         worktree,
-			config:           entry,
-			explicitRepoPath: explicitRepoPath,
-		}
-		m.agents[agentMeta.ID] = state
-		m.nameIndex[entry.Name] = append(m.nameIndex[entry.Name], agentMeta.ID)
-		if _, err := m.baseBranch(ctx, canonical); err != nil {
-			return fmt.Errorf("load agent: %w", err)
-		}
+		return fmt.Errorf("load agent: %w", ErrAgentInvalid)
 	}
 	return nil
 }
 
-func (m *LocalManager) appendAgentConfig(entry config.AgentConfig) error {
+func (m *Manager) appendAgentConfig(entry config.AgentConfig) error {
 	path := m.resolver.ProjectConfigPath()
 	raw, err := config.LoadConfigFile(path)
 	if err != nil {
@@ -714,7 +987,7 @@ func (m *LocalManager) appendAgentConfig(entry config.AgentConfig) error {
 	return nil
 }
 
-func (m *LocalManager) removeAgentConfig(entry config.AgentConfig) error {
+func (m *Manager) removeAgentConfig(entry config.AgentConfig) error {
 	path := m.resolver.ProjectConfigPath()
 	raw, err := config.LoadConfigFile(path)
 	if err != nil {
@@ -852,7 +1125,7 @@ func lastStateSegment(state string) string {
 	return state[idx+1:]
 }
 
-func (m *LocalManager) removeNameIndexLocked(name string, id api.AgentID) {
+func (m *Manager) removeNameIndexLocked(name string, id api.AgentID) {
 	ids := m.nameIndex[name]
 	if len(ids) == 0 {
 		return
@@ -871,7 +1144,7 @@ func (m *LocalManager) removeNameIndexLocked(name string, id api.AgentID) {
 	m.nameIndex[name] = updated
 }
 
-func (m *LocalManager) removeConfigEntryLocked(entry config.AgentConfig) {
+func (m *Manager) removeConfigEntryLocked(entry config.AgentConfig) {
 	filtered := m.cfg.Agents[:0]
 	removed := false
 	for _, candidate := range m.cfg.Agents {

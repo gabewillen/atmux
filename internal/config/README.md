@@ -1127,6 +1127,8 @@ type RemoteManagerConfig struct {
 	Enabled bool
 	// Model selects the default model.
 	Model string
+	// HostID sets the stable host_id for manager role.
+	HostID string
 }
 ```
 

@@ -6,7 +6,7 @@ import (
 
 func TestEnvOverrides(t *testing.T) {
 	env := map[string]string{
-		"AMUX__GENERAL__LOG_LEVEL": "info",
+		"AMUX__GENERAL__LOG_LEVEL":                     "info",
 		"AMUX__ADAPTERS__CLAUDE_CODE__CLI__CONSTRAINT": ">=1.0.0",
 	}
 	overrides, err := EnvOverrides(env)

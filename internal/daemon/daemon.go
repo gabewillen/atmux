@@ -15,6 +15,7 @@ import (
 	"github.com/agentflare-ai/amux/internal/manager"
 	"github.com/agentflare-ai/amux/internal/paths"
 	"github.com/agentflare-ai/amux/internal/protocol"
+	"github.com/agentflare-ai/amux/internal/remote"
 	"github.com/agentflare-ai/amux/internal/rpc"
 )
 
@@ -29,7 +30,8 @@ const (
 type Daemon struct {
 	resolver   *paths.Resolver
 	cfg        config.Config
-	manager    *manager.LocalManager
+	manager    *manager.Manager
+	hostMgr    *remote.HostManager
 	dispatcher protocol.Dispatcher
 	server     *rpc.Server
 	listener   net.Listener
@@ -49,50 +51,68 @@ func New(ctx context.Context, resolver *paths.Resolver, cfg config.Config, logge
 	}
 	var embedded *protocol.EmbeddedServer
 	var dispatcher protocol.Dispatcher
-	mode := strings.TrimSpace(cfg.NATS.Mode)
-	if mode == "" || mode == "embedded" {
-		addr := cfg.NATS.Listen
-		if strings.TrimSpace(addr) == "" {
-			addr = "127.0.0.1:0"
+	var mgr *manager.Manager
+	var hostMgr *remote.HostManager
+	var err error
+	role := strings.TrimSpace(cfg.Node.Role)
+	if role == "" {
+		role = "director"
+	}
+	if role != "manager" {
+		mode := strings.TrimSpace(cfg.NATS.Mode)
+		if mode == "" || mode == "embedded" {
+			addr := cfg.NATS.Listen
+			if strings.TrimSpace(addr) == "" {
+				addr = "127.0.0.1:0"
+			}
+			server, err := protocol.StartEmbeddedServer(ctx, addr, protocol.EmbeddedServerConfig{})
+			if err != nil {
+				return nil, fmt.Errorf("daemon: %w", err)
+			}
+			embedded = server
+			dispatcher, err = protocol.NewNATSDispatcher(ctx, server.URL(), protocol.NATSOptions{})
+			if err != nil {
+				_ = server.Close()
+				return nil, fmt.Errorf("daemon: %w", err)
+			}
+		} else {
+			url := cfg.Remote.NATS.URL
+			if strings.TrimSpace(url) == "" {
+				url = cfg.NATS.HubURL
+			}
+			d, err := protocol.NewNATSDispatcher(ctx, url, protocol.NATSOptions{})
+			if err != nil {
+				return nil, fmt.Errorf("daemon: %w", err)
+			}
+			dispatcher = d
 		}
-		server, err := protocol.StartEmbeddedServer(ctx, addr)
+		mgr, err = manager.NewManager(ctx, resolver, cfg, dispatcher, AmuxVersion)
 		if err != nil {
-			return nil, fmt.Errorf("daemon: %w", err)
-		}
-		embedded = server
-		dispatcher, err = protocol.NewNATSDispatcher(ctx, server.URL())
-		if err != nil {
-			_ = server.Close()
+			if embedded != nil {
+				_ = embedded.Close()
+			}
 			return nil, fmt.Errorf("daemon: %w", err)
 		}
 	} else {
-		url := cfg.Remote.NATS.URL
-		if strings.TrimSpace(url) == "" {
-			url = cfg.NATS.HubURL
-		}
-		d, err := protocol.NewNATSDispatcher(ctx, url)
+		remoteMgr, err := remote.NewHostManager(cfg, resolver)
 		if err != nil {
 			return nil, fmt.Errorf("daemon: %w", err)
 		}
-		dispatcher = d
-	}
-	mgr, err := manager.NewLocalManager(ctx, resolver, cfg, dispatcher)
-	if err != nil {
-		if embedded != nil {
-			_ = embedded.Close()
-		}
-		return nil, fmt.Errorf("daemon: %w", err)
+		hostMgr = remoteMgr
 	}
 	daemon := &Daemon{
 		resolver:   resolver,
 		cfg:        cfg,
 		manager:    mgr,
+		hostMgr:    hostMgr,
 		dispatcher: dispatcher,
 		embedded:   embedded,
 		logger:     logger,
 		server:     rpc.NewServer(logger),
 	}
-	daemon.registerHandlers()
+	if mgr != nil {
+		daemon.registerHandlers()
+	}
 	return daemon, nil
 }
 
@@ -100,6 +120,11 @@ func New(ctx context.Context, resolver *paths.Resolver, cfg config.Config, logge
 func (d *Daemon) Serve(ctx context.Context) error {
 	if d == nil {
 		return fmt.Errorf("daemon serve: daemon is nil")
+	}
+	if d.hostMgr != nil {
+		go func() {
+			_ = d.hostMgr.Start(ctx)
+		}()
 	}
 	socketPath := d.cfg.Daemon.SocketPath
 	if socketPath == "" {

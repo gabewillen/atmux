@@ -74,7 +74,7 @@ var shutdownModel = hsm.Define(
 
 type shutdownController struct {
 	hsm.HSM
-	manager *LocalManager
+	manager *Manager
 	done    chan struct{}
 	errMu   sync.Mutex
 	err     error
@@ -89,7 +89,7 @@ type shutdownTarget struct {
 	runtime  *agent.Agent
 }
 
-func newShutdownController(m *LocalManager) *shutdownController {
+func newShutdownController(m *Manager) *shutdownController {
 	return &shutdownController{
 		manager: m,
 		done:    make(chan struct{}),
@@ -179,7 +179,7 @@ func (s *shutdownController) error() error {
 	return s.err
 }
 
-func (m *LocalManager) shutdownTargets() []shutdownTarget {
+func (m *Manager) shutdownTargets() []shutdownTarget {
 	if m == nil {
 		return nil
 	}
@@ -188,6 +188,9 @@ func (m *LocalManager) shutdownTargets() []shutdownTarget {
 	targets := make([]shutdownTarget, 0, len(m.agents))
 	for id, state := range m.agents {
 		if state == nil {
+			continue
+		}
+		if state.remote {
 			continue
 		}
 		targets = append(targets, shutdownTarget{
@@ -201,7 +204,7 @@ func (m *LocalManager) shutdownTargets() []shutdownTarget {
 	return targets
 }
 
-func (m *LocalManager) dispatchAgentLifecycle(ctx context.Context, targets []shutdownTarget, name string) {
+func (m *Manager) dispatchAgentLifecycle(ctx context.Context, targets []shutdownTarget, name string) {
 	if m == nil {
 		return
 	}
@@ -213,7 +216,7 @@ func (m *LocalManager) dispatchAgentLifecycle(ctx context.Context, targets []shu
 	}
 }
 
-func (m *LocalManager) drainSessions(ctx context.Context, targets []shutdownTarget) (bool, error) {
+func (m *Manager) drainSessions(ctx context.Context, targets []shutdownTarget) (bool, error) {
 	if m == nil {
 		return false, nil
 	}
@@ -249,7 +252,7 @@ func (m *LocalManager) drainSessions(ctx context.Context, targets []shutdownTarg
 	return errors.Is(drainCtx.Err(), context.DeadlineExceeded), errOut
 }
 
-func (m *LocalManager) forceTerminate(ctx context.Context, targets []shutdownTarget) error {
+func (m *Manager) forceTerminate(ctx context.Context, targets []shutdownTarget) error {
 	if m == nil {
 		return nil
 	}
@@ -278,7 +281,7 @@ func (m *LocalManager) forceTerminate(ctx context.Context, targets []shutdownTar
 	return errOut
 }
 
-func (m *LocalManager) clearSessions(targets []shutdownTarget) {
+func (m *Manager) clearSessions(targets []shutdownTarget) {
 	if m == nil {
 		return
 	}
@@ -295,7 +298,7 @@ func (m *LocalManager) clearSessions(targets []shutdownTarget) {
 	}
 }
 
-func (m *LocalManager) cleanupWorktrees(ctx context.Context, targets []shutdownTarget) error {
+func (m *Manager) cleanupWorktrees(ctx context.Context, targets []shutdownTarget) error {
 	if m == nil {
 		return nil
 	}
@@ -314,15 +317,15 @@ func (m *LocalManager) cleanupWorktrees(ctx context.Context, targets []shutdownT
 	return errOut
 }
 
-func (m *LocalManager) emitAgentEvent(ctx context.Context, name string, payload any) {
+func (m *Manager) emitAgentEvent(ctx context.Context, name string, payload any) {
 	m.emitEvent(ctx, "agent", name, payload)
 }
 
-func (m *LocalManager) emitSystemEvent(ctx context.Context, name string, payload any) {
+func (m *Manager) emitSystemEvent(ctx context.Context, name string, payload any) {
 	m.emitEvent(ctx, "system", name, payload)
 }
 
-func (m *LocalManager) emitEvent(ctx context.Context, category string, name string, payload any) {
+func (m *Manager) emitEvent(ctx context.Context, category string, name string, payload any) {
 	if m == nil || m.dispatcher == nil {
 		return
 	}
@@ -331,7 +334,7 @@ func (m *LocalManager) emitEvent(ctx context.Context, category string, name stri
 	_ = m.dispatcher.Publish(ctx, subject, event)
 }
 
-func (m *LocalManager) ensureShutdownController() *shutdownController {
+func (m *Manager) ensureShutdownController() *shutdownController {
 	if m == nil {
 		return nil
 	}
@@ -346,7 +349,7 @@ func (m *LocalManager) ensureShutdownController() *shutdownController {
 	return controller
 }
 
-func (m *LocalManager) releaseShutdownController(controller *shutdownController) {
+func (m *Manager) releaseShutdownController(controller *shutdownController) {
 	if m == nil || controller == nil {
 		return
 	}

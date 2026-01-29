@@ -4,6 +4,7 @@ import (
 	"context"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/agentflare-ai/amux/internal/protocol"
 	"github.com/agentflare-ai/amux/pkg/api"
@@ -30,6 +31,39 @@ func (r *recordDispatcher) Subscribe(ctx context.Context, subject string, handle
 	_ = subject
 	_ = handler
 	return nil, nil
+}
+
+func (r *recordDispatcher) PublishRaw(ctx context.Context, subject string, payload []byte, reply string) error {
+	_ = ctx
+	_ = subject
+	_ = payload
+	_ = reply
+	return nil
+}
+
+func (r *recordDispatcher) SubscribeRaw(ctx context.Context, subject string, handler func(protocol.Message)) (protocol.Subscription, error) {
+	_ = ctx
+	_ = subject
+	_ = handler
+	return nil, nil
+}
+
+func (r *recordDispatcher) Request(ctx context.Context, subject string, payload []byte, timeout time.Duration) (protocol.Message, error) {
+	_ = ctx
+	_ = subject
+	_ = payload
+	_ = timeout
+	return protocol.Message{}, nil
+}
+
+func (r *recordDispatcher) MaxPayload() int {
+	return 1024 * 1024
+}
+
+func (r *recordDispatcher) Closed() <-chan struct{} {
+	ch := make(chan struct{})
+	close(ch)
+	return ch
 }
 
 func TestLifecycleTransitions(t *testing.T) {

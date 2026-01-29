@@ -76,6 +76,39 @@ func (r *recordDispatcher) Subscribe(ctx context.Context, subject string, handle
 	return nil, nil
 }
 
+func (r *recordDispatcher) PublishRaw(ctx context.Context, subject string, payload []byte, reply string) error {
+	_ = ctx
+	_ = subject
+	_ = payload
+	_ = reply
+	return nil
+}
+
+func (r *recordDispatcher) SubscribeRaw(ctx context.Context, subject string, handler func(protocol.Message)) (protocol.Subscription, error) {
+	_ = ctx
+	_ = subject
+	_ = handler
+	return nil, nil
+}
+
+func (r *recordDispatcher) Request(ctx context.Context, subject string, payload []byte, timeout time.Duration) (protocol.Message, error) {
+	_ = ctx
+	_ = subject
+	_ = payload
+	_ = timeout
+	return protocol.Message{}, nil
+}
+
+func (r *recordDispatcher) MaxPayload() int {
+	return 1024 * 1024
+}
+
+func (r *recordDispatcher) Closed() <-chan struct{} {
+	ch := make(chan struct{})
+	close(ch)
+	return ch
+}
+
 func TestAddAgentWritesConfig(t *testing.T) {
 	repoRoot := initRepo(t)
 	resolver, err := paths.NewResolver(repoRoot)
@@ -83,7 +116,7 @@ func TestAddAgentWritesConfig(t *testing.T) {
 		t.Fatalf("resolver: %v", err)
 	}
 	cfg := config.DefaultConfig(resolver)
-	server, err := protocol.StartEmbeddedServer(context.Background(), "127.0.0.1:0")
+	server, err := protocol.StartEmbeddedServer(context.Background(), "127.0.0.1:0", protocol.EmbeddedServerConfig{})
 	if err != nil {
 		t.Fatalf("start nats: %v", err)
 	}
@@ -92,7 +125,7 @@ func TestAddAgentWritesConfig(t *testing.T) {
 			t.Errorf("close nats: %v", err)
 		}
 	})
-	dispatcher, err := protocol.NewNATSDispatcher(context.Background(), server.URL())
+	dispatcher, err := protocol.NewNATSDispatcher(context.Background(), server.URL(), protocol.NATSOptions{})
 	if err != nil {
 		t.Fatalf("connect nats: %v", err)
 	}
@@ -101,7 +134,7 @@ func TestAddAgentWritesConfig(t *testing.T) {
 			t.Errorf("close dispatcher: %v", err)
 		}
 	})
-	mgr, err := NewLocalManager(context.Background(), resolver, cfg, dispatcher)
+	mgr, err := NewManager(context.Background(), resolver, cfg, dispatcher, "test")
 	if err != nil {
 		t.Fatalf("manager: %v", err)
 	}
@@ -142,7 +175,7 @@ func TestAddAgentRequiresRepo(t *testing.T) {
 		t.Fatalf("resolver: %v", err)
 	}
 	cfg := config.DefaultConfig(resolver)
-	server, err := protocol.StartEmbeddedServer(context.Background(), "127.0.0.1:0")
+	server, err := protocol.StartEmbeddedServer(context.Background(), "127.0.0.1:0", protocol.EmbeddedServerConfig{})
 	if err != nil {
 		t.Fatalf("start nats: %v", err)
 	}
@@ -151,7 +184,7 @@ func TestAddAgentRequiresRepo(t *testing.T) {
 			t.Errorf("close nats: %v", err)
 		}
 	})
-	dispatcher, err := protocol.NewNATSDispatcher(context.Background(), server.URL())
+	dispatcher, err := protocol.NewNATSDispatcher(context.Background(), server.URL(), protocol.NATSOptions{})
 	if err != nil {
 		t.Fatalf("connect nats: %v", err)
 	}
@@ -160,7 +193,7 @@ func TestAddAgentRequiresRepo(t *testing.T) {
 			t.Errorf("close dispatcher: %v", err)
 		}
 	})
-	mgr, err := NewLocalManager(context.Background(), resolver, cfg, dispatcher)
+	mgr, err := NewManager(context.Background(), resolver, cfg, dispatcher, "test")
 	if err != nil {
 		t.Fatalf("manager: %v", err)
 	}
@@ -188,7 +221,7 @@ func TestAddAgentRequiresRepoPathForMultiRepo(t *testing.T) {
 		t.Fatalf("resolver: %v", err)
 	}
 	cfg := config.DefaultConfig(resolver)
-	server, err := protocol.StartEmbeddedServer(context.Background(), "127.0.0.1:0")
+	server, err := protocol.StartEmbeddedServer(context.Background(), "127.0.0.1:0", protocol.EmbeddedServerConfig{})
 	if err != nil {
 		t.Fatalf("start nats: %v", err)
 	}
@@ -197,7 +230,7 @@ func TestAddAgentRequiresRepoPathForMultiRepo(t *testing.T) {
 			t.Errorf("close nats: %v", err)
 		}
 	})
-	dispatcher, err := protocol.NewNATSDispatcher(context.Background(), server.URL())
+	dispatcher, err := protocol.NewNATSDispatcher(context.Background(), server.URL(), protocol.NATSOptions{})
 	if err != nil {
 		t.Fatalf("connect nats: %v", err)
 	}
@@ -206,7 +239,7 @@ func TestAddAgentRequiresRepoPathForMultiRepo(t *testing.T) {
 			t.Errorf("close dispatcher: %v", err)
 		}
 	})
-	mgr, err := NewLocalManager(context.Background(), resolver, cfg, dispatcher)
+	mgr, err := NewManager(context.Background(), resolver, cfg, dispatcher, "test")
 	if err != nil {
 		t.Fatalf("manager: %v", err)
 	}
@@ -261,7 +294,7 @@ func TestAddAgentRequiresRepoPathForMultiRepo(t *testing.T) {
 
 func TestShutdownEmitsEvents(t *testing.T) {
 	dispatcher := &recordDispatcher{}
-	mgr := &LocalManager{
+	mgr := &Manager{
 		dispatcher: dispatcher,
 		cfg: config.Config{
 			Shutdown: config.ShutdownConfig{

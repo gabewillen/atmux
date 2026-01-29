@@ -119,7 +119,7 @@ func TestNATSDispatcherPublishSubscribe(t *testing.T) {
 	}()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	dispatcher, err := NewNATSDispatcher(ctx, "nats://"+listener.Addr().String())
+	dispatcher, err := NewNATSDispatcher(ctx, "nats://"+listener.Addr().String(), NATSOptions{})
 	if err != nil {
 		t.Fatalf("connect: %v", err)
 	}

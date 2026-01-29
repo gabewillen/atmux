@@ -13,9 +13,9 @@ Package manager manages local agents, worktrees, and sessions.
 - `func statePresence(runtime *agent.Agent) string`
 - `shutdownModel`
 - `shutdownStateRunning, shutdownStateDraining, shutdownStateTerminating, shutdownStateStopped, shutdownEventRequest, shutdownEventForce, shutdownEventDrainComplete, shutdownEventDrainTimeout, shutdownEventTerminateComplete`
-- `type AddRequest` — AddRequest describes a local agent add request.
+- `type AddRequest` — AddRequest describes an agent add request.
 - `type AgentRecord` — AgentRecord describes a managed agent.
-- `type LocalManager` — LocalManager manages local agents and sessions.
+- `type Manager` — Manager manages local and remote agents and sessions.
 - `type RemoveRequest` — RemoveRequest describes an agent removal request.
 - `type agentState`
 - `type shutdownController`
@@ -159,7 +159,7 @@ type AddRequest struct {
 }
 ```
 
-AddRequest describes a local agent add request.
+AddRequest describes an agent add request.
 
 ## type AgentRecord
 
@@ -179,14 +179,15 @@ type AgentRecord struct {
 
 AgentRecord describes a managed agent.
 
-## type LocalManager
+## type Manager
 
 ```go
-type LocalManager struct {
+type Manager struct {
 	resolver        *paths.Resolver
 	dispatcher      protocol.Dispatcher
 	cfg             config.Config
 	git             *git.Runner
+	remoteDirector  *remote.Director
 	mu              sync.Mutex
 	agents          map[api.AgentID]*agentState
 	nameIndex       map[string][]api.AgentID
@@ -198,22 +199,22 @@ type LocalManager struct {
 }
 ```
 
-LocalManager manages local agents and sessions.
+Manager manages local and remote agents and sessions.
 
-### Functions returning LocalManager
+### Functions returning Manager
 
-#### NewLocalManager
+#### NewManager
 
 ```go
-func NewLocalManager(ctx context.Context, resolver *paths.Resolver, cfg config.Config, dispatcher protocol.Dispatcher) (*LocalManager, error)
+func NewManager(ctx context.Context, resolver *paths.Resolver, cfg config.Config, dispatcher protocol.Dispatcher, version string) (*Manager, error)
 ```
 
-NewLocalManager constructs a LocalManager.
+NewManager constructs a Manager.
 
 
 ### Methods
 
-#### LocalManager.AddAgent
+#### Manager.AddAgent
 
 ```go
 func () AddAgent(ctx context.Context, req AddRequest) (AgentRecord, error)
@@ -221,7 +222,7 @@ func () AddAgent(ctx context.Context, req AddRequest) (AgentRecord, error)
 
 AddAgent adds and starts a local agent.
 
-#### LocalManager.AttachAgent
+#### Manager.AttachAgent
 
 ```go
 func () AttachAgent(id api.AgentID) (net.Conn, error)
@@ -229,7 +230,7 @@ func () AttachAgent(id api.AgentID) (net.Conn, error)
 
 AttachAgent attaches to a running agent PTY.
 
-#### LocalManager.KillAgent
+#### Manager.KillAgent
 
 ```go
 func () KillAgent(ctx context.Context, id api.AgentID) error
@@ -237,7 +238,7 @@ func () KillAgent(ctx context.Context, id api.AgentID) error
 
 KillAgent forces a running agent session to stop.
 
-#### LocalManager.ListAgents
+#### Manager.ListAgents
 
 ```go
 func () ListAgents() ([]AgentRecord, error)
@@ -245,7 +246,7 @@ func () ListAgents() ([]AgentRecord, error)
 
 ListAgents returns the current roster.
 
-#### LocalManager.MergeAgent
+#### Manager.MergeAgent
 
 ```go
 func () MergeAgent(ctx context.Context, id api.AgentID, strategy git.MergeStrategy, targetBranch string) (git.MergeResult, error)
@@ -253,7 +254,7 @@ func () MergeAgent(ctx context.Context, id api.AgentID, strategy git.MergeStrate
 
 MergeAgent integrates an agent branch into a target branch.
 
-#### LocalManager.RemoveAgent
+#### Manager.RemoveAgent
 
 ```go
 func () RemoveAgent(ctx context.Context, req RemoveRequest) error
@@ -261,7 +262,7 @@ func () RemoveAgent(ctx context.Context, req RemoveRequest) error
 
 RemoveAgent removes an agent and its worktree.
 
-#### LocalManager.RestartAgent
+#### Manager.RestartAgent
 
 ```go
 func () RestartAgent(ctx context.Context, id api.AgentID) error
@@ -269,7 +270,7 @@ func () RestartAgent(ctx context.Context, id api.AgentID) error
 
 RestartAgent restarts a running agent session.
 
-#### LocalManager.SetRegistryFactory
+#### Manager.SetRegistryFactory
 
 ```go
 func () SetRegistryFactory(factory func(*paths.Resolver) (adapter.Registry, error))
@@ -277,7 +278,7 @@ func () SetRegistryFactory(factory func(*paths.Resolver) (adapter.Registry, erro
 
 SetRegistryFactory overrides the adapter registry factory.
 
-#### LocalManager.Shutdown
+#### Manager.Shutdown
 
 ```go
 func () Shutdown(ctx context.Context, force bool) error
@@ -285,7 +286,7 @@ func () Shutdown(ctx context.Context, force bool) error
 
 Shutdown drains all running sessions and optionally forces termination.
 
-#### LocalManager.StartAgent
+#### Manager.StartAgent
 
 ```go
 func () StartAgent(ctx context.Context, id api.AgentID) error
@@ -293,7 +294,7 @@ func () StartAgent(ctx context.Context, id api.AgentID) error
 
 StartAgent starts an existing agent session.
 
-#### LocalManager.StopAgent
+#### Manager.StopAgent
 
 ```go
 func () StopAgent(ctx context.Context, id api.AgentID) error
@@ -301,139 +302,157 @@ func () StopAgent(ctx context.Context, id api.AgentID) error
 
 StopAgent stops a running agent session.
 
-#### LocalManager.appendAgentConfig
+#### Manager.addRemoteAgent
+
+```go
+func () addRemoteAgent(ctx context.Context, req AddRequest, location api.Location, repoRoot string, explicitRepoPath bool) (AgentRecord, error)
+```
+
+#### Manager.appendAgentConfig
 
 ```go
 func () appendAgentConfig(entry config.AgentConfig) error
 ```
 
-#### LocalManager.baseBranch
+#### Manager.baseBranch
 
 ```go
 func () baseBranch(ctx context.Context, repoRoot string) (string, error)
 ```
 
-#### LocalManager.cleanupWorktrees
+#### Manager.cleanupWorktrees
 
 ```go
 func () cleanupWorktrees(ctx context.Context, targets []shutdownTarget) error
 ```
 
-#### LocalManager.clearSessions
+#### Manager.clearSessions
 
 ```go
 func () clearSessions(targets []shutdownTarget)
 ```
 
-#### LocalManager.dispatchAgentLifecycle
+#### Manager.dispatchAgentLifecycle
 
 ```go
 func () dispatchAgentLifecycle(ctx context.Context, targets []shutdownTarget, name string)
 ```
 
-#### LocalManager.drainSessions
+#### Manager.drainSessions
 
 ```go
 func () drainSessions(ctx context.Context, targets []shutdownTarget) (bool, error)
 ```
 
-#### LocalManager.emitAgentEvent
+#### Manager.emitAgentEvent
 
 ```go
 func () emitAgentEvent(ctx context.Context, name string, payload any)
 ```
 
-#### LocalManager.emitEvent
+#### Manager.emitEvent
 
 ```go
 func () emitEvent(ctx context.Context, category string, name string, payload any)
 ```
 
-#### LocalManager.emitSystemEvent
+#### Manager.emitSystemEvent
 
 ```go
 func () emitSystemEvent(ctx context.Context, name string, payload any)
 ```
 
-#### LocalManager.ensureShutdownController
+#### Manager.ensureShutdownController
 
 ```go
 func () ensureShutdownController() *shutdownController
 ```
 
-#### LocalManager.findAgent
+#### Manager.findAgent
 
 ```go
 func () findAgent(req RemoveRequest) (*agentState, api.AgentID, error)
 ```
 
-#### LocalManager.forceTerminate
+#### Manager.forceTerminate
 
 ```go
 func () forceTerminate(ctx context.Context, targets []shutdownTarget) error
 ```
 
-#### LocalManager.loadFromConfig
+#### Manager.loadFromConfig
 
 ```go
 func () loadFromConfig(ctx context.Context) error
 ```
 
-#### LocalManager.registry
+#### Manager.registry
 
 ```go
 func () registry(resolver *paths.Resolver) (adapter.Registry, error)
 ```
 
-#### LocalManager.releaseShutdownController
+#### Manager.releaseShutdownController
 
 ```go
 func () releaseShutdownController(controller *shutdownController)
 ```
 
-#### LocalManager.removeAgentConfig
+#### Manager.removeAgentConfig
 
 ```go
 func () removeAgentConfig(entry config.AgentConfig) error
 ```
 
-#### LocalManager.removeConfigEntryLocked
+#### Manager.removeConfigEntryLocked
 
 ```go
 func () removeConfigEntryLocked(entry config.AgentConfig)
 ```
 
-#### LocalManager.removeNameIndexLocked
+#### Manager.removeNameIndexLocked
 
 ```go
 func () removeNameIndexLocked(name string, id api.AgentID)
 ```
 
-#### LocalManager.resolveLocation
+#### Manager.resolveLocation
 
 ```go
 func () resolveLocation(req AddRequest) (api.Location, string, error)
 ```
 
-#### LocalManager.shutdownTargets
+#### Manager.shutdownTargets
 
 ```go
 func () shutdownTargets() []shutdownTarget
 ```
 
-#### LocalManager.startSession
+#### Manager.spawnRemote
+
+```go
+func () spawnRemote(ctx context.Context, hostID api.HostID, req remote.SpawnRequest) (remote.SpawnResponse, error)
+```
+
+#### Manager.startRemoteSession
+
+```go
+func () startRemoteSession(ctx context.Context, id api.AgentID, state *agentState) error
+```
+
+#### Manager.startSession
 
 ```go
 func () startSession(ctx context.Context, id api.AgentID) (*session.LocalSession, error)
 ```
 
-#### LocalManager.stopSession
+#### Manager.stopSession
 
 ```go
 func () stopSession(ctx context.Context, id api.AgentID) error
 ```
 
-#### LocalManager.validateMultiRepo
+#### Manager.validateMultiRepo
 
 ```go
 func () validateMultiRepo(repoRoot string, explicitRepoPath bool) error
@@ -460,6 +479,9 @@ type agentState struct {
 	repoRoot         string
 	worktree         string
 	session          *session.LocalSession
+	remoteHost       api.HostID
+	remoteSession    api.SessionID
+	remote           bool
 	config           config.AgentConfig
 	explicitRepoPath bool
 }
@@ -470,7 +492,7 @@ type agentState struct {
 ```go
 type shutdownController struct {
 	hsm.HSM
-	manager *LocalManager
+	manager *Manager
 	done    chan struct{}
 	errMu   sync.Mutex
 	err     error
@@ -483,7 +505,7 @@ type shutdownController struct {
 #### newShutdownController
 
 ```go
-func newShutdownController(m *LocalManager) *shutdownController
+func newShutdownController(m *Manager) *shutdownController
 ```
 
 

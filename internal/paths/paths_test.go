@@ -91,3 +91,25 @@ func TestWorktreePath(t *testing.T) {
 		t.Fatalf("expected %s, got %s", want, path)
 	}
 }
+
+func TestAdapterWasmPaths(t *testing.T) {
+	tmp := t.TempDir()
+	repo := filepath.Join(tmp, "repo")
+	if err := os.MkdirAll(filepath.Join(repo, ".git"), 0o755); err != nil {
+		t.Fatalf("mkdir repo: %v", err)
+	}
+	resolver, err := NewResolver(repo)
+	if err != nil {
+		t.Fatalf("new resolver: %v", err)
+	}
+	user := resolver.UserAdapterWasmPath("claude-code")
+	wantUser := filepath.Join(resolver.HomeDir(), ".config", "amux", "adapters", "claude-code", "claude-code.wasm")
+	if user != wantUser {
+		t.Fatalf("expected %s, got %s", wantUser, user)
+	}
+	project := resolver.ProjectAdapterWasmPath("claude-code")
+	want := filepath.Join(repo, ".amux", "adapters", "claude-code", "claude-code.wasm")
+	if project != want {
+		t.Fatalf("expected %s, got %s", want, project)
+	}
+}

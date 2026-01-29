@@ -183,19 +183,19 @@ type Presence struct {
 }
 
 // NewLifecycle constructs a lifecycle state machine bound to an agent.
-func NewLifecycle(agent *Agent, dispatcher protocol.Dispatcher) *Lifecycle {
+func NewLifecycle(agent *Agent, dispatcher protocol.Dispatcher) (*Lifecycle, error) {
 	if dispatcher == nil {
-		dispatcher = &protocol.NoopDispatcher{}
+		return nil, fmt.Errorf("new lifecycle: %w", ErrDispatcherRequired)
 	}
-	return &Lifecycle{agent: agent, dispatcher: dispatcher}
+	return &Lifecycle{agent: agent, dispatcher: dispatcher}, nil
 }
 
 // NewPresence constructs a presence state machine bound to an agent.
-func NewPresence(agent *Agent, dispatcher protocol.Dispatcher) *Presence {
+func NewPresence(agent *Agent, dispatcher protocol.Dispatcher) (*Presence, error) {
 	if dispatcher == nil {
-		dispatcher = &protocol.NoopDispatcher{}
+		return nil, fmt.Errorf("new presence: %w", ErrDispatcherRequired)
 	}
-	return &Presence{agent: agent, dispatcher: dispatcher}
+	return &Presence{agent: agent, dispatcher: dispatcher}, nil
 }
 
 // Start starts the lifecycle state machine.

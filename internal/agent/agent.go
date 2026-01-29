@@ -22,7 +22,7 @@ type Agent struct {
 // NewAgent constructs a new agent with lifecycle and presence state machines.
 func NewAgent(meta api.Agent, dispatcher protocol.Dispatcher) (*Agent, error) {
 	if dispatcher == nil {
-		dispatcher = &protocol.NoopDispatcher{}
+		return nil, fmt.Errorf("new agent: %w", ErrDispatcherRequired)
 	}
 	if meta.ID.IsZero() {
 		meta.ID = api.NewAgentID()
@@ -34,8 +34,16 @@ func NewAgent(meta api.Agent, dispatcher protocol.Dispatcher) (*Agent, error) {
 		Agent:      meta,
 		dispatcher: dispatcher,
 	}
-	agent.Lifecycle = NewLifecycle(agent, dispatcher)
-	agent.Presence = NewPresence(agent, dispatcher)
+	lifecycle, err := NewLifecycle(agent, dispatcher)
+	if err != nil {
+		return nil, fmt.Errorf("new agent: %w", err)
+	}
+	presence, err := NewPresence(agent, dispatcher)
+	if err != nil {
+		return nil, fmt.Errorf("new agent: %w", err)
+	}
+	agent.Lifecycle = lifecycle
+	agent.Presence = presence
 	return agent, nil
 }
 

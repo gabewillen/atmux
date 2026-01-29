@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"path/filepath"
 	"testing"
 )
 
@@ -53,5 +54,42 @@ func TestLocationValidateSSHRequiresRepoPath(t *testing.T) {
 	loc := Location{Type: LocationSSH, Host: "devbox"}
 	if err := loc.Validate(); err == nil {
 		t.Fatalf("expected error for missing repo_path")
+	}
+}
+
+func TestAgentValidateRejectsRelativeRepoRoot(t *testing.T) {
+	loc := Location{Type: LocationLocal}
+	_, err := NewAgentWithID(NewAgentID(), "alpha", "desc", AdapterRef("adapter"), "repo", "/repo/.amux/worktrees/alpha", loc)
+	if err == nil {
+		t.Fatalf("expected error for relative repo root")
+	}
+}
+
+func TestAgentValidateRejectsWorktreeOutsideRepo(t *testing.T) {
+	repo := t.TempDir()
+	other := t.TempDir()
+	loc := Location{Type: LocationLocal}
+	_, err := NewAgentWithID(NewAgentID(), "alpha", "desc", AdapterRef("adapter"), repo, other, loc)
+	if err == nil {
+		t.Fatalf("expected error for worktree outside repo")
+	}
+}
+
+func TestSessionValidateRejectsRepoRootAsWorktree(t *testing.T) {
+	repo := t.TempDir()
+	loc := Location{Type: LocationLocal}
+	_, err := NewSessionWithID(NewSessionID(), NewAgentID(), repo, repo, loc)
+	if err == nil {
+		t.Fatalf("expected error for worktree equal to repo root")
+	}
+}
+
+func TestSessionValidateAcceptsWorktreeWithinRepo(t *testing.T) {
+	repo := t.TempDir()
+	worktree := filepath.Join(repo, ".amux", "worktrees", "alpha")
+	loc := Location{Type: LocationLocal}
+	_, err := NewSessionWithID(NewSessionID(), NewAgentID(), repo, worktree, loc)
+	if err != nil {
+		t.Fatalf("expected valid session: %v", err)
 	}
 }

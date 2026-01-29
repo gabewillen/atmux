@@ -70,6 +70,11 @@ func (r *Resolver) UserAdapterConfigPath(adapter string) string {
 	return filepath.Join(r.homeDir, ".config", "amux", "adapters", adapter, "config.toml")
 }
 
+// UserAdapterWasmPath returns the per-adapter user WASM module path.
+func (r *Resolver) UserAdapterWasmPath(adapter string) string {
+	return filepath.Join(r.homeDir, ".config", "amux", "adapters", adapter, adapter+".wasm")
+}
+
 // ProjectConfigPath returns the repo-scoped config path.
 func (r *Resolver) ProjectConfigPath() string {
 	return filepath.Join(r.AmuxRoot(), "config.toml")
@@ -78,6 +83,11 @@ func (r *Resolver) ProjectConfigPath() string {
 // ProjectAdapterConfigPath returns the per-adapter repo-scoped config path.
 func (r *Resolver) ProjectAdapterConfigPath(adapter string) string {
 	return filepath.Join(r.AmuxRoot(), "adapters", adapter, "config.toml")
+}
+
+// ProjectAdapterWasmPath returns the per-adapter repo-scoped WASM module path.
+func (r *Resolver) ProjectAdapterWasmPath(adapter string) string {
+	return filepath.Join(r.AmuxRoot(), "adapters", adapter, adapter+".wasm")
 }
 
 // SocketPath returns the default daemon socket path under ~/.amux.

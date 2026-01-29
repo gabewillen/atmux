@@ -4,6 +4,7 @@
 
 Package agent manages agent lifecycle and presence state machines.
 
+- `ErrDispatcherRequired` — ErrDispatcherRequired is returned when a dispatcher is required but missing.
 - `LifecycleModel` — LifecycleModel defines the agent lifecycle state machine.
 - `LifecyclePending, LifecycleStarting, LifecycleRunning, LifecycleTerminated, LifecycleErrored, EventStart, EventReady, EventStop, EventError, PresenceOnline, PresenceBusy, PresenceOffline, PresenceAway, EventTaskAssigned, EventTaskCompleted, EventPromptDetected, EventRateLimit, EventRateCleared, EventStuckDetected, EventActivity, EventAgentStarted, EventAgentStopped, EventPresenceChanged`
 - `PresenceModel` — PresenceModel defines the agent presence state machine.
@@ -74,6 +75,14 @@ const (
 
 
 ### Variables
+
+#### ErrDispatcherRequired
+
+```go
+var ErrDispatcherRequired = errors.New("dispatcher required")
+```
+
+ErrDispatcherRequired is returned when a dispatcher is required but missing.
 
 #### LifecycleModel
 
@@ -256,7 +265,7 @@ Lifecycle drives the agent lifecycle state machine.
 #### NewLifecycle
 
 ```go
-func NewLifecycle(agent *Agent, dispatcher protocol.Dispatcher) *Lifecycle
+func NewLifecycle(agent *Agent, dispatcher protocol.Dispatcher) (*Lifecycle, error)
 ```
 
 NewLifecycle constructs a lifecycle state machine bound to an agent.
@@ -332,7 +341,7 @@ Presence drives the agent presence state machine.
 #### NewPresence
 
 ```go
-func NewPresence(agent *Agent, dispatcher protocol.Dispatcher) *Presence
+func NewPresence(agent *Agent, dispatcher protocol.Dispatcher) (*Presence, error)
 ```
 
 NewPresence constructs a presence state machine bound to an agent.

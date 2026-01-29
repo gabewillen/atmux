@@ -10,6 +10,8 @@ required by the amux specification.
 - `ErrEmptyID, ErrZeroID`
 - `ErrInvalidLocationType, ErrInvalidLocation, ErrInvalidAgent, ErrInvalidSession`
 - `defaultIDGenerator`
+- `func validateRepoRoot(repoRoot string) error`
+- `func validateWorktree(repoRoot, worktree string) error`
 - `type AdapterRef` — AdapterRef is the string name of an adapter loaded from the WASM registry.
 - `type AgentID` — AgentID is the runtime identifier for an agent.
 - `type Agent` — Agent describes the core metadata for a managed agent.
@@ -53,6 +55,21 @@ var (
 
 ```go
 var defaultIDGenerator = muid.NewGenerator(muid.DefaultConfig(), 0, 0)
+```
+
+
+### Functions
+
+#### validateRepoRoot
+
+```go
+func validateRepoRoot(repoRoot string) error
+```
+
+#### validateWorktree
+
+```go
+func validateWorktree(repoRoot, worktree string) error
 ```
 
 

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 )
 
@@ -17,6 +18,35 @@ var (
 	// ErrInvalidSession is returned when a session violates invariants.
 	ErrInvalidSession = errors.New("invalid session")
 )
+
+func validateRepoRoot(repoRoot string) error {
+	if strings.TrimSpace(repoRoot) == "" {
+		return fmt.Errorf("repo root: %w", ErrInvalidAgent)
+	}
+	if !filepath.IsAbs(repoRoot) {
+		return fmt.Errorf("repo root: %w", ErrInvalidAgent)
+	}
+	return nil
+}
+
+func validateWorktree(repoRoot, worktree string) error {
+	if strings.TrimSpace(worktree) == "" {
+		return fmt.Errorf("worktree: %w", ErrInvalidAgent)
+	}
+	if !filepath.IsAbs(worktree) {
+		return fmt.Errorf("worktree: %w", ErrInvalidAgent)
+	}
+	cleanRoot := filepath.Clean(repoRoot)
+	cleanWorktree := filepath.Clean(worktree)
+	rel, err := filepath.Rel(cleanRoot, cleanWorktree)
+	if err != nil {
+		return fmt.Errorf("worktree: %w", err)
+	}
+	if rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("worktree: %w", ErrInvalidAgent)
+	}
+	return nil
+}
 
 // LocationType describes where an agent runs.
 type LocationType int
@@ -151,11 +181,11 @@ func (a Agent) Validate() error {
 	if strings.TrimSpace(string(a.Adapter)) == "" {
 		return fmt.Errorf("agent: %w", ErrInvalidAgent)
 	}
-	if strings.TrimSpace(a.RepoRoot) == "" {
-		return fmt.Errorf("agent: %w", ErrInvalidAgent)
+	if err := validateRepoRoot(a.RepoRoot); err != nil {
+		return fmt.Errorf("agent: %w", err)
 	}
-	if strings.TrimSpace(a.Worktree) == "" {
-		return fmt.Errorf("agent: %w", ErrInvalidAgent)
+	if err := validateWorktree(a.RepoRoot, a.Worktree); err != nil {
+		return fmt.Errorf("agent: %w", err)
 	}
 	if err := a.Location.Validate(); err != nil {
 		return fmt.Errorf("agent: %w", err)
@@ -200,11 +230,11 @@ func (s Session) Validate() error {
 	if s.AgentID.IsZero() {
 		return fmt.Errorf("session: %w", ErrZeroID)
 	}
-	if strings.TrimSpace(s.RepoRoot) == "" {
-		return fmt.Errorf("session: %w", ErrInvalidSession)
+	if err := validateRepoRoot(s.RepoRoot); err != nil {
+		return fmt.Errorf("session: %w", err)
 	}
-	if strings.TrimSpace(s.Worktree) == "" {
-		return fmt.Errorf("session: %w", ErrInvalidSession)
+	if err := validateWorktree(s.RepoRoot, s.Worktree); err != nil {
+		return fmt.Errorf("session: %w", err)
 	}
 	if err := s.Location.Validate(); err != nil {
 		return fmt.Errorf("session: %w", err)

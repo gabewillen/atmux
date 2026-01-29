@@ -30,12 +30,12 @@ func (p *Pair) Close() error {
 	var firstErr error
 	if p.Master != nil {
 		if err := p.Master.Close(); err != nil {
-			firstErr = err
+			firstErr = fmt.Errorf("pty close master: %w", err)
 		}
 	}
 	if p.Slave != nil {
 		if err := p.Slave.Close(); err != nil && firstErr == nil {
-			firstErr = err
+			firstErr = fmt.Errorf("pty close slave: %w", err)
 		}
 	}
 	return firstErr

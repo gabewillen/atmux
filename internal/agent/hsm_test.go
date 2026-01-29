@@ -35,7 +35,10 @@ func (r *recordDispatcher) Subscribe(ctx context.Context, subject string, handle
 func TestLifecycleTransitions(t *testing.T) {
 	dispatcher := &recordDispatcher{}
 	agent := &Agent{Agent: api.Agent{ID: api.NewAgentID()}, dispatcher: dispatcher}
-	lifecycle := NewLifecycle(agent, dispatcher)
+	lifecycle, err := NewLifecycle(agent, dispatcher)
+	if err != nil {
+		t.Fatalf("new lifecycle: %v", err)
+	}
 	started := hsm.Started(context.Background(), lifecycle, &LifecycleModel)
 	<-hsm.Dispatch(started.Context(), started, hsm.Event{Name: EventStart})
 	if started.State() != "/agent.lifecycle/starting" {
@@ -57,7 +60,10 @@ func TestLifecycleTransitions(t *testing.T) {
 func TestPresenceTransitions(t *testing.T) {
 	dispatcher := &recordDispatcher{}
 	agent := &Agent{Agent: api.Agent{ID: api.NewAgentID()}, dispatcher: dispatcher}
-	presence := NewPresence(agent, dispatcher)
+	presence, err := NewPresence(agent, dispatcher)
+	if err != nil {
+		t.Fatalf("new presence: %v", err)
+	}
 	started := hsm.Started(context.Background(), presence, &PresenceModel)
 	if started.State() != "/agent.presence/online" {
 		t.Fatalf("unexpected state: %s", started.State())

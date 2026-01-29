@@ -6,23 +6,27 @@ Package protocol defines the event transport interfaces for amux.
 
 All event dispatch flows through NATS-backed implementations.
 
-- `ErrNoopDispatcher` — ErrNoopDispatcher is returned when using a noop dispatcher.
+- `ErrNATSNotConnected, ErrNATSProtocol`
 - `func Subject(parts ...string) string` — Subject joins subject segments for NATS routing.
+- `func parseMsgLine(line string) (string, string, int, error)`
 - `type Dispatcher` — Dispatcher publishes and subscribes to events over NATS.
 - `type Event` — Event is the generic event envelope used for dispatch.
-- `type NoopDispatcher` — NoopDispatcher is a placeholder dispatcher that drops all events.
+- `type NATSDispatcher` — NATSDispatcher publishes and subscribes to events over NATS.
 - `type Subscription` — Subscription represents an active event subscription.
-- `type noopSub`
+- `type natsSubscription`
 
 ### Variables
 
-#### ErrNoopDispatcher
+#### ErrNATSNotConnected, ErrNATSProtocol
 
 ```go
-var ErrNoopDispatcher = errors.New("noop dispatcher")
+var (
+	// ErrNATSNotConnected is returned when the dispatcher is not connected.
+	ErrNATSNotConnected = errors.New("nats not connected")
+	// ErrNATSProtocol is returned for malformed NATS protocol frames.
+	ErrNATSProtocol = errors.New("nats protocol error")
+)
 ```
-
-ErrNoopDispatcher is returned when using a noop dispatcher.
 
 
 ### Functions
@@ -34,6 +38,12 @@ func Subject(parts ...string) string
 ```
 
 Subject joins subject segments for NATS routing.
+
+#### parseMsgLine
+
+```go
+func parseMsgLine(line string) (string, string, int, error)
+```
 
 
 ## type Dispatcher
@@ -59,31 +69,94 @@ type Event struct {
 
 Event is the generic event envelope used for dispatch.
 
-## type NoopDispatcher
+## type NATSDispatcher
 
 ```go
-type NoopDispatcher struct{}
+type NATSDispatcher struct {
+	conn    net.Conn
+	reader  *bufio.Reader
+	writer  *bufio.Writer
+	mu      sync.Mutex
+	subs    map[string]func(Event)
+	closed  bool
+	nextSID uint64
+}
 ```
 
-NoopDispatcher is a placeholder dispatcher that drops all events.
+NATSDispatcher publishes and subscribes to events over NATS.
+
+### Functions returning NATSDispatcher
+
+#### NewNATSDispatcher
+
+```go
+func NewNATSDispatcher(ctx context.Context, rawURL string) (*NATSDispatcher, error)
+```
+
+NewNATSDispatcher connects to a NATS server and returns a dispatcher.
+
 
 ### Methods
 
-#### NoopDispatcher.Publish
+#### NATSDispatcher.Close
+
+```go
+func () Close(ctx context.Context) error
+```
+
+Close closes the underlying NATS connection.
+
+#### NATSDispatcher.Publish
 
 ```go
 func () Publish(ctx context.Context, subject string, event Event) error
 ```
 
-Publish drops the event.
+Publish publishes an event to a subject.
 
-#### NoopDispatcher.Subscribe
+#### NATSDispatcher.Subscribe
 
 ```go
 func () Subscribe(ctx context.Context, subject string, handler func(Event)) (Subscription, error)
 ```
 
-Subscribe returns a noop subscription.
+Subscribe subscribes to a subject.
+
+#### NATSDispatcher.handlerForSID
+
+```go
+func () handlerForSID(sid string) func(Event)
+```
+
+#### NATSDispatcher.readInfo
+
+```go
+func () readInfo(ctx context.Context) error
+```
+
+#### NATSDispatcher.readLoop
+
+```go
+func () readLoop()
+```
+
+#### NATSDispatcher.sendConnect
+
+```go
+func () sendConnect(ctx context.Context) error
+```
+
+#### NATSDispatcher.unsubscribe
+
+```go
+func () unsubscribe(sid string) error
+```
+
+#### NATSDispatcher.writePong
+
+```go
+func () writePong()
+```
 
 
 ## type Subscription
@@ -96,15 +169,18 @@ type Subscription interface {
 
 Subscription represents an active event subscription.
 
-## type noopSub
+## type natsSubscription
 
 ```go
-type noopSub struct{}
+type natsSubscription struct {
+	dispatcher *NATSDispatcher
+	sid        string
+}
 ```
 
 ### Methods
 
-#### noopSub.Unsubscribe
+#### natsSubscription.Unsubscribe
 
 ```go
 func () Unsubscribe() error

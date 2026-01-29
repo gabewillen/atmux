@@ -131,6 +131,14 @@ func () ProjectAdapterConfigPath(adapter string) string
 
 ProjectAdapterConfigPath returns the per-adapter repo-scoped config path.
 
+#### Resolver.ProjectAdapterWasmPath
+
+```go
+func () ProjectAdapterWasmPath(adapter string) string
+```
+
+ProjectAdapterWasmPath returns the per-adapter repo-scoped WASM module path.
+
 #### Resolver.ProjectConfigPath
 
 ```go
@@ -162,6 +170,14 @@ func () UserAdapterConfigPath(adapter string) string
 ```
 
 UserAdapterConfigPath returns the per-adapter user config path.
+
+#### Resolver.UserAdapterWasmPath
+
+```go
+func () UserAdapterWasmPath(adapter string) string
+```
+
+UserAdapterWasmPath returns the per-adapter user WASM module path.
 
 #### Resolver.UserConfigPath
 

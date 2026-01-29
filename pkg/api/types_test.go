@@ -281,9 +281,13 @@ func TestParseLocationType(t *testing.T) {
 		{"local", LocationLocal, false},
 		{"LOCAL", LocationLocal, false},
 		{"Local", LocationLocal, false},
+		{"lOcAl", LocationLocal, false},
+		{"lOCAL", LocationLocal, false},
 		{"ssh", LocationSSH, false},
 		{"SSH", LocationSSH, false},
 		{"Ssh", LocationSSH, false},
+		{"sSH", LocationSSH, false},
+		{"sSh", LocationSSH, false},
 		{"invalid", LocationLocal, true},
 		{"", LocationLocal, true},
 	}

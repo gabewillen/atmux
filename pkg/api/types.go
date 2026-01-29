@@ -6,6 +6,8 @@
 package api
 
 import (
+	"strings"
+
 	"github.com/stateforward/hsm-go/muid"
 )
 
@@ -133,10 +135,10 @@ func (lt LocationType) String() string {
 // Returns LocationLocal for "local" and LocationSSH for "ssh".
 // Returns an error for any other value.
 func ParseLocationType(s string) (LocationType, error) {
-	switch s {
-	case "local", "LOCAL", "Local":
+	switch strings.ToLower(s) {
+	case "local":
 		return LocationLocal, nil
-	case "ssh", "SSH", "Ssh":
+	case "ssh":
 		return LocationSSH, nil
 	default:
 		return LocationLocal, &InvalidLocationTypeError{Value: s}

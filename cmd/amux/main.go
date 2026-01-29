@@ -3,17 +3,19 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/pelletier/go-toml/v2"
 
 	"github.com/stateforward/amux/internal/agent"
 	"github.com/stateforward/amux/internal/config"
-	"github.com/stateforward/amux/internal/errors"
+	amuxerrors "github.com/stateforward/amux/internal/errors"
 	"github.com/stateforward/amux/internal/paths"
 	"github.com/stateforward/amux/internal/snapshot"
 	"github.com/stateforward/amux/pkg/api"
@@ -49,9 +51,9 @@ func handleTestCommand() {
 	noSnapshot := testFlags.Bool("no-snapshot", false, "Write snapshot to stdout")
 	testFlags.Parse(os.Args[2:])
 
-	moduleRoot, err := os.Getwd()
+	moduleRoot, err := findModuleRoot()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: get working directory: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Error: determine module root: %v\n", err)
 		os.Exit(1)
 	}
 
@@ -63,49 +65,76 @@ func handleTestCommand() {
 		os.Exit(1)
 	}
 
-	// Helper to determine if any step failed.
+	// Helper to determine if any core step failed.
 	anyFailed := func() bool {
-		statuses := []string{snap.TidyStatus, snap.VetStatus, snap.LintStatus, snap.TestStatus, snap.RaceStatus}
-		for _, s := range statuses {
-			if s == "fail" {
-				return true
-			}
-		}
-		return false
+		steps := snap.Steps
+		return steps.GoModTidy.ExitCode != 0 ||
+			steps.GoVet.ExitCode != 0 ||
+			steps.GolangciLint.ExitCode != 0 ||
+			steps.TestsRace.ExitCode != 0 ||
+			steps.Tests.ExitCode != 0 ||
+			steps.Coverage.ExitCode != 0 ||
+			steps.Benchmarks.ExitCode != 0
 	}
 
 	if *regression {
-		// Regression mode: compare with latest snapshot
+		// Regression mode: compare with latest snapshot (lexicographically greatest name).
 		latestPath, err := snapshot.FindLatestSnapshot(moduleRoot)
+		baselineMissing := false
+		var baseline *snapshot.Snapshot
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: find baseline snapshot: %v\n", err)
-			os.Exit(1)
+			if errors.Is(err, amuxerrors.ErrNotFound) {
+				baselineMissing = true
+				fmt.Fprintln(os.Stderr, "No baseline snapshot found for regression mode; creating new snapshot and exiting non-zero.")
+			} else {
+				fmt.Fprintf(os.Stderr, "Error: find baseline snapshot: %v\n", err)
+				os.Exit(1)
+			}
+		} else {
+			baseline, err = snapshot.Read(latestPath)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: read baseline snapshot: %v\n", err)
+				os.Exit(1)
+			}
 		}
 
-		baseline, err := snapshot.Read(latestPath)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: read baseline snapshot: %v\n", err)
-			os.Exit(1)
+		regressionsDetected := false
+		if baseline != nil {
+			passed, report := snapshot.Compare(baseline, snap)
+			fmt.Fprintln(os.Stderr, "\nRegression report:")
+			fmt.Fprintln(os.Stderr, report)
+			regressionsDetected = !passed
+			if regressionsDetected {
+				fmt.Fprintln(os.Stderr, "\nREGRESSION DETECTED")
+			} else {
+				fmt.Fprintln(os.Stderr, "\nNo regressions detected")
+			}
 		}
 
-		passed, report := snapshot.Compare(baseline, snap)
-		fmt.Fprintln(os.Stderr, "\nRegression report:")
-		fmt.Fprintln(os.Stderr, report)
-
-		if !passed {
-			fmt.Fprintln(os.Stderr, "\nREGRESSION DETECTED")
-			os.Exit(1)
+		// Emit snapshot according to flags.
+		if *noSnapshot {
+			data, err := toml.Marshal(snap)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: marshal snapshot: %v\n", err)
+				os.Exit(1)
+			}
+			if _, err := os.Stdout.Write(data); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: write snapshot to stdout: %v\n", err)
+				os.Exit(1)
+			}
+		} else {
+			outPath := snapshot.GenerateSnapshotPath(moduleRoot)
+			if err := snapshot.Write(snap, outPath); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: write snapshot: %v\n", err)
+				os.Exit(1)
+			}
+			fmt.Fprintf(os.Stderr, "Snapshot written: %s\n", outPath)
 		}
 
-		fmt.Fprintln(os.Stderr, "\nNo regressions detected")
-
-		// Write new snapshot
-		outPath := snapshot.GenerateSnapshotPath(moduleRoot)
-		if err := snapshot.Write(snap, outPath); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: write snapshot: %v\n", err)
+		// In regression mode, exit non-zero if baseline missing or regressions detected.
+		if baselineMissing || regressionsDetected {
 			os.Exit(1)
 		}
-		fmt.Fprintf(os.Stderr, "Snapshot written: %s\n", outPath)
 	} else if *noSnapshot {
 		// No-snapshot mode: write TOML snapshot to stdout; logs remain on stderr.
 		data, err := toml.Marshal(snap)
@@ -130,6 +159,29 @@ func handleTestCommand() {
 	if anyFailed() {
 		fmt.Fprintln(os.Stderr, "One or more verification steps failed; see logs above.")
 		os.Exit(1)
+	}
+}
+
+// findModuleRoot searches from the current working directory upward for a
+// go.mod file and returns its directory. If no go.mod is found, it returns
+// an error and amux test must exit non-zero per spec §12.6.1.
+func findModuleRoot() (string, error) {
+	dir, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("get working directory: %w", err)
+	}
+
+	for {
+		goModPath := filepath.Join(dir, "go.mod")
+		if _, err := os.Stat(goModPath); err == nil {
+			return dir, nil
+		}
+
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "", fmt.Errorf("no go.mod found; amux test requires a Go module")
+		}
+		dir = parent
 	}
 }
 
@@ -232,14 +284,14 @@ func discoverGitRepoRoot() (string, error) {
 	cmd.Stderr = &out
 
 	if err := cmd.Run(); err != nil {
-		return "", errors.Wrapf(errors.ErrInvalidInput, "current directory is not inside a git repository (%s)", out.String())
+		return "", amuxerrors.Wrapf(amuxerrors.ErrInvalidInput, "current directory is not inside a git repository (%s)", out.String())
 	}
 
 	root := strings.TrimSpace(out.String())
 
 	canonical, err := api.CanonicalizeRepoRoot(root)
 	if err != nil {
-		return "", errors.Wrap(err, "canonicalize repo root")
+		return "", amuxerrors.Wrap(err, "canonicalize repo root")
 	}
 
 	return canonical, nil

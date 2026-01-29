@@ -30,19 +30,20 @@ type FlowResult struct {
 
 // Run executes a minimal conformance suite against the local amux binaries.
 //
-// Phase 0: This boots the daemon stub and runs a couple of CLI flows, then
-// records structured JSON results per the output contract.
+// Phase 0–3: This boots the daemon stub (amux-node), runs basic CLI flows, and
+// invokes `amux test` to exercise the verification entrypoint, then records
+// structured JSON results per the output contract.
 func Run(ctx context.Context) (*RunResult, error) {
 	start := time.Now()
 	result := &RunResult{
-		RunID:       "phase0-local",
+		RunID:       "phase0-3-local",
 		SpecVersion: "v1.22",
 		StartedAt:   start,
 	}
 
 	var flows []FlowResult
 
-	// Flow 1: Boot the daemon stub (amux-node).
+	// Flow 1: Boot the daemon stub (amux-node) with default behavior.
 	{
 		flowStart := time.Now()
 		cmd := exec.CommandContext(ctx, "amux-node")
@@ -76,6 +77,27 @@ func Run(ctx context.Context) (*RunResult, error) {
 		} else {
 			flows = append(flows, FlowResult{
 				Name:     "cli.version",
+				Status:   "pass",
+				Duration: time.Since(flowStart).String(),
+			})
+		}
+	}
+
+	// Flow 3: Run `amux test --no-snapshot` to exercise the verification
+	// snapshot pipeline without writing snapshot files.
+	{
+		flowStart := time.Now()
+		cmd := exec.CommandContext(ctx, "amux", "test", "--no-snapshot")
+		if err := cmd.Run(); err != nil {
+			flows = append(flows, FlowResult{
+				Name:     "cli.amux_test_no_snapshot",
+				Status:   "fail",
+				Error:    err.Error(),
+				Duration: time.Since(flowStart).String(),
+			})
+		} else {
+			flows = append(flows, FlowResult{
+				Name:     "cli.amux_test_no_snapshot",
 				Status:   "pass",
 				Duration: time.Since(flowStart).String(),
 			})

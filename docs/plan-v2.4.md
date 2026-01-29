@@ -144,7 +144,7 @@ Establish repository structure, build/toolchain, configuration, observability sc
   - Spec reference(s): §4.2.5
   - Acceptance criteria: package templates use `fmt.Errorf("context: %w", err)`; sentinel errors defined; no ignored errors in core paths (enforced by staticcheck configuration).
 
-- [ ] Implement configuration subsystem: format, hierarchy, env mapping, parsing conventions
+- [x] Implement configuration subsystem: format, hierarchy, env mapping, parsing conventions
   - Spec reference(s): §4.2.8.1–§4.2.8.4, §4.2.8.10
   - Acceptance criteria: config loads from default paths and supports overrides; env var mapping verified in unit tests; duration/bytes/bool parsing matches spec conventions.
 
@@ -152,32 +152,32 @@ Establish repository structure, build/toolchain, configuration, observability sc
   - Spec reference(s): §4.2.8.5–§4.2.8.6
   - Acceptance criteria: adapters receive only their scoped config; sensitive fields are redacted in logs and debug outputs per spec requirements.
 
-- [ ] Implement configuration actor, live updates, and subscriptions
+- [x] Implement configuration actor, live updates, and subscriptions
   - Spec reference(s): §4.2.8.7–§4.2.8.9
   - Acceptance criteria: components can subscribe to config changes; hot reload updates dependent subsystems without restart in an integration test.
 
-- [ ] Implement OpenTelemetry scaffolding (traces/metrics/logs (OTel))
+- [x] Implement OpenTelemetry scaffolding (traces/metrics/logs (OTel))
   - Spec reference(s): §4.2.9.1–§4.2.9.5
   - Acceptance criteria: OTel can be enabled by env vars or config; spans follow naming convention; required baseline metrics are emitted in a test exporter.
 
-- [ ] Scaffold `liquidgen` local inference integration interface and configuration
+- [x] Scaffold `liquidgen` local inference integration interface and configuration
   - Spec reference(s): §4.2.10
   - Acceptance criteria: interface types compile; unknown model IDs return error; mapping of logical IDs to artifacts is observable via telemetry fields/events.
 
-- [ ] The implementation MUST integrate the pre-existing `liquidgen` inference engine from `third_party/liquidgen` (local) as a dependency and MUST wire it to the local inference interface
+- [x] The implementation MUST integrate the pre-existing `liquidgen` inference engine from `third_party/liquidgen` (local) as a dependency and MUST wire it to the local inference interface
   - Spec reference(s): §4.2.10
   - Acceptance criteria: `go test ./...` succeeds on a development machine; the default build uses `liquidgen` behind the Phase 0 interface (no new inference engine implementation is introduced); build and runtime logs MUST include the `liquidgen` module version or commit identifier for traceability.
 
-- [ ] Create conformance harness skeleton and test runner wiring
+- [x] Create conformance harness skeleton and test runner wiring
   - Spec reference(s): §4.3.1
   - Acceptance criteria: `go test` can run a placeholder conformance suite that boots a daemon + CLI client fixture and records structured JSON results per the “Conformance harness output contract (minimum)” section above.
 
 ---
-- [ ] Ensure `spec-v1.22.md` is present and version-locked for this plan
+- [x] Ensure `spec-v1.22.md` is present and version-locked for this plan
   - Spec reference(s): §4.3.1, §4.2.6
   - Acceptance criteria: `spec-v1.22.md` exists in-repo; a guard test or startup check fails fast with a clear error if the file is missing or the expected version marker does not match.
 
-- [ ] Implement shared path resolver (`internal/paths`) and repo-scoped `.amux/` invariants
+- [x] Implement shared path resolver (`internal/paths`) and repo-scoped `.amux/` invariants
   - Spec reference(s): §4.2.6, §4.2.8
   - Acceptance criteria: a single package resolves all filesystem paths from config/env and `repo_root`; worktree paths use the resolver and still satisfy `.amux/worktrees/{agent_slug}/`; unit tests lock the invariants.
 
@@ -185,7 +185,7 @@ Establish repository structure, build/toolchain, configuration, observability sc
   - Spec reference(s): §4.3.1–§4.3.2, §4.2.5
   - Acceptance criteria: documented commands exist for unit, lint, integration, and conformance runs; commands return non-zero on failure; they are suitable for CI automation.
 
-- [ ] Implement `amux test` CLI subcommand (snapshot + `--regression`) and wire it into verification entrypoints
+- [x] Implement `amux test` CLI subcommand (snapshot + `--regression`) and wire it into verification entrypoints
   - Spec reference(s): §12.6–§12.6.5
   - Acceptance criteria: `amux test` runs the required command sequence and writes a TOML snapshot to `<module_root>/snapshots/`; `amux test --regression` compares to the previous snapshot and exits non-zero on regressions; `--no-snapshot` writes the snapshot to stdout and writes all human-readable logs/regression reports to stderr.
 

@@ -1,71 +1,71 @@
 {
-  "run_id": "amux-conformance-1769631186",
+  "run_id": "amux-conformance-1769645738",
   "spec_version": "v1.22",
-  "started_at": "2026-01-28T20:13:06.197185453Z",
-  "finished_at": "2026-01-28T20:13:06.197195353Z",
+  "started_at": "2026-01-29T00:15:38.595948821Z",
+  "finished_at": "2026-01-29T00:15:38.595968781Z",
   "flows": [
     {
       "name": "agent-management",
       "status": "skip",
       "error": "Flow not yet implemented",
-      "started_at": "2026-01-28T20:13:06.197193413Z",
-      "finished_at": "2026-01-28T20:13:06.197193623Z"
+      "started_at": "2026-01-29T00:15:38.595963821Z",
+      "finished_at": "2026-01-29T00:15:38.595964101Z"
     },
     {
       "name": "presence-status",
       "status": "skip",
       "error": "Flow not yet implemented",
-      "started_at": "2026-01-28T20:13:06.197194073Z",
-      "finished_at": "2026-01-28T20:13:06.197194223Z"
+      "started_at": "2026-01-29T00:15:38.595964301Z",
+      "finished_at": "2026-01-29T00:15:38.595964461Z"
     },
     {
       "name": "pty-monitoring",
       "status": "skip",
       "error": "Flow not yet implemented",
-      "started_at": "2026-01-28T20:13:06.197194333Z",
-      "finished_at": "2026-01-28T20:13:06.197194433Z"
+      "started_at": "2026-01-29T00:15:38.595964571Z",
+      "finished_at": "2026-01-29T00:15:38.595964661Z"
     },
     {
       "name": "process-tracking",
       "status": "skip",
       "error": "Flow not yet implemented",
-      "started_at": "2026-01-28T20:13:06.197194513Z",
-      "finished_at": "2026-01-28T20:13:06.197194583Z"
+      "started_at": "2026-01-29T00:15:38.595964731Z",
+      "finished_at": "2026-01-29T00:15:38.595964801Z"
     },
     {
       "name": "event-system",
       "status": "skip",
       "error": "Flow not yet implemented",
-      "started_at": "2026-01-28T20:13:06.197194643Z",
-      "finished_at": "2026-01-28T20:13:06.197194713Z"
+      "started_at": "2026-01-29T00:15:38.595964851Z",
+      "finished_at": "2026-01-29T00:15:38.595964941Z"
     },
     {
       "name": "adapter-interface",
       "status": "skip",
       "error": "Flow not yet implemented",
-      "started_at": "2026-01-28T20:13:06.197194813Z",
-      "finished_at": "2026-01-28T20:13:06.197194883Z"
+      "started_at": "2026-01-29T00:15:38.595965051Z",
+      "finished_at": "2026-01-29T00:15:38.595965131Z"
     },
     {
       "name": "coordination-loop",
       "status": "skip",
       "error": "Flow not yet implemented",
-      "started_at": "2026-01-28T20:13:06.197194933Z",
-      "finished_at": "2026-01-28T20:13:06.197195023Z"
+      "started_at": "2026-01-29T00:15:38.595965181Z",
+      "finished_at": "2026-01-29T00:15:38.595965251Z"
     },
     {
       "name": "control-plane",
       "status": "skip",
       "error": "Flow not yet implemented",
-      "started_at": "2026-01-28T20:13:06.197195063Z",
-      "finished_at": "2026-01-28T20:13:06.197195133Z"
+      "started_at": "2026-01-29T00:15:38.595965291Z",
+      "finished_at": "2026-01-29T00:15:38.595965351Z"
     },
     {
       "name": "plugin-system",
       "status": "skip",
       "error": "Flow not yet implemented",
-      "started_at": "2026-01-28T20:13:06.197195173Z",
-      "finished_at": "2026-01-28T20:13:06.197195243Z"
+      "started_at": "2026-01-29T00:15:38.595965401Z",
+      "finished_at": "2026-01-29T00:15:38.595965461Z"
     }
   ],
   "summary": {

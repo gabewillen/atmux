@@ -17,5 +17,8 @@ require (
 	github.com/go-logr/logr v1.4.2 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/google/uuid v1.6.0 // indirect
+	github.com/stateforward/hsm-go v1.0.0 // indirect
+	github.com/stateforward/hsm-go/kind v0.0.0-20260124060507-9cca10687b7c // indirect
+	github.com/stateforward/hsm-go/muid v0.0.0-20260124060507-9cca10687b7c // indirect
 	golang.org/x/sys v0.38.0 // indirect
 )

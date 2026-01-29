@@ -15,6 +15,9 @@ type Agent struct {
 	// ID is the unique identifier for this agent instance.
 	ID muid.MUID `json:"id"`
 
+	// Slug is the normalized agent slug (derived from Name).
+	Slug string `json:"slug"`
+
 	// Adapter is the string name of the WASM adapter (e.g., "claude-code", "cursor").
 	Adapter string `json:"adapter"`
 
@@ -27,6 +30,9 @@ type Agent struct {
 	// Presence represents the current presence state.
 	Presence PresenceState `json:"presence"`
 
+	// RepoRoot is the canonical repository root path for this agent.
+	RepoRoot string `json:"repo_root"`
+
 	// CreatedAt is when this agent was created.
 	CreatedAt time.Time `json:"created_at"`
 
@@ -35,6 +41,33 @@ type Agent struct {
 
 	// Config contains adapter-specific configuration (opaque to core).
 	Config map[string]interface{} `json:"config,omitempty"`
+}
+
+// Session represents an active agent session with PTY and process tracking.
+type Session struct {
+	// ID is the unique identifier for this session.
+	ID muid.MUID `json:"id"`
+
+	// AgentID is the ID of the agent that owns this session.
+	AgentID muid.MUID `json:"agent_id"`
+
+	// PTYPath is the path to the PTY device for this session.
+	PTYPath string `json:"pty_path,omitempty"`
+
+	// ProcessPID is the process ID of the main process (if any).
+	ProcessPID int `json:"process_pid,omitempty"`
+
+	// WorkingDirectory is the current working directory for the session.
+	WorkingDirectory string `json:"working_directory"`
+
+	// Environment contains session-specific environment variables.
+	Environment map[string]string `json:"environment,omitempty"`
+
+	// CreatedAt is when this session was created.
+	CreatedAt time.Time `json:"created_at"`
+
+	// LastActivity is when this session last had activity.
+	LastActivity time.Time `json:"last_activity"`
 }
 
 // AgentState represents agent lifecycle states per HSM pattern.
@@ -84,6 +117,9 @@ type Event struct {
 
 	// AgentID is the ID of the agent associated with this event (if any).
 	AgentID *muid.MUID `json:"agent_id,omitempty"`
+
+	// SessionID is the ID of the session associated with this event (if any).
+	SessionID *muid.MUID `json:"session_id,omitempty"`
 
 	// Timestamp is when this event occurred.
 	Timestamp time.Time `json:"timestamp"`

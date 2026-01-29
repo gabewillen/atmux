@@ -5,7 +5,6 @@
 Package session manages owned PTY sessions for local agents.
 
 - `ErrSessionRunning, ErrSessionNotRunning, ErrSessionInvalid`
-- `func dupFile(file *os.File) (*os.File, error)`
 - `func sendTerminate(proc *os.Process) error`
 - `type Command` — Command describes the command used to start an agent.
 - `type Config` — Config configures session behavior.
@@ -28,12 +27,6 @@ var (
 
 
 ### Functions
-
-#### dupFile
-
-```go
-func dupFile(file *os.File) (*os.File, error)
-```
 
 #### sendTerminate
 

@@ -72,7 +72,7 @@ Snapshot represents a test snapshot per spec §12.6.
 func Create(moduleRoot string) (*Snapshot, error)
 ```
 
-Create creates a new snapshot by running the test suite.
+Create creates a new snapshot by running the verification sequence per spec §12.6.
 
 #### Read
 

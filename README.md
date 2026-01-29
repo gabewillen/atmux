@@ -10,6 +10,7 @@
 - [internal/event](internal/event/README.md) — Package event provides event dispatch interfaces for amux per spec §9.
 - [internal/inference](internal/inference/README.md) — Package inference provides the local inference engine interface for amux per spec §4.2.10.
 - [internal/paths](internal/paths/README.md) — Package paths provides centralized filesystem path resolution for amux.
+- [internal/remote](internal/remote/README.md) — Package remote implements Phase 3 remote agent orchestration.
 - [internal/snapshot](internal/snapshot/README.md) — Package snapshot implements the amux test snapshot functionality per spec §12.6.
 - [internal/telemetry](internal/telemetry/README.md) — Package telemetry provides OpenTelemetry instrumentation for amux per spec §4.2.9.
 - [pkg/api](pkg/api/README.md) — Package api provides public types for the amux system.

@@ -69,12 +69,12 @@ ModelID represents a logical model identifier.
 
 ### Constants
 
-#### ModelLFM25Thinking, ModelLFM25Fast
+#### ModelLFM25Thinking, ModelLFM25VL
 
 ```go
 const (
 	ModelLFM25Thinking ModelID = "lfm2.5-thinking"
-	ModelLFM25Fast     ModelID = "lfm2.5-fast"
+	ModelLFM25VL       ModelID = "lfm2.5-VL"
 )
 ```
 
@@ -86,6 +86,9 @@ Defined model IDs per spec §4.2.10
 ```go
 type stubEngine struct {
 	liquidgenPath string
+	binaryPath    string
+	commit        string
+	addr          string
 }
 ```
 

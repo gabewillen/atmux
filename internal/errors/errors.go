@@ -42,6 +42,9 @@ var (
 
 	// ErrInternal indicates an internal error that should not occur.
 	ErrInternal = errors.New("internal error")
+
+	// ErrRemote indicates an error from a remote operation or host.
+	ErrRemote = errors.New("remote error")
 )
 
 // Wrap wraps an error with context. If err is nil, returns nil.

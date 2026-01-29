@@ -17,12 +17,16 @@ The configuration supports:
 - Sensitive configuration redaction
 - HSM-based config actor for updates
 
+- `ConfigFileChanged, ConfigReloaded, ConfigUpdated` — Config actor event names used with hsm-go.
+- `Model` — Model defines the configuration actor state machine.
 - `func ParseByteSize(s string) (int64, error)` — ParseByteSize parses a byte size string (e.g., "1MB", "512KB").
 - `func Save(path string, cfg *Config) error` — Save writes the configuration to the specified path in TOML format.
 - `func applyEnvOverrides(cfg *Config) error` — applyEnvOverrides applies environment variable overrides to the config.
+- `type Actor` — Actor manages configuration state as an HSM actor per spec §4.2.8.7–§4.2.8.9.
 - `type AgentConfig` — AgentConfig represents a single agent configuration.
 - `type ByteSize` — ByteSize represents a byte size that can be parsed from TOML.
 - `type CoalesceConfig` — CoalesceConfig holds event coalescing configuration.
+- `type ConfigChange` — ConfigChange describes a single configuration value change.
 - `type Config` — Config represents the complete amux configuration.
 - `type DaemonConfig` — DaemonConfig holds daemon configuration.
 - `type Duration` — Duration is a time.Duration that can be parsed from TOML.
@@ -39,6 +43,54 @@ The configuration supports:
 - `type RemoteManagerConfig` — RemoteManagerConfig holds remote manager configuration.
 - `type RemoteNATSConfig` — RemoteNATSConfig holds NATS configuration for remote agents.
 - `type TimeoutsConfig` — TimeoutsConfig holds timeout durations.
+
+### Constants
+
+#### ConfigFileChanged, ConfigReloaded, ConfigUpdated
+
+```go
+const (
+	ConfigFileChanged = "config.file_changed"
+	ConfigReloaded    = "config.reloaded"
+	ConfigUpdated     = "config.updated"
+)
+```
+
+Config actor event names used with hsm-go.
+
+
+### Variables
+
+#### Model
+
+```go
+var Model = hsm.Define("config",
+	hsm.State("loading",
+		hsm.Entry(func(ctx context.Context, a *Actor, e hsm.Event) {
+			_, _ = a.reload(ctx)
+		}),
+	),
+
+	hsm.State("ready"),
+	hsm.State("reloading",
+		hsm.Entry(func(ctx context.Context, a *Actor, e hsm.Event) {
+			_, _ = a.reload(ctx)
+		}),
+	),
+
+	hsm.Transition(hsm.On(hsm.Event{Name: ConfigFileChanged}), hsm.Source("ready"), hsm.Target("reloading")),
+	hsm.Transition(hsm.On(hsm.Event{Name: ConfigReloaded}), hsm.Source("loading"), hsm.Target("ready")),
+	hsm.Transition(hsm.On(hsm.Event{Name: ConfigReloaded}), hsm.Source("reloading"), hsm.Target("ready")),
+
+	hsm.Initial(hsm.Target("loading")),
+)
+```
+
+Model defines the configuration actor state machine. It is intentionally
+minimal for Phase 0: it supports loading and reloading, and emits the
+ConfigReloaded event; file watching is left to the caller, which should
+dispatch ConfigFileChanged as appropriate.
+
 
 ### Functions
 
@@ -67,6 +119,81 @@ func applyEnvOverrides(cfg *Config) error
 
 applyEnvOverrides applies environment variable overrides to the config.
 Environment variables follow the pattern: AMUX__<path>__<path>...
+See spec §4.2.8.3 for the mapping rules.
+
+
+## type Actor
+
+```go
+type Actor struct {
+	hsm.HSM
+
+	mu   sync.RWMutex
+	cfg  *Config
+	load func() (*Config, error)
+
+	subscribersMu sync.RWMutex
+	subscribers   []chan ConfigChange
+}
+```
+
+Actor manages configuration state as an HSM actor per spec §4.2.8.7–§4.2.8.9.
+
+It keeps the current Config value and notifies subscribers via ConfigChange
+events when values change as a result of a reload.
+
+### Functions returning Actor
+
+#### NewActor
+
+```go
+func NewActor(ctx context.Context, loader func() (*Config, error)) (*Actor, error)
+```
+
+NewActor constructs and starts a configuration actor using the provided
+loader function, which should load and merge configuration from all sources
+(files + env).
+
+
+### Methods
+
+#### Actor.Current
+
+```go
+func () Current() *Config
+```
+
+Current returns a snapshot of the current configuration.
+
+#### Actor.NotifyFileChanged
+
+```go
+func () NotifyFileChanged(ctx context.Context)
+```
+
+NotifyFileChanged is a helper for external watchers to inform the actor
+that configuration files have changed. It dispatches ConfigFileChanged
+into the HSM; the actor will reload and emit ConfigReloaded/ConfigUpdated
+as appropriate.
+
+#### Actor.Subscribe
+
+```go
+func () Subscribe() <-chan ConfigChange
+```
+
+Subscribe returns a channel that will receive ConfigChange events produced
+when the actor reloads configuration and detects changed values. The caller
+is responsible for draining and closing the channel when done.
+
+#### Actor.reload
+
+```go
+func () reload(ctx context.Context) (*Config, error)
+```
+
+reload loads configuration via the loader, computes a simple diff, updates
+the current config, and emits ConfigReloaded/ConfigUpdated events.
 
 
 ## type AgentConfig
@@ -160,6 +287,19 @@ func Load(paths ...string) (*Config, error)
 
 Load loads configuration from the specified paths and environment variables.
 
+
+## type ConfigChange
+
+```go
+type ConfigChange struct {
+	Path     string
+	OldValue any
+	NewValue any
+}
+```
+
+ConfigChange describes a single configuration value change.
+Per spec §4.2.8.8, Path is a dot-separated key (e.g. "timeouts.stuck").
 
 ## type DaemonConfig
 

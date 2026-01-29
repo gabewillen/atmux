@@ -7,6 +7,7 @@ Package api provides public types for the amux system.
 - `BroadcastID` — BroadcastID is the reserved ID value (0) for broadcast messages to all participants.
 - `ErrInvalidLocationType, ErrReservedID, ErrInvalidAgent`
 - `func CanonicalizeRepoRoot(repoPath string) (string, error)` — CanonicalizeRepoRoot canonicalizes a repository root path.
+- `func ExpandHomeDir(path string) string` — ExpandHomeDir expands ~/ to the user's home directory.
 - `func GenerateID() muid.MUID` — GenerateID generates a new muid.MUID and ensures it is not the reserved value 0.
 - `func NormalizeAgentSlug(name string) string` — NormalizeAgentSlug derives a stable, filesystem-safe identifier from an agent name.
 - `type AgentMessage` — AgentMessage represents a message between agents, host managers, or the director.
@@ -63,6 +64,15 @@ Per spec §3.23:
 
 If symbolic link resolution is not possible (insufficient permissions or missing OS support),
 this function still applies (a)-(c) and treats the result as canonical.
+
+#### ExpandHomeDir
+
+```go
+func ExpandHomeDir(path string) string
+```
+
+ExpandHomeDir expands ~/ to the user's home directory.
+Per spec §3.23 and §4.2.8.10, ~/ expansion is required for paths.
 
 #### GenerateID
 

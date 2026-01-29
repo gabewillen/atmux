@@ -9,13 +9,13 @@ This package implements the error handling strategy per spec §4.2.5:
 - Sentinel errors are defined as package-level variables
 - No errors are silently ignored
 
-- `ErrNotFound, ErrInvalidInput, ErrAlreadyExists, ErrNotImplemented, ErrTimeout, ErrCancelled, ErrUnavailable, ErrPermissionDenied, ErrConflict, ErrInternal` — Sentinel errors for common error conditions across the application.
+- `ErrNotFound, ErrInvalidInput, ErrAlreadyExists, ErrNotImplemented, ErrTimeout, ErrCancelled, ErrUnavailable, ErrPermissionDenied, ErrConflict, ErrInternal, ErrRemote` — Sentinel errors for common error conditions across the application.
 - `func Wrap(err error, context string) error` — Wrap wraps an error with context.
 - `func Wrapf(err error, format string, args ...any) error` — Wrapf wraps an error with formatted context.
 
 ### Variables
 
-#### ErrNotFound, ErrInvalidInput, ErrAlreadyExists, ErrNotImplemented, ErrTimeout, ErrCancelled, ErrUnavailable, ErrPermissionDenied, ErrConflict, ErrInternal
+#### ErrNotFound, ErrInvalidInput, ErrAlreadyExists, ErrNotImplemented, ErrTimeout, ErrCancelled, ErrUnavailable, ErrPermissionDenied, ErrConflict, ErrInternal, ErrRemote
 
 ```go
 var (
@@ -48,6 +48,9 @@ var (
 
 	// ErrInternal indicates an internal error that should not occur.
 	ErrInternal = errors.New("internal error")
+
+	// ErrRemote indicates an error from a remote operation or host.
+	ErrRemote = errors.New("remote error")
 )
 ```
 

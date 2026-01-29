@@ -54,7 +54,9 @@ RunResult represents the result of a conformance run.
 func Run(ctx context.Context) (*RunResult, error)
 ```
 
-Run executes the conformance suite.
-Phase 0: Placeholder implementation.
+Run executes a minimal conformance suite against the local amux binaries.
+
+Phase 0: This boots the daemon stub and runs a couple of CLI flows, then
+records structured JSON results per the output contract.
 
 

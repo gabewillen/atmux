@@ -106,3 +106,16 @@ func GenerateID() muid.MUID {
 		// Retry if we got the reserved value 0
 	}
 }
+
+// ExpandHomeDir expands ~/ to the user's home directory.
+// Per spec §3.23 and §4.2.8.10, ~/ expansion is required for paths.
+func ExpandHomeDir(path string) string {
+	if strings.HasPrefix(path, "~/") {
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			return path // Return as-is if home cannot be determined
+		}
+		return filepath.Join(homeDir, path[2:])
+	}
+	return path
+}

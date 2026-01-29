@@ -49,7 +49,10 @@ func handleTestCommand() {
 	testFlags := flag.NewFlagSet("test", flag.ExitOnError)
 	regression := testFlags.Bool("regression", false, "Compare against previous snapshot")
 	noSnapshot := testFlags.Bool("no-snapshot", false, "Write snapshot to stdout")
-	testFlags.Parse(os.Args[2:])
+	if err := testFlags.Parse(os.Args[2:]); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: parse test flags: %v\n", err)
+		os.Exit(1)
+	}
 
 	moduleRoot, err := findModuleRoot()
 	if err != nil {
@@ -209,7 +212,10 @@ func handleAgentAddCommand() {
 	adapter := addFlags.String("adapter", "", "Adapter name (e.g., claude-code)")
 	repo := addFlags.String("repo", "", "Repository root (optional, defaults to current git repo)")
 
-	addFlags.Parse(os.Args[3:])
+	if err := addFlags.Parse(os.Args[3:]); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: parse agent add flags: %v\n", err)
+		os.Exit(1)
+	}
 
 	if strings.TrimSpace(*name) == "" {
 		fmt.Fprintln(os.Stderr, "Error: -name is required")

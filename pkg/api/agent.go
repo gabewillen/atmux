@@ -1,6 +1,8 @@
 package api
 
 import (
+	"time"
+
 	"github.com/stateforward/hsm-go/muid"
 )
 
@@ -115,6 +117,17 @@ type Session struct {
 	// We'll add this in a later phase when we implement full session management.
 }
 
+// RosterEntry represents a single entry in the current roster for agent.list.
+// Per spec §6.2 and §12.4.5, the roster MUST expose at least agent_id, name,
+// adapter, presence, and repo_root.
+type RosterEntry struct {
+	AgentID  muid.MUID
+	Name     string
+	Adapter  string
+	Presence string
+	RepoRoot string
+}
+
 // AgentMessage represents a message between agents, host managers, or the director.
 // Per spec §6.4, agents can communicate with each other using these messages.
 type AgentMessage struct {
@@ -133,5 +146,7 @@ type AgentMessage struct {
 	// Content is the message content.
 	Content string
 
-	// Timestamp is when the message was sent (will be added with time package import).
+	// Timestamp is when the message was sent.
+	// Per spec §6.4 and §9.1.3.1, timestamps are encoded as RFC3339 UTC strings in JSON.
+	Timestamp time.Time
 }

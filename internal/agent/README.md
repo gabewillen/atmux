@@ -11,13 +11,21 @@ This file implements Phase 2 local agent management for:
 - Worktree isolation and slug-based path layout per spec §5.3.1
 - Git merge strategy selection scaffolding per spec §5.7
 
+Package agent provides the agent actor model, presence state machines, and
+roster management helpers.
+
 - `EventStart, EventReady, EventStop, EventError` — Lifecycle event constants.
 - `EventTaskAssigned, EventTaskCompleted, EventPromptDetected, EventRateLimit, EventRateCleared, EventStuckDetected, EventActivityDetected` — Presence event constants per spec §6.5.
+- `EventTypeMessageOutbound, EventTypeMessageInbound, EventTypeMessageBroadcast` — Message event type constants per spec §6.4 and §9.3.
+- `EventTypePresenceChanged, EventTypeRosterUpdated` — Event type constants for presence and roster updates.
 - `LifecycleModel` — LifecycleModel defines the agent lifecycle state machine per spec §5.4.
 - `PresenceModel` — PresenceModel defines the agent presence state machine per spec §6.5.
 - `StateOnline, StateBusy, StateOffline, StateAway` — Presence state constants matching spec §6.1.
 - `StatePending, StateStarting, StateRunning, StateTerminated, StateErrored` — Lifecycle state constants matching spec §5.4.
 - `func AddLocalAgent(ctx context.Context, cfg *config.Config, opts AddLocalAgentOptions) (*api.Agent, string, error)` — AddLocalAgent adds a new local agent for the given repository root.
+- `func EmitBroadcastMessage(ctx context.Context, dispatcher event.Dispatcher, msg api.AgentMessage) error` — EmitBroadcastMessage emits a message.broadcast event carrying the given message.
+- `func EmitInboundMessage(ctx context.Context, dispatcher event.Dispatcher, msg api.AgentMessage) error` — EmitInboundMessage emits a message.inbound event carrying the given message.
+- `func EmitOutboundMessage(ctx context.Context, dispatcher event.Dispatcher, msg api.AgentMessage) error` — EmitOutboundMessage emits a message.outbound event carrying the given message.
 - `func deriveUniqueAgentSlug(cfg *config.Config, name string) string` — deriveUniqueAgentSlug derives a unique agent_slug given the existing config and desired agent name.
 - `func ensureLocalWorktree(ctx context.Context, repoRoot, slug, worktreePath string) error` — ensureLocalWorktree ensures a git worktree exists for the given agent slug.
 - `func flattenEnv(m map[string]string) []string` — flattenEnv flattens a map[string]string into KEY=VALUE strings.
@@ -28,7 +36,10 @@ This file implements Phase 2 local agent management for:
 - `type AgentActor` — AgentActor wraps an Agent with HSM-driven lifecycle and presence state machines.
 - `type LocalSession` — LocalSession represents a local PTY-backed agent session.
 - `type MergeStrategy` — AddLocalAgentOptions holds input parameters for adding a local agent.
+- `type MessagePayload` — MessagePayload wraps an AgentMessage for event dispatch.
 - `type PresenceActor` — PresenceActor wraps an Agent with a presence state machine.
+- `type PresenceChangedPayload` — PresenceChangedPayload is the payload for presence.changed events.
+- `type RosterStore` — RosterStore maintains the current roster of agents and their presence.
 
 ### Constants
 
@@ -59,6 +70,18 @@ const (
 
 Lifecycle event constants.
 
+#### EventTypeMessageOutbound, EventTypeMessageInbound, EventTypeMessageBroadcast
+
+```go
+const (
+	EventTypeMessageOutbound  = "message.outbound"
+	EventTypeMessageInbound   = "message.inbound"
+	EventTypeMessageBroadcast = "message.broadcast"
+)
+```
+
+Message event type constants per spec §6.4 and §9.3.
+
 #### StateOnline, StateBusy, StateOffline, StateAway
 
 ```go
@@ -87,6 +110,17 @@ const (
 ```
 
 Presence event constants per spec §6.5.
+
+#### EventTypePresenceChanged, EventTypeRosterUpdated
+
+```go
+const (
+	EventTypePresenceChanged = "presence.changed"
+	EventTypeRosterUpdated   = "roster.updated"
+)
+```
+
+Event type constants for presence and roster updates.
 
 
 ### Variables
@@ -198,6 +232,32 @@ Responsibilities (Phase 2, spec §5.2, §5.3.1, §5.7.1):
 - Ensure a git worktree exists at .amux/worktrees/{agent_slug}/ under repoRoot
 - Append the agent to the provided configuration (Agents slice)
 - Return the instantiated api.Agent with canonical RepoRoot and Worktree
+
+#### EmitBroadcastMessage
+
+```go
+func EmitBroadcastMessage(ctx context.Context, dispatcher event.Dispatcher, msg api.AgentMessage) error
+```
+
+EmitBroadcastMessage emits a message.broadcast event carrying the given message.
+
+#### EmitInboundMessage
+
+```go
+func EmitInboundMessage(ctx context.Context, dispatcher event.Dispatcher, msg api.AgentMessage) error
+```
+
+EmitInboundMessage emits a message.inbound event carrying the given message.
+
+#### EmitOutboundMessage
+
+```go
+func EmitOutboundMessage(ctx context.Context, dispatcher event.Dispatcher, msg api.AgentMessage) error
+```
+
+EmitOutboundMessage emits a message.outbound event carrying the given message.
+Phase 4 uses the local event dispatcher; Phase 7 will route these over hsmnet
+and NATS per spec §5.5.7.1 and §6.4.
 
 #### deriveUniqueAgentSlug
 
@@ -427,6 +487,19 @@ SelectMergeStrategy returns the effective merge strategy based on config,
 defaulting to squash when an unknown or empty value is provided.
 
 
+## type MessagePayload
+
+```go
+type MessagePayload struct {
+	Message api.AgentMessage
+}
+```
+
+MessagePayload wraps an AgentMessage for event dispatch.
+Per spec §6.4, agents, host managers, and the director communicate using
+AgentMessage payloads routed over the event system and, in later phases,
+NATS participant channels.
+
 ## type PresenceActor
 
 ```go
@@ -525,5 +598,92 @@ func () TaskCompleted(ctx context.Context)
 ```
 
 TaskCompleted transitions from Busy to Online.
+
+
+## type PresenceChangedPayload
+
+```go
+type PresenceChangedPayload struct {
+	AgentID  muid.MUID
+	Presence string
+}
+```
+
+PresenceChangedPayload is the payload for presence.changed events.
+Per spec §6.1 and §6.5, presence indicates whether an agent can accept tasks.
+IDs are kept as muid.MUID here; JSON encoding is handled at the event system
+or control-plane layer per spec §9.1.3.1.
+
+## type RosterStore
+
+```go
+type RosterStore struct {
+	mu         sync.RWMutex
+	entries    map[muid.MUID]api.RosterEntry
+	dispatcher event.Dispatcher
+}
+```
+
+RosterStore maintains the current roster of agents and their presence.
+Per spec §6.2 and §6.3, the roster MUST be updated in real time as presence
+changes occur and MUST be broadcast via presence.changed events.
+
+### Functions returning RosterStore
+
+#### NewRosterStore
+
+```go
+func NewRosterStore(dispatcher event.Dispatcher) *RosterStore
+```
+
+NewRosterStore creates a new RosterStore backed by the provided dispatcher.
+If dispatcher is nil, a local in-process dispatcher is created.
+
+
+### Methods
+
+#### RosterStore.Dispatcher
+
+```go
+func () Dispatcher() event.Dispatcher
+```
+
+Dispatcher returns the underlying event dispatcher used by the store.
+This is primarily exposed for tests and integration wiring.
+
+#### RosterStore.List
+
+```go
+func () List() []api.RosterEntry
+```
+
+List returns a snapshot of the current roster entries, ordered deterministically
+by name (then by AgentID) for stable listings.
+
+#### RosterStore.RemoveAgent
+
+```go
+func () RemoveAgent(ctx context.Context, id muid.MUID) error
+```
+
+RemoveAgent removes an agent from the roster and emits a roster.updated event.
+
+#### RosterStore.UpsertAgent
+
+```go
+func () UpsertAgent(ctx context.Context, ag *api.Agent, presence string) error
+```
+
+UpsertAgent inserts or updates an agent in the roster and emits presence and
+roster events. Presence defaults to StateOnline when empty.
+
+#### RosterStore.snapshotLocked
+
+```go
+func () snapshotLocked() []api.RosterEntry
+```
+
+snapshotLocked builds a sorted slice of roster entries. Caller must hold
+either a read or write lock.
 
 

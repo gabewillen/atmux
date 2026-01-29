@@ -89,7 +89,11 @@ func TestAddLocalAgentCreatesWorktreeAndConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("StartLocalSession returned error: %v", err)
 	}
-	defer session.Stop()
+	defer func() {
+		if err := session.Stop(); err != nil {
+			t.Fatalf("session.Stop returned error: %v", err)
+		}
+	}()
 
 	if session.Cmd == nil {
 		t.Fatal("expected non-nil session.Cmd")

@@ -67,14 +67,16 @@ Config actor event names used with hsm-go.
 var Model = hsm.Define("config",
 	hsm.State("loading",
 		hsm.Entry(func(ctx context.Context, a *Actor, e hsm.Event) {
-			_, _ = a.reload(ctx)
+
+			_, _ = a.reloadInternal(ctx)
 		}),
 	),
 
 	hsm.State("ready"),
 	hsm.State("reloading",
 		hsm.Entry(func(ctx context.Context, a *Actor, e hsm.Event) {
-			_, _ = a.reload(ctx)
+
+			_, _ = a.reloadInternal(ctx)
 		}),
 	),
 
@@ -134,6 +136,8 @@ type Actor struct {
 
 	subscribersMu sync.RWMutex
 	subscribers   []chan ConfigChange
+
+	hsmStarted bool // tracks whether HSM has been initialized
 }
 ```
 
@@ -186,14 +190,15 @@ Subscribe returns a channel that will receive ConfigChange events produced
 when the actor reloads configuration and detects changed values. The caller
 is responsible for draining and closing the channel when done.
 
-#### Actor.reload
+#### Actor.reloadInternal
 
 ```go
-func () reload(ctx context.Context) (*Config, error)
+func () reloadInternal(ctx context.Context) (*Config, error)
 ```
 
-reload loads configuration via the loader, computes a simple diff, updates
-the current config, and emits ConfigReloaded/ConfigUpdated events.
+reloadInternal loads configuration via the loader, computes per-key diffs, updates
+the current config, and sends ConfigChange events to subscribers. It does NOT
+dispatch any HSM events (to avoid deadlock when called from HSM entry actions).
 
 
 ## type AgentConfig
@@ -300,6 +305,19 @@ type ConfigChange struct {
 
 ConfigChange describes a single configuration value change.
 Per spec §4.2.8.8, Path is a dot-separated key (e.g. "timeouts.stuck").
+
+### Functions returning ConfigChange
+
+#### diffConfigs
+
+```go
+func diffConfigs(oldCfg, newCfg *Config) []ConfigChange
+```
+
+diffConfigs computes a list of ConfigChange entries describing differences
+between the old and new configuration. When old is nil, no changes are
+reported (initial load).
+
 
 ## type DaemonConfig
 

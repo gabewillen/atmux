@@ -1,0 +1,36 @@
+[meta]
+created_at = 2026-01-29T19:09:15.510002045Z
+module_root = '/shared/qoder-auto'
+spec_version = 'v1.22'
+
+[steps]
+[steps.go_mod_tidy]
+exit_code = 0
+duration_ms = 36
+
+[steps.go_vet]
+exit_code = 0
+duration_ms = 191
+
+[steps.golangci_lint]
+exit_code = 1
+duration_ms = 732
+
+[steps.tests_race]
+exit_code = 0
+duration_ms = 2013
+
+[steps.tests]
+exit_code = 0
+duration_ms = 246
+
+[steps.coverage]
+exit_code = 0
+duration_ms = 712
+total_percent = 21.8
+
+[steps.benchmarks]
+exit_code = 0
+duration_ms = 356
+
+[steps.benchmarks.benchmarks]

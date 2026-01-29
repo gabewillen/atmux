@@ -4,17 +4,11 @@
 
 Package inference provides the local inference engine interface for amux per spec §4.2.10.
 
-This package integrates the liquidgen inference engine from third_party/liquidgen.
-The liquidgen engine is a C++ application that must be built separately using CMake.
-
-Build instructions:
-  cd third_party/liquidgen
-  mkdir build && cd build
-  cmake ..
-  make
-
-Phase 0: This implementation provides the interface and stub. Full liquidgen integration
-requires CGO bindings or exec-based integration to be completed in subsequent work.
+This package integrates the liquidgen inference engine from third_party/liquidgen
+via an HTTP-compatible gateway ("liquid-server"). The engine is discovered at
+runtime using the AMUX_LIQUIDGEN_ROOT and AMUX_LIQUIDGEN_ADDR environment
+variables and supports dynamic model ID routing and structured error
+propagation.
 
 - `type Engine` — Engine is the interface to the local inference engine.
 - `type ModelID` — ModelID represents a logical model identifier.

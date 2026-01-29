@@ -56,7 +56,8 @@ func Run(ctx context.Context) (*RunResult, error)
 
 Run executes a minimal conformance suite against the local amux binaries.
 
-Phase 0: This boots the daemon stub and runs a couple of CLI flows, then
-records structured JSON results per the output contract.
+Phase 0–3: This boots the daemon stub (amux-node), runs basic CLI flows, and
+invokes `amux test` to exercise the verification entrypoint, then records
+structured JSON results per the output contract.
 
 

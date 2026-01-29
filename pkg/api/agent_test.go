@@ -2,6 +2,7 @@ package api
 
 import (
 	"testing"
+	"time"
 )
 
 func TestLocationTypeString(t *testing.T) {
@@ -151,11 +152,12 @@ func TestSessionStructure(t *testing.T) {
 func TestAgentMessageStructure(t *testing.T) {
 	// Verify AgentMessage structure can be instantiated
 	msg := AgentMessage{
-		ID:      GenerateID(),
-		From:    GenerateID(),
-		To:      GenerateID(),
-		ToSlug:  "target-agent",
-		Content: "Hello, world!",
+		ID:        GenerateID(),
+		From:      GenerateID(),
+		To:        GenerateID(),
+		ToSlug:    "target-agent",
+		Content:   "Hello, world!",
+		Timestamp: time.Now().UTC(),
 	}
 
 	if msg.ID == BroadcastID {
@@ -163,6 +165,9 @@ func TestAgentMessageStructure(t *testing.T) {
 	}
 	if msg.Content != "Hello, world!" {
 		t.Errorf("AgentMessage.Content = %q, want %q", msg.Content, "Hello, world!")
+	}
+	if msg.Timestamp.IsZero() {
+		t.Error("AgentMessage.Timestamp should be set")
 	}
 }
 

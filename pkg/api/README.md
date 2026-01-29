@@ -14,6 +14,7 @@ Package api provides public types for the amux system.
 - `type Agent` — Agent represents a coding agent instance managed by amux.
 - `type LocationType` — LocationType indicates whether an agent runs locally or remotely.
 - `type Location` — Location specifies where an agent runs.
+- `type RosterEntry` — RosterEntry represents a single entry in the current roster for agent.list.
 - `type Session` — Session represents a collection of agents managed together.
 
 ### Constants
@@ -155,6 +156,10 @@ type AgentMessage struct {
 
 	// Content is the message content.
 	Content string
+
+	// Timestamp is when the message was sent.
+	// Per spec §6.4 and §9.1.3.1, timestamps are encoded as RFC3339 UTC strings in JSON.
+	Timestamp time.Time
 }
 ```
 
@@ -236,6 +241,22 @@ func () String() string
 
 String returns the string representation of a LocationType.
 
+
+## type RosterEntry
+
+```go
+type RosterEntry struct {
+	AgentID  muid.MUID
+	Name     string
+	Adapter  string
+	Presence string
+	RepoRoot string
+}
+```
+
+RosterEntry represents a single entry in the current roster for agent.list.
+Per spec §6.2 and §12.4.5, the roster MUST expose at least agent_id, name,
+adapter, presence, and repo_root.
 
 ## type Session
 

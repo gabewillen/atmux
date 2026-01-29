@@ -126,27 +126,113 @@ Commands:
 }
 
 func agentAdd(ctx context.Context, args []string) error {
-	fmt.Println("agent add: not yet implemented")
+	flags, positional := ParseFlags(args)
+
+	if len(positional) == 0 {
+		return fmt.Errorf("usage: amux agent add <name> [--adapter <adapter>] [--repo <path>]")
+	}
+
+	name := positional[0]
+	adapter := GetFlag(flags, []string{"adapter", "a"}, "")
+	repo := GetFlag(flags, []string{"repo", "r"}, "")
+
+	params := map[string]any{
+		"name": name,
+	}
+	if adapter != "" {
+		params["adapter"] = adapter
+	}
+	if repo != "" {
+		params["repo_path"] = repo
+	}
+
+	client := NewRPCClient()
+	var result map[string]any
+	if err := client.Call("agent.add", params, &result); err != nil {
+		return fmt.Errorf("agent add: %w", err)
+	}
+
+	fmt.Fprintf(os.Stdout, "Added agent %q\n", name)
+	if id, ok := result["agent_id"]; ok {
+		fmt.Fprintf(os.Stdout, "  ID: %v\n", id)
+	}
+	if slug, ok := result["agent_slug"]; ok {
+		fmt.Fprintf(os.Stdout, "  Slug: %v\n", slug)
+	}
 	return nil
 }
 
 func agentList(ctx context.Context, args []string) error {
-	fmt.Println("agent list: not yet implemented")
+	client := NewRPCClient()
+	var result []map[string]any
+	if err := client.Call("agent.list", nil, &result); err != nil {
+		return fmt.Errorf("agent list: %w", err)
+	}
+
+	if len(result) == 0 {
+		fmt.Println("No agents configured")
+		return nil
+	}
+
+	fmt.Printf("%-20s %-15s %-12s %s\n", "NAME", "ADAPTER", "STATE", "SLUG")
+	for _, agent := range result {
+		name, _ := agent["name"].(string)
+		adapter, _ := agent["adapter"].(string)
+		state, _ := agent["lifecycle_state"].(string)
+		slug, _ := agent["agent_slug"].(string)
+		fmt.Printf("%-20s %-15s %-12s %s\n", name, adapter, state, slug)
+	}
 	return nil
 }
 
 func agentRemove(ctx context.Context, args []string) error {
-	fmt.Println("agent remove: not yet implemented")
+	_, positional := ParseFlags(args)
+
+	if len(positional) == 0 {
+		return fmt.Errorf("usage: amux agent remove <name-or-id>")
+	}
+
+	client := NewRPCClient()
+	params := map[string]any{"name": positional[0]}
+	if err := client.Call("agent.remove", params, nil); err != nil {
+		return fmt.Errorf("agent remove: %w", err)
+	}
+
+	fmt.Fprintf(os.Stdout, "Removed agent %q\n", positional[0])
 	return nil
 }
 
 func agentStart(ctx context.Context, args []string) error {
-	fmt.Println("agent start: not yet implemented")
+	_, positional := ParseFlags(args)
+
+	if len(positional) == 0 {
+		return fmt.Errorf("usage: amux agent start <name-or-id>")
+	}
+
+	client := NewRPCClient()
+	params := map[string]any{"name": positional[0]}
+	if err := client.Call("agent.start", params, nil); err != nil {
+		return fmt.Errorf("agent start: %w", err)
+	}
+
+	fmt.Fprintf(os.Stdout, "Started agent %q\n", positional[0])
 	return nil
 }
 
 func agentStop(ctx context.Context, args []string) error {
-	fmt.Println("agent stop: not yet implemented")
+	_, positional := ParseFlags(args)
+
+	if len(positional) == 0 {
+		return fmt.Errorf("usage: amux agent stop <name-or-id>")
+	}
+
+	client := NewRPCClient()
+	params := map[string]any{"name": positional[0]}
+	if err := client.Call("agent.stop", params, nil); err != nil {
+		return fmt.Errorf("agent stop: %w", err)
+	}
+
+	fmt.Fprintf(os.Stdout, "Stopped agent %q\n", positional[0])
 	return nil
 }
 
@@ -191,17 +277,58 @@ Commands:
 }
 
 func pluginInstall(ctx context.Context, args []string) error {
-	fmt.Println("plugin install: not yet implemented")
+	_, positional := ParseFlags(args)
+
+	if len(positional) == 0 {
+		return fmt.Errorf("usage: amux plugin install <path-or-url>")
+	}
+
+	client := NewRPCClient()
+	params := map[string]any{"source": positional[0]}
+	if err := client.Call("plugin.install", params, nil); err != nil {
+		return fmt.Errorf("plugin install: %w", err)
+	}
+
+	fmt.Fprintf(os.Stdout, "Installed plugin from %q\n", positional[0])
 	return nil
 }
 
 func pluginList(ctx context.Context, args []string) error {
-	fmt.Println("plugin list: not yet implemented")
+	client := NewRPCClient()
+	var result []map[string]any
+	if err := client.Call("plugin.list", nil, &result); err != nil {
+		return fmt.Errorf("plugin list: %w", err)
+	}
+
+	if len(result) == 0 {
+		fmt.Println("No plugins installed")
+		return nil
+	}
+
+	fmt.Printf("%-30s %-10s %s\n", "NAME", "VERSION", "STATUS")
+	for _, plugin := range result {
+		name, _ := plugin["name"].(string)
+		version, _ := plugin["version"].(string)
+		status, _ := plugin["status"].(string)
+		fmt.Printf("%-30s %-10s %s\n", name, version, status)
+	}
 	return nil
 }
 
 func pluginRemove(ctx context.Context, args []string) error {
-	fmt.Println("plugin remove: not yet implemented")
+	_, positional := ParseFlags(args)
+
+	if len(positional) == 0 {
+		return fmt.Errorf("usage: amux plugin remove <name>")
+	}
+
+	client := NewRPCClient()
+	params := map[string]any{"name": positional[0]}
+	if err := client.Call("plugin.remove", params, nil); err != nil {
+		return fmt.Errorf("plugin remove: %w", err)
+	}
+
+	fmt.Fprintf(os.Stdout, "Removed plugin %q\n", positional[0])
 	return nil
 }
 

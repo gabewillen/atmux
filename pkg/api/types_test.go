@@ -71,6 +71,54 @@ func TestAgentValidate(t *testing.T) {
 	}
 }
 
+func TestAgentValidateSSHHost(t *testing.T) {
+	// SSH agents must have Location.Host set
+	sshAgent := Agent{
+		ID:       muid.MUID(123),
+		Name:     "remote-dev",
+		Slug:     "remote-dev",
+		Adapter:  "claude-code",
+		RepoRoot: "/home/user/project",
+		Location: Location{
+			Type: LocationSSH,
+			// Host is empty
+		},
+	}
+
+	err := sshAgent.Validate()
+	if err == nil {
+		t.Error("Validate() should fail for SSH agent without Location.Host")
+	}
+	valErr, ok := err.(*AgentValidationError)
+	if !ok {
+		t.Fatalf("expected AgentValidationError, got %T", err)
+	}
+	if valErr.Field != "Location.Host" {
+		t.Errorf("error field = %q, want %q", valErr.Field, "Location.Host")
+	}
+
+	// SSH agent with Host set should pass validation
+	sshAgent.Location.Host = "remote-host.example.com"
+	if err := sshAgent.Validate(); err != nil {
+		t.Errorf("Validate() should pass for SSH agent with Host set: %v", err)
+	}
+
+	// Local agents should not require Host
+	localAgent := Agent{
+		ID:       muid.MUID(456),
+		Name:     "local-dev",
+		Slug:     "local-dev",
+		Adapter:  "claude-code",
+		RepoRoot: "/home/user/project",
+		Location: Location{
+			Type: LocationLocal,
+		},
+	}
+	if err := localAgent.Validate(); err != nil {
+		t.Errorf("Validate() should pass for local agent without Host: %v", err)
+	}
+}
+
 func TestSessionValidate(t *testing.T) {
 	tests := []struct {
 		name    string

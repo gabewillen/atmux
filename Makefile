@@ -1,7 +1,7 @@
 # amux Makefile
 # Verification entrypoints for the Agent Multiplexer
 
-.PHONY: all build test lint vet tidy check conformance docs clean help
+.PHONY: all build test lint vet tidy staticcheck check conformance docs clean help
 
 # Default target
 all: check build
@@ -25,6 +25,10 @@ test-cover:
 # Run linter
 lint:
 	golangci-lint run ./...
+
+# Run staticcheck
+staticcheck:
+	staticcheck ./...
 
 # Run go vet
 vet:

@@ -19,11 +19,15 @@ import (
 
 	"github.com/nats-io/nats.go"
 
+	"github.com/agentflare-ai/amux/internal/agent"
 	"github.com/agentflare-ai/amux/internal/config"
 	"github.com/agentflare-ai/amux/internal/event"
 	"github.com/agentflare-ai/amux/internal/remote/director"
+	"github.com/agentflare-ai/amux/internal/remote/hub"
 	"github.com/agentflare-ai/amux/internal/remote/manager"
 	"github.com/agentflare-ai/amux/internal/remote/natsconn"
+	"github.com/agentflare-ai/amux/internal/session"
+	"github.com/agentflare-ai/amux/internal/shutdown"
 	"github.com/agentflare-ai/amux/pkg/api"
 )
 
@@ -155,11 +159,27 @@ func runDirector(ctx context.Context, cfg *config.Config) error {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
-	dispatcher := event.NewLocalDispatcher()
 	hostID := getHostID()
+
+	// Start embedded hub NATS server when nats.mode=embedded (spec §5.5.5)
+	var hubServer *hub.Server
+	if cfg.NATS.Mode == "embedded" {
+		hubOpts := hub.OptionsFromConfig(cfg)
+		var err error
+		hubServer, err = hub.Start(hubOpts)
+		if err != nil {
+			return fmt.Errorf("director hub start: %w", err)
+		}
+		defer hubServer.Shutdown()
+		fmt.Fprintf(os.Stderr, "Hub NATS server started (%s)\n", hubOpts.Listen)
+	}
 
 	// Connect to NATS
 	opts := natsconn.OptionsFromConfig(cfg, hostID)
+	// If hub was started, connect to it directly
+	if hubServer != nil {
+		opts.URL = hubServer.ClientURL()
+	}
 	opts.DisconnectHandler = func(nc *nats.Conn, err error) {
 		fmt.Fprintf(os.Stderr, "NATS disconnected: %v\n", err)
 	}
@@ -173,23 +193,64 @@ func runDirector(ctx context.Context, cfg *config.Config) error {
 	}
 	defer conn.Close()
 
+	// Create NATS-routed event dispatcher per CLAUDE.md invariant:
+	// "ALWAYS use NATS as event transport even in local-only deployments"
+	natsDispatcher, err := event.NewNATSDispatcher(conn.NC())
+	if err != nil {
+		return fmt.Errorf("director nats dispatcher: %w", err)
+	}
+	defer natsDispatcher.Close()
+	event.SetDefaultDispatcher(natsDispatcher)
+
 	fmt.Fprintf(os.Stderr, "Director connected to NATS (host=%s)\n", hostID)
 
+	// Create agent management subsystem (spec §5)
+	agentMgr := agent.NewManager(natsDispatcher)
+	if cfg.Git.Merge.TargetBranch != "" {
+		agentMgr.SetMergeTargetBranch(cfg.Git.Merge.TargetBranch)
+	}
+
+	sessMgr := session.NewManager(natsDispatcher)
+	sessAdapter := session.NewAdapter(sessMgr)
+	agentMgr.SetSessionSpawner(sessAdapter)
+
+	// Create shutdown controller (spec §5.6)
+	shutdownCtrl := shutdown.NewController(sessMgr, natsDispatcher, cfg.Shutdown.DrainTimeout.Duration)
+
 	// Create and start the director
-	dir := director.New(conn, cfg, dispatcher)
+	dir := director.New(conn, cfg, natsDispatcher)
 	if err := dir.Start(ctx); err != nil {
 		return fmt.Errorf("director start: %w", err)
 	}
 	defer func() { _ = dir.Stop() }()
 
+	// Start JSON-RPC server on Unix socket
+	rpcServer := NewRPCServer(dir, nil, agentMgr)
+	if err := rpcServer.Start(); err != nil {
+		return fmt.Errorf("director rpc server: %w", err)
+	}
+	defer rpcServer.Stop()
+
 	fmt.Fprintln(os.Stderr, "Director ready")
 
-	// Wait for shutdown signal
+	// Wait for shutdown signal with HSM-driven shutdown sequence (spec §5.6.2)
 	select {
 	case sig := <-sigCh:
 		fmt.Fprintf(os.Stderr, "Director received signal: %s, shutting down\n", sig)
+		shutdownCtrl.RequestShutdown(ctx)
+		// Wait for drain completion or second signal
+		select {
+		case <-shutdownCtrl.Done():
+			fmt.Fprintln(os.Stderr, "Director shutdown complete")
+		case <-sigCh:
+			fmt.Fprintln(os.Stderr, "Director received second signal, forcing shutdown")
+			shutdownCtrl.RequestShutdown(ctx) // escalates to force
+			<-shutdownCtrl.Done()
+		}
 	case <-ctx.Done():
 		fmt.Fprintln(os.Stderr, "Director context cancelled, shutting down")
+		shutdownCtrl.ForceShutdown(ctx)
+		<-shutdownCtrl.Done()
 	}
 
 	return nil
@@ -203,7 +264,6 @@ func runManager(ctx context.Context, cfg *config.Config) error {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
-	dispatcher := event.NewLocalDispatcher()
 	hostID := getHostID()
 
 	// Connect to NATS
@@ -230,23 +290,63 @@ func runManager(ctx context.Context, cfg *config.Config) error {
 	}
 	defer conn.Close()
 
+	// Create NATS-routed event dispatcher per CLAUDE.md invariant:
+	// "ALWAYS use NATS as event transport even in local-only deployments"
+	natsDispatcher, err := event.NewNATSDispatcher(conn.NC())
+	if err != nil {
+		return fmt.Errorf("manager nats dispatcher: %w", err)
+	}
+	defer natsDispatcher.Close()
+	event.SetDefaultDispatcher(natsDispatcher)
+
 	fmt.Fprintf(os.Stderr, "Manager connected to NATS (host=%s)\n", hostID)
 
-	// Create and start the manager
-	mgr = manager.New(conn, cfg, hostID, dispatcher)
+	// Create agent management subsystem (spec §5)
+	agentMgr := agent.NewManager(natsDispatcher)
+	if cfg.Git.Merge.TargetBranch != "" {
+		agentMgr.SetMergeTargetBranch(cfg.Git.Merge.TargetBranch)
+	}
+
+	sessMgr := session.NewManager(natsDispatcher)
+	sessAdapter := session.NewAdapter(sessMgr)
+	agentMgr.SetSessionSpawner(sessAdapter)
+
+	// Create shutdown controller (spec §5.6)
+	shutdownCtrl := shutdown.NewController(sessMgr, natsDispatcher, cfg.Shutdown.DrainTimeout.Duration)
+
+	// Create and start the remote manager
+	mgr = manager.New(conn, cfg, hostID, natsDispatcher)
 	if err := mgr.Start(ctx); err != nil {
 		return fmt.Errorf("manager start: %w", err)
 	}
 	defer func() { _ = mgr.Stop() }()
 
+	// Start JSON-RPC server on Unix socket
+	rpcServer := NewRPCServer(nil, mgr, agentMgr)
+	if err := rpcServer.Start(); err != nil {
+		return fmt.Errorf("manager rpc server: %w", err)
+	}
+	defer rpcServer.Stop()
+
 	fmt.Fprintln(os.Stderr, "Manager ready")
 
-	// Wait for shutdown signal
+	// Wait for shutdown signal with HSM-driven shutdown sequence (spec §5.6.2)
 	select {
 	case sig := <-sigCh:
 		fmt.Fprintf(os.Stderr, "Manager received signal: %s, shutting down\n", sig)
+		shutdownCtrl.RequestShutdown(ctx)
+		select {
+		case <-shutdownCtrl.Done():
+			fmt.Fprintln(os.Stderr, "Manager shutdown complete")
+		case <-sigCh:
+			fmt.Fprintln(os.Stderr, "Manager received second signal, forcing shutdown")
+			shutdownCtrl.RequestShutdown(ctx)
+			<-shutdownCtrl.Done()
+		}
 	case <-ctx.Done():
 		fmt.Fprintln(os.Stderr, "Manager context cancelled, shutting down")
+		shutdownCtrl.ForceShutdown(ctx)
+		<-shutdownCtrl.Done()
 	}
 
 	return nil

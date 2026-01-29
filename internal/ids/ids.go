@@ -157,6 +157,25 @@ func EncodeID(id muid.MUID) string {
 	return fmt.Sprintf("%d", uint64(id))
 }
 
+// ParseID decodes a base-10 string to a muid.MUID, returning 0 on failure.
+// This is a convenience wrapper around DecodeID for contexts where an
+// invalid ID should be treated as the zero/broadcast sentinel.
+func ParseID(s string) muid.MUID {
+	id, _ := DecodeID(s)
+	return id
+}
+
+// ParseIDStrict decodes a base-10 string to a muid.MUID and returns an error
+// if the string is not a valid base-10 unsigned integer. Unlike ParseID, this
+// function does not silently return 0 on failure.
+func ParseIDStrict(s string) (muid.MUID, error) {
+	id, err := DecodeID(s)
+	if err != nil {
+		return 0, fmt.Errorf("parse ID strict: %w", err)
+	}
+	return id, nil
+}
+
 // DecodeID decodes a base-10 string to a muid.MUID.
 // Returns an error if the string is not a valid base-10 unsigned integer.
 func DecodeID(s string) (muid.MUID, error) {

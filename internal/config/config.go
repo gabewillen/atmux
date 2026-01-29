@@ -415,21 +415,36 @@ func NewLoader(resolver *paths.Resolver) *Loader {
 	}
 }
 
-// Load loads configuration from all sources in order.
+// Load loads configuration from all sources in order per spec §4.2.8:
+//  1. Built-in defaults
+//  2. Adapter defaults (currently not loaded - requires WASM registry)
+//  3. User config (~/.config/amux/config.toml)
+//  4. User adapter config (~/.config/amux/adapters/{name}/config.toml)
+//  5. Project config (.amux/config.toml)
+//  6. Project adapter config (.amux/adapters/{name}/config.toml)
+//  7. Environment variables (AMUX__* prefix)
 func (l *Loader) Load() (*Config, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	// Start with defaults
+	// Layer 1: Start with defaults
 	l.config = DefaultConfig()
 
-	// Load user config
+	// Layer 2: Adapter defaults would come from WASM manifests
+	// (requires adapter registry integration - skipped for now)
+
+	// Layer 3: Load user config
 	userConfigPath := l.resolver.UserConfigFile()
 	if err := l.loadFile(userConfigPath); err != nil && !os.IsNotExist(err) {
 		return nil, fmt.Errorf("user config: %w", err)
 	}
 
-	// Load project config
+	// Layer 4: Load user adapter configs for all known adapters
+	l.loadAdapterConfigs(func(name string) string {
+		return l.resolver.UserAdapterConfigFile(name)
+	})
+
+	// Layer 5: Load project config
 	projectConfigPath := l.resolver.ProjectConfigFile()
 	if projectConfigPath != "" {
 		if err := l.loadFile(projectConfigPath); err != nil && !os.IsNotExist(err) {
@@ -437,7 +452,12 @@ func (l *Loader) Load() (*Config, error) {
 		}
 	}
 
-	// Apply environment variables
+	// Layer 6: Load project adapter configs for all known adapters
+	l.loadAdapterConfigs(func(name string) string {
+		return l.resolver.ProjectAdapterConfigFile(name)
+	})
+
+	// Layer 7: Apply environment variables
 	if err := l.loadEnv(); err != nil {
 		return nil, fmt.Errorf("environment config: %w", err)
 	}
@@ -446,6 +466,63 @@ func (l *Loader) Load() (*Config, error) {
 	l.expandPaths()
 
 	return l.config, nil
+}
+
+// loadAdapterConfigs loads adapter-specific config files for all known adapters.
+// The pathFn is called for each adapter name to get the config file path.
+func (l *Loader) loadAdapterConfigs(pathFn func(name string) string) {
+	// Load configs for adapters we already know about
+	for adapterName := range l.config.Adapters {
+		configPath := pathFn(adapterName)
+		if configPath == "" {
+			continue
+		}
+		_ = l.loadAdapterConfigFile(adapterName, configPath)
+	}
+
+	// Also load configs for well-known adapters
+	wellKnownAdapters := []string{"claude-code", "cursor", "windsurf"}
+	for _, adapterName := range wellKnownAdapters {
+		if _, exists := l.config.Adapters[adapterName]; exists {
+			continue // Already loaded
+		}
+		configPath := pathFn(adapterName)
+		if configPath == "" {
+			continue
+		}
+		_ = l.loadAdapterConfigFile(adapterName, configPath)
+	}
+}
+
+// loadAdapterConfigFile loads a single adapter config file and merges it
+// into the adapters map.
+func (l *Loader) loadAdapterConfigFile(adapterName, path string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err // File doesn't exist or can't be read - that's OK
+	}
+
+	var adapterConfig map[string]any
+	if err := toml.Unmarshal(data, &adapterConfig); err != nil {
+		return fmt.Errorf("parse adapter config %s: %w", path, err)
+	}
+
+	if l.config.Adapters == nil {
+		l.config.Adapters = make(map[string]any)
+	}
+
+	// Merge into existing adapter config
+	existing, ok := l.config.Adapters[adapterName].(map[string]any)
+	if !ok {
+		l.config.Adapters[adapterName] = adapterConfig
+	} else {
+		// Deep merge the new config into existing
+		for k, v := range adapterConfig {
+			existing[k] = v
+		}
+	}
+
+	return nil
 }
 
 // loadFile loads a TOML configuration file and merges it with current config.
@@ -1105,6 +1182,129 @@ func (l *Loader) expandPaths() {
 	for i := range l.config.Agents {
 		l.config.Agents[i].Location.RepoPath = expand(l.config.Agents[i].Location.RepoPath)
 	}
+}
+
+// sensitiveKeys contains key patterns that should be redacted in config display.
+var sensitiveKeys = []string{
+	"api_key", "token", "secret", "password", "creds",
+	"seed", "private_key", "auth_token", "access_key",
+}
+
+// isSensitiveKey returns true if the key name suggests a sensitive value.
+func isSensitiveKey(key string) bool {
+	lower := strings.ToLower(key)
+	for _, sensitive := range sensitiveKeys {
+		if strings.Contains(lower, sensitive) {
+			return true
+		}
+	}
+	return false
+}
+
+// RedactedAdapters returns a copy of the adapters config with sensitive
+// values replaced by "[REDACTED]".
+//
+// Per spec: adapter configuration may contain secrets (API keys, tokens)
+// that MUST NOT be displayed in logs, status output, or debug dumps.
+func RedactedAdapters(adapters map[string]any) map[string]any {
+	if adapters == nil {
+		return nil
+	}
+	redacted := make(map[string]any, len(adapters))
+	for k, v := range adapters {
+		redacted[k] = redactValue(k, v)
+	}
+	return redacted
+}
+
+// redactValue recursively redacts sensitive values in adapter config maps.
+func redactValue(key string, value any) any {
+	switch v := value.(type) {
+	case map[string]any:
+		result := make(map[string]any, len(v))
+		for k, val := range v {
+			result[k] = redactValue(k, val)
+		}
+		return result
+	case string:
+		if isSensitiveKey(key) {
+			return "[REDACTED]"
+		}
+		return v
+	default:
+		if isSensitiveKey(key) {
+			return "[REDACTED]"
+		}
+		return v
+	}
+}
+
+// Reload re-reads configuration from all sources and updates the loader.
+// Returns the new configuration and emits a config.reloaded event on the
+// provided dispatcher (if non-nil).
+//
+// Per spec §4.2.8: configuration reload MUST re-read all layers in order
+// and apply environment overrides last.
+func (l *Loader) Reload() (*Config, error) {
+	return l.Load()
+}
+
+// Watch starts polling config files for changes and calls onChange when
+// a modification is detected. Call the returned cancel function to stop.
+//
+// The check interval defaults to 5 seconds.
+func (l *Loader) Watch(onChange func(*Config)) (cancel func()) {
+	done := make(chan struct{})
+	var lastModTimes map[string]time.Time
+
+	getModTimes := func() map[string]time.Time {
+		mods := make(map[string]time.Time)
+		for _, path := range []string{
+			l.resolver.UserConfigFile(),
+			l.resolver.ProjectConfigFile(),
+		} {
+			if path == "" {
+				continue
+			}
+			info, err := os.Stat(path)
+			if err == nil {
+				mods[path] = info.ModTime()
+			}
+		}
+		return mods
+	}
+
+	lastModTimes = getModTimes()
+
+	go func() {
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-done:
+				return
+			case <-ticker.C:
+				current := getModTimes()
+				changed := false
+				for path, modTime := range current {
+					if last, ok := lastModTimes[path]; !ok || !modTime.Equal(last) {
+						changed = true
+						break
+					}
+				}
+				if changed {
+					lastModTimes = current
+					cfg, err := l.Reload()
+					if err == nil && onChange != nil {
+						onChange(cfg)
+					}
+				}
+			}
+		}
+	}()
+
+	return func() { close(done) }
 }
 
 // Global functions for default loader

@@ -19,7 +19,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"os/exec"
+	"path/filepath"
+	"runtime"
 	"sync"
 	"time"
 
@@ -35,6 +38,9 @@ import (
 	"github.com/agentflare-ai/amux/internal/remote/natsconn"
 )
 
+// Version is the manager daemon version string.
+const Version = "0.1.0-dev"
+
 // Manager implements the manager-role daemon on a remote host.
 type Manager struct {
 	mu     sync.RWMutex
@@ -42,6 +48,10 @@ type Manager struct {
 	cfg    *config.Config
 	prefix string
 	hostID string
+
+	// peerMUID is the manager's runtime ID (non-zero, per spec §3.22).
+	peerMUID muid.MUID
+	// peerID is peerMUID encoded as a base-10 string for wire use.
 	peerID string
 
 	// handshakeComplete indicates whether the handshake exchange is done.
@@ -97,6 +107,9 @@ type ManagedSession struct {
 	// done is closed when the session exits.
 	done chan struct{}
 
+	// startedAt records when the session was created (UTC).
+	startedAt time.Time
+
 	// running indicates whether the session is active.
 	running bool
 
@@ -104,7 +117,15 @@ type ManagedSession struct {
 	// While true, live PTY output MUST NOT be published.
 	replayPending bool
 
-	// liveBuf holds PTY output produced during a replay operation.
+	// awaitingReplay indicates whether the session is waiting for a replay
+	// request after hub reconnection. While true, live PTY output MUST NOT
+	// be published; instead it is buffered in liveBuf.
+	// Per spec §5.5.7.3: after reconnect, the manager MUST NOT publish
+	// live PTY output until a replay request is received for each session.
+	awaitingReplay bool
+
+	// liveBuf holds PTY output produced during a replay operation or
+	// while awaiting a replay request after reconnection.
 	liveBuf []byte
 }
 
@@ -121,12 +142,14 @@ func New(conn *natsconn.Conn, cfg *config.Config, hostID string, dispatcher even
 	if bufSize == 0 {
 		bufSize = 10 * 1024 * 1024 // 10MB default
 	}
+	peerMUID := ids.NewID()
 	return &Manager{
 		conn:           conn,
 		cfg:            cfg,
 		prefix:         prefix,
 		hostID:         hostID,
-		peerID:         ids.EncodeID(ids.NewID()),
+		peerMUID:       peerMUID,
+		peerID:         ids.EncodeID(peerMUID),
 		sessions:       make(map[string]*ManagedSession),
 		sessionsByID:   make(map[string]*ManagedSession),
 		dispatcher:     dispatcher,
@@ -175,6 +198,9 @@ func (m *Manager) Start(ctx context.Context) error {
 	}
 	m.subs = append(m.subs, ptyInSub)
 
+	// Step 4: Start heartbeat goroutine (spec §5.5.7.3)
+	go m.heartbeatLoop(ctx)
+
 	// Emit connection.established event
 	m.publishEvent("connection.established", &protocol.ConnectionEstablishedEvent{
 		PeerID:    m.peerID,
@@ -212,8 +238,13 @@ func (m *Manager) performHandshake(ctx context.Context) error {
 	payload := &protocol.HandshakePayload{
 		Protocol: protocol.ProtocolVersion,
 		PeerID:   m.peerID,
-		Role:     "daemon",
+		Role:     "manager",
 		HostID:   m.hostID,
+		HostInfo: &protocol.HostInfoPayload{
+			Version: Version,
+			OS:      runtime.GOOS,
+			Arch:    runtime.GOARCH,
+		},
 	}
 
 	ctlMsg, err := protocol.NewControlMessage(protocol.TypeHandshake, payload)
@@ -259,6 +290,59 @@ func (m *Manager) performHandshake(ctx context.Context) error {
 	m.mu.Unlock()
 
 	return nil
+}
+
+// heartbeatLoop sends periodic heartbeat pings to the director at the configured
+// interval. If a ping fails (timeout), a warning is logged but the loop continues.
+//
+// Per spec: after handshake, the manager MUST send heartbeat pings at the
+// configured heartbeat_interval to maintain presence.
+func (m *Manager) heartbeatLoop(ctx context.Context) {
+	interval := m.cfg.Remote.NATS.HeartbeatInterval.Duration
+	if interval == 0 {
+		interval = 5 * time.Second
+	}
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			m.mu.RLock()
+			connected := m.hubConnected
+			m.mu.RUnlock()
+
+			if !connected {
+				continue
+			}
+
+			ping := protocol.NewPingPayload()
+			ctlMsg, err := protocol.NewControlMessage(protocol.TypePing, ping)
+			if err != nil {
+				continue
+			}
+			data, err := json.Marshal(ctlMsg)
+			if err != nil {
+				continue
+			}
+
+			timeout := m.cfg.Remote.RequestTimeout.Duration
+			if timeout == 0 {
+				timeout = 5 * time.Second
+			}
+
+			_, err = m.conn.Request(
+				protocol.ControlSubject(m.prefix, m.hostID),
+				data, timeout,
+			)
+			if err != nil {
+				log.Printf("heartbeat: ping to director failed: %v", err)
+			}
+		}
+	}
 }
 
 // handleControlRequest processes control requests from the director.
@@ -344,7 +428,7 @@ func (m *Manager) handleSpawn(msg *nats.Msg, ctlMsg *protocol.ControlMessage) {
 
 	// Create or reuse worktree at .amux/worktrees/{agent_slug}/
 	// (worktree operations are done inline; the manager handles its own worktrees)
-	worktreePath := repoRoot + "/.amux/worktrees/" + req.AgentSlug
+	worktreePath := filepath.Join(repoRoot, ".amux", "worktrees", req.AgentSlug)
 
 	// Build the command
 	if len(req.Command) == 0 {
@@ -380,6 +464,7 @@ func (m *Manager) handleSpawn(msg *nats.Msg, ctlMsg *protocol.ControlMessage) {
 		cmd:       cmd,
 		ptyMaster: ptyMaster,
 		done:      make(chan struct{}),
+		startedAt: time.Now().UTC(),
 		running:   true,
 	}
 
@@ -474,12 +559,13 @@ func (m *Manager) handleReplay(msg *nats.Msg, ctlMsg *protocol.ControlMessage) {
 		m.publishChunked(subject, snapshot)
 	}
 
-	// Release the live output gate
+	// Release the live output gate and clear awaitingReplay
 	sess.mu.Lock()
 	// Flush any live output that was buffered during replay
 	liveBuf := sess.liveBuf
 	sess.liveBuf = nil
 	sess.replayPending = false
+	sess.awaitingReplay = false
 	sess.mu.Unlock()
 
 	// Publish buffered live output
@@ -539,10 +625,11 @@ func (m *Manager) readPTYOutput(sess *ManagedSession) {
 			// Always update replay buffer regardless of connectivity
 			sess.ReplayBuf.Write(data)
 
-			// Check if replay is in progress
+			// Check if replay is in progress or awaiting replay after reconnect
 			sess.mu.Lock()
-			if sess.replayPending {
-				// Buffer live output during replay per spec §5.5.7.3
+			if sess.replayPending || sess.awaitingReplay {
+				// Buffer live output during replay or while awaiting
+				// replay request after reconnect, per spec §5.5.7.3
 				sess.liveBuf = append(sess.liveBuf, data...)
 				sess.mu.Unlock()
 				continue
@@ -590,16 +677,16 @@ func (m *Manager) watchSession(sess *ManagedSession) {
 	m.publishEvent(eventName, &protocol.ProcessCompletedEvent{
 		AgentID:   sess.AgentID,
 		Command:   sess.cmd.Path,
-		StartedAt: time.Now().UTC().Format(time.RFC3339Nano),
+		StartedAt: sess.startedAt.Format(time.RFC3339Nano),
 		EndedAt:   time.Now().UTC().Format(time.RFC3339Nano),
 	})
 
 	// Emit agent exit event visible to director
 	_ = m.dispatcher.Dispatch(context.Background(), event.NewEvent(
-		event.TypeAgentTerminated, muid.MUID(0),
-		map[string]any{
-			"session_id": sess.SessionID,
-			"agent_id":   sess.AgentID,
+		event.TypeAgentTerminated, m.peerMUID,
+		&protocol.AgentTerminatedEvent{
+			SessionID: sess.SessionID,
+			AgentID:   sess.AgentID,
 		},
 	))
 }
@@ -651,9 +738,25 @@ func (m *Manager) publishEvent(name string, data any) {
 
 // SetHubConnected updates the hub connection state.
 // Called by the NATS disconnect/reconnect handlers.
+//
+// When reconnecting (connected=true), all active sessions are marked as
+// awaitingReplay. Live PTY output MUST NOT be published for those sessions
+// until a replay request is received, per spec §5.5.7.3.
 func (m *Manager) SetHubConnected(connected bool) {
 	m.mu.Lock()
 	m.hubConnected = connected
+	if connected {
+		// Mark all active sessions as awaiting replay.
+		// Per spec: after reconnect, MUST NOT publish live PTY output
+		// until a replay request is received for each session.
+		for _, sess := range m.sessions {
+			sess.mu.Lock()
+			if sess.running {
+				sess.awaitingReplay = true
+			}
+			sess.mu.Unlock()
+		}
+	}
 	m.mu.Unlock()
 
 	if connected {

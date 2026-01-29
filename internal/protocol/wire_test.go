@@ -195,6 +195,87 @@ func TestProcessCompletedEventNullSignal(t *testing.T) {
 	}
 }
 
+func TestEventMessageMulticast(t *testing.T) {
+	data := map[string]string{"msg": "hello"}
+	targets := []string{"100", "200", "300"}
+	msg, err := NewMulticastEvent("custom.event", targets, data)
+	if err != nil {
+		t.Fatalf("NewMulticastEvent: %v", err)
+	}
+
+	if msg.Type != MsgMulticast {
+		t.Fatalf("Type = %d, want %d", msg.Type, MsgMulticast)
+	}
+	if len(msg.Targets) != 3 {
+		t.Fatalf("Targets length = %d, want 3", len(msg.Targets))
+	}
+	if msg.Targets[0] != "100" || msg.Targets[1] != "200" || msg.Targets[2] != "300" {
+		t.Fatalf("Targets = %v, want [100 200 300]", msg.Targets)
+	}
+	if msg.Event.Name != "custom.event" {
+		t.Fatalf("Event.Name = %q, want %q", msg.Event.Name, "custom.event")
+	}
+	if msg.Target != "" {
+		t.Fatalf("Target should be empty for multicast, got %q", msg.Target)
+	}
+
+	// Verify JSON round-trip
+	jsonData, err := json.Marshal(msg)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+
+	var decoded EventMessage
+	if err := json.Unmarshal(jsonData, &decoded); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+
+	if decoded.Type != MsgMulticast {
+		t.Fatalf("decoded Type = %d, want %d", decoded.Type, MsgMulticast)
+	}
+	if len(decoded.Targets) != 3 {
+		t.Fatalf("decoded Targets length = %d, want 3", len(decoded.Targets))
+	}
+}
+
+func TestMulticastEvent_EmptyTargets(t *testing.T) {
+	msg, err := NewMulticastEvent("test.event", nil, map[string]string{})
+	if err != nil {
+		t.Fatalf("NewMulticastEvent: %v", err)
+	}
+	if msg.Type != MsgMulticast {
+		t.Fatalf("Type = %d, want %d", msg.Type, MsgMulticast)
+	}
+	if msg.Targets != nil {
+		t.Fatalf("Targets = %v, want nil", msg.Targets)
+	}
+}
+
+func TestMulticastEvent_MarshalError(t *testing.T) {
+	// channels can't be marshaled
+	_, err := NewMulticastEvent("test.event", []string{"1"}, make(chan int))
+	if err == nil {
+		t.Fatal("expected marshal error for channel data")
+	}
+}
+
+func TestAgentTerminatedEvent(t *testing.T) {
+	evt := &AgentTerminatedEvent{
+		SessionID: "12345",
+		AgentID:   "42",
+	}
+
+	data, err := json.Marshal(evt)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+
+	expected := `{"session_id":"12345","agent_id":"42"}`
+	if string(data) != expected {
+		t.Fatalf("JSON = %s\nwant = %s", data, expected)
+	}
+}
+
 func TestProcessIOEvent(t *testing.T) {
 	evt := &ProcessIOEvent{
 		PID:       12345,

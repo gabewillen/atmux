@@ -71,7 +71,7 @@ func (s *KVStore) PutHostInfo(ctx context.Context, hostID string, info *HostInfo
 	if err != nil {
 		return fmt.Errorf("marshal host info: %w", err)
 	}
-	key := "hosts." + hostID + ".info"
+	key := "hosts/" + hostID + "/info"
 	_, err = s.kv.Put(ctx, key, data)
 	if err != nil {
 		return fmt.Errorf("put host info for %q: %w", hostID, err)
@@ -81,7 +81,7 @@ func (s *KVStore) PutHostInfo(ctx context.Context, hostID string, info *HostInfo
 
 // GetHostInfo reads host metadata from KV.
 func (s *KVStore) GetHostInfo(ctx context.Context, hostID string) (*HostInfo, error) {
-	key := "hosts." + hostID + ".info"
+	key := "hosts/" + hostID + "/info"
 	entry, err := s.kv.Get(ctx, key)
 	if err != nil {
 		return nil, fmt.Errorf("get host info for %q: %w", hostID, err)
@@ -110,7 +110,7 @@ func (s *KVStore) PutHeartbeat(ctx context.Context, hostID string) error {
 	if err != nil {
 		return fmt.Errorf("marshal heartbeat: %w", err)
 	}
-	key := "hosts." + hostID + ".heartbeat"
+	key := "hosts/" + hostID + "/heartbeat"
 	_, err = s.kv.Put(ctx, key, data)
 	if err != nil {
 		return fmt.Errorf("put heartbeat for %q: %w", hostID, err)
@@ -120,7 +120,7 @@ func (s *KVStore) PutHeartbeat(ctx context.Context, hostID string) error {
 
 // GetHeartbeat reads the last heartbeat timestamp from KV.
 func (s *KVStore) GetHeartbeat(ctx context.Context, hostID string) (*HostHeartbeat, error) {
-	key := "hosts." + hostID + ".heartbeat"
+	key := "hosts/" + hostID + "/heartbeat"
 	entry, err := s.kv.Get(ctx, key)
 	if err != nil {
 		return nil, fmt.Errorf("get heartbeat for %q: %w", hostID, err)
@@ -149,7 +149,7 @@ func (s *KVStore) PutSessionMeta(ctx context.Context, hostID, sessionID string, 
 	if err != nil {
 		return fmt.Errorf("marshal session meta: %w", err)
 	}
-	key := "sessions." + hostID + "." + sessionID
+	key := "sessions/" + hostID + "/" + sessionID
 	_, err = s.kv.Put(ctx, key, data)
 	if err != nil {
 		return fmt.Errorf("put session meta for %q: %w", hostID, err)
@@ -159,7 +159,7 @@ func (s *KVStore) PutSessionMeta(ctx context.Context, hostID, sessionID string, 
 
 // GetSessionMeta reads session metadata from KV.
 func (s *KVStore) GetSessionMeta(ctx context.Context, hostID, sessionID string) (*SessionMeta, error) {
-	key := "sessions." + hostID + "." + sessionID
+	key := "sessions/" + hostID + "/" + sessionID
 	entry, err := s.kv.Get(ctx, key)
 	if err != nil {
 		return nil, fmt.Errorf("get session meta for %q: %w", hostID, err)
@@ -173,7 +173,7 @@ func (s *KVStore) GetSessionMeta(ctx context.Context, hostID, sessionID string) 
 
 // DeleteSessionMeta removes session metadata from KV.
 func (s *KVStore) DeleteSessionMeta(ctx context.Context, hostID, sessionID string) error {
-	key := "sessions." + hostID + "." + sessionID
+	key := "sessions/" + hostID + "/" + sessionID
 	return s.kv.Delete(ctx, key)
 }
 

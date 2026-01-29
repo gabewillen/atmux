@@ -7,7 +7,11 @@
 // first when the limit is exceeded. Per-subject publish order MUST be preserved.
 package manager
 
-import "sync"
+import (
+	"fmt"
+	"os"
+	"sync"
+)
 
 // outboundEntry holds a single buffered publication.
 type outboundEntry struct {
@@ -52,8 +56,10 @@ func (b *OutboundBuffer) Enqueue(subject string, data []byte) {
 		b.totalLen -= int64(len(dropped.data))
 	}
 
-	// If a single entry exceeds max, drop it
+	// If a single entry exceeds max, drop it with a warning
 	if payloadLen > b.maxLen {
+		fmt.Fprintf(os.Stderr, "outbound buffer: dropping oversized entry (%d bytes > %d max) on subject %s\n",
+			payloadLen, b.maxLen, subject)
 		return
 	}
 

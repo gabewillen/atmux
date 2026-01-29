@@ -71,6 +71,22 @@ type HandshakePayload struct {
 
 	// HostID is the host identifier.
 	HostID string `json:"host_id"`
+
+	// HostInfo contains optional host metadata (version, OS, arch).
+	// Populated by the manager during handshake.
+	HostInfo *HostInfoPayload `json:"host_info,omitempty"`
+}
+
+// HostInfoPayload carries host metadata in the handshake.
+type HostInfoPayload struct {
+	// Version is the daemon version string.
+	Version string `json:"version"`
+
+	// OS is the operating system (runtime.GOOS).
+	OS string `json:"os"`
+
+	// Arch is the CPU architecture (runtime.GOARCH).
+	Arch string `json:"arch"`
 }
 
 // ErrorPayload is the error response payload.

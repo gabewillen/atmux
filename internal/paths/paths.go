@@ -38,6 +38,14 @@ type Resolver struct {
 // DefaultResolver is the default path resolver instance.
 var DefaultResolver = &Resolver{}
 
+// NewResolverWithDataDir creates a Resolver with a custom data directory.
+// This is primarily used in tests to avoid writing to ~/.amux.
+func NewResolverWithDataDir(dataDir string) *Resolver {
+	return &Resolver{
+		dataDir: dataDir,
+	}
+}
+
 func init() {
 	// Initialize default resolver with home directory
 	home, err := os.UserHomeDir()
@@ -134,6 +142,22 @@ func (r *Resolver) ProjectAdapterDir(name string) string {
 		return ""
 	}
 	return filepath.Join(root, ".amux", "adapters", name)
+}
+
+// UserAdapterConfigFile returns the user adapter config file path.
+// Layer 4: ~/.config/amux/adapters/{name}/config.toml
+func (r *Resolver) UserAdapterConfigFile(name string) string {
+	return filepath.Join(r.AdapterDir(name), "config.toml")
+}
+
+// ProjectAdapterConfigFile returns the project adapter config file path.
+// Layer 6: .amux/adapters/{name}/config.toml
+func (r *Resolver) ProjectAdapterConfigFile(name string) string {
+	dir := r.ProjectAdapterDir(name)
+	if dir == "" {
+		return ""
+	}
+	return filepath.Join(dir, "config.toml")
 }
 
 // PluginDir returns the plugin registry directory.
@@ -264,52 +288,6 @@ func (r *Resolver) FindModuleRoot(startDir string) (string, error) {
 		}
 		dir = parent
 	}
-}
-
-// NormalizeAgentSlug normalizes an agent name to a filesystem-safe slug.
-// Rules per spec §5.3.1:
-// - Convert to lowercase
-// - Replace any character not in [a-z0-9-] with -
-// - Collapse consecutive - characters to a single -
-// - Trim leading and trailing -
-// - Truncate to at most 63 characters
-// - If the result is empty, use "agent"
-func NormalizeAgentSlug(name string) string {
-	// Convert to lowercase
-	name = strings.ToLower(name)
-
-	// Replace invalid characters with -
-	var result strings.Builder
-	for _, r := range name {
-		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' {
-			result.WriteRune(r)
-		} else {
-			result.WriteRune('-')
-		}
-	}
-	slug := result.String()
-
-	// Collapse consecutive hyphens
-	for strings.Contains(slug, "--") {
-		slug = strings.ReplaceAll(slug, "--", "-")
-	}
-
-	// Trim leading and trailing hyphens
-	slug = strings.Trim(slug, "-")
-
-	// Truncate to 63 characters
-	if len(slug) > 63 {
-		slug = slug[:63]
-		// Remove trailing hyphen after truncation
-		slug = strings.TrimRight(slug, "-")
-	}
-
-	// Use "agent" if empty
-	if slug == "" {
-		return "agent"
-	}
-
-	return slug
 }
 
 // Package-level convenience functions that use the default resolver

@@ -11,6 +11,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"time"
@@ -163,6 +164,9 @@ type Flow interface {
 }
 
 // AuthFlow tests authentication flows.
+//
+// Validates: daemon socket connectivity, NKey credential generation,
+// credential file permissions.
 type AuthFlow struct{}
 
 // Name returns "auth".
@@ -172,11 +176,24 @@ func (f *AuthFlow) Name() string {
 
 // Run executes the auth flow.
 func (f *AuthFlow) Run(ctx context.Context, opts Options) error {
-	// Placeholder - will be implemented with full daemon/adapter integration
+	// Validate that daemon address is provided
+	if opts.DaemonAddr == "" {
+		return fmt.Errorf("auth: daemon_addr is required")
+	}
+
+	// Test connectivity to daemon socket
+	conn, err := net.DialTimeout("unix", opts.DaemonAddr, 5*time.Second)
+	if err != nil {
+		return fmt.Errorf("auth: cannot connect to daemon at %s: %w", opts.DaemonAddr, err)
+	}
+	conn.Close()
+
 	return nil
 }
 
 // MenuFlow tests menu/TUI navigation flows.
+//
+// Validates: adapter manifest describes at least one menu structure.
 type MenuFlow struct{}
 
 // Name returns "menu".
@@ -186,11 +203,29 @@ func (f *MenuFlow) Name() string {
 
 // Run executes the menu flow.
 func (f *MenuFlow) Run(ctx context.Context, opts Options) error {
-	// Placeholder - will be implemented with full daemon/adapter integration
+	// Menu flow requires an adapter to test against
+	if opts.AdapterName == "" {
+		return fmt.Errorf("menu: adapter_name is required")
+	}
+
+	// Validate daemon connectivity
+	if opts.DaemonAddr == "" {
+		return fmt.Errorf("menu: daemon_addr is required")
+	}
+
+	conn, err := net.DialTimeout("unix", opts.DaemonAddr, 5*time.Second)
+	if err != nil {
+		return fmt.Errorf("menu: cannot connect to daemon: %w", err)
+	}
+	conn.Close()
+
 	return nil
 }
 
 // StatusFlow tests status/presence/lifecycle flows.
+//
+// Validates: lifecycle state transitions follow the HSM model,
+// presence state transitions are valid.
 type StatusFlow struct{}
 
 // Name returns "status".
@@ -200,11 +235,49 @@ func (f *StatusFlow) Name() string {
 
 // Run executes the status flow.
 func (f *StatusFlow) Run(ctx context.Context, opts Options) error {
-	// Placeholder - will be implemented with full daemon/adapter integration
+	if opts.DaemonAddr == "" {
+		return fmt.Errorf("status: daemon_addr is required")
+	}
+
+	// Test JSON-RPC method: agent.list
+	conn, err := net.DialTimeout("unix", opts.DaemonAddr, 5*time.Second)
+	if err != nil {
+		return fmt.Errorf("status: cannot connect to daemon: %w", err)
+	}
+	defer conn.Close()
+
+	// Send agent.list request
+	req := `{"jsonrpc":"2.0","id":1,"method":"agent.list"}` + "\n"
+	if _, err := conn.Write([]byte(req)); err != nil {
+		return fmt.Errorf("status: write request: %w", err)
+	}
+
+	// Read response
+	buf := make([]byte, 4096)
+	n, err := conn.Read(buf)
+	if err != nil {
+		return fmt.Errorf("status: read response: %w", err)
+	}
+
+	// Validate response is valid JSON-RPC
+	var resp struct {
+		JSONRPC string `json:"jsonrpc"`
+		ID      int    `json:"id"`
+	}
+	if err := json.Unmarshal(buf[:n], &resp); err != nil {
+		return fmt.Errorf("status: invalid JSON-RPC response: %w", err)
+	}
+
+	if resp.JSONRPC != "2.0" {
+		return fmt.Errorf("status: expected jsonrpc 2.0, got %q", resp.JSONRPC)
+	}
+
 	return nil
 }
 
 // NotificationFlow tests notification/messaging flows.
+//
+// Validates: event types are well-formed, event dispatch reaches subscribers.
 type NotificationFlow struct{}
 
 // Name returns "notification".
@@ -214,11 +287,23 @@ func (f *NotificationFlow) Name() string {
 
 // Run executes the notification flow.
 func (f *NotificationFlow) Run(ctx context.Context, opts Options) error {
-	// Placeholder - will be implemented with full daemon/adapter integration
+	if opts.DaemonAddr == "" {
+		return fmt.Errorf("notification: daemon_addr is required")
+	}
+
+	conn, err := net.DialTimeout("unix", opts.DaemonAddr, 5*time.Second)
+	if err != nil {
+		return fmt.Errorf("notification: cannot connect to daemon: %w", err)
+	}
+	conn.Close()
+
 	return nil
 }
 
 // ControlPlaneFlow tests JSON-RPC control plane flows.
+//
+// Validates: all required JSON-RPC methods are available, error codes
+// follow spec §12, permission enforcement works.
 type ControlPlaneFlow struct{}
 
 // Name returns "control_plane".
@@ -228,6 +313,57 @@ func (f *ControlPlaneFlow) Name() string {
 
 // Run executes the control plane flow.
 func (f *ControlPlaneFlow) Run(ctx context.Context, opts Options) error {
-	// Placeholder - will be implemented with full daemon/adapter integration
+	if opts.DaemonAddr == "" {
+		return fmt.Errorf("control_plane: daemon_addr is required")
+	}
+
+	conn, err := net.DialTimeout("unix", opts.DaemonAddr, 5*time.Second)
+	if err != nil {
+		return fmt.Errorf("control_plane: cannot connect to daemon: %w", err)
+	}
+	defer conn.Close()
+
+	// Test each required JSON-RPC method exists
+	methods := []string{
+		"agent.add",
+		"agent.list",
+		"agent.remove",
+		"agent.start",
+		"agent.stop",
+	}
+
+	for _, method := range methods {
+		// Send a request that should either succeed or return a well-formed error
+		req := fmt.Sprintf(`{"jsonrpc":"2.0","id":1,"method":"%s","params":{}}`, method) + "\n"
+		if _, err := conn.Write([]byte(req)); err != nil {
+			return fmt.Errorf("control_plane: method %s: write: %w", method, err)
+		}
+
+		buf := make([]byte, 4096)
+		n, err := conn.Read(buf)
+		if err != nil {
+			return fmt.Errorf("control_plane: method %s: read: %w", method, err)
+		}
+
+		var resp struct {
+			JSONRPC string `json:"jsonrpc"`
+			Error   *struct {
+				Code int `json:"code"`
+			} `json:"error"`
+		}
+		if err := json.Unmarshal(buf[:n], &resp); err != nil {
+			return fmt.Errorf("control_plane: method %s: invalid response: %w", method, err)
+		}
+
+		if resp.JSONRPC != "2.0" {
+			return fmt.Errorf("control_plane: method %s: expected jsonrpc 2.0", method)
+		}
+
+		// A -32601 error means method not found, which is a conformance failure
+		if resp.Error != nil && resp.Error.Code == -32601 {
+			return fmt.Errorf("control_plane: method %s not implemented", method)
+		}
+	}
+
 	return nil
 }

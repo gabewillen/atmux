@@ -37,6 +37,7 @@ type Manager struct {
 	dispatcher event.Dispatcher
 	resolver   *paths.Resolver
 	worktrees  *worktree.Manager
+	persist    *persister
 
 	// baseBranches tracks the base_branch per repo_root, recorded at the time
 	// the first agent for that repository is added (spec §5.7.1).
@@ -46,6 +47,9 @@ type Manager struct {
 	// Per spec §5.7.1, when git symbolic-ref fails (detached HEAD), base_branch
 	// MUST be set to this value. If this is also empty, the add operation MUST fail.
 	mergeTargetBranch string
+
+	// monitorUnsub is the unsubscribe function for the monitor event subscription.
+	monitorUnsub func()
 }
 
 // Agent represents a managed agent instance.
@@ -74,14 +78,102 @@ func NewManagerWithResolver(dispatcher event.Dispatcher, resolver *paths.Resolve
 		resolver = paths.DefaultResolver
 	}
 
-	return &Manager{
+	m := &Manager{
 		agents:       make(map[muid.MUID]*Agent),
 		slugs:        make(map[string]muid.MUID),
 		hsms:         make(map[muid.MUID]*agentHSMs),
 		dispatcher:   dispatcher,
 		resolver:     resolver,
 		worktrees:    worktree.NewManager(),
+		persist:      newPersister(resolver),
 		baseBranches: make(map[string]string),
+	}
+
+	m.setupMonitorSubscription()
+	return m
+}
+
+// setupMonitorSubscription subscribes to PTY monitor events and dispatches
+// the appropriate presence HSM transitions per spec §7.6:
+//   - pty.activity  -> ActivityDetected -> Busy
+//   - pty.idle      -> PromptDetected   -> Online
+//   - pty.stuck     -> StuckDetected    -> Away
+func (m *Manager) setupMonitorSubscription() {
+	unsub := m.dispatcher.Subscribe(event.Subscription{
+		Types: []event.Type{
+			event.TypePTYActivity,
+			event.TypePTYIdle,
+			event.TypePTYStuck,
+		},
+		Handler: func(ctx context.Context, evt event.Event) error {
+			m.handleMonitorEvent(ctx, evt)
+			return nil
+		},
+	})
+	m.monitorUnsub = unsub
+}
+
+// handleMonitorEvent maps PTY monitor events to presence HSM transitions.
+// Per spec §7.6:
+//   - TypePTYActivity  -> task.assigned   (Online -> Busy)
+//   - TypePTYIdle      -> prompt.detected (Busy -> Online)
+//   - TypePTYStuck     -> stuck.detected  (* -> Away)
+func (m *Manager) handleMonitorEvent(ctx context.Context, evt event.Event) {
+	agentID := evt.Source
+
+	m.mu.RLock()
+	hsms, ok := m.hsms[agentID]
+	m.mu.RUnlock()
+
+	if !ok || hsms == nil || hsms.presenceInstance == nil {
+		return
+	}
+
+	switch evt.Type {
+	case event.TypePTYActivity:
+		hsm.Dispatch(ctx, hsms.presenceInstance, hsm.Event{Name: PresenceEventTaskAssigned})
+	case event.TypePTYIdle:
+		hsm.Dispatch(ctx, hsms.presenceInstance, hsm.Event{Name: PresenceEventPromptDetected})
+	case event.TypePTYStuck:
+		hsm.Dispatch(ctx, hsms.presenceInstance, hsm.Event{Name: PresenceEventStuckDetected})
+	}
+}
+
+// LoadPersisted loads agent definitions from disk and registers them.
+// This should be called on daemon startup to restore agents that survived a restart.
+// Agents are loaded in their persisted state (lifecycle=pending, presence=online).
+func (m *Manager) LoadPersisted(ctx context.Context) error {
+	agents, err := m.persist.load()
+	if err != nil {
+		return fmt.Errorf("load persisted agents: %w", err)
+	}
+
+	for _, cfg := range agents {
+		if _, addErr := m.Add(ctx, cfg); addErr != nil {
+			// Log the error but continue loading other agents
+			_ = m.dispatcher.Dispatch(ctx, event.NewEvent(event.TypeAgentErrored, cfg.ID,
+				map[string]any{"error": addErr.Error(), "agent": cfg.Name}))
+		}
+	}
+	return nil
+}
+
+// persistAgents saves the current agent definitions to disk.
+// Must be called with m.mu held (at least RLock).
+func (m *Manager) persistAgents() {
+	agents := make([]api.Agent, 0, len(m.agents))
+	for _, a := range m.agents {
+		a.mu.RLock()
+		agents = append(agents, a.Agent)
+		a.mu.RUnlock()
+	}
+
+	if err := m.persist.save(agents); err != nil {
+		// Best effort: log the error but don't fail the operation
+		_ = m.dispatcher.Dispatch(context.Background(), event.NewEvent(
+			event.TypeAgentErrored, ids.BroadcastID,
+			map[string]any{"error": err.Error(), "operation": "persist_agents"},
+		))
 	}
 }
 
@@ -181,6 +273,9 @@ func (m *Manager) Add(ctx context.Context, cfg api.Agent) (*Agent, error) {
 		presenceInstance:  pInstance,
 	}
 
+	// Persist agents to disk
+	m.persistAgents()
+
 	// Emit agent.added event
 	_ = m.dispatcher.Dispatch(ctx, event.NewEvent(event.TypeAgentAdded, cfg.ID, cfg))
 
@@ -230,6 +325,11 @@ func (m *Manager) Remove(ctx context.Context, id muid.MUID, deleteBranch bool) e
 				map[string]any{"slug": agentCfg.Slug}))
 		}
 	}
+
+	// Persist agents to disk after removal
+	m.mu.RLock()
+	m.persistAgents()
+	m.mu.RUnlock()
 
 	_ = m.dispatcher.Dispatch(ctx, event.NewEvent(event.TypeAgentStopped, id, agentCfg))
 	return nil

@@ -232,6 +232,77 @@ func TestEncodeDecodeIDs(t *testing.T) {
 	}
 }
 
+func TestParseID(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want muid.MUID
+	}{
+		{"valid ID", "12345", muid.MUID(12345)},
+		{"zero", "0", muid.MUID(0)},
+		{"empty string", "", muid.MUID(0)},
+		{"invalid string", "abc", muid.MUID(0)},
+		{"negative", "-1", muid.MUID(0)},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ParseID(tt.in)
+			if got != tt.want {
+				t.Errorf("ParseID(%q) = %d, want %d", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseID_RoundTrip(t *testing.T) {
+	id := NewID()
+	encoded := EncodeID(id)
+	parsed := ParseID(encoded)
+	if parsed != id {
+		t.Errorf("ParseID(EncodeID(%d)) = %d", id, parsed)
+	}
+}
+
+func TestParseIDStrict(t *testing.T) {
+	tests := []struct {
+		name    string
+		in      string
+		want    muid.MUID
+		wantErr bool
+	}{
+		{"valid ID", "12345", muid.MUID(12345), false},
+		{"zero", "0", muid.MUID(0), false},
+		{"empty string", "", 0, true},
+		{"invalid string", "abc", 0, true},
+		{"negative", "-1", 0, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ParseIDStrict(tt.in)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ParseIDStrict(%q) error = %v, wantErr %v", tt.in, err, tt.wantErr)
+			}
+			if err == nil && got != tt.want {
+				t.Errorf("ParseIDStrict(%q) = %d, want %d", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseIDStrict_RoundTrip(t *testing.T) {
+	id := NewID()
+	encoded := EncodeID(id)
+	parsed, err := ParseIDStrict(encoded)
+	if err != nil {
+		t.Fatalf("ParseIDStrict(EncodeID(%d)) failed: %v", id, err)
+	}
+	if parsed != id {
+		t.Errorf("ParseIDStrict(EncodeID(%d)) = %d", id, parsed)
+	}
+}
+
 func TestBroadcastID(t *testing.T) {
 	if BroadcastID != 0 {
 		t.Errorf("BroadcastID = %d, want 0", BroadcastID)

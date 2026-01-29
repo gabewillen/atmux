@@ -270,6 +270,58 @@ func TestPresenceHSMInvalidTransitions(t *testing.T) {
 	<-hsm.Stop(ctx, instance)
 }
 
+func TestMonitorEventsToPresenceHSM(t *testing.T) {
+	dispatcher := event.NewLocalDispatcher()
+	mgr := NewManagerWithResolver(dispatcher, nil)
+	ctx := context.Background()
+
+	repoRoot := initTestRepo(t)
+
+	ag, err := mgr.Add(ctx, api.Agent{
+		Name:     "monitor-test",
+		Adapter:  "claude-code",
+		RepoRoot: repoRoot,
+	})
+	if err != nil {
+		t.Fatalf("Add() failed: %v", err)
+	}
+
+	agentID := ag.ID
+
+	// Verify initial state is Online
+	phsm := mgr.PresenceHSMFor(agentID)
+	if phsm == nil {
+		t.Fatal("PresenceHSMFor returned nil")
+	}
+	if phsm.PresenceState() != api.PresenceOnline {
+		t.Fatalf("Initial state = %q, want %q", phsm.PresenceState(), api.PresenceOnline)
+	}
+
+	// Dispatch pty.activity event -> should transition to Busy
+	_ = dispatcher.Dispatch(ctx, event.NewEvent(event.TypePTYActivity, agentID, nil))
+	time.Sleep(50 * time.Millisecond)
+
+	if phsm.PresenceState() != api.PresenceBusy {
+		t.Errorf("After pty.activity, state = %q, want %q", phsm.PresenceState(), api.PresenceBusy)
+	}
+
+	// Dispatch pty.idle event -> should transition from Busy to Online
+	_ = dispatcher.Dispatch(ctx, event.NewEvent(event.TypePTYIdle, agentID, nil))
+	time.Sleep(50 * time.Millisecond)
+
+	if phsm.PresenceState() != api.PresenceOnline {
+		t.Errorf("After pty.idle, state = %q, want %q", phsm.PresenceState(), api.PresenceOnline)
+	}
+
+	// Dispatch pty.stuck event -> should transition to Away
+	_ = dispatcher.Dispatch(ctx, event.NewEvent(event.TypePTYStuck, agentID, nil))
+	time.Sleep(50 * time.Millisecond)
+
+	if phsm.PresenceState() != api.PresenceAway {
+		t.Errorf("After pty.stuck, state = %q, want %q", phsm.PresenceState(), api.PresenceAway)
+	}
+}
+
 func TestPresenceHSMEventDispatch(t *testing.T) {
 	agent := &Agent{
 		Agent:    api.Agent{ID: 123, Name: "test", Slug: "test"},

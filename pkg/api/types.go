@@ -85,6 +85,9 @@ func (a *Agent) Validate() error {
 	if a.RepoRoot == "" {
 		return &AgentValidationError{Field: "RepoRoot", Message: "must not be empty"}
 	}
+	if a.Location.Type == LocationSSH && a.Location.Host == "" {
+		return &AgentValidationError{Field: "Location.Host", Message: "must not be empty for SSH agents"}
+	}
 	return nil
 }
 

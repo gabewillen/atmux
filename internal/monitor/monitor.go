@@ -105,6 +105,8 @@ func (m *Monitor) Stop() {
 func (m *Monitor) run(ctx context.Context) {
 	buf := make([]byte, 4096)
 	lastActivity := time.Now()
+	lastPatternChange := time.Now()
+	var lastPatternResult bool
 
 	for {
 		select {
@@ -132,6 +134,11 @@ func (m *Monitor) run(ctx context.Context) {
 
 			// Check for pattern matches
 			matches := m.matcher.Match(buf[:n])
+			matched := len(matches) > 0
+			if matched != lastPatternResult {
+				lastPatternChange = now
+				lastPatternResult = matched
+			}
 			for _, match := range matches {
 				_ = m.dispatcher.Dispatch(ctx, event.NewEvent(event.TypePTYOutput, m.agentID, match))
 			}
@@ -140,6 +147,13 @@ func (m *Monitor) run(ctx context.Context) {
 		// Check for idle timeout
 		if m.idleTimeout > 0 && time.Since(lastActivity) > m.idleTimeout {
 			_ = m.dispatcher.Dispatch(ctx, event.NewEvent(event.TypePTYIdle, m.agentID, nil))
+		}
+
+		// Check for stuck timeout (pattern result unchanged for too long)
+		if m.stuckTimeout > 0 && time.Since(lastPatternChange) > m.stuckTimeout {
+			_ = m.dispatcher.Dispatch(ctx, event.NewEvent(event.TypePTYStuck, m.agentID, nil))
+			// Reset to avoid repeated stuck events
+			lastPatternChange = time.Now()
 		}
 	}
 }

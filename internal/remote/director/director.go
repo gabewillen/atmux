@@ -15,6 +15,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"sync"
 	"time"
 
@@ -35,6 +36,10 @@ type Director struct {
 	kv     *natsconn.KVStore
 	cfg    *config.Config
 	prefix string
+
+	// peerMUID is the director's runtime ID (non-zero, per spec §3.22).
+	peerMUID muid.MUID
+	// peerID is peerMUID encoded as a base-10 string for wire use.
 	peerID string
 
 	// hosts tracks connected remote hosts by host_id.
@@ -93,11 +98,13 @@ func New(conn *natsconn.Conn, cfg *config.Config, dispatcher event.Dispatcher) *
 	if prefix == "" {
 		prefix = "amux"
 	}
+	peerMUID := ids.NewID()
 	return &Director{
 		conn:       conn,
 		cfg:        cfg,
 		prefix:     prefix,
-		peerID:     ids.EncodeID(ids.NewID()),
+		peerMUID:   peerMUID,
+		peerID:     ids.EncodeID(peerMUID),
 		hosts:      make(map[string]*HostState),
 		sessions:   make(map[string]*RemoteSession),
 		dispatcher: dispatcher,
@@ -231,12 +238,21 @@ func (d *Director) handleHandshake(msg *nats.Msg) {
 	// If an existing host reconnects with a new peer_id (daemon restart),
 	// the update below handles it by overwriting the peer_id.
 	host := d.hosts[payload.HostID]
+	isReconnect := false
+	var reconnectSessions []string
 	if host == nil {
 		host = &HostState{
 			HostID:   payload.HostID,
 			Sessions: make(map[string]bool),
 		}
 		d.hosts[payload.HostID] = host
+	} else if len(host.Sessions) > 0 {
+		// Host had prior sessions -- this is a reconnection scenario.
+		// Collect session IDs that need replay for PTY output continuity.
+		isReconnect = true
+		for sid := range host.Sessions {
+			reconnectSessions = append(reconnectSessions, sid)
+		}
 	}
 	host.PeerID = payload.PeerID
 	host.Connected = true
@@ -244,11 +260,17 @@ func (d *Director) handleHandshake(msg *nats.Msg) {
 	host.ConnectedAt = time.Now().UTC()
 	d.mu.Unlock()
 
-	// Store host info in KV
-	_ = d.kv.PutHostInfo(context.Background(), payload.HostID, &natsconn.HostInfo{
+	// Store host info in KV, including runtime metadata if provided
+	hostInfo := &natsconn.HostInfo{
 		PeerID:    payload.PeerID,
 		StartedAt: host.ConnectedAt.Format(time.RFC3339Nano),
-	})
+	}
+	if payload.HostInfo != nil {
+		hostInfo.Version = payload.HostInfo.Version
+		hostInfo.OS = payload.HostInfo.OS
+		hostInfo.Arch = payload.HostInfo.Arch
+	}
+	_ = d.kv.PutHostInfo(context.Background(), payload.HostID, hostInfo)
 
 	// Send handshake response
 	resp := &protocol.HandshakePayload{
@@ -259,28 +281,65 @@ func (d *Director) handleHandshake(msg *nats.Msg) {
 	}
 	d.replyControl(msg, protocol.TypeHandshake, resp)
 
+	// Auto-replay for active sessions after reconnection (spec §5.5.8).
+	// This ensures PTY output continuity after a host disconnection/reconnection.
+	if isReconnect && len(reconnectSessions) > 0 {
+		go func() {
+			for _, sid := range reconnectSessions {
+				_, err := d.Replay(context.Background(), payload.HostID, sid)
+				if err != nil {
+					log.Printf("director: auto-replay for session %s on host %s failed: %v",
+						sid, payload.HostID, err)
+				}
+			}
+		}()
+	}
+
 	// Emit connection.established event
 	_ = d.dispatcher.Dispatch(context.Background(), event.NewEvent(
-		event.TypeConnectionEstablished, muid.MUID(0),
-		map[string]any{
-			"peer_id":   payload.PeerID,
-			"host_id":   payload.HostID,
-			"timestamp": time.Now().UTC().Format(time.RFC3339Nano),
+		event.TypeConnectionEstablished, d.peerMUID,
+		&protocol.ConnectionEstablishedEvent{
+			PeerID:    payload.PeerID,
+			Timestamp: time.Now().UTC().Format(time.RFC3339Nano),
 		},
 	))
 }
 
 // handleHostEvent processes an event from a remote host.
+//
+// Per spec §9.1.4: the director routes events based on the EventMessage
+// Type field: broadcast to all subscribers, multicast to specified targets,
+// unicast to a single target.
 func (d *Director) handleHostEvent(msg *nats.Msg) {
 	var evtMsg protocol.EventMessage
 	if err := json.Unmarshal(msg.Data, &evtMsg); err != nil {
 		return // ignore malformed events
 	}
 
-	// Dispatch locally
-	_ = d.dispatcher.Dispatch(context.Background(), event.NewEvent(
-		event.Type(evtMsg.Event.Name), muid.MUID(0), evtMsg.Event.Data,
-	))
+	evt := event.NewEvent(event.Type(evtMsg.Event.Name), d.peerMUID, evtMsg.Event.Data)
+
+	switch evtMsg.Type {
+	case protocol.MsgBroadcast:
+		// Broadcast: dispatch to all local subscribers
+		_ = d.dispatcher.Dispatch(context.Background(), evt)
+
+	case protocol.MsgMulticast:
+		// Multicast: dispatch targeted to each specified peer
+		for _, target := range evtMsg.Targets {
+			targeted := evt
+			targeted.Target = ids.ParseID(target)
+			_ = d.dispatcher.Dispatch(context.Background(), targeted)
+		}
+
+	case protocol.MsgUnicast:
+		// Unicast: dispatch to the single target peer
+		evt.Target = ids.ParseID(evtMsg.Target)
+		_ = d.dispatcher.Dispatch(context.Background(), evt)
+
+	default:
+		// Unknown type: treat as broadcast for forward compatibility
+		_ = d.dispatcher.Dispatch(context.Background(), evt)
+	}
 }
 
 // Spawn sends a spawn request to a remote host.
@@ -495,8 +554,31 @@ func (d *Director) Replay(ctx context.Context, hostID string, sessionID string) 
 	return &resp, nil
 }
 
+// ReplayWithSubscription subscribes to PTY output first, then sends a replay
+// request. This ordering prevents the race window where the manager publishes
+// replay bytes before the director has subscribed to the PTY output subject.
+//
+// Callers that use Replay and SubscribePTYOutput separately MUST ensure
+// SubscribePTYOutput is called before Replay.
+func (d *Director) ReplayWithSubscription(ctx context.Context, hostID, sessionID string, handler func(data []byte)) (*protocol.ReplayResponse, error) {
+	// Subscribe first to avoid missing replay bytes
+	if err := d.SubscribePTYOutput(hostID, sessionID, handler); err != nil {
+		return nil, fmt.Errorf("replay subscribe: %w", err)
+	}
+
+	resp, err := d.Replay(ctx, hostID, sessionID)
+	if err != nil {
+		return nil, err
+	}
+
+	return resp, nil
+}
+
 // SubscribePTYOutput subscribes to PTY output for a session on a remote host.
 // The handler receives raw PTY output bytes.
+//
+// When used with Replay, this MUST be called before Replay to avoid missing
+// replay bytes. Prefer ReplayWithSubscription which enforces this ordering.
 func (d *Director) SubscribePTYOutput(hostID, sessionID string, handler func(data []byte)) error {
 	subject := protocol.PTYOutputSubject(d.prefix, hostID, sessionID)
 	sub, err := d.conn.Subscribe(subject, func(msg *nats.Msg) {
@@ -569,12 +651,39 @@ func (d *Director) HostConnected(hostID string) bool {
 
 // SetHostDisconnected marks a host as disconnected.
 // Called when the NATS connection to a host is lost.
+//
+// Per spec §5.5.7.2.1: when a host disconnects, agents running on that host
+// should transition to Away state. This is signaled via connection.lost event.
 func (d *Director) SetHostDisconnected(hostID string) {
 	d.mu.Lock()
-	defer d.mu.Unlock()
-	if host, ok := d.hosts[hostID]; ok {
-		host.Connected = false
-		host.HandshakeComplete = false
+	host, ok := d.hosts[hostID]
+	if !ok {
+		d.mu.Unlock()
+		return
+	}
+
+	wasConnected := host.Connected
+	host.Connected = false
+	host.HandshakeComplete = false
+
+	// Collect session IDs for agents that need Away transition
+	sessionIDs := make([]string, 0, len(host.Sessions))
+	for sid := range host.Sessions {
+		sessionIDs = append(sessionIDs, sid)
+	}
+	d.mu.Unlock()
+
+	// Emit connection.lost event if the host was previously connected
+	if wasConnected {
+		_ = d.dispatcher.Dispatch(context.Background(), event.NewEvent(
+			event.TypeConnectionLost, d.peerMUID,
+			&protocol.ConnectionLostEvent{
+				PeerID:    host.PeerID,
+				HostID:    hostID,
+				Timestamp: time.Now().UTC().Format(time.RFC3339Nano),
+				Sessions:  sessionIDs,
+			},
+		))
 	}
 }
 

@@ -83,6 +83,89 @@ func TestHandshakePayloadJSON(t *testing.T) {
 	}
 }
 
+func TestHandshakePayloadWithHostInfo(t *testing.T) {
+	payload := &HandshakePayload{
+		Protocol: 1,
+		PeerID:   "5678",
+		Role:     "manager",
+		HostID:   "devbox",
+		HostInfo: &HostInfoPayload{
+			Version: "0.1.0-dev",
+			OS:      "linux",
+			Arch:    "amd64",
+		},
+	}
+
+	msg, err := NewControlMessage(TypeHandshake, payload)
+	if err != nil {
+		t.Fatalf("NewControlMessage: %v", err)
+	}
+
+	data, err := json.Marshal(msg)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+
+	// Decode and verify
+	var decoded ControlMessage
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+
+	var decodedPayload HandshakePayload
+	if err := decoded.DecodePayload(&decodedPayload); err != nil {
+		t.Fatalf("DecodePayload: %v", err)
+	}
+
+	if decodedPayload.HostInfo == nil {
+		t.Fatal("HostInfo should not be nil")
+	}
+	if decodedPayload.HostInfo.Version != "0.1.0-dev" {
+		t.Errorf("HostInfo.Version = %q, want %q", decodedPayload.HostInfo.Version, "0.1.0-dev")
+	}
+	if decodedPayload.HostInfo.OS != "linux" {
+		t.Errorf("HostInfo.OS = %q, want %q", decodedPayload.HostInfo.OS, "linux")
+	}
+	if decodedPayload.HostInfo.Arch != "amd64" {
+		t.Errorf("HostInfo.Arch = %q, want %q", decodedPayload.HostInfo.Arch, "amd64")
+	}
+}
+
+func TestHandshakePayloadWithoutHostInfo(t *testing.T) {
+	// HostInfo is optional; verify omitempty works
+	payload := &HandshakePayload{
+		Protocol: 1,
+		PeerID:   "5678",
+		Role:     "director",
+		HostID:   "hub",
+	}
+
+	msg, err := NewControlMessage(TypeHandshake, payload)
+	if err != nil {
+		t.Fatalf("NewControlMessage: %v", err)
+	}
+
+	data, err := json.Marshal(msg)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+
+	// Decode and verify HostInfo is nil
+	var decoded ControlMessage
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+
+	var decodedPayload HandshakePayload
+	if err := decoded.DecodePayload(&decodedPayload); err != nil {
+		t.Fatalf("DecodePayload: %v", err)
+	}
+
+	if decodedPayload.HostInfo != nil {
+		t.Errorf("HostInfo should be nil when not provided, got %+v", decodedPayload.HostInfo)
+	}
+}
+
 func TestErrorPayloadJSON(t *testing.T) {
 	expected := `{"type":"error","payload":{"request_type":"spawn","code":"invalid_repo","message":"repo_path is not a git repository"}}`
 

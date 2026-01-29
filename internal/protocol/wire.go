@@ -79,6 +79,22 @@ func NewUnicastEvent(name string, target string, data any) (*EventMessage, error
 	}, nil
 }
 
+// NewMulticastEvent creates a multicast EventMessage routed to specified targets.
+func NewMulticastEvent(name string, targets []string, data any) (*EventMessage, error) {
+	raw, err := json.Marshal(data)
+	if err != nil {
+		return nil, err
+	}
+	return &EventMessage{
+		Type:    MsgMulticast,
+		Targets: targets,
+		Event: WireEvent{
+			Name: name,
+			Data: json.RawMessage(raw),
+		},
+	}, nil
+}
+
 // --- Required event payload schemas per spec §9.1.3.2 ---
 
 // ConnectionEstablishedEvent is the payload for "connection.established" events.
@@ -89,9 +105,11 @@ type ConnectionEstablishedEvent struct {
 
 // ConnectionLostEvent is the payload for "connection.lost" events.
 type ConnectionLostEvent struct {
-	PeerID    string `json:"peer_id"`
-	Timestamp string `json:"timestamp"`
-	Reason    string `json:"reason"`
+	PeerID    string   `json:"peer_id"`
+	HostID    string   `json:"host_id,omitempty"`
+	Timestamp string   `json:"timestamp"`
+	Reason    string   `json:"reason,omitempty"`
+	Sessions  []string `json:"sessions,omitempty"`
 }
 
 // ConnectionRecoveredEvent is the payload for "connection.recovered" events.
@@ -136,4 +154,10 @@ type ProcessIOEvent struct {
 	Stream    string `json:"stream"`
 	DataB64   string `json:"data_b64"`
 	Timestamp string `json:"timestamp"`
+}
+
+// AgentTerminatedEvent is the payload for "agent.terminated" events.
+type AgentTerminatedEvent struct {
+	SessionID string `json:"session_id"`
+	AgentID   string `json:"agent_id"`
 }

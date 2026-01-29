@@ -12,6 +12,8 @@ package event
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"strconv"
 	"sync"
 	"time"
 
@@ -39,6 +41,7 @@ const (
 	TypePTYOutput   Type = "pty.output"
 	TypePTYActivity Type = "pty.activity"
 	TypePTYIdle     Type = "pty.idle"
+	TypePTYStuck    Type = "pty.stuck"
 
 	// Process events
 	TypeProcessSpawned   Type = "process.spawned"
@@ -129,33 +132,91 @@ func (e Event) WithTraceID(traceID string) Event {
 	return e
 }
 
+// jsonEvent is the intermediate representation for JSON serialization.
+// IDs are base-10 strings per spec §4.2.3, timestamps are RFC 3339 UTC.
+type jsonEvent struct {
+	ID        string          `json:"id"`
+	Type      Type            `json:"type"`
+	Source    string          `json:"source"`
+	Target    string          `json:"target,omitempty"`
+	Timestamp string          `json:"timestamp"`
+	Data      json.RawMessage `json:"data,omitempty"`
+	TraceID   string          `json:"trace_id,omitempty"`
+}
+
 // MarshalJSON implements json.Marshaler for wire encoding.
 // IDs are encoded as base-10 strings per spec §4.2.3.
 func (e Event) MarshalJSON() ([]byte, error) {
-	type jsonEvent struct {
-		ID        string    `json:"id"`
-		Type      Type      `json:"type"`
-		Source    string    `json:"source"`
-		Target    string    `json:"target,omitempty"`
-		Timestamp string    `json:"timestamp"`
-		Data      any       `json:"data,omitempty"`
-		TraceID   string    `json:"trace_id,omitempty"`
-	}
-
 	je := jsonEvent{
-		ID:        e.ID.String(),
+		ID:        strconv.FormatUint(uint64(e.ID), 10),
 		Type:      e.Type,
-		Source:    e.Source.String(),
+		Source:    strconv.FormatUint(uint64(e.Source), 10),
 		Timestamp: e.Timestamp.Format(time.RFC3339Nano),
-		Data:      e.Data,
 		TraceID:   e.TraceID,
 	}
 
 	if e.Target != 0 {
-		je.Target = e.Target.String()
+		je.Target = strconv.FormatUint(uint64(e.Target), 10)
+	}
+
+	if e.Data != nil {
+		raw, err := json.Marshal(e.Data)
+		if err != nil {
+			return nil, fmt.Errorf("marshal event data: %w", err)
+		}
+		je.Data = raw
 	}
 
 	return json.Marshal(je)
+}
+
+// UnmarshalJSON implements json.Unmarshaler for wire decoding.
+// Reverses MarshalJSON: parses base-10 string IDs back to muid.MUID.
+func (e *Event) UnmarshalJSON(data []byte) error {
+	var je jsonEvent
+	if err := json.Unmarshal(data, &je); err != nil {
+		return fmt.Errorf("unmarshal event: %w", err)
+	}
+
+	e.Type = je.Type
+	e.TraceID = je.TraceID
+	e.Data = je.Data // preserved as json.RawMessage
+
+	// Parse base-10 string IDs
+	if je.ID != "" {
+		id, err := strconv.ParseUint(je.ID, 10, 64)
+		if err != nil {
+			return fmt.Errorf("unmarshal event id %q: %w", je.ID, err)
+		}
+		e.ID = muid.MUID(id)
+	}
+
+	if je.Source != "" {
+		src, err := strconv.ParseUint(je.Source, 10, 64)
+		if err != nil {
+			return fmt.Errorf("unmarshal event source %q: %w", je.Source, err)
+		}
+		e.Source = muid.MUID(src)
+	}
+
+	if je.Target != "" {
+		tgt, err := strconv.ParseUint(je.Target, 10, 64)
+		if err != nil {
+			return fmt.Errorf("unmarshal event target %q: %w", je.Target, err)
+		}
+		e.Target = muid.MUID(tgt)
+	}
+
+	// Parse RFC 3339 timestamp
+	if je.Timestamp != "" {
+		ts, err := time.Parse(time.RFC3339Nano, je.Timestamp)
+		if err != nil {
+			return fmt.Errorf("unmarshal event timestamp %q: %w", je.Timestamp, err)
+		}
+		e.Timestamp = ts
+	}
+
+	return nil
 }
 
 // Handler is a function that handles an event.

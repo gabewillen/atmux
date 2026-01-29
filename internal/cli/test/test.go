@@ -63,6 +63,7 @@ func Run(ctx context.Context, args []string) error {
 		{"go mod tidy", "go_mod_tidy", []string{"go", "mod", "tidy"}},
 		{"go vet", "go_vet", []string{"go", "vet", "./..."}},
 		{"golangci-lint", "golangci_lint", []string{"golangci-lint", "run", "./..."}},
+		{"staticcheck", "staticcheck", []string{"staticcheck", "./..."}},
 		{"go test -race", "tests_race", []string{"go", "test", "-race", "./..."}},
 		{"go test", "tests", []string{"go", "test", "./..."}},
 		{"go test -cover", "coverage", nil}, // coverprofile handled specially
@@ -161,6 +162,7 @@ type Steps struct {
 	GoModTidy    *StepResult `toml:"go_mod_tidy"`
 	GoVet        *StepResult `toml:"go_vet"`
 	GolangciLint *StepResult `toml:"golangci_lint"`
+	Staticcheck  *StepResult `toml:"staticcheck"`
 	TestsRace    *StepResult `toml:"tests_race"`
 	Tests        *StepResult `toml:"tests"`
 	Coverage     *StepResult `toml:"coverage"`
@@ -209,6 +211,8 @@ func (s *Snapshot) SetStep(key string, result *StepResult) {
 		s.Steps.GoVet = result
 	case "golangci_lint":
 		s.Steps.GolangciLint = result
+	case "staticcheck":
+		s.Steps.Staticcheck = result
 	case "tests_race":
 		s.Steps.TestsRace = result
 	case "tests":
@@ -226,6 +230,7 @@ func (s *Snapshot) HasFailures() bool {
 		s.Steps.GoModTidy,
 		s.Steps.GoVet,
 		s.Steps.GolangciLint,
+		s.Steps.Staticcheck,
 		s.Steps.TestsRace,
 		s.Steps.Tests,
 		s.Steps.Coverage,
@@ -293,7 +298,7 @@ func sha256Hex(data []byte) string {
 }
 
 func checkRequiredExecutables() error {
-	required := []string{"go", "golangci-lint"}
+	required := []string{"go", "golangci-lint", "staticcheck"}
 
 	for _, exe := range required {
 		if _, err := exec.LookPath(exe); err != nil {
@@ -429,6 +434,7 @@ func checkRegression(moduleRoot string, newSnapshot *Snapshot, output io.Writer)
 	regressions = append(regressions, checkStepRegression("go_mod_tidy", baseline.Steps.GoModTidy, newSnapshot.Steps.GoModTidy)...)
 	regressions = append(regressions, checkStepRegression("go_vet", baseline.Steps.GoVet, newSnapshot.Steps.GoVet)...)
 	regressions = append(regressions, checkStepRegression("golangci_lint", baseline.Steps.GolangciLint, newSnapshot.Steps.GolangciLint)...)
+	regressions = append(regressions, checkStepRegression("staticcheck", baseline.Steps.Staticcheck, newSnapshot.Steps.Staticcheck)...)
 	regressions = append(regressions, checkStepRegression("tests_race", baseline.Steps.TestsRace, newSnapshot.Steps.TestsRace)...)
 	regressions = append(regressions, checkStepRegression("tests", baseline.Steps.Tests, newSnapshot.Steps.Tests)...)
 	regressions = append(regressions, checkStepRegression("coverage", baseline.Steps.Coverage, newSnapshot.Steps.Coverage)...)

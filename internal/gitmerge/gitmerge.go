@@ -184,7 +184,7 @@ func (e *Executor) Execute(ctx context.Context, req Request) (*Result, error) {
 // validatePreconditions checks merge preconditions per spec §5.7.3.
 func (e *Executor) validatePreconditions(req Request, targetBranch, sourceBranch string) error {
 	// Validate repo_root is a git repository
-	if !isGitRepo(req.RepoRoot) {
+	if !e.isGitRepo(req.RepoRoot) {
 		return fmt.Errorf("precondition: %q is %w", req.RepoRoot, amuxerrors.ErrNotInRepository)
 	}
 
@@ -200,7 +200,7 @@ func (e *Executor) validatePreconditions(req Request, targetBranch, sourceBranch
 
 	// Check for uncommitted changes in worktree unless allow_dirty
 	if !req.AllowDirty {
-		wtDir := req.RepoRoot + "/.amux/worktrees/" + req.AgentSlug
+		wtDir := filepath.Join(req.RepoRoot, ".amux", "worktrees", req.AgentSlug)
 		dirty, err := isDirtyWorktree(e.gitPath, wtDir)
 		if err == nil && dirty {
 			return fmt.Errorf("precondition: %w", amuxerrors.ErrDirtyWorktree)
@@ -387,8 +387,8 @@ func isDirtyWorktree(gitPath, dir string) (bool, error) {
 }
 
 // isGitRepo returns true if the directory is a git repository root.
-func isGitRepo(dir string) bool {
-	cmd := exec.Command("git", "rev-parse", "--git-dir")
+func (e *Executor) isGitRepo(dir string) bool {
+	cmd := exec.Command(e.gitPath, "rev-parse", "--git-dir")
 	cmd.Dir = dir
 	return cmd.Run() == nil
 }

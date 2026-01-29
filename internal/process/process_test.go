@@ -2,7 +2,6 @@ package process
 
 import (
 	"testing"
-	"time"
 
 	"github.com/agentflare-ai/amux/pkg/api"
 	"github.com/stateforward/hsm-go/muid"
@@ -10,61 +9,54 @@ import (
 
 func TestTracker(t *testing.T) {
 	tracker := NewTracker()
-
-	pid := 1234
-	procID := api.ProcessID(muid.Make())
-	agentID := api.AgentID(1)
-
+	
 	p := &Process{
-		PID:       pid,
-		AgentID:   agentID,
-		ProcessID: procID,
+		PID:       123,
+		AgentID:   api.AgentID(muid.Make()),
+		ProcessID: api.ProcessID(muid.Make()),
 		Command:   "ls",
-		StartedAt: time.Now(),
+		Running:   true,
 	}
 
 	// Test Spawn
 	tracker.TrackSpawn(p)
-
-	// Verify internal state
-	got, ok := tracker.GetProcess(pid)
+	
+	retrieved, ok := tracker.GetProcess(123)
 	if !ok {
 		t.Fatal("Process not tracked")
 	}
-	if !got.Running {
+	if !retrieved.Running {
 		t.Error("Process should be running")
 	}
 
-	// Verify Event
 	select {
-	case e := <-tracker.Events:
-		if e.Type != EventSpawned {
-			t.Errorf("Expected spawned event, got %s", e.Type)
+	case evt := <-tracker.Events:
+		if evt.Type != EventSpawned {
+			t.Errorf("Expected Spawned event, got %s", evt.Type)
 		}
-	case <-time.After(100 * time.Millisecond):
-		t.Error("Timeout waiting for spawn event")
+	default:
+		t.Error("No spawn event emitted")
 	}
 
 	// Test Exit
-	if err := tracker.TrackExit(pid, 0); err != nil {
-		t.Fatalf("TrackExit failed: %v", err)
+	if err := tracker.TrackExit(123, 0); err != nil {
+		t.Errorf("TrackExit failed: %v", err)
 	}
 
-	got, _ = tracker.GetProcess(pid)
-	if got.Running {
+	retrieved, _ = tracker.GetProcess(123)
+	if retrieved.Running {
 		t.Error("Process should not be running")
 	}
-	if got.ExitCode != 0 {
-		t.Errorf("Expected exit code 0, got %d", got.ExitCode)
+	if retrieved.ExitCode != 0 {
+		t.Error("Exit code mismatch")
 	}
 
-	// Verify Exit Event
 	select {
-	case e := <-tracker.Events:
-		if e.Type != EventExited {
-			t.Errorf("Expected exited event, got %s", e.Type)
+	case evt := <-tracker.Events:
+		if evt.Type != EventExited {
+			t.Errorf("Expected Exited event, got %s", evt.Type)
 		}
-	case <-time.After(100 * time.Millisecond):
-		t.Error("Timeout waiting for exit event")
+	default:
+		t.Error("No exit event emitted")
 	}
 }

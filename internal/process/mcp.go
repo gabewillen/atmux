@@ -3,99 +3,121 @@ package process
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"net"
 	"os"
 	"path/filepath"
 	"sync"
-
-	"github.com/agentflare-ai/amux/internal/config"
 )
 
-// StartMCPServer starts the Notification MCP server.
-func StartMCPServer(ctx context.Context, cfg config.ProcessConfig, tracker *Tracker) error {
-	socketPath := filepath.Join(cfg.HookSocketDir, "amux-mcp.sock") // Or configured path
-	
-	// Ensure dir exists
-	if err := os.MkdirAll(filepath.Dir(socketPath), 0755); err != nil {
-		return fmt.Errorf("failed to create mcp socket dir: %w", err)
+// MCPNotification represents a notification sent to clients.
+type MCPNotification struct {
+	JSONRPC string      `json:"jsonrpc"`
+	Method  string      `json:"method"`
+	Params  interface{} `json:"params"`
+}
+
+// MCPServer handles notification subscriptions via a Unix socket.
+type MCPServer struct {
+	SocketPath string
+	mu         sync.Mutex
+	clients    map[net.Conn]struct{}
+	listener   net.Listener
+}
+
+// NewMCPServer creates a new MCP server.
+func NewMCPServer(socketPath string) *MCPServer {
+	return &MCPServer{
+		SocketPath: socketPath,
+		clients:    make(map[net.Conn]struct{}),
 	}
+}
 
-	// Remove old socket
-	os.Remove(socketPath)
+// Start starts the server.
+func (s *MCPServer) Start(ctx context.Context) error {
+	if err := os.MkdirAll(filepath.Dir(s.SocketPath), 0755); err != nil {
+		return err
+	}
+	os.Remove(s.SocketPath)
 
-	ln, err := net.Listen("unix", socketPath)
+	ln, err := net.Listen("unix", s.SocketPath)
 	if err != nil {
-		return fmt.Errorf("mcp listen failed: %w", err)
+		return err
 	}
+	s.listener = ln
 
-	server := &MCPServer{
-		Tracker: tracker,
-		Clients: make(map[*MCPSession]struct{}),
-	}
-
-	go server.Run(ctx, ln)
-	
+	go s.acceptLoop(ctx)
 	return nil
 }
 
-type MCPServer struct {
-	Tracker *Tracker
-	mu      sync.Mutex
-	Clients map[*MCPSession]struct{}
-}
-
-func (s *MCPServer) Run(ctx context.Context, ln net.Listener) {
-	defer ln.Close()
-	
-	// Accept loop
-	go func() {
-		for {
-			conn, err := ln.Accept()
-			if err != nil {
-				return
-			}
-			session := &MCPSession{
-				conn: conn,
-				srv:  s,
-			}
-			s.addClient(session)
-			go session.Serve(ctx)
-		}
-	}()
-	
-	<-ctx.Done()
-}
-
-func (s *MCPServer) addClient(c *MCPSession) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.Clients[c] = struct{}{}
-}
-
-func (s *MCPServer) removeClient(c *MCPSession) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	delete(s.Clients, c)
-}
-
-type MCPSession struct {
-	conn net.Conn
-	srv  *MCPServer
-}
-
-func (s *MCPSession) Serve(ctx context.Context) {
-	defer s.srv.removeClient(s)
-	defer s.conn.Close()
-	
-	decoder := json.NewDecoder(s.conn)
-	
-	// Read loop (basic JSON-RPC 2.0 handling)
+func (s *MCPServer) acceptLoop(ctx context.Context) {
+	defer s.listener.Close()
 	for {
-		var msg json.RawMessage
-		if err := decoder.Decode(&msg); err != nil {
+		conn, err := s.listener.Accept()
+		if err != nil {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+				continue
+			}
+		}
+		
+		s.addClient(conn)
+		go s.handleClient(ctx, conn)
+	}
+}
+
+func (s *MCPServer) handleClient(ctx context.Context, conn net.Conn) {
+	defer s.removeClient(conn)
+	defer conn.Close()
+	
+	// Keep connection open until context done or read error
+	// Clients listen for notifications.
+	// We might also support basic requests (like Subscribe), 
+	// but the plan emphasizes Server-to-Client notifications.
+	
+buf := make([]byte, 1024)
+	for {
+		_, err := conn.Read(buf)
+		if err != nil {
 			return
 		}
-		// Handle request (placeholder)
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+	}
+}
+
+func (s *MCPServer) addClient(c net.Conn) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.clients[c] = struct{}{}
+}
+
+func (s *MCPServer) removeClient(c net.Conn) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.clients, c)
+}
+
+// Broadcast sends a notification to all connected clients.
+func (s *MCPServer) Broadcast(method string, params interface{}) {
+	notif := MCPNotification{
+		JSONRPC: "2.0",
+		Method:  method,
+		Params:  params,
+	}
+	data, _ := json.Marshal(notif)
+	data = append(data, '\n') // Newline delimited
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for conn := range s.clients {
+		go func(c net.Conn) {
+			c.Write(data)
+		}(conn)
 	}
 }

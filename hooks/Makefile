@@ -1,13 +1,13 @@
 CC=gcc
-CFLAGS=-fPIC -shared -ldl
-TARGET_DIR=bin
-TARGET=$(TARGET_DIR)/amux-hook.so
+CFLAGS=-fPIC -shared -ldl -D_GNU_SOURCE
+TARGET=bin/amux-hook.so
+SRC=hook.c
 
 all: $(TARGET)
 
-$(TARGET): hook.c
-	mkdir -p $(TARGET_DIR)
+$(TARGET): $(SRC)
+	mkdir -p bin
 	$(CC) $(CFLAGS) -o $@ $<
 
 clean:
-	rm -rf $(TARGET_DIR)
+	rm -f $(TARGET)

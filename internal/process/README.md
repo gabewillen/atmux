@@ -2,24 +2,12 @@
 
 `import "github.com/agentflare-ai/amux/internal/process"`
 
-- `func StartMCPServer(ctx context.Context, cfg config.ProcessConfig, tracker *Tracker) error` — StartMCPServer starts the Notification MCP server.
 - `type EventType` — EventType for process events.
 - `type Event` — Event represents a process event.
-- `type MCPServer`
-- `type MCPSession`
+- `type MCPNotification` — MCPNotification represents a notification sent to clients.
+- `type MCPServer` — MCPServer handles notification subscriptions via a Unix socket.
 - `type Process` — Process represents a tracked process.
 - `type Tracker` — Tracker manages the process tree.
-
-### Functions
-
-#### StartMCPServer
-
-```go
-func StartMCPServer(ctx context.Context, cfg config.ProcessConfig, tracker *Tracker) error
-```
-
-StartMCPServer starts the Notification MCP server.
-
 
 ## type Event
 
@@ -54,52 +42,82 @@ const (
 ```
 
 
+## type MCPNotification
+
+```go
+type MCPNotification struct {
+	JSONRPC string      `json:"jsonrpc"`
+	Method  string      `json:"method"`
+	Params  interface{} `json:"params"`
+}
+```
+
+MCPNotification represents a notification sent to clients.
+
 ## type MCPServer
 
 ```go
 type MCPServer struct {
-	Tracker *Tracker
-	mu      sync.Mutex
-	Clients map[*MCPSession]struct{}
+	SocketPath string
+	mu         sync.Mutex
+	clients    map[net.Conn]struct{}
+	listener   net.Listener
 }
 ```
 
-### Methods
+MCPServer handles notification subscriptions via a Unix socket.
 
-#### MCPServer.Run
+### Functions returning MCPServer
+
+#### NewMCPServer
 
 ```go
-func () Run(ctx context.Context, ln net.Listener)
+func NewMCPServer(socketPath string) *MCPServer
+```
+
+NewMCPServer creates a new MCP server.
+
+
+### Methods
+
+#### MCPServer.Broadcast
+
+```go
+func () Broadcast(method string, params interface{})
+```
+
+Broadcast sends a notification to all connected clients.
+
+#### MCPServer.Start
+
+```go
+func () Start(ctx context.Context) error
+```
+
+Start starts the server.
+
+#### MCPServer.acceptLoop
+
+```go
+func () acceptLoop(ctx context.Context)
 ```
 
 #### MCPServer.addClient
 
 ```go
-func () addClient(c *MCPSession)
+func () addClient(c net.Conn)
+```
+
+#### MCPServer.handleClient
+
+```go
+func () handleClient(ctx context.Context, conn net.Conn)
 ```
 
 #### MCPServer.removeClient
 
 ```go
-func () removeClient(c *MCPSession)
-```
-
-
-## type MCPSession
-
-```go
-type MCPSession struct {
-	conn net.Conn
-	srv  *MCPServer
-}
-```
-
-### Methods
-
-#### MCPSession.Serve
-
-```go
-func () Serve(ctx context.Context)
+func () removeClient(c net.Conn)
 ```
 
 

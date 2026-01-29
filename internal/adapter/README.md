@@ -4,47 +4,44 @@
 
 Package adapter manages the WASM runtime and adapter loading.
 
-- `type Action` — Action represents an action returned by an adapter.
-- `type CLIReq` — CLIReq defines CLI version requirements.
-- `type Manifest` — Manifest describes an adapter.
-- `type Matcher` — Matcher is the interface for pattern matching.
-- `type Runtime` — Runtime manages adapter instances.
+- `type Action` — Action represents an action returned by the adapter.
+- `type CLIConfig` — CLIConfig defines CLI version requirements.
+- `type Manifest` — Manifest represents the adapter configuration.
 - `type WasmRuntime` — WasmRuntime executes a WASM adapter.
 
 ## type Action
 
 ```go
 type Action struct {
-	Type    string         `json:"type"`
-	Payload map[string]any `json:"payload"`
+	Type    string          `json:"type"`
+	Payload json.RawMessage `json:"payload"`
 }
 ```
 
-Action represents an action returned by an adapter.
+Action represents an action returned by the adapter.
 
-## type CLIReq
+## type CLIConfig
 
 ```go
-type CLIReq struct {
+type CLIConfig struct {
 	MinVersion string `toml:"min_version"`
-	MaxVersion string `toml:"max_version"` // Optional
 }
 ```
 
-CLIReq defines CLI version requirements.
+CLIConfig defines CLI version requirements.
 
 ## type Manifest
 
 ```go
 type Manifest struct {
-	Name        string `toml:"name"`
-	Version     string `toml:"version"`
-	Description string `toml:"description"`
-	CLI         CLIReq `toml:"cli"`
+	Name        string    `toml:"name"`
+	Version     string    `toml:"version"`
+	Description string    `toml:"description"`
+	CLI         CLIConfig `toml:"cli"`
 }
 ```
 
-Manifest describes an adapter.
+Manifest represents the adapter configuration.
 
 ### Functions returning Manifest
 
@@ -54,7 +51,7 @@ Manifest describes an adapter.
 func ParseManifest(data []byte) (*Manifest, error)
 ```
 
-ParseManifest parses a TOML manifest.
+ParseManifest parses and validates the adapter manifest.
 
 
 ### Methods
@@ -65,30 +62,8 @@ ParseManifest parses a TOML manifest.
 func () Validate() error
 ```
 
-Validate checks required fields.
+Validate checks for required fields.
 
-
-## type Matcher
-
-```go
-type Matcher interface {
-	// Match returns actions for the given input.
-	Match(input []byte) ([]Action, error)
-}
-```
-
-Matcher is the interface for pattern matching.
-
-## type Runtime
-
-```go
-type Runtime interface {
-	Start() error
-	Stop() error
-}
-```
-
-Runtime manages adapter instances.
 
 ## type WasmRuntime
 

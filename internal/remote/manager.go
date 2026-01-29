@@ -55,7 +55,15 @@ type RemoteSession struct {
 	// Replay buffer per spec §5.5.7.3
 	replayMu     sync.Mutex
 	replayBuffer *RingBuffer
-	replayActive bool // true while replaying, blocks live output
+	replayActive bool // true while replaying, or when gating live output until replay
+}
+
+// SessionExitEvent is published on the host events subject when a PTY session
+// ends, allowing the director to observe session exit per spec §5.5.9.
+type SessionExitEvent struct {
+	SessionID string `json:"session_id"`
+	AgentID   string `json:"agent_id"`
+	Reason    string `json:"reason"`
 }
 
 // RingBuffer implements a ring buffer for PTY output replay per spec §5.5.7.3.
@@ -423,7 +431,7 @@ func (m *Manager) handleReplay(ctx context.Context, msg *nats.Msg, payloadRaw js
 	// Publish replay to PTY output subject
 	if len(snapshot) > 0 {
 		outSubj := m.subjects.PTYOut(m.hostID, sessionID)
-		m.publishChunked(outSubj, snapshot, 1024*1024) // 1MB chunks
+		_ = m.publishChunked(outSubj, snapshot, 1024*1024) // 1MB chunks
 	}
 
 	sess.replayMu.Lock()
@@ -479,9 +487,17 @@ func (m *Manager) streamPTYOutput(ctx context.Context, sess *RemoteSession) {
 			replayActive := sess.replayActive
 			sess.replayMu.Unlock()
 
-			// Block live output while replay is active per spec §5.5.7.3
+			// Block live output while replay is active per spec §5.5.7.3 and
+			// while we are gating output after a publish error until replay
+			// has been requested and handled.
 			if !replayActive {
-				m.publishChunked(outSubj, data, 1024*1024) // 1MB chunks
+				if err := m.publishChunked(outSubj, data, 1024*1024); err != nil {
+					// On publish error, enable replayActive gating so that the
+					// director can request a replay before live output resumes.
+					sess.replayMu.Lock()
+					sess.replayActive = true
+					sess.replayMu.Unlock()
+				}
 			}
 		}
 
@@ -489,10 +505,22 @@ func (m *Manager) streamPTYOutput(ctx context.Context, sess *RemoteSession) {
 			break
 		}
 	}
-}
++
++	// When PTY reading stops, emit a session exit event to the host events
++	// subject so the director can observe unexpected exits per spec §5.5.9.
++	out := SessionExitEvent{
++		SessionID: FormatID(sess.SessionID),
++		AgentID:   FormatID(sess.AgentID),
++		Reason:    "pty_closed",
++	}
++
++	if payload, err := json.Marshal(out); err == nil {
++		_ = m.nc.Publish(m.subjects.Events(m.hostID), payload)
++	}
+ }
 
 // publishChunked publishes data in chunks not exceeding maxChunkSize per spec §5.5.7.4.
-func (m *Manager) publishChunked(subject string, data []byte, maxChunkSize int) {
+func (m *Manager) publishChunked(subject string, data []byte, maxChunkSize int) error {
 	for len(data) > 0 {
 		chunkSize := len(data)
 		if chunkSize > maxChunkSize {
@@ -500,9 +528,13 @@ func (m *Manager) publishChunked(subject string, data []byte, maxChunkSize int) 
 		}
 
 		chunk := data[:chunkSize]
-		_ = m.nc.Publish(subject, chunk)
+		if err := m.nc.Publish(subject, chunk); err != nil {
+			return err
+		}
 		data = data[chunkSize:]
 	}
+
+	return nil
 }
 
 // Close closes the manager and all managed sessions.

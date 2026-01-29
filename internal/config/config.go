@@ -440,3 +440,64 @@ func Save(path string, cfg *Config) error {
 
 	return nil
 }
+
+// RedactedConfigForLogging returns a shallow copy of cfg with sensitive fields
+// (such as adapter secrets) redacted for safe logging and debugging.
+//
+// Sensitive keys are detected heuristically based on their names, matching
+// common patterns such as "token", "secret", "password", and related forms.
+func RedactedConfigForLogging(cfg *Config) *Config {
+	if cfg == nil {
+		return nil
+	}
+
+	out := *cfg
+	out.Adapters = redactAdapters(cfg.Adapters)
+	return &out
+}
+
+// redactAdapters returns a copy of the adapters map with sensitive fields
+// redacted for each adapter configuration.
+func redactAdapters(adapters map[string]any) map[string]any {
+	if adapters == nil {
+		return nil
+	}
+
+	out := make(map[string]any, len(adapters))
+	for name, raw := range adapters {
+		if m, ok := raw.(map[string]any); ok {
+			out[name] = redactMap(m)
+			continue
+		}
+		out[name] = raw
+	}
+	return out
+}
+
+// redactMap returns a copy of m with sensitive keys redacted.
+func redactMap(m map[string]any) map[string]any {
+	out := make(map[string]any, len(m))
+	for k, v := range m {
+		if isSensitiveKey(k) {
+			out[k] = "<redacted>"
+			continue
+		}
+		out[k] = v
+	}
+	return out
+}
+
+// isSensitiveKey reports whether a configuration key is likely to contain
+// sensitive data (such as secrets or tokens).
+func isSensitiveKey(key string) bool {
+	k := strings.ToLower(key)
+	if strings.Contains(k, "token") ||
+		strings.Contains(k, "secret") ||
+		strings.Contains(k, "password") ||
+		strings.Contains(k, "apikey") ||
+		strings.Contains(k, "api_key") ||
+		strings.Contains(k, "client_secret") {
+		return true
+	}
+	return false
+}

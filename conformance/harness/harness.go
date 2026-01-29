@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"time"
 
 	"github.com/stateforward/amux/internal/errors"
@@ -41,12 +42,21 @@ func Run(ctx context.Context) (*RunResult, error) {
 		StartedAt:   start,
 	}
 
+	// Allow overriding the binary directory for integration tests via AMUX_BIN_DIR.
+	binDir := os.Getenv("AMUX_BIN_DIR")
+	daemonCmd := "amux-node"
+	cliCmd := "amux"
+	if binDir != "" {
+		daemonCmd = filepath.Join(binDir, "amux-node")
+		cliCmd = filepath.Join(binDir, "amux")
+	}
+
 	var flows []FlowResult
 
 	// Flow 1: Boot the daemon stub (amux-node) with default behavior.
 	{
 		flowStart := time.Now()
-		cmd := exec.CommandContext(ctx, "amux-node")
+		cmd := exec.CommandContext(ctx, daemonCmd)
 		if err := cmd.Run(); err != nil {
 			flows = append(flows, FlowResult{
 				Name:     "daemon.stub",
@@ -66,7 +76,7 @@ func Run(ctx context.Context) (*RunResult, error) {
 	// Flow 2: Run a simple CLI command (amux version).
 	{
 		flowStart := time.Now()
-		cmd := exec.CommandContext(ctx, "amux", "version")
+		cmd := exec.CommandContext(ctx, cliCmd, "version")
 		if err := cmd.Run(); err != nil {
 			flows = append(flows, FlowResult{
 				Name:     "cli.version",
@@ -87,7 +97,7 @@ func Run(ctx context.Context) (*RunResult, error) {
 	// snapshot pipeline without writing snapshot files.
 	{
 		flowStart := time.Now()
-		cmd := exec.CommandContext(ctx, "amux", "test", "--no-snapshot")
+		cmd := exec.CommandContext(ctx, cliCmd, "test", "--no-snapshot")
 		if err := cmd.Run(); err != nil {
 			flows = append(flows, FlowResult{
 				Name:     "cli.amux_test_no_snapshot",

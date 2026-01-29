@@ -1,6 +1,7 @@
 package api
 
 import (
+	"strings"
 	"time"
 
 	"github.com/stateforward/hsm-go/muid"
@@ -149,4 +150,40 @@ type AgentMessage struct {
 	// Timestamp is when the message was sent.
 	// Per spec §6.4 and §9.1.3.1, timestamps are encoded as RFC3339 UTC strings in JSON.
 	Timestamp time.Time
+}
+
+// ValidateAgent validates the core invariants for an Agent.
+// It is intended for use by constructors and callers that assemble Agent
+// values before handing them to the rest of the system.
+func ValidateAgent(ag *Agent) error {
+	if ag == nil {
+		return ErrInvalidAgent
+	}
+
+	if ag.ID == BroadcastID {
+		return ErrReservedID
+	}
+
+	if strings.TrimSpace(ag.Name) == "" {
+		return ErrInvalidAgent
+	}
+	if strings.TrimSpace(ag.Adapter) == "" {
+		return ErrInvalidAgent
+	}
+	if strings.TrimSpace(ag.RepoRoot) == "" {
+		return ErrInvalidAgent
+	}
+
+	switch ag.Location.Type {
+	case LocationLocal:
+		// RepoPath is optional for local agents; RepoRoot is already required.
+	case LocationSSH:
+		if strings.TrimSpace(ag.Location.RepoPath) == "" {
+			return ErrInvalidAgent
+		}
+	default:
+		return ErrInvalidLocationType
+	}
+
+	return nil
 }

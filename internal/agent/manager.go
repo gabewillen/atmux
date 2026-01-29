@@ -135,6 +135,10 @@ func AddLocalAgent(ctx context.Context, cfg *config.Config, opts AddLocalAgentOp
 		},
 	}
 
+	if err := api.ValidateAgent(agent); err != nil {
+		return nil, "", errors.Wrap(err, "validate agent")
+	}
+
 	return agent, slug, nil
 }
 

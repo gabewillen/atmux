@@ -132,6 +132,68 @@ func TestAgentStructure(t *testing.T) {
 	if agent.Adapter != "test-adapter" {
 		t.Errorf("Agent.Adapter = %q, want %q", agent.Adapter, "test-adapter")
 	}
+
+	if err := ValidateAgent(&agent); err != nil {
+		t.Fatalf("ValidateAgent returned error for valid agent: %v", err)
+	}
+}
+
+func TestValidateAgentInvalidCases(t *testing.T) {
+	id := GenerateID()
+
+	tests := []struct {
+		name  string
+		agent *Agent
+		want  error
+	}{
+		{
+			name:  "nil agent",
+			agent: nil,
+			want: ErrInvalidAgent,
+		},
+		{
+			name: "reserved ID",
+			agent: &Agent{ID: BroadcastID, Name: "a", Adapter: "b", RepoRoot: "/repo", Location: Location{Type: LocationLocal}},
+			want: ErrReservedID,
+		},
+		{
+			name: "missing name",
+			agent: &Agent{ID: id, Adapter: "b", RepoRoot: "/repo", Location: Location{Type: LocationLocal}},
+			want: ErrInvalidAgent,
+		},
+		{
+			name: "missing adapter",
+			agent: &Agent{ID: id, Name: "a", RepoRoot: "/repo", Location: Location{Type: LocationLocal}},
+			want: ErrInvalidAgent,
+		},
+		{
+			name: "missing repo root",
+			agent: &Agent{ID: id, Name: "a", Adapter: "b", Location: Location{Type: LocationLocal}},
+			want: ErrInvalidAgent,
+		},
+		{
+			name: "ssh without repo path",
+			agent: &Agent{ID: id, Name: "a", Adapter: "b", RepoRoot: "/repo", Location: Location{Type: LocationSSH}},
+			want: ErrInvalidAgent,
+		},
+		{
+			name: "unknown location type",
+			agent: &Agent{ID: id, Name: "a", Adapter: "b", RepoRoot: "/repo", Location: Location{Type: LocationType(999)}},
+			want: ErrInvalidLocationType,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateAgent(tt.agent)
+			if err == nil {
+				t.Fatalf("expected error %v, got nil", tt.want)
+			}
+			if err != tt.want {
+				t.Fatalf("unexpected error: got %v, want %v", err, tt.want)
+			}
+		})
+	}
 }
 
 func TestSessionStructure(t *testing.T) {

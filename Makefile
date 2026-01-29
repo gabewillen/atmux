@@ -44,9 +44,9 @@ tidy:
 	go mod tidy
 
 # Run conformance suite
-conformance:
-	@echo "Running conformance suite..."
-	@echo "Phase 0: Conformance suite stub"
+conformance: build
+	@echo "Running conformance harness..."
+	@go test ./conformance/harness -run TestHarnessSmoke
 
 # Check documentation sync
 docs-check:

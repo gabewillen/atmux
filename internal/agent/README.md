@@ -13,15 +13,22 @@
 - `func StopAgent(ctx context.Context, a *Agent) error` — StopAgent stops the agent process.
 - `func ValidateAgentConfig(c config.AgentConfig) error` — ValidateAgentConfig checks required fields.
 - `func isGitRepo(path string) bool`
+- `func updatePresence(state api.PresenceState) func(context.Context, *PresenceHSM, hsm.Event)`
 - `lifecycleModel`
 - `presenceModel`
+- `type AgentRegistry` — AgentRegistry tracks active agents.
 - `type Agent` — Agent represents the runtime state of an agent.
+- `type BusEvent` — BusEvent represents an event on the bus.
+- `type EventBus` — EventBus manages subscriptions and event distribution.
+- `type EventType` — EventType represents the type of event.
 - `type LifecycleHSM` — LifecycleHSM manages the agent lifecycle.
 - `type LifecycleState` — LifecycleState represents the lifecycle state of an agent.
 - `type MergeStrategy` — MergeStrategy represents a git merge strategy.
 - `type PresenceHSM` — PresenceHSM manages the agent presence.
 - `type PresenceState` — PresenceState represents the presence state of an agent.
+- `type RosterEntry` — RosterEntry represents an agent in the roster.
 - `type Session` — Session represents a running session of an agent.
+- `type Subscription` — Subscription is a channel for receiving events.
 
 ### Constants
 
@@ -103,10 +110,10 @@ var lifecycleModel = hsm.Define("lifecycle",
 
 ```go
 var presenceModel = hsm.Define("presence",
-	hsm.State(string(PresenceOffline)),
-	hsm.State(string(PresenceOnline)),
-	hsm.State(string(PresenceBusy)),
-	hsm.State(string(PresenceAway)),
+	hsm.State(string(PresenceOffline), hsm.Entry(updatePresence(api.PresenceOffline))),
+	hsm.State(string(PresenceOnline), hsm.Entry(updatePresence(api.PresenceOnline))),
+	hsm.State(string(PresenceBusy), hsm.Entry(updatePresence(api.PresenceBusy))),
+	hsm.State(string(PresenceAway), hsm.Entry(updatePresence(api.PresenceAway))),
 
 	hsm.Initial(hsm.Target(string(PresenceOffline))),
 
@@ -236,6 +243,12 @@ ValidateAgentConfig checks required fields.
 func isGitRepo(path string) bool
 ```
 
+#### updatePresence
+
+```go
+func updatePresence(state api.PresenceState) func(context.Context, *PresenceHSM, hsm.Event)
+```
+
 
 ## type Agent
 
@@ -250,6 +263,9 @@ type Agent struct {
 	// State machines
 	Lifecycle hsm.Instance
 	Presence  hsm.Instance
+
+	// CurrentPresence tracks the current presence state (updated by HSM).
+	CurrentPresence api.PresenceState
 
 	// Sessions active for this agent
 	Sessions map[api.SessionID]*Session
@@ -267,6 +283,137 @@ func NewAgent(cfg config.AgentConfig, repoRoot api.RepoRoot) (*Agent, error)
 ```
 
 NewAgent creates a new Agent instance.
+
+
+### Methods
+
+#### Agent.GetPresence
+
+```go
+func () GetPresence() api.PresenceState
+```
+
+GetPresence returns the current presence state of the agent.
+
+
+## type AgentRegistry
+
+```go
+type AgentRegistry struct {
+	Agents map[api.AgentID]*Agent
+}
+```
+
+AgentRegistry tracks active agents.
+
+### Functions returning AgentRegistry
+
+#### NewRegistry
+
+```go
+func NewRegistry() *AgentRegistry
+```
+
+NewRegistry creates a new registry.
+
+
+### Methods
+
+#### AgentRegistry.GetRoster
+
+```go
+func () GetRoster() []RosterEntry
+```
+
+GetRoster returns the list of agents.
+
+#### AgentRegistry.Register
+
+```go
+func () Register(a *Agent)
+```
+
+Register adds an agent to the registry.
+
+
+## type BusEvent
+
+```go
+type BusEvent struct {
+	Type    EventType
+	Source  api.AgentID
+	Payload interface{}
+}
+```
+
+BusEvent represents an event on the bus.
+
+## type EventBus
+
+```go
+type EventBus struct {
+	mu   sync.RWMutex
+	subs map[*Subscription]struct{}
+}
+```
+
+EventBus manages subscriptions and event distribution.
+
+### Functions returning EventBus
+
+#### NewEventBus
+
+```go
+func NewEventBus() *EventBus
+```
+
+NewEventBus creates a new EventBus.
+
+
+### Methods
+
+#### EventBus.Publish
+
+```go
+func () Publish(event BusEvent)
+```
+
+Publish sends an event to all subscribers.
+
+#### EventBus.Subscribe
+
+```go
+func () Subscribe() *Subscription
+```
+
+Subscribe returns a subscription for all events (for now).
+In a real implementation, we'd filter by topic.
+
+#### EventBus.unsubscribe
+
+```go
+func () unsubscribe(sub *Subscription)
+```
+
+
+## type EventType
+
+```go
+type EventType string
+```
+
+EventType represents the type of event.
+
+### Constants
+
+#### EventPresenceUpdate, EventMessage
+
+```go
+const (
+	EventPresenceUpdate EventType = "presence.update"
+	EventMessage        EventType = "message"
+)
+```
 
 
 ## type LifecycleHSM
@@ -369,6 +516,20 @@ const (
 ```
 
 
+## type RosterEntry
+
+```go
+type RosterEntry struct {
+	AgentID  api.AgentID       `json:"agent_id"`
+	Name     string            `json:"name"`
+	Adapter  string            `json:"adapter"`
+	Presence api.PresenceState `json:"presence"`
+	RepoRoot api.RepoRoot      `json:"repo_root"`
+}
+```
+
+RosterEntry represents an agent in the roster.
+
 ## type Session
 
 ```go
@@ -385,4 +546,26 @@ type Session struct {
 ```
 
 Session represents a running session of an agent.
+
+## type Subscription
+
+```go
+type Subscription struct {
+	C      chan BusEvent
+	cancel func()
+}
+```
+
+Subscription is a channel for receiving events.
+
+### Methods
+
+#### Subscription.Close
+
+```go
+func () Close()
+```
+
+Close unsubscribes.
+
 

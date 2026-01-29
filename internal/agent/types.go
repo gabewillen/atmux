@@ -21,6 +21,9 @@ type Agent struct {
 	// State machines
 	Lifecycle hsm.Instance
 	Presence  hsm.Instance
+	
+	// CurrentPresence tracks the current presence state (updated by HSM).
+	CurrentPresence api.PresenceState
 
 	// Sessions active for this agent
 	Sessions map[api.SessionID]*Session

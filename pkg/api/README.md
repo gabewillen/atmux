@@ -6,6 +6,7 @@
 - `type AgentSlug` — AgentSlug is a filesystem-safe identifier derived from an agent's name.
 - `type HostID` — HostID is a stable identifier for a host.
 - `type PeerID` — PeerID is a unique identifier for a peer in the hsmnet.
+- `type PresenceState` — PresenceState is re-exported/defined here for public API usage.
 - `type ProcessID` — ProcessID is a unique identifier for a process.
 - `type RepoKey` — repoKey represents a stable, session-scoped identifier for a repository.
 - `type RepoRoot` — RepoRoot is a canonical absolute path to a git repository.
@@ -124,6 +125,28 @@ func () UnmarshalJSON(data []byte) error
 ```
 
 UnmarshalJSON decodes PeerID from a base-10 string.
+
+
+## type PresenceState
+
+```go
+type PresenceState string
+```
+
+PresenceState is re-exported/defined here for public API usage.
+
+### Constants
+
+#### PresenceOnline, PresenceBusy, PresenceOffline, PresenceAway
+
+```go
+const (
+	PresenceOnline  PresenceState = "Online"
+	PresenceBusy    PresenceState = "Busy"
+	PresenceOffline PresenceState = "Offline"
+	PresenceAway    PresenceState = "Away"
+)
+```
 
 
 ## type ProcessID

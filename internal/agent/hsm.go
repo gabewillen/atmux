@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 
+	"github.com/agentflare-ai/amux/pkg/api"
 	"github.com/stateforward/hsm-go"
 )
 
@@ -32,6 +33,14 @@ type LifecycleHSM struct {
 type PresenceHSM struct {
 	hsm.HSM
 	Agent *Agent
+}
+
+func updatePresence(state api.PresenceState) func(context.Context, *PresenceHSM, hsm.Event) {
+	return func(_ context.Context, sm *PresenceHSM, _ hsm.Event) {
+		if sm.Agent != nil {
+			sm.Agent.CurrentPresence = state
+		}
+	}
 }
 
 var lifecycleModel = hsm.Define("lifecycle",
@@ -81,10 +90,10 @@ var lifecycleModel = hsm.Define("lifecycle",
 )
 
 var presenceModel = hsm.Define("presence",
-	hsm.State(string(PresenceOffline)),
-	hsm.State(string(PresenceOnline)),
-	hsm.State(string(PresenceBusy)),
-	hsm.State(string(PresenceAway)),
+	hsm.State(string(PresenceOffline), hsm.Entry(updatePresence(api.PresenceOffline))),
+	hsm.State(string(PresenceOnline), hsm.Entry(updatePresence(api.PresenceOnline))),
+	hsm.State(string(PresenceBusy), hsm.Entry(updatePresence(api.PresenceBusy))),
+	hsm.State(string(PresenceAway), hsm.Entry(updatePresence(api.PresenceAway))),
 
 	hsm.Initial(hsm.Target(string(PresenceOffline))),
 

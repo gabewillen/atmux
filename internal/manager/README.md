@@ -12,8 +12,10 @@ Package manager manages local agents, worktrees, and sessions.
 - `func extractAgents(raw map[string]any) []config.AgentConfig`
 - `func lastStateSegment(state string) string`
 - `func locationForState(state *agentState) *api.Location`
+- `func presenceTransitionEvents(current string, target string) []string`
 - `func rosterOrder(kind api.RosterKind) int`
 - `func sameAgent(a, b config.AgentConfig) bool`
+- `func sameStringList(a, b []string) bool`
 - `func sortRoster(entries []api.RosterEntry)`
 - `func statePresence(state *agentState) string`
 - `shutdownModel`
@@ -21,7 +23,11 @@ Package manager manages local agents, worktrees, and sessions.
 - `type AddRequest` — AddRequest describes an agent add request.
 - `type Manager` — Manager manages local and remote agents and sessions.
 - `type RemoveRequest` — RemoveRequest describes an agent removal request.
+- `type actionEmitEvent`
+- `type actionSendInput`
+- `type actionUpdatePresence`
 - `type agentState`
+- `type listenSubscription`
 - `type shutdownController`
 - `type shutdownTarget`
 
@@ -158,6 +164,12 @@ func lastStateSegment(state string) string
 func locationForState(state *agentState) *api.Location
 ```
 
+#### presenceTransitionEvents
+
+```go
+func presenceTransitionEvents(current string, target string) []string
+```
+
 #### rosterOrder
 
 ```go
@@ -168,6 +180,12 @@ func rosterOrder(kind api.RosterKind) int
 
 ```go
 func sameAgent(a, b config.AgentConfig) bool
+```
+
+#### sameStringList
+
+```go
+func sameStringList(a, b []string) bool
 ```
 
 #### sortRoster
@@ -187,11 +205,12 @@ func statePresence(state *agentState) string
 
 ```go
 type AddRequest struct {
-	Name     string
-	About    string
-	Adapter  string
-	Location api.Location
-	Cwd      string
+	Name           string
+	About          string
+	Adapter        string
+	Location       api.Location
+	Cwd            string
+	ListenChannels []string
 }
 ```
 
@@ -215,6 +234,8 @@ type Manager struct {
 	registries      map[string]adapter.Registry
 	registryFactory func(*paths.Resolver) (adapter.Registry, error)
 	subs            []protocol.Subscription
+	listenSubs      map[string]*listenSubscription
+	listenTargets   map[string]map[api.AgentID]struct{}
 	shutdownMu      sync.Mutex
 	shutdown        *shutdownController
 }
@@ -353,6 +374,12 @@ func () buildAgentMessage(sender api.AgentID, payload api.OutboundMessage) (api.
 func () cleanupWorktrees(ctx context.Context, targets []shutdownTarget) error
 ```
 
+#### Manager.clearListen
+
+```go
+func () clearListen(id api.AgentID)
+```
+
 #### Manager.clearSessions
 
 ```go
@@ -363,6 +390,12 @@ func () clearSessions(targets []shutdownTarget)
 
 ```go
 func () commSubjectForTarget(target api.TargetID) string
+```
+
+#### Manager.configureListen
+
+```go
+func () configureListen(ctx context.Context, id api.AgentID, state *agentState)
 ```
 
 #### Manager.deliverBroadcast
@@ -389,10 +422,22 @@ func () deliverToTarget(payload api.AgentMessage) bool
 func () directorPeerID() api.PeerID
 ```
 
+#### Manager.dispatchAdapterEvent
+
+```go
+func () dispatchAdapterEvent(ctx context.Context, state *agentState, event adapter.Event)
+```
+
 #### Manager.dispatchAgentLifecycle
 
 ```go
 func () dispatchAgentLifecycle(ctx context.Context, targets []shutdownTarget, name string)
+```
+
+#### Manager.dispatchRosterToAdapters
+
+```go
+func () dispatchRosterToAdapters(ctx context.Context, roster []api.RosterEntry)
 ```
 
 #### Manager.drainSessions
@@ -443,6 +488,12 @@ func () emitSystemEvent(ctx context.Context, name string, payload any)
 func () ensureShutdownController() *shutdownController
 ```
 
+#### Manager.executeAdapterActions
+
+```go
+func () executeAdapterActions(ctx context.Context, state *agentState, actions []adapter.Action)
+```
+
 #### Manager.findAgent
 
 ```go
@@ -453,6 +504,24 @@ func () findAgent(req RemoveRequest) (*agentState, api.AgentID, error)
 
 ```go
 func () forceTerminate(ctx context.Context, targets []shutdownTarget) error
+```
+
+#### Manager.handleActionEmitEvent
+
+```go
+func () handleActionEmitEvent(ctx context.Context, payload json.RawMessage)
+```
+
+#### Manager.handleActionSendInput
+
+```go
+func () handleActionSendInput(ctx context.Context, state *agentState, payload json.RawMessage)
+```
+
+#### Manager.handleActionUpdatePresence
+
+```go
+func () handleActionUpdatePresence(ctx context.Context, state *agentState, payload json.RawMessage)
 ```
 
 #### Manager.handleCommMessage
@@ -479,6 +548,12 @@ func () handlePresenceEvent(event protocol.Event)
 func () handleRemoteEvent(msg protocol.Message)
 ```
 
+#### Manager.listenSubjectForTarget
+
+```go
+func () listenSubjectForTarget(target string) (string, bool)
+```
+
 #### Manager.loadFromConfig
 
 ```go
@@ -489,6 +564,18 @@ func () loadFromConfig(ctx context.Context) error
 
 ```go
 func () localHostID() api.HostID
+```
+
+#### Manager.mirrorListenedMessage
+
+```go
+func () mirrorListenedMessage(subject string, payload api.AgentMessage)
+```
+
+#### Manager.mirrorMessageToState
+
+```go
+func () mirrorMessageToState(subject string, payload api.AgentMessage, state *agentState)
 ```
 
 #### Manager.notifyUnknownRecipient
@@ -545,6 +632,12 @@ func () removeConfigEntryLocked(entry config.AgentConfig)
 func () removeNameIndexLocked(name string, id api.AgentID)
 ```
 
+#### Manager.resolveListenSubjects
+
+```go
+func () resolveListenSubjects(targets []string) []string
+```
+
 #### Manager.resolveLocation
 
 ```go
@@ -579,6 +672,12 @@ func () routeOutboundMessage(ctx context.Context, payload api.OutboundMessage)
 
 ```go
 func () setPresence(ctx context.Context, id api.AgentID, presence string, emit bool) bool
+```
+
+#### Manager.shouldSubscribeListenSubject
+
+```go
+func () shouldSubscribeListenSubject(subject string) bool
 ```
 
 #### Manager.shutdownTargets
@@ -629,6 +728,12 @@ func () stopSession(ctx context.Context, id api.AgentID) error
 func () systemRosterLocked() []api.RosterEntry
 ```
 
+#### Manager.updateListenTargets
+
+```go
+func () updateListenTargets(ctx context.Context, id api.AgentID, subjects []string)
+```
+
 #### Manager.updateRemotePresence
 
 ```go
@@ -659,6 +764,30 @@ type RemoveRequest struct {
 
 RemoveRequest describes an agent removal request.
 
+## type actionEmitEvent
+
+```go
+type actionEmitEvent struct {
+	Event adapter.Event `json:"event"`
+}
+```
+
+## type actionSendInput
+
+```go
+type actionSendInput struct {
+	DataB64 string `json:"data_b64"`
+}
+```
+
+## type actionUpdatePresence
+
+```go
+type actionUpdatePresence struct {
+	Presence string `json:"presence"`
+}
+```
+
 ## type agentState
 
 ```go
@@ -668,6 +797,7 @@ type agentState struct {
 	repoRoot         string
 	worktree         string
 	session          *session.LocalSession
+	adapter          adapter.Adapter
 	formatter        adapter.ActionFormatter
 	remoteHost       api.HostID
 	remoteSession    api.SessionID
@@ -676,6 +806,16 @@ type agentState struct {
 	explicitRepoPath bool
 	presence         string
 	task             string
+	listenSubjects   []string
+}
+```
+
+## type listenSubscription
+
+```go
+type listenSubscription struct {
+	subject string
+	sub     protocol.Subscription
 }
 ```
 

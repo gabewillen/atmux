@@ -680,6 +680,8 @@ type AgentConfig struct {
 	About string
 	// Adapter names the adapter.
 	Adapter string
+	// ListenChannels are participant channels to mirror into the agent PTY.
+	ListenChannels []string
 	// Location describes the agent location.
 	Location AgentLocationConfig
 }

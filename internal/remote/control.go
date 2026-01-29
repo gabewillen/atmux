@@ -28,14 +28,15 @@ type ErrorPayload struct {
 
 // SpawnRequest describes a spawn request payload.
 type SpawnRequest struct {
-	Name      string            `json:"name,omitempty"`
-	About     string            `json:"about,omitempty"`
-	AgentID   string            `json:"agent_id"`
-	AgentSlug string            `json:"agent_slug"`
-	RepoPath  string            `json:"repo_path"`
-	Adapter   string            `json:"adapter"`
-	Command   []string          `json:"command"`
-	Env       map[string]string `json:"env,omitempty"`
+	Name           string            `json:"name,omitempty"`
+	About          string            `json:"about,omitempty"`
+	AgentID        string            `json:"agent_id"`
+	AgentSlug      string            `json:"agent_slug"`
+	RepoPath       string            `json:"repo_path"`
+	Adapter        string            `json:"adapter"`
+	Command        []string          `json:"command"`
+	Env            map[string]string `json:"env,omitempty"`
+	ListenChannels []string          `json:"listen_channels,omitempty"`
 }
 
 // SpawnResponse describes a spawn response payload.

@@ -32,6 +32,7 @@ Package remote implements NATS-based remote orchestration for amux.
 - `func buildBootstrapZip(ctx context.Context, req BootstrapRequest, runner SSHRunner) ([]byte, error)`
 - `func buildManagerBinary(ctx context.Context, goos, goarch string) (string, error)`
 - `func chunkBytes(maxPayload int, data []byte) [][]byte`
+- `func decodeEventPayload(payload any, dest any) error`
 - `func deriveHubURLFromLeaf(raw string) (string, error)`
 - `func detectRemoteArch(ctx context.Context, location api.Location, runner SSHRunner) (string, string, error)`
 - `func ensureRepo(repoRoot string) error`
@@ -43,10 +44,13 @@ Package remote implements NATS-based remote orchestration for amux.
 - `func loadOrCreateKeyPair(path string, prefix nkeys.PrefixByte) (nkeys.KeyPair, error)`
 - `func mapGOARCH(raw string) (string, error)`
 - `func mapGOOS(raw string) (string, error)`
+- `func presenceTransitionEvents(current string, target string) []string`
 - `func reconnectDelay(cfg config.Config, attempt int) time.Duration`
 - `func shellEscape(raw string) string`
 - `func sshOptions(location api.Location) []string`
 - `func sshTarget(location api.Location) string`
+- `hostManagerLifecycleModel`
+- `hostManagerLifecyclePending, hostManagerLifecycleStarting, hostManagerLifecycleRunning, hostManagerLifecycleTerminated, hostManagerLifecycleErrored, hostManagerEventStart, hostManagerEventReady, hostManagerEventStop, hostManagerEventError`
 - `type AdapterBundle` — AdapterBundle describes an adapter WASM module to bootstrap.
 - `type BootstrapRequest` — BootstrapRequest describes a remote bootstrap request.
 - `type Bootstrapper` — Bootstrapper provisions remote credentials and configuration.
@@ -62,6 +66,7 @@ Package remote implements NATS-based remote orchestration for amux.
 - `type EventMessage` — EventMessage wraps a remote event in a wire envelope.
 - `type ExecSSHRunner` — ExecSSHRunner executes SSH commands using the system ssh binary.
 - `type HandshakePayload` — HandshakePayload is the handshake request/response payload.
+- `type HostManagerLifecycle` — HostManagerLifecycle drives the host manager lifecycle state machine.
 - `type HostManagerStatus` — HostManagerStatus reports manager connection state.
 - `type HostManager` — HostManager runs sessions and responds to remote control requests.
 - `type HostSnapshot` — HostSnapshot captures the director's view of a host manager.
@@ -79,9 +84,33 @@ Package remote implements NATS-based remote orchestration for amux.
 - `type SpawnRequest` — SpawnRequest describes a spawn request payload.
 - `type SpawnResponse` — SpawnResponse describes a spawn response payload.
 - `type WireEvent` — WireEvent describes an event payload.
+- `type actionEmitEvent`
+- `type actionSendInput`
+- `type actionUpdatePresence`
 - `type hostState`
+- `type listenSubscription`
 - `type queuedMessage`
 - `type remoteSession`
+
+### Constants
+
+#### hostManagerLifecyclePending, hostManagerLifecycleStarting, hostManagerLifecycleRunning, hostManagerLifecycleTerminated, hostManagerLifecycleErrored, hostManagerEventStart, hostManagerEventReady, hostManagerEventStop, hostManagerEventError
+
+```go
+const (
+	hostManagerLifecyclePending    = "pending"
+	hostManagerLifecycleStarting   = "starting"
+	hostManagerLifecycleRunning    = "running"
+	hostManagerLifecycleTerminated = "terminated"
+	hostManagerLifecycleErrored    = "errored"
+
+	hostManagerEventStart = "start"
+	hostManagerEventReady = "ready"
+	hostManagerEventStop  = "stop"
+	hostManagerEventError = "error"
+)
+```
+
 
 ### Variables
 
@@ -107,6 +136,28 @@ var (
 	ErrBootstrapFailed = errors.New("bootstrap failed")
 	// ErrMessageTargetUnknown is returned when a message recipient cannot be resolved.
 	ErrMessageTargetUnknown = errors.New("message target unknown")
+)
+```
+
+#### hostManagerLifecycleModel
+
+```go
+var hostManagerLifecycleModel = hsm.Define(
+	"host_manager.lifecycle",
+	hsm.State(hostManagerLifecyclePending),
+	hsm.State(hostManagerLifecycleStarting),
+	hsm.State(hostManagerLifecycleRunning),
+	hsm.Final(hostManagerLifecycleTerminated),
+	hsm.Final(hostManagerLifecycleErrored),
+
+	hsm.Transition(hsm.On(hsm.Event{Name: hostManagerEventStart}), hsm.Source(hostManagerLifecyclePending), hsm.Target(hostManagerLifecycleStarting)),
+	hsm.Transition(hsm.On(hsm.Event{Name: hostManagerEventReady}), hsm.Source(hostManagerLifecycleStarting), hsm.Target(hostManagerLifecycleRunning)),
+	hsm.Transition(hsm.On(hsm.Event{Name: hostManagerEventStop}), hsm.Source(hostManagerLifecycleRunning), hsm.Target(hostManagerLifecycleTerminated)),
+	hsm.Transition(hsm.On(hsm.Event{Name: hostManagerEventError}), hsm.Source(hostManagerLifecyclePending), hsm.Target(hostManagerLifecycleErrored)),
+	hsm.Transition(hsm.On(hsm.Event{Name: hostManagerEventError}), hsm.Source(hostManagerLifecycleStarting), hsm.Target(hostManagerLifecycleErrored)),
+	hsm.Transition(hsm.On(hsm.Event{Name: hostManagerEventError}), hsm.Source(hostManagerLifecycleRunning), hsm.Target(hostManagerLifecycleErrored)),
+
+	hsm.Initial(hsm.Target(hostManagerLifecyclePending)),
 )
 ```
 
@@ -317,6 +368,12 @@ func buildManagerBinary(ctx context.Context, goos, goarch string) (string, error
 func chunkBytes(maxPayload int, data []byte) [][]byte
 ```
 
+#### decodeEventPayload
+
+```go
+func decodeEventPayload(payload any, dest any) error
+```
+
 #### deriveHubURLFromLeaf
 
 ```go
@@ -381,6 +438,12 @@ func mapGOARCH(raw string) (string, error)
 
 ```go
 func mapGOOS(raw string) (string, error)
+```
+
+#### presenceTransitionEvents
+
+```go
+func presenceTransitionEvents(current string, target string) []string
 ```
 
 #### reconnectDelay
@@ -944,9 +1007,12 @@ type HostManager struct {
 	registry      adapter.Registry
 	registryClose func(context.Context) error
 	logger        *log.Logger
+	lifecycle     *HostManagerLifecycle
 	mu            sync.Mutex
 	sessions      map[api.SessionID]*remoteSession
 	agentIndex    map[api.AgentID]*remoteSession
+	listenSubs    map[string]*listenSubscription
+	listenTargets map[string]map[api.AgentID]struct{}
 	subscribed    bool
 	ready         bool
 	connected     bool
@@ -999,10 +1065,22 @@ Status returns the current connection state for the host manager.
 func () buildAgentMessage(session *remoteSession, payload api.OutboundMessage) (api.AgentMessage, error)
 ```
 
+#### HostManager.clearListen
+
+```go
+func () clearListen(session *remoteSession)
+```
+
 #### HostManager.commSubjectForTarget
 
 ```go
 func () commSubjectForTarget(target api.TargetID) string
+```
+
+#### HostManager.configureListen
+
+```go
+func () configureListen(ctx context.Context, session *remoteSession, targets []string)
 ```
 
 #### HostManager.connect
@@ -1017,10 +1095,28 @@ func () connect(ctx context.Context) error
 func () deliverMessage(session *remoteSession, payload api.AgentMessage)
 ```
 
+#### HostManager.dispatchAdapterEvent
+
+```go
+func () dispatchAdapterEvent(ctx context.Context, session *remoteSession, event adapter.Event)
+```
+
+#### HostManager.dispatchRosterToAdapters
+
+```go
+func () dispatchRosterToAdapters(ctx context.Context, roster []api.RosterEntry)
+```
+
 #### HostManager.ensureLeafServer
 
 ```go
 func () ensureLeafServer(ctx context.Context) error
+```
+
+#### HostManager.executeAdapterActions
+
+```go
+func () executeAdapterActions(ctx context.Context, session *remoteSession, actions []adapter.Action)
 ```
 
 #### HostManager.expandPath
@@ -1033,6 +1129,24 @@ func () expandPath(path string) string
 
 ```go
 func () flushOutbox()
+```
+
+#### HostManager.handleActionEmitEvent
+
+```go
+func () handleActionEmitEvent(ctx context.Context, payload json.RawMessage)
+```
+
+#### HostManager.handleActionSendInput
+
+```go
+func () handleActionSendInput(session *remoteSession, payload json.RawMessage)
+```
+
+#### HostManager.handleActionUpdatePresence
+
+```go
+func () handleActionUpdatePresence(ctx context.Context, session *remoteSession, payload json.RawMessage)
 ```
 
 #### HostManager.handleCommMessage
@@ -1077,6 +1191,12 @@ func () handlePTYInput(msg protocol.Message)
 func () handlePing(reply string, control ControlMessage)
 ```
 
+#### HostManager.handlePresenceEvent
+
+```go
+func () handlePresenceEvent(event protocol.Event)
+```
+
 #### HostManager.handleReplay
 
 ```go
@@ -1101,10 +1221,28 @@ func () heartbeatLoop(ctx context.Context)
 func () isReady() bool
 ```
 
+#### HostManager.listenSubjectForTarget
+
+```go
+func () listenSubjectForTarget(target string) (string, bool)
+```
+
 #### HostManager.markDisconnected
 
 ```go
 func () markDisconnected(reason string)
+```
+
+#### HostManager.mirrorListenedMessage
+
+```go
+func () mirrorListenedMessage(subject string, payload api.AgentMessage)
+```
+
+#### HostManager.mirrorMessageToSession
+
+```go
+func () mirrorMessageToSession(subject string, payload api.AgentMessage, session *remoteSession)
 ```
 
 #### HostManager.monitorLeaf
@@ -1185,10 +1323,28 @@ func () replyError(reply, requestType, code, message string) error
 func () replySpawn(reply string, agentID api.AgentID, sessionID api.SessionID)
 ```
 
+#### HostManager.resolveListenSubjects
+
+```go
+func () resolveListenSubjects(targets []string) []string
+```
+
 #### HostManager.resolveToID
 
 ```go
 func () resolveToID(slug string) (api.TargetID, bool)
+```
+
+#### HostManager.shouldSubscribeListenSubject
+
+```go
+func () shouldSubscribeListenSubject(subject string) bool
+```
+
+#### HostManager.startInternal
+
+```go
+func () startInternal(ctx context.Context) error
 ```
 
 #### HostManager.subscribeComm
@@ -1201,6 +1357,24 @@ func () subscribeComm(ctx context.Context) error
 
 ```go
 func () subscribeControl(ctx context.Context) error
+```
+
+#### HostManager.subscribePresence
+
+```go
+func () subscribePresence(ctx context.Context) error
+```
+
+#### HostManager.updateListenTargets
+
+```go
+func () updateListenTargets(ctx context.Context, id api.AgentID, subjects []string)
+```
+
+#### HostManager.updateSessionPresence
+
+```go
+func () updateSessionPresence(id api.AgentID, presence string)
 ```
 
 #### HostManager.wasConnected
@@ -1226,6 +1400,37 @@ func () writeHostKV(ctx context.Context) error
 ```go
 func () writeSessionKV(ctx context.Context, session *remoteSession, state string, sessionErr error) error
 ```
+
+
+## type HostManagerLifecycle
+
+```go
+type HostManagerLifecycle struct {
+	hsm.HSM
+	manager *HostManager
+}
+```
+
+HostManagerLifecycle drives the host manager lifecycle state machine.
+
+### Functions returning HostManagerLifecycle
+
+#### newHostManagerLifecycle
+
+```go
+func newHostManagerLifecycle(manager *HostManager) *HostManagerLifecycle
+```
+
+
+### Methods
+
+#### HostManagerLifecycle.Start
+
+```go
+func () Start(ctx context.Context)
+```
+
+Start starts the host manager lifecycle state machine.
 
 
 ## type HostManagerStatus
@@ -1499,14 +1704,15 @@ SSHRunner executes SSH commands.
 
 ```go
 type SpawnRequest struct {
-	Name      string            `json:"name,omitempty"`
-	About     string            `json:"about,omitempty"`
-	AgentID   string            `json:"agent_id"`
-	AgentSlug string            `json:"agent_slug"`
-	RepoPath  string            `json:"repo_path"`
-	Adapter   string            `json:"adapter"`
-	Command   []string          `json:"command"`
-	Env       map[string]string `json:"env,omitempty"`
+	Name           string            `json:"name,omitempty"`
+	About          string            `json:"about,omitempty"`
+	AgentID        string            `json:"agent_id"`
+	AgentSlug      string            `json:"agent_slug"`
+	RepoPath       string            `json:"repo_path"`
+	Adapter        string            `json:"adapter"`
+	Command        []string          `json:"command"`
+	Env            map[string]string `json:"env,omitempty"`
+	ListenChannels []string          `json:"listen_channels,omitempty"`
 }
 ```
 
@@ -1534,6 +1740,30 @@ type WireEvent struct {
 
 WireEvent describes an event payload.
 
+## type actionEmitEvent
+
+```go
+type actionEmitEvent struct {
+	Event adapter.Event `json:"event"`
+}
+```
+
+## type actionSendInput
+
+```go
+type actionSendInput struct {
+	DataB64 string `json:"data_b64"`
+}
+```
+
+## type actionUpdatePresence
+
+```go
+type actionUpdatePresence struct {
+	Presence string `json:"presence"`
+}
+```
+
 ## type hostState
 
 ```go
@@ -1542,6 +1772,15 @@ type hostState struct {
 	peerID    api.PeerID
 	connected bool
 	ready     bool
+}
+```
+
+## type listenSubscription
+
+```go
+type listenSubscription struct {
+	subject string
+	sub     protocol.Subscription
 }
 ```
 
@@ -1558,20 +1797,24 @@ type queuedMessage struct {
 
 ```go
 type remoteSession struct {
-	agentID    api.AgentID
-	sessionID  api.SessionID
-	slug       string
-	adapter    string
-	repoPath   string
-	worktree   string
-	runtime    *session.LocalSession
-	buffer     *ReplayBuffer
-	matcher    adapter.PatternMatcher
-	formatter  adapter.ActionFormatter
-	replayGate bool
-	replaying  bool
-	pending    [][]byte
-	mu         sync.Mutex
+	agentID        api.AgentID
+	sessionID      api.SessionID
+	slug           string
+	adapter        string
+	repoPath       string
+	worktree       string
+	agentRuntime   *agent.Agent
+	runtime        *session.LocalSession
+	buffer         *ReplayBuffer
+	matcher        adapter.PatternMatcher
+	formatter      adapter.ActionFormatter
+	adapterRef     adapter.Adapter
+	replayGate     bool
+	replaying      bool
+	pending        [][]byte
+	presence       string
+	listenSubjects []string
+	mu             sync.Mutex
 }
 ```
 

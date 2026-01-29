@@ -452,6 +452,13 @@ func applyAgents(cfg *Config, raw map[string]any, resolver *paths.Resolver) erro
 		if value, ok := parseString(section["adapter"]); ok {
 			agent.Adapter = value
 		}
+		if rawList, ok := section["listen_channels"].([]any); ok {
+			for _, item := range rawList {
+				if value, ok := parseString(item); ok {
+					agent.ListenChannels = append(agent.ListenChannels, value)
+				}
+			}
+		}
 		if locRaw, ok := section["location"].(map[string]any); ok {
 			if value, ok := parseString(locRaw["type"]); ok {
 				agent.Location.Type = value

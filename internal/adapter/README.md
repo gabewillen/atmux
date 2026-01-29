@@ -13,11 +13,13 @@ The core loads adapters by string name via the WASM registry.
 - `func firstResult(results []uint64) (uint64, bool)`
 - `func loadAdapterDefaults(ctx context.Context, runtime wazero.Runtime, module adapterModule) ([]byte, string, error)`
 - `type ActionFormatter` — ActionFormatter converts a high-level action into agent input.
+- `type Action` — Action describes an adapter-requested action.
 - `type AdapterCommands` — AdapterCommands describes commands used to control the agent.
 - `type AdapterPatterns` — AdapterPatterns defines adapter output detection patterns.
 - `type Adapter` — Adapter is the runtime-facing interface to a loaded adapter.
 - `type CLIRequirement` — CLIRequirement describes the adapter CLI requirements.
 - `type DefaultsProvider` — DefaultsProvider loads adapter default configuration from WASM modules.
+- `type Event` — Event describes an adapter event envelope.
 - `type Manifest` — Manifest describes adapter capabilities and requirements.
 - `type PatternMatch` — PatternMatch describes a detected pattern match.
 - `type PatternMatcher` — PatternMatcher scans output and returns matches.
@@ -93,6 +95,17 @@ func loadAdapterDefaults(ctx context.Context, runtime wazero.Runtime, module ada
 ```
 
 
+## type Action
+
+```go
+type Action struct {
+	Type    string          `json:"type"`
+	Payload json.RawMessage `json:"payload,omitempty"`
+}
+```
+
+Action describes an adapter-requested action.
+
 ## type ActionFormatter
 
 ```go
@@ -111,6 +124,7 @@ type Adapter interface {
 	Manifest() Manifest
 	Matcher() PatternMatcher
 	Formatter() ActionFormatter
+	OnEvent(ctx context.Context, event Event) ([]Action, error)
 }
 ```
 
@@ -196,6 +210,17 @@ func () AdapterDefaults() ([]config.AdapterDefault, error)
 
 AdapterDefaults returns default TOML blocks for discovered adapters.
 
+
+## type Event
+
+```go
+type Event struct {
+	Type    string          `json:"type"`
+	Payload json.RawMessage `json:"payload,omitempty"`
+}
+```
+
+Event describes an adapter event envelope.
 
 ## type Manifest
 
@@ -383,6 +408,14 @@ func () Matcher() PatternMatcher
 ```go
 func () Name() string
 ```
+
+#### wasmAdapter.OnEvent
+
+```go
+func () OnEvent(ctx context.Context, event Event) ([]Action, error)
+```
+
+OnEvent notifies the adapter about a system event and returns any requested actions.
 
 #### wasmAdapter.callNoInput
 

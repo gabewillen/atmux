@@ -204,11 +204,12 @@ func () startAttachProxy(ctx context.Context, repoRoot string, agentID api.Agent
 
 ```go
 type agentAddParams struct {
-	Name     string        `json:"name"`
-	About    string        `json:"about"`
-	Adapter  string        `json:"adapter"`
-	Location locationParam `json:"location"`
-	Cwd      string        `json:"cwd"`
+	Name           string        `json:"name"`
+	About          string        `json:"about"`
+	Adapter        string        `json:"adapter"`
+	Location       locationParam `json:"location"`
+	Cwd            string        `json:"cwd"`
+	ListenChannels []string      `json:"listen_channels"`
 }
 ```
 

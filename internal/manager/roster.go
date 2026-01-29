@@ -144,6 +144,13 @@ func (m *Manager) emitRosterUpdated(ctx context.Context) {
 		OccurredAt: time.Now().UTC(),
 	}
 	_ = m.dispatcher.Publish(ctx, protocol.Subject("events", "presence"), event)
+	presenceEvent := protocol.Event{
+		Name:       agent.EventPresenceChanged,
+		Payload:    entries,
+		OccurredAt: time.Now().UTC(),
+	}
+	_ = m.dispatcher.Publish(ctx, protocol.Subject("events", "presence"), presenceEvent)
+	m.dispatchRosterToAdapters(ctx, entries)
 }
 
 func (m *Manager) rosterEntry(id api.AgentID, state *agentState) api.RosterEntry {

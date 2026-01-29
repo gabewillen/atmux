@@ -2,6 +2,7 @@ package adapter
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 )
 
@@ -17,6 +18,18 @@ type PatternMatch struct {
 // PatternMatcher scans output and returns matches.
 type PatternMatcher interface {
 	Match(ctx context.Context, output []byte) ([]PatternMatch, error)
+}
+
+// Event describes an adapter event envelope.
+type Event struct {
+	Type    string          `json:"type"`
+	Payload json.RawMessage `json:"payload,omitempty"`
+}
+
+// Action describes an adapter-requested action.
+type Action struct {
+	Type    string          `json:"type"`
+	Payload json.RawMessage `json:"payload,omitempty"`
 }
 
 // AdapterPatterns defines adapter output detection patterns.
@@ -80,6 +93,7 @@ type Adapter interface {
 	Manifest() Manifest
 	Matcher() PatternMatcher
 	Formatter() ActionFormatter
+	OnEvent(ctx context.Context, event Event) ([]Action, error)
 }
 
 // Registry loads adapters by name.

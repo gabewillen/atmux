@@ -61,6 +61,12 @@ func (s *stubAdapter) Formatter() adapter.ActionFormatter {
 	return stubFormatter{}
 }
 
+func (s *stubAdapter) OnEvent(ctx context.Context, event adapter.Event) ([]adapter.Action, error) {
+	_ = ctx
+	_ = event
+	return nil, nil
+}
+
 type stubMatcher struct{}
 
 func (stubMatcher) Match(ctx context.Context, output []byte) ([]adapter.PatternMatch, error) {

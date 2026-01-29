@@ -134,7 +134,11 @@ func (m *Manager) warnf(format string, args ...any) {
 }
 
 func (m *Manager) notifyUnknownRecipient(state *agentState, toSlug string) {
-	m.warnf("message target unresolved: to_slug=%q sender=%s", toSlug, state.slug)
+	slug := "unknown"
+	if state != nil {
+		slug = state.slug
+	}
+	m.warnf("message target unresolved: to_slug=%q sender=%s", toSlug, slug)
 	if state == nil || state.session == nil {
 		return
 	}
@@ -264,6 +268,7 @@ func (m *Manager) handleCommMessage(msg protocol.Message) {
 	if err := json.Unmarshal(msg.Data, &payload); err != nil {
 		return
 	}
+	m.mirrorListenedMessage(msg.Subject, payload)
 	if payload.To.IsBroadcast() {
 		m.deliverBroadcast(payload)
 		m.emitMessageEvent("message.broadcast", payload)

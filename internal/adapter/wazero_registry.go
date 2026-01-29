@@ -131,17 +131,17 @@ func (r *WazeroRegistry) findModule(name string) (string, []byte, error) {
 }
 
 type wasmAdapter struct {
-	name       string
-	module     api.Module
-	memory     api.Memory
-	alloc      api.Function
-	free       api.Function
-	manifestFn api.Function
-	onOutputFn api.Function
-	formatFn   api.Function
-	onEventFn  api.Function
+	name          string
+	module        api.Module
+	memory        api.Memory
+	alloc         api.Function
+	free          api.Function
+	manifestFn    api.Function
+	onOutputFn    api.Function
+	formatFn      api.Function
+	onEventFn     api.Function
 	manifestCache Manifest
-	mu         sync.Mutex
+	mu            sync.Mutex
 }
 
 func newWasmAdapter(name string, module api.Module) (*wasmAdapter, error) {
@@ -189,6 +189,29 @@ func (w *wasmAdapter) Matcher() PatternMatcher {
 
 func (w *wasmAdapter) Formatter() ActionFormatter {
 	return &wasmFormatter{adapter: w}
+}
+
+// OnEvent notifies the adapter about a system event and returns any requested actions.
+func (w *wasmAdapter) OnEvent(ctx context.Context, event Event) ([]Action, error) {
+	if w == nil {
+		return nil, fmt.Errorf("adapter event: %w", ErrAdapterInvalid)
+	}
+	data, err := json.Marshal(event)
+	if err != nil {
+		return nil, fmt.Errorf("adapter event: %w", err)
+	}
+	raw, err := w.callWithInput(ctx, w.onEventFn, data)
+	if err != nil {
+		return nil, fmt.Errorf("adapter event: %w", err)
+	}
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	var actions []Action
+	if err := json.Unmarshal(raw, &actions); err != nil {
+		return nil, fmt.Errorf("adapter event: %w", err)
+	}
+	return actions, nil
 }
 
 func (w *wasmAdapter) manifest(ctx context.Context) (Manifest, error) {

@@ -24,23 +24,28 @@ import (
 	"github.com/agentflare-ai/amux/internal/protocol"
 	"github.com/agentflare-ai/amux/internal/session"
 	"github.com/agentflare-ai/amux/pkg/api"
+	"github.com/stateforward/hsm-go"
 )
 
 type remoteSession struct {
-	agentID    api.AgentID
-	sessionID  api.SessionID
-	slug       string
-	adapter    string
-	repoPath   string
-	worktree   string
-	runtime    *session.LocalSession
-	buffer     *ReplayBuffer
-	matcher    adapter.PatternMatcher
-	formatter  adapter.ActionFormatter
-	replayGate bool
-	replaying  bool
-	pending    [][]byte
-	mu         sync.Mutex
+	agentID        api.AgentID
+	sessionID      api.SessionID
+	slug           string
+	adapter        string
+	repoPath       string
+	worktree       string
+	agentRuntime   *agent.Agent
+	runtime        *session.LocalSession
+	buffer         *ReplayBuffer
+	matcher        adapter.PatternMatcher
+	formatter      adapter.ActionFormatter
+	adapterRef     adapter.Adapter
+	replayGate     bool
+	replaying      bool
+	pending        [][]byte
+	presence       string
+	listenSubjects []string
+	mu             sync.Mutex
 }
 
 // HostManager runs sessions and responds to remote control requests.
@@ -60,9 +65,12 @@ type HostManager struct {
 	registry      adapter.Registry
 	registryClose func(context.Context) error
 	logger        *log.Logger
+	lifecycle     *HostManagerLifecycle
 	mu            sync.Mutex
 	sessions      map[api.SessionID]*remoteSession
 	agentIndex    map[api.AgentID]*remoteSession
+	listenSubs    map[string]*listenSubscription
+	listenTargets map[string]map[api.AgentID]struct{}
 	subscribed    bool
 	ready         bool
 	connected     bool
@@ -113,7 +121,7 @@ func NewHostManager(cfg config.Config, resolver *paths.Resolver, version string)
 		return nil, fmt.Errorf("host manager: %w", err)
 	}
 	logger := log.New(os.Stderr, "amux-hostmgr ", log.LstdFlags)
-	return &HostManager{
+	manager := &HostManager{
 		cfg:           cfg,
 		resolver:      resolver,
 		subjectPrefix: SubjectPrefix(cfg.Remote.NATS.SubjectPrefix),
@@ -125,7 +133,11 @@ func NewHostManager(cfg config.Config, resolver *paths.Resolver, version string)
 		logger:        logger,
 		sessions:      make(map[api.SessionID]*remoteSession),
 		agentIndex:    make(map[api.AgentID]*remoteSession),
-	}, nil
+		listenSubs:    make(map[string]*listenSubscription),
+		listenTargets: make(map[string]map[api.AgentID]struct{}),
+	}
+	manager.lifecycle = newHostManagerLifecycle(manager)
+	return manager, nil
 }
 
 // Status returns the current connection state for the host manager.
@@ -144,6 +156,23 @@ func (m *HostManager) Status() HostManagerStatus {
 
 // Start connects to NATS and begins serving control requests.
 func (m *HostManager) Start(ctx context.Context) error {
+	if m.lifecycle != nil {
+		m.lifecycle.Start(ctx)
+		hsm.Dispatch(ctx, m.lifecycle, hsm.Event{Name: hostManagerEventStart})
+	}
+	if err := m.startInternal(ctx); err != nil {
+		if m.lifecycle != nil {
+			hsm.Dispatch(ctx, m.lifecycle, hsm.Event{Name: hostManagerEventError, Data: err})
+		}
+		return err
+	}
+	if m.lifecycle != nil {
+		hsm.Dispatch(ctx, m.lifecycle, hsm.Event{Name: hostManagerEventStop})
+	}
+	return nil
+}
+
+func (m *HostManager) startInternal(ctx context.Context) error {
 	if m.registry == nil {
 		registry, err := adapter.NewWazeroRegistry(ctx, m.resolver)
 		if err != nil {
@@ -162,6 +191,9 @@ func (m *HostManager) Start(ctx context.Context) error {
 	}
 	if err := m.connect(ctx); err != nil {
 		return err
+	}
+	if m.lifecycle != nil {
+		hsm.Dispatch(ctx, m.lifecycle, hsm.Event{Name: hostManagerEventReady})
 	}
 	go m.monitorLeaf(ctx)
 	go m.heartbeatLoop(ctx)
@@ -471,6 +503,9 @@ func (m *HostManager) subscribeControl(ctx context.Context) error {
 	if err := m.subscribeComm(ctx); err != nil {
 		return err
 	}
+	if err := m.subscribePresence(ctx); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -625,16 +660,19 @@ func (m *HostManager) handleSpawn(reply string, control ControlMessage) {
 		return
 	}
 	remoteSess := &remoteSession{
-		agentID:   agentID,
-		sessionID: sessionMeta.ID,
-		slug:      req.AgentSlug,
-		adapter:   req.Adapter,
-		repoPath:  repoRoot,
-		worktree:  worktree,
-		runtime:   sess,
-		buffer:    NewReplayBuffer(m.bufferSize),
-		matcher:   matcher,
-		formatter: formatter,
+		agentID:      agentID,
+		sessionID:    sessionMeta.ID,
+		slug:         req.AgentSlug,
+		adapter:      req.Adapter,
+		repoPath:     repoRoot,
+		worktree:     worktree,
+		agentRuntime: runtime,
+		runtime:      sess,
+		buffer:       NewReplayBuffer(m.bufferSize),
+		matcher:      matcher,
+		formatter:    formatter,
+		adapterRef:   adapterInstance,
+		presence:     agent.PresenceOnline,
 	}
 	if err := m.writeSessionKV(context.Background(), remoteSess, "running", nil); err != nil {
 		_ = sess.Kill(context.Background())
@@ -645,6 +683,7 @@ func (m *HostManager) handleSpawn(reply string, control ControlMessage) {
 	m.sessions[sessionMeta.ID] = remoteSess
 	m.agentIndex[agentID] = remoteSess
 	m.mu.Unlock()
+	m.configureListen(context.Background(), remoteSess, req.ListenChannels)
 	sess.AddOutputObserver(func(chunk []byte) {
 		m.handleOutput(remoteSess, chunk)
 	})
@@ -685,6 +724,7 @@ func (m *HostManager) handleKill(reply string, control ControlMessage) {
 	if session != nil {
 		if err := session.runtime.Kill(context.Background()); err == nil {
 			killed = true
+			m.clearListen(session)
 			m.mu.Lock()
 			delete(m.sessions, sessionID)
 			delete(m.agentIndex, session.agentID)
@@ -788,6 +828,7 @@ func (m *HostManager) handleCommMessage(msg protocol.Message) {
 	if err := json.Unmarshal(msg.Data, &payload); err != nil {
 		return
 	}
+	m.mirrorListenedMessage(msg.Subject, payload)
 	target := payload.To
 	if target.IsBroadcast() {
 		m.mu.Lock()

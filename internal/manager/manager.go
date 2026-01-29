@@ -38,11 +38,12 @@ var (
 
 // AddRequest describes an agent add request.
 type AddRequest struct {
-	Name     string
-	About    string
-	Adapter  string
-	Location api.Location
-	Cwd      string
+	Name           string
+	About          string
+	Adapter        string
+	Location       api.Location
+	Cwd            string
+	ListenChannels []string
 }
 
 // RemoveRequest describes an agent removal request.
@@ -57,6 +58,7 @@ type agentState struct {
 	repoRoot         string
 	worktree         string
 	session          *session.LocalSession
+	adapter          adapter.Adapter
 	formatter        adapter.ActionFormatter
 	remoteHost       api.HostID
 	remoteSession    api.SessionID
@@ -65,6 +67,7 @@ type agentState struct {
 	explicitRepoPath bool
 	presence         string
 	task             string
+	listenSubjects   []string
 }
 
 // Manager manages local and remote agents and sessions.
@@ -83,6 +86,8 @@ type Manager struct {
 	registries      map[string]adapter.Registry
 	registryFactory func(*paths.Resolver) (adapter.Registry, error)
 	subs            []protocol.Subscription
+	listenSubs      map[string]*listenSubscription
+	listenTargets   map[string]map[api.AgentID]struct{}
 	shutdownMu      sync.Mutex
 	shutdown        *shutdownController
 }
@@ -96,17 +101,28 @@ func NewManager(ctx context.Context, resolver *paths.Resolver, cfg config.Config
 		return nil, fmt.Errorf("new manager: %w", ErrAgentInvalid)
 	}
 	logger := log.New(os.Stderr, "amux-manager ", log.LstdFlags)
+	peerDir := cfg.NATS.JetStreamDir
+	if peerDir == "" {
+		peerDir = filepath.Join(resolver.HomeDir(), ".amux")
+	}
+	managerDir := filepath.Join(peerDir, "manager")
+	managerID, err := remote.LoadOrCreatePeerID(managerDir)
+	if err != nil {
+		return nil, fmt.Errorf("new manager: %w", err)
+	}
 	mgr := &Manager{
-		resolver:   resolver,
-		dispatcher: dispatcher,
-		cfg:        cfg,
-		git:        git.NewRunner(),
-		logger:     logger,
-		managerID:  api.NewPeerID(),
-		agents:     make(map[api.AgentID]*agentState),
-		nameIndex:  make(map[string][]api.AgentID),
-		bases:      make(map[string]string),
-		registries: make(map[string]adapter.Registry),
+		resolver:      resolver,
+		dispatcher:    dispatcher,
+		cfg:           cfg,
+		git:           git.NewRunner(),
+		logger:        logger,
+		managerID:     managerID,
+		agents:        make(map[api.AgentID]*agentState),
+		nameIndex:     make(map[string][]api.AgentID),
+		bases:         make(map[string]string),
+		registries:    make(map[string]adapter.Registry),
+		listenSubs:    make(map[string]*listenSubscription),
+		listenTargets: make(map[string]map[api.AgentID]struct{}),
 		registryFactory: func(resolver *paths.Resolver) (adapter.Registry, error) {
 			return adapter.NewWazeroRegistry(context.Background(), resolver)
 		},
@@ -170,9 +186,10 @@ func (m *Manager) AddAgent(ctx context.Context, req AddRequest) (api.RosterEntry
 		return api.RosterEntry{}, fmt.Errorf("add agent: %w", err)
 	}
 	cfgEntry := config.AgentConfig{
-		Name:    req.Name,
-		About:   req.About,
-		Adapter: req.Adapter,
+		Name:           req.Name,
+		About:          req.About,
+		Adapter:        req.Adapter,
+		ListenChannels: append([]string(nil), req.ListenChannels...),
 		Location: config.AgentLocationConfig{
 			Type:     location.Type.String(),
 			Host:     location.Host,
@@ -261,9 +278,10 @@ func (m *Manager) addRemoteAgent(ctx context.Context, req AddRequest, location a
 	}
 	agentID := api.NewAgentID()
 	cfgEntry := config.AgentConfig{
-		Name:    req.Name,
-		About:   req.About,
-		Adapter: req.Adapter,
+		Name:           req.Name,
+		About:          req.About,
+		Adapter:        req.Adapter,
+		ListenChannels: append([]string(nil), req.ListenChannels...),
 		Location: config.AgentLocationConfig{
 			Type:     location.Type.String(),
 			Host:     location.Host,
@@ -274,13 +292,14 @@ func (m *Manager) addRemoteAgent(ctx context.Context, req AddRequest, location a
 		return api.RosterEntry{}, fmt.Errorf("add agent: %w", err)
 	}
 	spawnReq := remote.SpawnRequest{
-		Name:      req.Name,
-		About:     req.About,
-		AgentID:   agentID.String(),
-		AgentSlug: slug,
-		RepoPath:  repoRoot,
-		Adapter:   req.Adapter,
-		Command:   manifest.Commands.Start,
+		Name:           req.Name,
+		About:          req.About,
+		AgentID:        agentID.String(),
+		AgentSlug:      slug,
+		RepoPath:       repoRoot,
+		Adapter:        req.Adapter,
+		Command:        manifest.Commands.Start,
+		ListenChannels: append([]string(nil), req.ListenChannels...),
 	}
 	resp, err := m.spawnRemote(ctx, hostID, spawnReq)
 	if err != nil {
@@ -593,11 +612,13 @@ func (m *Manager) startSession(ctx context.Context, id api.AgentID) (*session.Lo
 	}
 	m.mu.Lock()
 	state.session = sess
+	state.adapter = adapterInstance
 	state.formatter = formatter
 	if strings.TrimSpace(state.presence) == "" {
 		state.presence = agent.PresenceOnline
 	}
 	m.mu.Unlock()
+	m.configureListen(ctx, id, state)
 	return sess, nil
 }
 
@@ -624,7 +645,9 @@ func (m *Manager) stopSession(ctx context.Context, id api.AgentID) error {
 	sess := state.session
 	state.session = nil
 	state.formatter = nil
+	state.adapter = nil
 	m.mu.Unlock()
+	m.clearListen(id)
 	if sess == nil {
 		return nil
 	}
@@ -654,13 +677,14 @@ func (m *Manager) startRemoteSession(ctx context.Context, id api.AgentID, state 
 		return fmt.Errorf("start remote session: %w", ErrAgentInvalid)
 	}
 	req := remote.SpawnRequest{
-		Name:      state.config.Name,
-		About:     state.config.About,
-		AgentID:   id.String(),
-		AgentSlug: state.slug,
-		RepoPath:  state.repoRoot,
-		Adapter:   state.config.Adapter,
-		Command:   manifest.Commands.Start,
+		Name:           state.config.Name,
+		About:          state.config.About,
+		AgentID:        id.String(),
+		AgentSlug:      state.slug,
+		RepoPath:       state.repoRoot,
+		Adapter:        state.config.Adapter,
+		Command:        manifest.Commands.Start,
+		ListenChannels: append([]string(nil), state.config.ListenChannels...),
 	}
 	resp, err := m.spawnRemote(ctx, state.remoteHost, req)
 	if err != nil {
@@ -1036,6 +1060,13 @@ func extractAgents(raw map[string]any) []config.AgentConfig {
 		if value, ok := entry["adapter"].(string); ok {
 			cfg.Adapter = value
 		}
+		if rawList, ok := entry["listen_channels"].([]any); ok {
+			for _, item := range rawList {
+				if value, ok := item.(string); ok {
+					cfg.ListenChannels = append(cfg.ListenChannels, value)
+				}
+			}
+		}
 		if locRaw, ok := entry["location"].(map[string]any); ok {
 			if value, ok := locRaw["type"].(string); ok {
 				cfg.Location.Type = value
@@ -1065,6 +1096,13 @@ func encodeAgents(agents []config.AgentConfig) []any {
 				"repo_path": agentCfg.Location.RepoPath,
 			},
 		}
+		if len(agentCfg.ListenChannels) > 0 {
+			channels := make([]any, 0, len(agentCfg.ListenChannels))
+			for _, channel := range agentCfg.ListenChannels {
+				channels = append(channels, channel)
+			}
+			entry["listen_channels"] = channels
+		}
 		entries = append(entries, entry)
 	}
 	return entries
@@ -1074,11 +1112,26 @@ func sameAgent(a, b config.AgentConfig) bool {
 	if a.Name != b.Name || a.Adapter != b.Adapter {
 		return false
 	}
+	if !sameStringList(a.ListenChannels, b.ListenChannels) {
+		return false
+	}
 	if a.Location.Type != b.Location.Type || a.Location.Host != b.Location.Host {
 		return false
 	}
 	if filepath.Clean(a.Location.RepoPath) != filepath.Clean(b.Location.RepoPath) {
 		return false
+	}
+	return true
+}
+
+func sameStringList(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
 	}
 	return true
 }

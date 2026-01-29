@@ -19,11 +19,12 @@ import (
 )
 
 type agentAddParams struct {
-	Name     string        `json:"name"`
-	About    string        `json:"about"`
-	Adapter  string        `json:"adapter"`
-	Location locationParam `json:"location"`
-	Cwd      string        `json:"cwd"`
+	Name           string        `json:"name"`
+	About          string        `json:"about"`
+	Adapter        string        `json:"adapter"`
+	Location       locationParam `json:"location"`
+	Cwd            string        `json:"cwd"`
+	ListenChannels []string      `json:"listen_channels"`
 }
 
 type daemonStopParams struct {
@@ -147,11 +148,12 @@ func (d *Daemon) handleAgentAdd(ctx context.Context, raw json.RawMessage) (any, 
 	}
 	location := api.Location{Type: locType, Host: params.Location.Host, RepoPath: params.Location.RepoPath}
 	record, err := d.manager.AddAgent(ctx, manager.AddRequest{
-		Name:     params.Name,
-		About:    params.About,
-		Adapter:  params.Adapter,
-		Location: location,
-		Cwd:      params.Cwd,
+		Name:           params.Name,
+		About:          params.About,
+		Adapter:        params.Adapter,
+		Location:       location,
+		Cwd:            params.Cwd,
+		ListenChannels: params.ListenChannels,
 	})
 	if err != nil {
 		return nil, rpcInternal(err)

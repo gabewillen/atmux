@@ -45,6 +45,7 @@ type Tracker struct {
 	mu        sync.RWMutex
 	processes map[int]*Process
 	Events    chan Event
+	Gater     *Gater
 }
 
 // NewTracker creates a new process tracker.
@@ -63,10 +64,14 @@ func (t *Tracker) TrackSpawn(proc *Process) {
 	proc.Running = true
 	t.processes[proc.PID] = proc
 
-	t.Events <- Event{
+	evt := Event{
 		Type:      EventSpawned,
 		Timestamp: time.Now(),
 		Payload:   proc,
+	}
+
+	if t.Gater == nil || t.Gater.ShouldNotify(context.Background(), evt) {
+		t.Events <- evt
 	}
 }
 
@@ -84,10 +89,14 @@ func (t *Tracker) TrackExit(pid int, exitCode int) error {
 	proc.ExitCode = exitCode
 	proc.EndedAt = time.Now()
 
-	t.Events <- Event{
+	evt := Event{
 		Type:      EventExited,
 		Timestamp: time.Now(),
 		Payload:   proc,
+	}
+
+	if t.Gater == nil || t.Gater.ShouldNotify(context.Background(), evt) {
+		t.Events <- evt
 	}
 	return nil
 }

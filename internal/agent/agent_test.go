@@ -1,11 +1,8 @@
 package agent
 
 import (
-	"context"
 	"testing"
 	"time"
-
-	"github.com/stateforward/hsm-go"
 )
 
 func TestReflectHSM(t *testing.T) {
@@ -44,11 +41,8 @@ func TestAgentLifecycle(t *testing.T) {
 
 	// Start
 	a.Start()
-	waitForState(t, a, "/agent/starting", time.Second)
-
-	// Simulate started event
-	hsm.Dispatch(context.Background(), a, hsm.Event{Name: EventStarted})
-	// Initial running state -> online
+	// When worktree is nil, StartAction immediately dispatches EventStarted,
+	// so we transition directly to running/online.
 	waitForState(t, a, "/agent/running/online", time.Second)
 
 	// Activity -> Busy

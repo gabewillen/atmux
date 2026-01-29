@@ -14,5 +14,6 @@
 - [internal/spec](internal/spec/README.md)
 - [internal/telemetry](internal/telemetry/README.md)
 - [internal/test/conformance](internal/test/conformance/README.md)
+- [internal/worktree](internal/worktree/README.md)
 - [pkg/api](pkg/api/README.md)
 

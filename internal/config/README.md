@@ -2,9 +2,12 @@
 
 `import "github.com/agentflare-ai/amux/internal/config"`
 
+- `func AddAgent(root string, agent AgentDef) error` — AddAgent appends an agent definition to the configuration file.
+- `func RemoveAgent(root string, name string) error` — RemoveAgent removes an agent from the configuration file.
 - `func loadEnv(cfg *Config) error` — loadEnv loads environment variables starting with AMUX__ and overrides configuration.
 - `func loadFile(path string, cfg *Config) error`
 - `func parseEnvValue(s string) any`
+- `func saveFile(path string, cfg *Config) error`
 - `func setPath(m map[string]any, path []string, value any) error`
 - `type AdapterConfig` — AdapterConfig holds opaque configuration for adapters.
 - `type AgentDef`
@@ -30,6 +33,24 @@
 
 ### Functions
 
+#### AddAgent
+
+```go
+func AddAgent(root string, agent AgentDef) error
+```
+
+AddAgent appends an agent definition to the configuration file.
+If root is empty, it writes to the user config (~/.config/amux/config.toml).
+If root is provided, it writes to the project config (.amux/config.toml).
+
+#### RemoveAgent
+
+```go
+func RemoveAgent(root string, name string) error
+```
+
+RemoveAgent removes an agent from the configuration file.
+
 #### loadEnv
 
 ```go
@@ -49,6 +70,12 @@ func loadFile(path string, cfg *Config) error
 
 ```go
 func parseEnvValue(s string) any
+```
+
+#### saveFile
+
+```go
+func saveFile(path string, cfg *Config) error
 ```
 
 #### setPath

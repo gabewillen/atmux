@@ -4,6 +4,8 @@
 
 - `AgentModel` — AgentModel defines the combined agent state machine.
 - `EventStart, EventStarted, EventStop, EventTerminated, EventError, EventActivityDetected, EventInactivity, EventSetPresence` — Event constants for agent state machines.
+- `func StartAction(ctx context.Context, a *AgentActor, event hsm.Event)` — StartAction handles the agent start sequence.
+- `func StopAction(ctx context.Context, a *AgentActor, event hsm.Event)` — StopAction handles the agent stop sequence.
 - `func on(name string) hsm.RedefinableElement` — Helpers for event definition
 - `func presenceIs(p api.Presence) func(context.Context, *AgentActor, hsm.Event) bool` — Guards helpers
 - `type AgentActor` — AgentActor wraps the public Agent struct and manages its state via HSM.
@@ -38,6 +40,7 @@ var AgentModel = hsm.Define("agent",
 		hsm.Transition(on(EventStart), hsm.Target("/agent/starting")),
 	),
 	hsm.State("starting",
+		hsm.Entry[*AgentActor](StartAction),
 		hsm.Transition(on(EventStarted), hsm.Target("/agent/running")),
 		hsm.Transition(on(EventError), hsm.Target("/agent/errored")),
 		hsm.Transition(on(EventStop), hsm.Target("/agent/terminated")),
@@ -70,12 +73,16 @@ var AgentModel = hsm.Define("agent",
 
 		hsm.Initial(hsm.Target("/agent/running/online")),
 
-		hsm.Transition(on(EventStop), hsm.Target("/agent/terminated")),
-		hsm.Transition(on(EventError), hsm.Target("/agent/errored")),
-		hsm.Transition(on(EventTerminated), hsm.Target("/agent/terminated")),
+		hsm.Transition(on(EventStop), hsm.Target("/agent/terminated"), hsm.Effect[*AgentActor](StopAction)),
+		hsm.Transition(on(EventError), hsm.Target("/agent/errored"), hsm.Effect[*AgentActor](StopAction)),
+		hsm.Transition(on(EventTerminated), hsm.Target("/agent/terminated"), hsm.Effect[*AgentActor](StopAction)),
 	),
-	hsm.State("terminated"),
-	hsm.State("errored"),
+	hsm.State("terminated",
+		hsm.Entry[*AgentActor](StopAction),
+	),
+	hsm.State("errored",
+		hsm.Entry[*AgentActor](StopAction),
+	),
 
 	hsm.Initial(hsm.Target("pending")),
 )
@@ -86,6 +93,22 @@ Pending -> Starting -> Running (containing Presence) -> Terminated / Errored
 
 
 ### Functions
+
+#### StartAction
+
+```go
+func StartAction(ctx context.Context, a *AgentActor, event hsm.Event)
+```
+
+StartAction handles the agent start sequence.
+
+#### StopAction
+
+```go
+func StopAction(ctx context.Context, a *AgentActor, event hsm.Event)
+```
+
+StopAction handles the agent stop sequence.
 
 #### on
 
@@ -109,7 +132,9 @@ Guards helpers
 ```go
 type AgentActor struct {
 	hsm.HSM
-	data api.Agent
+	data     api.Agent
+	worktree *worktree.Manager
+	ptyFile  *os.File
 }
 ```
 
@@ -120,7 +145,7 @@ AgentActor wraps the public Agent struct and manages its state via HSM.
 #### NewAgent
 
 ```go
-func NewAgent(name, adapter, repoRoot string) *AgentActor
+func NewAgent(name, adapter, repoRoot string, wtMgr *worktree.Manager) *AgentActor
 ```
 
 NewAgent creates a new AgentActor.
@@ -143,6 +168,14 @@ func () ID() api.AgentID
 ```
 
 ID returns the agent's ID.
+
+#### AgentActor.PtyFile
+
+```go
+func () PtyFile() *os.File
+```
+
+PtyFile returns the underlying PTY file descriptor if started.
 
 #### AgentActor.SendActivity
 

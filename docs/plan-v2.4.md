@@ -286,42 +286,51 @@ Support adding/removing local agents, worktree isolation, local spawn/attach, gr
 - Git strategy implementation hooks
 
 ### TODO list
-- [ ] Run `amux test` to capture the baseline snapshot for Phase 2
+- [x] Run `amux test` to capture the baseline snapshot for Phase 2
   - Spec reference(s): §12.6.1–§12.6.3
   - Acceptance criteria: a new `snapshots/amux-test-*.toml` exists under `<module_root>/snapshots/` and is retained as the baseline for Phase 2 regression checking.
+  - Status: Complete — baseline captured at start of Phase 2.
 
-- [ ] Implement agent add flow (validation, repo required, config persistence)
+- [x] Implement agent add flow (validation, repo required, config persistence)
   - Spec reference(s): §1.3, §5.2, §5.1
   - Acceptance criteria: adding an agent outside a git repo fails; adding within a repo creates agent entry with required fields; `amux agent add` uses same validation as daemon API.
+  - Status: Complete — internal/agent/add.go, internal/config/project.go, cmd/amux agent add.
 
-- [ ] Implement worktree isolation, slug-based path layout, and normalization rules
+- [x] Implement worktree isolation, slug-based path layout, and normalization rules
   - Spec reference(s): §5.3, §5.3.1, §5.3.4
   - Acceptance criteria: worktrees created under `.amux/worktrees/{agent_slug}/`; idempotent reuse behavior; cleanup on remove as specified; tests validate behavior on existing worktrees.
+  - Status: Complete — internal/worktree; paths use resolver; slug via pkg/api.
 
-- [ ] Implement local agent lifecycle operations: spawn/start, attach, stop/kill, restart semantics
+- [x] Implement local agent lifecycle operations: spawn/start, attach, stop/kill, restart semantics
   - Spec reference(s): §5.4, §5.6
   - Acceptance criteria: lifecycle HSM transitions align to operations; PTY processes are started in correct workdir; shutdown drains and closes resources per graceful shutdown requirements.
+  - Status: Complete — internal/agent/local.go (LocalSession Spawn/Stop/Restart).
 
-- [ ] Implement local PTY session ownership model (owned PTY)
+- [x] Implement local PTY session ownership model (owned PTY)
   - Spec reference(s): §7 (monitor relies on owned PTY), §B.5
   - Acceptance criteria: amux owns PTY for agent; monitor can observe raw output; no dependency on external terminal multiplexers unless implemented as optional backend.
+  - Status: Complete — internal/pty (creack/pty); Session owns PTY, OutputStream for monitor.
 
-- [ ] Implement git merge strategy selection and defaults (base_branch/target_branch)
+- [x] Implement git merge strategy selection and defaults (base_branch/target_branch)
   - Spec reference(s): §5.7, §5.7.1
   - Acceptance criteria: selected strategy produces expected git operations in dry-run tests; defaulting rules validated against config examples.
+  - Status: Complete — internal/git (BaseBranch, ResolveTargetBranch, ValidStrategy); config GitMergeConfig.TargetBranch.
 
 
-- [ ] The implementation MUST maintain inline Go documentation and MUST regenerate per-package `README.md` files via `go-docmd`
+- [x] The implementation MUST maintain inline Go documentation and MUST regenerate per-package `README.md` files via `go-docmd`
   - Spec reference(s): §4.2.6.1
   - Acceptance criteria: every package and exported identifier added or modified in this phase MUST include `go doc`-suitable comments; running `go run github.com/agentflare-ai/go-docmd@latest -cmd -all -inplace ./...` at the module root MUST produce no uncommitted changes; generated per-package `README.md` files MUST be committed.
+  - Status: Complete — go-docmd run; READMEs for internal/git, internal/worktree, internal/pty.
 
-- [ ] Run `amux test --regression` at the end of Phase 2 to verify no regressions relative to the Phase 2 baseline snapshot
+- [x] Run `amux test --regression` at the end of Phase 2 to verify no regressions relative to the Phase 2 baseline snapshot
   - Spec reference(s): §12.6.5
   - Acceptance criteria: `amux test --regression` exits 0; any regressions are fixed before Phase 2 is considered complete; the new snapshot is written to `<module_root>/snapshots/`.
+  - Status: Complete — regression run passed.
 
-- [ ] Update this plan’s TODOs for Phase 2, remove unused code/scripts, and commit Phase 2 to git
+- [x] Update this plan’s TODOs for Phase 2, remove unused code/scripts, and commit Phase 2 to git
   - Spec reference(s): N/A (plan process requirement)
   - Acceptance criteria: Phase 2 TODOs are updated; `git status` is clean; the Phase 2 baseline + latest snapshots are retained; a Phase 2 commit exists in git history.
+  - Status: Complete — Phase 2 committed.
 ---
 
 ## Phase 3: Remote agents (SSH bootstrap, NATS + JetStream runtime orchestration)

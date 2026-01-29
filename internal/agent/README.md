@@ -6,20 +6,32 @@ Package agent provides agent orchestration: lifecycle, presence, and messaging.
 actor.go composes lifecycle and presence HSMs and wires dispatch.
 
 Package agent provides agent orchestration: lifecycle, presence, and messaging.
+add.go implements agent add validation and config building (spec §5.2, §5.3.1).
+
+Package agent provides agent orchestration: lifecycle, presence, and messaging.
 lifecycle.go implements the Agent lifecycle HSM per spec §4.2.3, §5.4.
+
+Package agent provides agent orchestration: lifecycle, presence, and messaging.
+local.go implements local agent lifecycle operations: spawn, stop, restart (spec §5.4, §5.6).
 
 Package agent provides agent orchestration: lifecycle, presence, and messaging.
 presence.go implements the Presence HSM per spec §4.2.3, §6.1, §6.5.
 
+- `ErrInvalidLocation` — ErrInvalidLocation is returned when location type is invalid.
+- `ErrNotInRepo` — ErrNotInRepo is returned when adding an agent outside a git repository.
 - `EventLifecycleStart, EventLifecycleReady, EventLifecycleStop, EventLifecycleError` — Lifecycle event names for dispatch (spec §5.4).
 - `EventPresenceTaskAssigned, EventPresenceTaskCompleted, EventPresencePromptDetected, EventPresenceRateLimit, EventPresenceRateCleared, EventPresenceStuckDetected, EventPresenceActivityDetected` — Presence event names for dispatch (spec §6.5).
 - `LifecycleModel` — LifecycleModel defines the agent lifecycle HSM (spec §5.4).
 - `LifecyclePending, LifecycleStarting, LifecycleRunning, LifecycleTerminated, LifecycleErrored` — Lifecycle state names (spec §5.4); HSM returns qualified names like /agent.lifecycle/pending.
 - `PresenceModel` — PresenceModel defines the presence HSM (spec §6.5).
 - `PresenceOnline, PresenceBusy, PresenceOffline, PresenceAway` — Presence state names (spec §6.1); HSM returns qualified names like /agent.presence/online.
+- `func BuildAgentConfig(in *AddInput, agentSlug string) config.AgentConfig` — BuildAgentConfig builds an AgentConfig for persistence from AddInput.
+- `func ResolveRepoRoot(homeDir, cwd, repoPath string) (string, error)` — ResolveRepoRoot returns the canonical repo root for a local add.
 - `func emitLifecycleChanged(ctx context.Context, d protocol.Dispatcher, agentID api.ID, state string)`
 - `func emitPresenceChanged(ctx context.Context, d protocol.Dispatcher, agentID api.ID, state string)`
 - `type Actor` — Actor holds an agent's data and its lifecycle and presence state machines.
+- `type AddInput` — AddInput holds validated inputs for adding an agent (spec §5.2).
+- `type LocalSession` — LocalSession holds a local agent's actor, PTY session, and worktree path (spec §5.4, §7).
 - `type lifecycleActor` — lifecycleActor holds HSM state and dispatch hook for agent lifecycle.
 - `type presenceActor` — presenceActor holds HSM state and dispatch hook for agent presence.
 
@@ -83,6 +95,22 @@ Presence event names for dispatch (spec §6.5).
 
 
 ### Variables
+
+#### ErrInvalidLocation
+
+```go
+var ErrInvalidLocation = errors.New("invalid location type")
+```
+
+ErrInvalidLocation is returned when location type is invalid.
+
+#### ErrNotInRepo
+
+```go
+var ErrNotInRepo = errors.New("not in a git repository")
+```
+
+ErrNotInRepo is returned when adding an agent outside a git repository.
 
 #### LifecycleModel
 
@@ -189,6 +217,24 @@ Online ↔ Busy ↔ Offline ↔ Away.
 
 ### Functions
 
+#### BuildAgentConfig
+
+```go
+func BuildAgentConfig(in *AddInput, agentSlug string) config.AgentConfig
+```
+
+BuildAgentConfig builds an AgentConfig for persistence from AddInput.
+agentSlug is the uniquified slug assigned to this agent (for worktree path and persistence).
+
+#### ResolveRepoRoot
+
+```go
+func ResolveRepoRoot(homeDir, cwd, repoPath string) (string, error)
+```
+
+ResolveRepoRoot returns the canonical repo root for a local add.
+If repoPath is non-empty, canonicalizes it; otherwise uses git.Root(cwd).
+
 #### emitLifecycleChanged
 
 ```go
@@ -273,6 +319,114 @@ func () Start(ctx context.Context)
 ```
 
 Start starts the lifecycle and presence HSMs. Call once after NewActor.
+
+
+## type AddInput
+
+```go
+type AddInput struct {
+	Name     string
+	About    string
+	Adapter  string
+	RepoRoot string // Canonical repo root; must be a git repo
+	Location config.AgentLocationConfig
+}
+```
+
+AddInput holds validated inputs for adding an agent (spec §5.2).
+
+### Functions returning AddInput
+
+#### ValidateAddInput
+
+```go
+func ValidateAddInput(repoRoot, name, about, adapter string, location config.AgentLocationConfig) (*AddInput, error)
+```
+
+ValidateAddInput validates inputs for adding an agent.
+Adding an agent outside a git repo fails (spec §1.3, §5.2).
+For local agents, repoRoot is used; if empty, the caller must resolve from cwd.
+
+
+## type LocalSession
+
+```go
+type LocalSession struct {
+	AgentConfig config.AgentConfig
+	RepoRoot    string
+
+	actor *Actor
+	sess  *pty.Session
+	agent *api.Agent
+	disp  protocol.Dispatcher
+	mu    sync.Mutex
+}
+```
+
+LocalSession holds a local agent's actor, PTY session, and worktree path (spec §5.4, §7).
+Lifecycle HSM transitions align to Spawn/Stop; PTY is started in the agent workdir.
+
+### Functions returning LocalSession
+
+#### NewLocalSession
+
+```go
+func NewLocalSession(ac config.AgentConfig, repoRoot string, disp protocol.Dispatcher) *LocalSession
+```
+
+NewLocalSession creates a session holder for a local agent. Call Spawn to start.
+
+
+### Methods
+
+#### LocalSession.Actor
+
+```go
+func () Actor() *Actor
+```
+
+Actor returns the agent actor, or nil if not spawned.
+
+#### LocalSession.Agent
+
+```go
+func () Agent() *api.Agent
+```
+
+Agent returns the api.Agent for this session, or nil if not spawned.
+
+#### LocalSession.PTY
+
+```go
+func () PTY() *pty.Session
+```
+
+PTY returns the PTY session, or nil if not spawned.
+
+#### LocalSession.Restart
+
+```go
+func () Restart(ctx context.Context, command []string, env []string) error
+```
+
+Restart stops then spawns again with the same command. Caller must pass the same command and env as Spawn.
+
+#### LocalSession.Spawn
+
+```go
+func () Spawn(ctx context.Context, command []string, env []string) error
+```
+
+Spawn ensures the worktree exists, starts the PTY in the workdir, and runs the lifecycle to Running (spec §5.4, §5.6).
+command is the argv to run in the PTY (e.g. []string{"bash"} or adapter CLI). env is the environment; TERM etc. may be set by caller.
+
+#### LocalSession.Stop
+
+```go
+func () Stop(ctx context.Context) error
+```
+
+Stop drains the lifecycle to Terminated and closes the PTY (spec §5.6).
 
 
 ## type lifecycleActor

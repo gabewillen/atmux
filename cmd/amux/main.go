@@ -24,6 +24,8 @@ func run() error {
 	args := os.Args[2:]
 
 	switch command {
+	case "agent":
+		return runAgent(args)
 	case "test":
 		return runTest(args)
 	default:

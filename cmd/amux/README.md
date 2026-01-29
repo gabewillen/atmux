@@ -1,3 +1,6 @@
+Package main implements the amux CLI client.
+agent.go implements amux agent add (spec §5.2).
+
 Command amux is the main CLI client for amux.
 
 Package main implements the amux CLI client.
@@ -7,6 +10,8 @@ Package main implements the amux CLI client.
 - `func getStatus(result interface{}) string` — getStatus extracts the status from a test result.
 - `func main()`
 - `func run() error`
+- `func runAgent(args []string) error`
+- `func runAgentAdd(args []string) error`
 - `func runCommand(name string, args ...string) error` — runCommand runs a command and returns an error if it fails.
 - `func runTest(args []string) error` — runTest implements the `amux test` command.
 - `type TestSnapshot` — TestSnapshot represents a test snapshot.
@@ -47,6 +52,18 @@ func main()
 
 ```go
 func run() error
+```
+
+#### runAgent
+
+```go
+func runAgent(args []string) error
+```
+
+#### runAgentAdd
+
+```go
+func runAgentAdd(args []string) error
 ```
 
 #### runCommand

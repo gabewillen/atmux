@@ -10,12 +10,18 @@ Package config provides configuration management for amux.
 Configuration is loaded from multiple sources in a defined hierarchy:
 built-in defaults < adapter defaults < user config < project config < environment variables.
 
+Package config provides configuration management for amux.
+project.go handles reading and writing project-scoped config (.amux/config.toml) for agent persistence.
+
 - `ConfigFileChanged, ConfigReloaded, ConfigUpdated` — Config events
 - `ConfigModel` — ConfigModel defines the HSM model for configuration management.
+- `func AddAgentToProject(repoRoot string, agent AgentConfig) error` — AddAgentToProject appends agent to the agents list in project config and saves (spec §5.2).
+- `func ProjectConfigPath(repoRoot string) string` — ProjectConfigPath returns the path to the project config file under repoRoot.
+- `func SaveProjectFile(repoRoot string, cfg *Config) error` — SaveProjectFile writes cfg to .amux/config.toml under repoRoot.
 - `func isSensitiveKey(key string) bool` — isSensitiveKey determines if a configuration key contains sensitive information.
 - `type Actor` — Actor manages configuration state and live updates.
 - `type AdapterConfig` — AdapterConfig represents adapter-specific configuration.
-- `type AgentConfig` — AgentConfig represents a single agent definition.
+- `type AgentConfig` — AgentConfig represents a single agent definition (spec §5.1, §5.2).
 - `type AgentLocationConfig` — AgentLocationConfig holds agent location information.
 - `type ConfigChange` — ConfigChange represents a configuration value change.
 - `type Config` — Config represents the complete amux configuration.
@@ -24,7 +30,7 @@ built-in defaults < adapter defaults < user config < project config < environmen
 - `type EventsConfig` — EventsConfig holds event batching and coalescing configuration.
 - `type GeneralConfig` — GeneralConfig holds general application settings.
 - `type GitConfig` — GitConfig holds git-related configuration.
-- `type GitMergeConfig` — GitMergeConfig holds git merge strategy configuration.
+- `type GitMergeConfig` — GitMergeConfig holds git merge strategy configuration (spec §5.7, §5.7.1).
 - `type Loader` — Loader loads configuration from multiple sources.
 - `type NATSConfig` — NATSConfig holds NATS server configuration.
 - `type NodeConfig` — NodeConfig holds node role configuration.
@@ -78,6 +84,32 @@ ConfigModel defines the HSM model for configuration management.
 
 
 ### Functions
+
+#### AddAgentToProject
+
+```go
+func AddAgentToProject(repoRoot string, agent AgentConfig) error
+```
+
+AddAgentToProject appends agent to the agents list in project config and saves (spec §5.2).
+Ensures .amux/config.toml exists and is updated.
+
+#### ProjectConfigPath
+
+```go
+func ProjectConfigPath(repoRoot string) string
+```
+
+ProjectConfigPath returns the path to the project config file under repoRoot.
+
+#### SaveProjectFile
+
+```go
+func SaveProjectFile(repoRoot string, cfg *Config) error
+```
+
+SaveProjectFile writes cfg to .amux/config.toml under repoRoot.
+Creates .amux directory if needed.
 
 #### isSensitiveKey
 
@@ -206,11 +238,13 @@ type AgentConfig struct {
 	Name     string              `toml:"name"`
 	About    string              `toml:"about"`
 	Adapter  string              `toml:"adapter"`
+	Slug     string              `toml:"slug,omitempty"` // agent_slug for worktree path
 	Location AgentLocationConfig `toml:"location"`
 }
 ```
 
-AgentConfig represents a single agent definition.
+AgentConfig represents a single agent definition (spec §5.1, §5.2).
+Slug is the assigned agent_slug (persisted for uniquification); if empty, derived from Name.
 
 ## type AgentLocationConfig
 
@@ -247,6 +281,18 @@ type Config struct {
 ```
 
 Config represents the complete amux configuration.
+
+### Functions returning Config
+
+#### LoadProjectFile
+
+```go
+func LoadProjectFile(repoRoot string) (*Config, error)
+```
+
+LoadProjectFile reads the project config from .amux/config.toml under repoRoot.
+If the file does not exist, returns a minimal config with empty agents.
+
 
 ### Methods
 
@@ -342,12 +388,14 @@ GitConfig holds git-related configuration.
 
 ```go
 type GitMergeConfig struct {
-	Strategy   string `toml:"strategy"`
-	AllowDirty bool   `toml:"allow_dirty"`
+	Strategy     string `toml:"strategy"`      // merge-commit, squash, rebase, ff-only
+	AllowDirty   bool   `toml:"allow_dirty"`   // Allow merge with uncommitted worktree changes
+	TargetBranch string `toml:"target_branch"` // Branch to merge into; default base_branch
 }
 ```
 
-GitMergeConfig holds git merge strategy configuration.
+GitMergeConfig holds git merge strategy configuration (spec §5.7, §5.7.1).
+target_branch defaults to the repository base_branch when unset.
 
 ## type Loader
 

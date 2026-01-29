@@ -55,10 +55,12 @@ type GitConfig struct {
 	Merge GitMergeConfig `toml:"merge"`
 }
 
-// GitMergeConfig holds git merge strategy configuration.
+// GitMergeConfig holds git merge strategy configuration (spec §5.7, §5.7.1).
+// target_branch defaults to the repository base_branch when unset.
 type GitMergeConfig struct {
-	Strategy   string `toml:"strategy"`
-	AllowDirty bool   `toml:"allow_dirty"`
+	Strategy     string `toml:"strategy"`       // merge-commit, squash, rebase, ff-only
+	AllowDirty   bool   `toml:"allow_dirty"`   // Allow merge with uncommitted worktree changes
+	TargetBranch string `toml:"target_branch"`  // Branch to merge into; default base_branch
 }
 
 // EventsConfig holds event batching and coalescing configuration.
@@ -168,11 +170,13 @@ type TelemetryLogsConfig struct {
 	Level   string `toml:"level"`
 }
 
-// AgentConfig represents a single agent definition.
+// AgentConfig represents a single agent definition (spec §5.1, §5.2).
+// Slug is the assigned agent_slug (persisted for uniquification); if empty, derived from Name.
 type AgentConfig struct {
-	Name     string         `toml:"name"`
-	About    string         `toml:"about"`
-	Adapter  string         `toml:"adapter"`
+	Name     string              `toml:"name"`
+	About    string              `toml:"about"`
+	Adapter  string              `toml:"adapter"`
+	Slug     string              `toml:"slug,omitempty"` // agent_slug for worktree path
 	Location AgentLocationConfig `toml:"location"`
 }
 
@@ -250,8 +254,9 @@ func (l *Loader) defaultConfig() *Config {
 		},
 		Git: GitConfig{
 			Merge: GitMergeConfig{
-				Strategy:   "squash",
-				AllowDirty: false,
+				Strategy:     "squash",
+				AllowDirty:   false,
+				TargetBranch: "",
 			},
 		},
 		Events: EventsConfig{

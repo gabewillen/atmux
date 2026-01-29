@@ -3,6 +3,7 @@ module github.com/agentflare-ai/amux
 go 1.25.6
 
 require (
+	github.com/creack/pty/v2 v2.0.1
 	github.com/pelletier/go-toml/v2 v2.2.4
 	github.com/stateforward/hsm-go v0.0.0-20260124064619-14d9b71481ec
 	github.com/stateforward/hsm-go/muid v0.0.0-20260124060507-9cca10687b7c

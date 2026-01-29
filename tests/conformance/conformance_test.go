@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"testing"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/agentflare-ai/amux/internal/monitor"
 	"github.com/agentflare-ai/amux/internal/plugin"
 	"github.com/agentflare-ai/amux/pkg/api"
+	"github.com/stateforward/hsm-go/muid"
 )
 
 // ConformanceResult represents the outcome of a conformance run.
@@ -78,14 +80,22 @@ func testAuthFlow(t *testing.T) error {
 
 func testAgentLifecycle(t *testing.T) error {
 	// Verify Agent Spawn/Stop (Phase 2/6)
-	repoRoot := api.RepoRoot(t.TempDir())
+	// Create a dummy repo for git checks
+	tmp := t.TempDir()
+	
+	// Init git repo
+	execCmd(t, tmp, "git", "init")
+	execCmd(t, tmp, "git", "config", "user.email", "test@example.com")
+	execCmd(t, tmp, "git", "config", "user.name", "Test User")
+	execCmd(t, tmp, "git", "commit", "--allow-empty", "-m", "init")
+	
+	repoRoot := api.RepoRoot(tmp)
 	cfg := config.AgentConfig{Name: "ConfTest"}
 	// Phase 1 check: Agent creation
 	bus := agent.NewEventBus()
 	a, err := agent.NewAgent(cfg, repoRoot, bus)
 	if err != nil {
-		results.addResult("create_agent", false, err.Error())
-		t.Fatalf("Failed to create agent: %v", err)
+		return err
 	}
 	
 	ctx := context.Background()
@@ -105,7 +115,7 @@ func testPTYMonitoring(t *testing.T) error {
 	// Verify Monitor (Phase 5)
 	bus := agent.NewEventBus()
 	r, w, _ := os.Pipe()
-	mon := monitor.NewMonitor(api.AgentID(1), bus, r)
+	mon := monitor.NewMonitor(api.AgentID(muid.Make()), bus, r)
 	mon.CheckInterval = 50 * time.Millisecond
 	
 	ctx, cancel := context.WithCancel(context.Background())
@@ -126,8 +136,29 @@ func testPTYMonitoring(t *testing.T) error {
 }
 
 func testPluginSystem(t *testing.T) error {
+
 	// Verify Plugin Manager (Phase 11)
+
 	mgr := plugin.NewManager()
+
 	m := plugin.Manifest{Name: "p1", Version: "1.0", Entrypoint: "e"}
+
 	return mgr.Install(m, "/tmp")
+
+}
+
+
+
+func execCmd(t *testing.T, dir string, name string, args ...string) {
+
+	cmd := exec.Command(name, args...)
+
+	cmd.Dir = dir
+
+	if out, err := cmd.CombinedOutput(); err != nil {
+
+		t.Fatalf("failed to run %s %v: %v\nOutput: %s", name, args, err, out)
+
+	}
+
 }

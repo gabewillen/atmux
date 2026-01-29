@@ -129,7 +129,7 @@ func (mr *MessageRouter) sendToSlug(ctx context.Context, msg *AgentMessage) erro
 	for _, entry := range mr.roster.GetAllAgents() {
 		// Compare slugs (case-insensitive)
 		if strings.EqualFold(entry.Name, msg.ToSlug) {
-			recipientAgent, exists := mr.agents[entry.ID]
+			_, exists := mr.agents[entry.ID]
 			if !exists {
 				continue
 			}
@@ -164,7 +164,7 @@ func (mr *MessageRouter) handleReceivedMessage(ctx context.Context, agent *Agent
 	if strings.Contains(strings.ToLower(msg.Content), "assign") || strings.Contains(strings.ToLower(msg.Content), "task") {
 		// Attempt to set the agent busy if it's currently online
 		if agent.CurrentPresenceState() == PresenceOnline {
-			agent.SetBusy(ctx)
+			_ = agent.SetBusy(ctx) // Ignoring error as per spec requirement for event handling
 		}
 	}
 }

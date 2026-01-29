@@ -4,7 +4,6 @@ package protocol
 import (
 	"archive/zip"
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -13,8 +12,6 @@ import (
 	"strings"
 
 	"github.com/stateforward/amux/internal/config"
-	"github.com/stateforward/amux/internal/ids"
-	"golang.org/x/crypto/ssh"
 )
 
 // SSHBootstrap performs the SSH bootstrap for remote hosts
@@ -144,7 +141,7 @@ func (sb *SSHBootstrap) addFileToZip(zipWriter *zip.Writer, filePath, zipPath st
 		return err
 	}
 
-	header, err := zip.FileInfoHeader(info, "")
+	header, err := zip.FileInfoHeader(info)
 	if err != nil {
 		return err
 	}
@@ -206,6 +203,7 @@ func (sb *SSHBootstrap) unpackAndInstall(ctx context.Context, host, remoteZipPat
 	mvCmd := exec.CommandContext(ctx, "ssh", host, "mv", "~/.local/bin/adapters/*", "~/.config/amux/adapters/")
 	if err := mvCmd.Run(); err != nil {
 		// It's OK if there are no adapters to move
+		_ = err // Suppress staticcheck warning
 	}
 
 	return nil

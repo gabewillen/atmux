@@ -45,7 +45,6 @@ func (ns *NATSServer) StartHubServer(ctx context.Context) error {
 	}
 
 	ns.server = s
-	server.ConfigureLogger(s, server.StandAloneMode, false, false)
 
 	go s.Start()
 
@@ -106,7 +105,6 @@ func (ns *NATSServer) StartLeafServer(ctx context.Context, hubURL, credsPath str
 	}
 
 	ns.server = s
-	server.ConfigureLogger(s, server.StandAloneMode, false, false)
 
 	go s.Start()
 

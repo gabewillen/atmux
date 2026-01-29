@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/nats-io/nats.go"
-	"github.com/stateforward/amux/internal/ids"
 )
 
 // MessageEnvelope wraps messages sent over NATS

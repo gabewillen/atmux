@@ -36,7 +36,9 @@ service_name = "test-service"
 
 [remote]
 enabled = true
-nats_url = "nats://test:4222"
+
+[remote.nats]
+url = "nats://test:4222"
 creds_path = "/tmp/creds.jwt"
 `
 	err := os.WriteFile(configPath, []byte(configContent), 0644)
@@ -84,11 +86,11 @@ creds_path = "/tmp/creds.jwt"
 	if !config.Remote.Enabled {
 		t.Error("Expected remote to be enabled")
 	}
-	if config.Remote.NATSURL != "nats://test:4222" {
-		t.Errorf("Expected remote NATS URL 'nats://test:4222', got '%s'", config.Remote.NATSURL)
+	if config.Remote.NATS.URL != "nats://test:4222" {
+		t.Errorf("Expected remote NATS URL 'nats://test:4222', got '%s'", config.Remote.NATS.URL)
 	}
-	if config.Remote.CredsPath != "/tmp/creds.jwt" {
-		t.Errorf("Expected remote creds path '/tmp/creds.jwt', got '%s'", config.Remote.CredsPath)
+	if config.Remote.NATS.CredsPath != "/tmp/creds.jwt" {
+		t.Errorf("Expected remote creds path '/tmp/creds.jwt', got '%s'", config.Remote.NATS.CredsPath)
 	}
 }
 

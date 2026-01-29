@@ -9,7 +9,6 @@ import (
 
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
-	"github.com/stateforward/amux/internal/ids"
 )
 
 // KVStore provides access to NATS JetStream Key-Value store

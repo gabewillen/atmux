@@ -2,7 +2,6 @@
 package protocol
 
 import (
-	"context"
 	"fmt"
 	"strings"
 
@@ -105,7 +104,7 @@ func subjectMatchesPattern(subject, pattern string) bool {
 	// Use regex to match
 	// Note: For simplicity, we're using strings.HasPrefix/HasSuffix here
 	// A full implementation would use proper regex matching
-	
+
 	if strings.Contains(pattern, "(.*)") {
 		// Handle > wildcard (matches everything after)
 		prefix := strings.Split(pattern, "(.*)")[0]
@@ -114,21 +113,20 @@ func subjectMatchesPattern(subject, pattern string) bool {
 		// Handle * wildcard (matches single segment)
 		// This is a simplified check - a full implementation would use regex
 		parts := strings.Split(pattern, "([^\\.]+)")
-		subjectParts := strings.Split(subject, ".")
-		
+
 		if len(parts) != 2 {
 			return false
 		}
-		
+
 		// Check prefix matches
 		if !strings.HasPrefix(subject, parts[0]) {
 			return false
 		}
-		
+
 		// Check suffix matches
 		return strings.HasSuffix(subject, parts[1])
 	}
-	
+
 	// No wildcards, direct comparison
 	return subject == pattern
 }

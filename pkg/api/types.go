@@ -19,7 +19,9 @@ type Agent struct {
 	ID       muid.MUID `json:"id"`
 	Name     string    `json:"name"`
 	Adapter  string    `json:"adapter"`
-	Location string    `json:"location,omitempty"`
+	Location Location  `json:"location,omitempty"`
+	RepoRoot string    `json:"repo_root"` // The canonical repository root path
+	HostID   muid.MUID `json:"host_id,omitempty"` // The host ID where the agent runs (for remote agents)
 }
 
 // Session represents an amux session

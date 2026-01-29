@@ -78,10 +78,12 @@ func (m *AgentManager) AddAgent(ctx context.Context, name, about, adapter string
 	// Create the agent
 	agentID := muid.Make()
 	agent := &api.Agent{
-		ID:      agentID,
-		Name:    name,
-		Adapter: adapter,
-		Location: fmt.Sprintf("worktree://%s", slug), // Store location as worktree reference
+		ID:       agentID,
+		Name:     name,
+		Adapter:  adapter,
+		Location: api.Location{Type: "worktree", RepoPath: fmt.Sprintf("worktree://%s", slug)}, // Store location as worktree reference
+		RepoRoot: repoRoot,
+		HostID:   0, // Will be set when the agent is actually deployed
 	}
 
 	// Create the worktree for the agent

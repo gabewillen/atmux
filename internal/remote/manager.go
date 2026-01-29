@@ -11,6 +11,7 @@ import (
 	"github.com/agentflare-ai/amux/internal/protocol"
 	"github.com/agentflare-ai/amux/pkg/api"
 	"github.com/nats-io/nats.go"
+	"github.com/stateforward/hsm-go"
 	"github.com/stateforward/hsm-go/muid"
 )
 
@@ -51,6 +52,14 @@ func (m *Manager) Start(ctx context.Context, nc *nats.Conn) error {
 		return fmt.Errorf("nats connection required")
 	}
 	m.NC = nc
+
+	// Setup connection callbacks for presence
+	m.NC.SetDisconnectErrHandler(func(_ *nats.Conn, _ error) {
+		m.updateAgentsPresence(agent.EventAway)
+	})
+	m.NC.SetReconnectHandler(func(_ *nats.Conn) {
+		m.updateAgentsPresence(agent.EventBack)
+	})
 
 	// 1. Handshake
 	if err := m.performHandshake(ctx); err != nil {
@@ -162,7 +171,7 @@ func (m *Manager) handleSpawn(p protocol.SpawnPayload) (json.RawMessage, error) 
 			},
 		}
 		var err error
-		a, err = agent.NewAgent(cfg, api.RepoRoot(p.RepoPath))
+		a, err = agent.NewAgent(cfg, api.RepoRoot(p.RepoPath), m.Bus)
 		if err != nil {
 			return nil, err
 		}
@@ -246,4 +255,11 @@ func (m *Manager) replyError(msg *nats.Msg, code, message string) {
 	}
 	data, _ := json.Marshal(resp)
 	msg.Respond(data)
+}
+
+func (m *Manager) updateAgentsPresence(eventName string) {
+	ctx := context.Background()
+	for _, a := range m.agents {
+		hsm.Dispatch(ctx, a.Presence, hsm.Event{Name: eventName})
+	}
 }

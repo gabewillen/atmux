@@ -80,9 +80,12 @@ func testAgentLifecycle(t *testing.T) error {
 	// Verify Agent Spawn/Stop (Phase 2/6)
 	repoRoot := api.RepoRoot(t.TempDir())
 	cfg := config.AgentConfig{Name: "ConfTest"}
-	a, err := agent.NewAgent(cfg, repoRoot)
+	// Phase 1 check: Agent creation
+	bus := agent.NewEventBus()
+	a, err := agent.NewAgent(cfg, repoRoot, bus)
 	if err != nil {
-		return err
+		results.addResult("create_agent", false, err.Error())
+		t.Fatalf("Failed to create agent: %v", err)
 	}
 	
 	ctx := context.Background()

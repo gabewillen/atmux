@@ -18,7 +18,8 @@ func TestSpawnAndStopAgent(t *testing.T) {
 	repoRoot := api.RepoRoot(tmpDir)
 	
 	cfg := config.AgentConfig{Name: "SpawnTest"}
-	a, err := NewAgent(cfg, repoRoot)
+	bus := NewEventBus()
+	a, err := NewAgent(cfg, repoRoot, bus)
 	if err != nil {
 		t.Fatalf("NewAgent failed: %v", err)
 	}

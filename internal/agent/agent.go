@@ -7,24 +7,65 @@ import (
 )
 
 // NewAgent creates a new Agent instance.
-func NewAgent(cfg config.AgentConfig, repoRoot api.RepoRoot) (*Agent, error) {
+
+func NewAgent(cfg config.AgentConfig, repoRoot api.RepoRoot, bus *EventBus) (*Agent, error) {
+
 	// Generate ID
+
 	id := api.AgentID(muid.Make())
+
 	slug := api.NormalizeAgentSlug(cfg.Name)
 
+
+
 	a := &Agent{
+
 		ID:       id,
+
 		Slug:     slug,
+
 		Name:     cfg.Name,
+
 		About:    cfg.About,
+
 		Adapter:  cfg.Adapter,
+
 		RepoRoot: repoRoot,
+
 		Config:   cfg,
+
 		Sessions: make(map[api.SessionID]*Session),
+
 	}
 
-	a.Lifecycle = NewLifecycleHSM(a)
-	a.Presence = NewPresenceHSM(a)
 
-	return a, nil
-}
+
+		a.Lifecycle = NewLifecycleHSM(a)
+
+
+
+		a.Presence = NewPresenceHSM(a, bus)
+
+
+
+	
+
+
+
+		GlobalRegistry.Register(a)
+
+
+
+	
+
+
+
+		return a, nil
+
+
+
+	}
+
+
+
+	

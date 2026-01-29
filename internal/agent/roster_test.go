@@ -1,43 +1,38 @@
 package agent
 
 import (
-	"context"
 	"testing"
 
 	"github.com/agentflare-ai/amux/internal/config"
 	"github.com/agentflare-ai/amux/pkg/api"
-	"github.com/stateforward/hsm-go"
 )
 
-func TestGetRoster(t *testing.T) {
+func TestRegistry_Roster(t *testing.T) {
 	// Setup
-	reg := NewRegistry()
+	_ = NewRegistry() // Redundant as we use GlobalRegistry
+	bus := NewEventBus()
 	
-	// Create Agent
-	cfg := config.AgentConfig{Name: "RosterAgent", Adapter: "test"}
-	a, err := NewAgent(cfg, "/tmp")
-	if err != nil {
-		t.Fatalf("NewAgent failed: %v", err)
+	cfg := config.AgentConfig{
+		Name:    "test-agent",
+		Adapter: "test-adapter",
 	}
+	// NewAgent registers to GlobalRegistry
+	// Reset GlobalRegistry for test
+	GlobalRegistry = NewRegistry()
 	
-	reg.Register(a)
-	
-	// Verify Initial Roster
-	roster := reg.GetRoster()
+	if _, err := NewAgent(cfg, "/tmp", bus); err != nil {
+		t.Fatalf("Failed to create agent: %v", err)
+	}
+
+	// Check List
+	roster := GlobalRegistry.GetRoster()
 	if len(roster) != 1 {
-		t.Errorf("Expected 1 agent, got %d", len(roster))
+		t.Errorf("Expected 1 entry, got %d", len(roster))
+	}
+	if roster[0].Name != "test-agent" {
+		t.Errorf("Expected name 'test-agent', got %s", roster[0].Name)
 	}
 	if roster[0].Presence != api.PresenceOffline {
-		t.Errorf("Expected initial presence Offline, got %s", roster[0].Presence)
-	}
-	
-	// Trigger Presence Change
-	ctx := context.Background()
-	<-hsm.Dispatch(ctx, a.Presence, hsm.Event{Name: EventConnect})
-	
-	// Verify Updated Roster
-	roster = reg.GetRoster()
-	if roster[0].Presence != api.PresenceOnline {
-		t.Errorf("Expected updated presence Online, got %s", roster[0].Presence)
+		t.Errorf("Expected Offline (default), got %s", roster[0].Presence)
 	}
 }

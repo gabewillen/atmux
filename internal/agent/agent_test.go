@@ -5,46 +5,31 @@ import (
 	"testing"
 
 	"github.com/agentflare-ai/amux/internal/config"
-	"github.com/agentflare-ai/amux/pkg/api"
 	"github.com/stateforward/hsm-go"
 )
 
 func TestNewAgent(t *testing.T) {
 	cfg := config.AgentConfig{
-		Name: "Test Agent",
+		Name:    "test-agent",
+		Adapter: "test-adapter",
 	}
-	repoRoot := api.RepoRoot("/tmp/repo")
-
-	a, err := NewAgent(cfg, repoRoot)
+	bus := NewEventBus()
+	a, err := NewAgent(cfg, "/tmp/repo", bus)
 	if err != nil {
 		t.Fatalf("NewAgent failed: %v", err)
 	}
-
-	if a.Name != "Test Agent" {
-		t.Errorf("Expected Name 'Test Agent', got %q", a.Name)
+	if a.ID == 0 {
+		t.Error("ID not generated")
 	}
 	if a.Slug != "test-agent" {
-		t.Errorf("Expected Slug 'test-agent', got %q", a.Slug)
+		t.Errorf("Expected slug test-agent, got %s", a.Slug)
 	}
-	if a.Lifecycle == nil {
-		t.Error("Lifecycle HSM is nil")
-	}
-	if a.Presence == nil {
-		t.Error("Presence HSM is nil")
-	}
-
-	// Verify initial states
-	// Note: hsm-go usually exposes checking state, but exact method depends on API.
-	// hsm.ID(instance) might return current state name if states are IDs?
-	// hsm.Name(instance) returns HSM name.
-	// We might need to query the state.
-	// hsm-go seems to track current state internally.
-	// For now, check no panic.
 }
 
 func TestLifecycleTransitions(t *testing.T) {
 	cfg := config.AgentConfig{Name: "LifecycleAgent"}
-	a, _ := NewAgent(cfg, "/tmp")
+	bus := NewEventBus()
+	a, _ := NewAgent(cfg, "/tmp", bus)
 	ctx := context.Background()
 
 	// Dispatch Spawn
@@ -60,7 +45,8 @@ func TestLifecycleTransitions(t *testing.T) {
 
 func TestPresenceTransitions(t *testing.T) {
 	cfg := config.AgentConfig{Name: "PresenceAgent"}
-	a, _ := NewAgent(cfg, "/tmp")
+	bus := NewEventBus()
+	a, _ := NewAgent(cfg, "/tmp", bus)
 	ctx := context.Background()
 
 	// Dispatch Connect

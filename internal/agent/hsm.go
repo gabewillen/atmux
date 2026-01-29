@@ -33,12 +33,20 @@ type LifecycleHSM struct {
 type PresenceHSM struct {
 	hsm.HSM
 	Agent *Agent
+	Bus   *EventBus
 }
 
 func updatePresence(state api.PresenceState) func(context.Context, *PresenceHSM, hsm.Event) {
 	return func(_ context.Context, sm *PresenceHSM, _ hsm.Event) {
 		if sm.Agent != nil {
 			sm.Agent.CurrentPresence = state
+			if sm.Bus != nil {
+				sm.Bus.Publish(BusEvent{
+					Type:    EventPresenceUpdate,
+					Source:  sm.Agent.ID,
+					Payload: state,
+				})
+			}
 		}
 	}
 }
@@ -146,7 +154,7 @@ func NewLifecycleHSM(agent *Agent) hsm.Instance {
 }
 
 // NewPresenceHSM creates a new presence HSM for the agent.
-func NewPresenceHSM(agent *Agent) hsm.Instance {
-	sm := &PresenceHSM{Agent: agent}
+func NewPresenceHSM(agent *Agent, bus *EventBus) hsm.Instance {
+	sm := &PresenceHSM{Agent: agent, Bus: bus}
 	return hsm.Started(context.Background(), sm, &presenceModel)
 }

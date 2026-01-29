@@ -3,21 +3,23 @@
 `import "github.com/agentflare-ai/amux/internal/agent"`
 
 - `EventSpawn, EventStarted, EventExited, EventError, EventStop, EventConnect, EventDisconnect, EventBusy, EventIdle, EventAway, EventBack` — Events
+- `GlobalRegistry` — GlobalRegistry is the default instance (singleton pattern for simplicity in this phase).
 - `func AddAgent(cfg *config.Config, newAgent config.AgentConfig) error` — AddAgent validates and persists a new agent configuration.
 - `func EnsureWorktree(repoRoot api.RepoRoot, slug api.AgentSlug, baseBranch string) (string, error)` — EnsureWorktree creates or reuses a worktree for the given agent.
 - `func GetAgentTargetBranch(a *Agent) (string, error)` — GetAgentTargetBranch helps resolve the branch to use for the worktree.
 - `func MessageError(format string, a ...any) error` — MessageError creates a formatted error.
 - `func NewLifecycleHSM(agent *Agent) hsm.Instance` — NewLifecycleHSM creates a new lifecycle HSM for the agent.
-- `func NewPresenceHSM(agent *Agent) hsm.Instance` — NewPresenceHSM creates a new presence HSM for the agent.
+- `func NewPresenceHSM(agent *Agent, bus *EventBus) hsm.Instance` — NewPresenceHSM creates a new presence HSM for the agent.
 - `func RemoveWorktree(repoRoot api.RepoRoot, slug api.AgentSlug) error` — RemoveWorktree removes the worktree for the given agent.
+- `func SendMessage(bus *EventBus, from, to api.AgentID, content string) error` — SendMessage sends a message from one agent to another.
 - `func SpawnAgent(ctx context.Context, a *Agent) error` — SpawnAgent starts the agent process in a new PTY session.
 - `func StopAgent(ctx context.Context, a *Agent) error` — StopAgent stops the agent process.
+- `func SubscribeToMessages(bus *EventBus, agentID api.AgentID) (<-chan Message, func())` — SubscribeToMessages returns a channel that receives messages for a specific agent.
 - `func ValidateAgentConfig(c config.AgentConfig) error` — ValidateAgentConfig checks required fields.
 - `func isGitRepo(path string) bool`
 - `func updatePresence(state api.PresenceState) func(context.Context, *PresenceHSM, hsm.Event)`
 - `lifecycleModel`
 - `presenceModel`
-- `type AgentRegistry` — AgentRegistry tracks active agents.
 - `type Agent` — Agent represents the runtime state of an agent.
 - `type BusEvent` — BusEvent represents an event on the bus.
 - `type EventBus` — EventBus manages subscriptions and event distribution.
@@ -25,8 +27,10 @@
 - `type LifecycleHSM` — LifecycleHSM manages the agent lifecycle.
 - `type LifecycleState` — LifecycleState represents the lifecycle state of an agent.
 - `type MergeStrategy` — MergeStrategy represents a git merge strategy.
+- `type Message` — Message represents an inter-agent message.
 - `type PresenceHSM` — PresenceHSM manages the agent presence.
 - `type PresenceState` — PresenceState represents the presence state of an agent.
+- `type Registry` — Registry manages the set of known agents.
 - `type RosterEntry` — RosterEntry represents an agent in the roster.
 - `type Session` — Session represents a running session of an agent.
 - `type Subscription` — Subscription is a channel for receiving events.
@@ -56,6 +60,14 @@ Events
 
 
 ### Variables
+
+#### GlobalRegistry
+
+```go
+var GlobalRegistry = NewRegistry()
+```
+
+GlobalRegistry is the default instance (singleton pattern for simplicity in this phase).
 
 #### lifecycleModel
 
@@ -210,7 +222,7 @@ NewLifecycleHSM creates a new lifecycle HSM for the agent.
 #### NewPresenceHSM
 
 ```go
-func NewPresenceHSM(agent *Agent) hsm.Instance
+func NewPresenceHSM(agent *Agent, bus *EventBus) hsm.Instance
 ```
 
 NewPresenceHSM creates a new presence HSM for the agent.
@@ -222,6 +234,14 @@ func RemoveWorktree(repoRoot api.RepoRoot, slug api.AgentSlug) error
 ```
 
 RemoveWorktree removes the worktree for the given agent.
+
+#### SendMessage
+
+```go
+func SendMessage(bus *EventBus, from, to api.AgentID, content string) error
+```
+
+SendMessage sends a message from one agent to another.
 
 #### SpawnAgent
 
@@ -238,6 +258,14 @@ func StopAgent(ctx context.Context, a *Agent) error
 ```
 
 StopAgent stops the agent process.
+
+#### SubscribeToMessages
+
+```go
+func SubscribeToMessages(bus *EventBus, agentID api.AgentID) (<-chan Message, func())
+```
+
+SubscribeToMessages returns a channel that receives messages for a specific agent.
 
 #### ValidateAgentConfig
 
@@ -292,10 +320,8 @@ Agent represents the runtime state of an agent.
 #### NewAgent
 
 ```go
-func NewAgent(cfg config.AgentConfig, repoRoot api.RepoRoot) (*Agent, error)
+func NewAgent(cfg config.AgentConfig, repoRoot api.RepoRoot, bus *EventBus) (*Agent, error)
 ```
-
-NewAgent creates a new Agent instance.
 
 
 ### Methods
@@ -307,46 +333,6 @@ func () GetPresence() api.PresenceState
 ```
 
 GetPresence returns the current presence state of the agent.
-
-
-## type AgentRegistry
-
-```go
-type AgentRegistry struct {
-	Agents map[api.AgentID]*Agent
-}
-```
-
-AgentRegistry tracks active agents.
-
-### Functions returning AgentRegistry
-
-#### NewRegistry
-
-```go
-func NewRegistry() *AgentRegistry
-```
-
-NewRegistry creates a new registry.
-
-
-### Methods
-
-#### AgentRegistry.GetRoster
-
-```go
-func () GetRoster() []RosterEntry
-```
-
-GetRoster returns the list of agents.
-
-#### AgentRegistry.Register
-
-```go
-func () Register(a *Agent)
-```
-
-Register adds an agent to the registry.
 
 
 ## type BusEvent
@@ -474,13 +460,14 @@ MergeStrategy represents a git merge strategy.
 
 ### Constants
 
-#### MergeSquash, MergeRebase, MergeFFOnly
+#### MergeMergeCommit, MergeSquash, MergeRebase, MergeFFOnly
 
 ```go
 const (
-	MergeSquash MergeStrategy = "squash"
-	MergeRebase MergeStrategy = "rebase"
-	MergeFFOnly MergeStrategy = "ff-only"
+	MergeMergeCommit MergeStrategy = "merge-commit"
+	MergeSquash      MergeStrategy = "squash"
+	MergeRebase      MergeStrategy = "rebase"
+	MergeFFOnly      MergeStrategy = "ff-only"
 )
 ```
 
@@ -497,12 +484,27 @@ SelectMergeStrategy determines the merge strategy and target branch.
 It checks repo_root for current HEAD if target_branch is not configured.
 
 
+## type Message
+
+```go
+type Message struct {
+	ID        string      `json:"id"`
+	From      api.AgentID `json:"from"`
+	To        api.AgentID `json:"to"`
+	Content   string      `json:"content"`
+	Timestamp int64       `json:"timestamp"`
+}
+```
+
+Message represents an inter-agent message.
+
 ## type PresenceHSM
 
 ```go
 type PresenceHSM struct {
 	hsm.HSM
 	Agent *Agent
+	Bus   *EventBus
 }
 ```
 
@@ -528,6 +530,71 @@ const (
 	PresenceAway    PresenceState = "Away"
 )
 ```
+
+
+## type Registry
+
+```go
+type Registry struct {
+	mu     sync.RWMutex
+	agents map[api.AgentID]*Agent
+}
+```
+
+Registry manages the set of known agents.
+
+### Functions returning Registry
+
+#### NewRegistry
+
+```go
+func NewRegistry() *Registry
+```
+
+NewRegistry creates a new agent registry.
+
+
+### Methods
+
+#### Registry.Get
+
+```go
+func () Get(id api.AgentID) (*Agent, bool)
+```
+
+Get retrieves an agent by ID.
+
+#### Registry.GetRoster
+
+```go
+func () GetRoster() []RosterEntry
+```
+
+GetRoster returns the list of roster entries.
+
+#### Registry.List
+
+```go
+func () List() []*Agent
+```
+
+List returns all agents.
+
+#### Registry.Register
+
+```go
+func () Register(a *Agent)
+```
+
+Register adds an agent to the registry.
+
+#### Registry.Unregister
+
+```go
+func () Unregister(id api.AgentID)
+```
+
+Unregister removes an agent from the registry.
 
 
 ## type RosterEntry

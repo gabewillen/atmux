@@ -10,6 +10,9 @@ Package inference provides the local inference engine interface for amux.
 - `ErrModelUnavailable` — ErrModelUnavailable is returned when a known model is unavailable.
 - `ErrUnknownModel` — ErrUnknownModel is returned when an unknown model ID is requested.
 - `func GetLiquidgenVersion() string` — GetLiquidgenVersion returns the liquidgen version/commit identifier for traceability.
+- `func findLiquidgenBinary(liquidgenDir string) string` — findLiquidgenBinary looks for the liquidgen binary in common build locations.
+- `func findModuleRoot() (string, error)` — findModuleRoot finds the Go module root directory.
+- `func getLiquidgenVersion(liquidgenDir string) string` — getLiquidgenVersion extracts the git commit hash from third_party/liquidgen.
 - `type Engine` — Engine is the interface for local inference engines.
 - `type Request` — Request represents an inference request.
 - `type Stream` — Stream represents a streaming inference response.
@@ -45,7 +48,30 @@ func GetLiquidgenVersion() string
 ```
 
 GetLiquidgenVersion returns the liquidgen version/commit identifier for traceability.
-Phase 0: Placeholder that returns a placeholder value.
+
+#### findLiquidgenBinary
+
+```go
+func findLiquidgenBinary(liquidgenDir string) string
+```
+
+findLiquidgenBinary looks for the liquidgen binary in common build locations.
+
+#### findModuleRoot
+
+```go
+func findModuleRoot() (string, error)
+```
+
+findModuleRoot finds the Go module root directory.
+
+#### getLiquidgenVersion
+
+```go
+func getLiquidgenVersion(liquidgenDir string) string
+```
+
+getLiquidgenVersion extracts the git commit hash from third_party/liquidgen.
 
 
 ## type Engine
@@ -78,7 +104,7 @@ func NewLiquidgenEngine() (Engine, error)
 ```
 
 NewLiquidgenEngine creates a new liquidgen-based inference engine.
-Phase 0: Returns a placeholder that validates model IDs but doesn't actually run inference.
+It locates the liquidgen binary and extracts version information.
 
 
 ## type Request
@@ -110,11 +136,13 @@ Stream represents a streaming inference response.
 
 ```go
 type liquidgenEngine struct {
+	binaryPath string
+	version    string
 }
 ```
 
 liquidgenEngine integrates with the liquidgen inference engine from third_party/liquidgen.
-Phase 0: Placeholder implementation that will be completed when liquidgen integration is finalized.
+Phase 0: Basic integration that validates models and extracts version info.
 
 ### Methods
 

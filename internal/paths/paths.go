@@ -10,6 +10,27 @@ import (
 	"strings"
 )
 
+// CanonicalizeRepoRoot produces the canonical repo_root per spec §3.23.
+// It expands ~/ to homeDir, converts to absolute, cleans . and .., and resolves
+// symlinks where the OS provides a mechanism (e.g. EvalSymlinks).
+// If symlink resolution fails (permissions or unsupported), (a)-(c) are still applied.
+func CanonicalizeRepoRoot(homeDir, rawPath string) (string, error) {
+	if rawPath == "" {
+		return "", fmt.Errorf("repo path is empty")
+	}
+	path := expandHome(rawPath, homeDir)
+	path, err := filepath.Abs(path)
+	if err != nil {
+		return "", fmt.Errorf("absolute path: %w", err)
+	}
+	path = filepath.Clean(path)
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return path, nil // Still canonical per (a)-(c); symlinks best-effort
+	}
+	return filepath.Clean(resolved), nil
+}
+
 // Resolver provides path resolution functionality.
 type Resolver struct {
 	configDir string
@@ -27,12 +48,10 @@ func NewResolver(configDir, homeDir, repoRoot string) (*Resolver, error) {
 		}
 	}
 
-	// Expand ~ in paths
 	configDir = expandHome(configDir, homeDir)
 	if repoRoot != "" {
-		repoRoot = expandHome(repoRoot, homeDir)
 		var err error
-		repoRoot, err = filepath.Abs(repoRoot)
+		repoRoot, err = CanonicalizeRepoRoot(homeDir, repoRoot)
 		if err != nil {
 			return nil, fmt.Errorf("failed to canonicalize repo root: %w", err)
 		}

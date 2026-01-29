@@ -6,10 +6,22 @@ Package paths provides centralized filesystem path resolution for amux.
 All filesystem paths MUST be resolved through this package to ensure
 consistent handling of config/env overrides and repository root canonicalization.
 
+- `func CanonicalizeRepoRoot(homeDir, rawPath string) (string, error)` — CanonicalizeRepoRoot produces the canonical repo_root per spec §3.23.
 - `func expandHome(path, homeDir string) string` — expandHome expands ~ to the home directory.
 - `type Resolver` — Resolver provides path resolution functionality.
 
 ### Functions
+
+#### CanonicalizeRepoRoot
+
+```go
+func CanonicalizeRepoRoot(homeDir, rawPath string) (string, error)
+```
+
+CanonicalizeRepoRoot produces the canonical repo_root per spec §3.23.
+It expands ~/ to homeDir, converts to absolute, cleans . and .., and resolves
+symlinks where the OS provides a mechanism (e.g. EvalSymlinks).
+If symlink resolution fails (permissions or unsupported), (a)-(c) are still applied.
 
 #### expandHome
 

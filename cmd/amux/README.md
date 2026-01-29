@@ -56,6 +56,7 @@ func runCommand(name string, args ...string) error
 ```
 
 runCommand runs a command and returns an error if it fails.
+Per spec §12.6, commands should continue on failure but record the result.
 
 #### runTest
 

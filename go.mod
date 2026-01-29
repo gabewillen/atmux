@@ -5,6 +5,7 @@ go 1.25.6
 require (
 	github.com/pelletier/go-toml/v2 v2.2.4
 	github.com/stateforward/hsm-go v0.0.0-20260124064619-14d9b71481ec
+	github.com/stateforward/hsm-go/muid v0.0.0-20260124060507-9cca10687b7c
 	go.opentelemetry.io/otel v1.39.0
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc v1.39.0
 	go.opentelemetry.io/otel/sdk v1.39.0
@@ -19,7 +20,6 @@ require (
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.27.3 // indirect
 	github.com/stateforward/hsm-go/kind v0.0.0-20260124060507-9cca10687b7c // indirect
-	github.com/stateforward/hsm-go/muid v0.0.0-20260124060507-9cca10687b7c // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.39.0 // indirect
 	go.opentelemetry.io/otel/metric v1.39.0 // indirect

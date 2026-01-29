@@ -3,6 +3,7 @@
 - [cmd/amux](cmd/amux/README.md) — Command amux is the main CLI client for amux.
 - [cmd/amux-node](cmd/amux-node/README.md) — Command amux-node is the unified daemon binary for amux.
 - [internal/adapter](internal/adapter/README.md) — Package adapter provides the adapter interface for pattern matching and actions.
+- [internal/agent](internal/agent/README.md) — Package agent provides agent orchestration: lifecycle, presence, and messaging.
 - [internal/config](internal/config/README.md) — Package config provides configuration management for amux.
 - [internal/conformance](internal/conformance/README.md) — Package conformance provides the conformance test harness for amux.
 - [internal/inference](internal/inference/README.md) — Package inference provides the local inference engine interface for amux.

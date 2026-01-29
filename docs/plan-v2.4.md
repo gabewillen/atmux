@@ -229,38 +229,45 @@ Implement authoritative types, identifiers, and HSM-driven lifecycle and presenc
 - Stable identifiers and normalization utilities
 
 ### TODO list
-- [ ] Run `amux test` to capture the baseline snapshot for Phase 1
+- [x] Run `amux test` to capture the baseline snapshot for Phase 1
   - Spec reference(s): §12.6.1–§12.6.3
   - Acceptance criteria: a new `snapshots/amux-test-*.toml` exists under `<module_root>/snapshots/` and is retained as the baseline for Phase 1 regression checking.
+  - Status: Complete — baseline captured at start of Phase 1.
 
-- [ ] Implement identifiers and normalization rules (agent_id, peer_id, host_id, agent_slug, repo_root canonicalization)
+- [x] Implement identifiers and normalization rules (agent_id, peer_id, host_id, agent_slug, repo_root canonicalization)
   - Spec reference(s): §3 (Definitions), §4.2.3, §5.3.1, §3.23
   - Acceptance criteria: ID encoding/decoding matches spec (base-10 strings where required); `agent_slug` normalization matches spec examples; `repo_root` canonicalization passes unit tests (including `~/` expansion semantics for remote).
+  - Status: Complete — pkg/api/ids.go; internal/paths CanonicalizeRepoRoot.
 
-- [ ] Implement Agent and Session core data structures and invariants
+- [x] Implement Agent and Session core data structures and invariants
   - Spec reference(s): §5.1, §5.5.9, §4.2.3
   - Acceptance criteria: structures contain all required fields; invariants enforced via constructors and validation tests.
+  - Status: Complete — pkg/api/types.go (Agent, Location, Session); internal/agent NewActor validates non-zero ID.
 
-- [ ] Implement Agent lifecycle HSM (Pending → Starting → Running → Terminated/Errored) and dispatch integration
+- [x] Implement Agent lifecycle HSM (Pending → Starting → Running → Terminated/Errored) and dispatch integration
   - Spec reference(s): §4.2.3, §5.4
   - Acceptance criteria: lifecycle transitions only via defined events; tests cover normal and error paths; transitions emit required events.
+  - Status: Complete — internal/agent LifecycleModel, Actor.DispatchLifecycle; lifecycle.changed events.
 
-- [ ] Implement Presence HSM (Online ↔ Busy ↔ Offline ↔ Away) and transition triggers
+- [x] Implement Presence HSM (Online ↔ Busy ↔ Offline ↔ Away) and transition triggers
   - Spec reference(s): §4.2.3, §6.1, §6.5
   - Acceptance criteria: presence transitions follow spec rules; PTY and process events can trigger presence changes through `hsm.Dispatch()`.
+  - Status: Complete — internal/agent PresenceModel, Actor.DispatchPresence; presence.changed events.
 
 
 - [ ] The implementation MUST maintain inline Go documentation and MUST regenerate per-package `README.md` files via `go-docmd`
   - Spec reference(s): §4.2.6.1
   - Acceptance criteria: every package and exported identifier added or modified in this phase MUST include `go doc`-suitable comments; running `go run github.com/agentflare-ai/go-docmd@latest -cmd -all -inplace ./...` at the module root MUST produce no uncommitted changes; generated per-package `README.md` files MUST be committed.
 
-- [ ] Run `amux test --regression` at the end of Phase 1 to verify no regressions relative to the Phase 1 baseline snapshot
+- [x] Run `amux test --regression` at the end of Phase 1 to verify no regressions relative to the Phase 1 baseline snapshot
   - Spec reference(s): §12.6.5
   - Acceptance criteria: `amux test --regression` exits 0; any regressions are fixed before Phase 1 is considered complete; the new snapshot is written to `<module_root>/snapshots/`.
+  - Status: Complete — regression run passed.
 
 - [ ] Update this plan’s TODOs for Phase 1, remove unused code/scripts, and commit Phase 1 to git
   - Spec reference(s): N/A (plan process requirement)
   - Acceptance criteria: Phase 1 TODOs are updated; `git status` is clean; the Phase 1 baseline + latest snapshots are retained; a Phase 1 commit exists in git history.
+  - Status: Plan TODOs updated; commit left to user.
 ---
 
 ## Phase 2: Local agent management (repo/worktree), lifecycle operations, and merge strategies

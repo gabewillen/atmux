@@ -13,7 +13,9 @@ import (
 
 func TestSpawnAndStopAgent(t *testing.T) {
 	// Use a temp dir for repo root
-	repoRoot := api.RepoRoot(t.TempDir())
+	tmpDir := t.TempDir()
+	initGitRepo(t, tmpDir)
+	repoRoot := api.RepoRoot(tmpDir)
 	
 	cfg := config.AgentConfig{Name: "SpawnTest"}
 	a, err := NewAgent(cfg, repoRoot)

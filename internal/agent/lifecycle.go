@@ -8,7 +8,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/agentflare-ai/amux/internal/config"
 	"github.com/agentflare-ai/amux/pkg/api"
 	"github.com/creack/pty"
 	"github.com/stateforward/hsm-go"

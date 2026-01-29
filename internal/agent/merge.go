@@ -13,9 +13,10 @@ import (
 type MergeStrategy string
 
 const (
-	MergeSquash MergeStrategy = "squash"
-	MergeRebase MergeStrategy = "rebase"
-	MergeFFOnly MergeStrategy = "ff-only"
+	MergeMergeCommit MergeStrategy = "merge-commit"
+	MergeSquash      MergeStrategy = "squash"
+	MergeRebase      MergeStrategy = "rebase"
+	MergeFFOnly      MergeStrategy = "ff-only"
 )
 
 // SelectMergeStrategy determines the merge strategy and target branch.

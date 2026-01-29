@@ -10,6 +10,7 @@ import (
 
 func TestWorktreeLifecycle(t *testing.T) {
 	tmpRepo := t.TempDir()
+	initGitRepo(t, tmpRepo)
 	repoRoot := api.RepoRoot(tmpRepo)
 	slug := api.AgentSlug("test-agent")
 

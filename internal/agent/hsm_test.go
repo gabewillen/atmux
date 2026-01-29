@@ -9,7 +9,7 @@ import (
 // TestAgentHSMActor_LifecycleTransitions tests HSM-based lifecycle state transitions.
 func TestAgentHSMActor_LifecycleTransitions(t *testing.T) {
 	// Create an HSM-based agent actor
-	actor, err := NewAgentHSMActor("test-agent", "claude-code", "/tmp/test", map[string]interface{}{})
+	actor, err := NewAgentHSMActor("test-agent", "test-adapter", "/tmp/test", map[string]interface{}{})
 	if err != nil {
 		t.Fatalf("Failed to create HSM agent actor: %v", err)
 	}
@@ -56,7 +56,7 @@ func TestAgentHSMActor_LifecycleTransitions(t *testing.T) {
 // TestAgentHSMActor_PresenceTransitions tests HSM-based presence state transitions.
 func TestAgentHSMActor_PresenceTransitions(t *testing.T) {
 	// Create an HSM-based agent actor
-	actor, err := NewAgentHSMActor("test-agent", "claude-code", "/tmp/test", map[string]interface{}{})
+	actor, err := NewAgentHSMActor("test-agent", "test-adapter", "/tmp/test", map[string]interface{}{})
 	if err != nil {
 		t.Fatalf("Failed to create HSM agent actor: %v", err)
 	}
@@ -111,7 +111,7 @@ func TestAgentHSMActor_PresenceTransitions(t *testing.T) {
 // TestAgentHSMActor_InvalidTransitions tests that invalid state transitions are rejected.
 func TestAgentHSMActor_InvalidTransitions(t *testing.T) {
 	// Create an HSM-based agent actor
-	actor, err := NewAgentHSMActor("test-agent", "claude-code", "/tmp/test", map[string]interface{}{})
+	actor, err := NewAgentHSMActor("test-agent", "test-adapter", "/tmp/test", map[string]interface{}{})
 	if err != nil {
 		t.Fatalf("Failed to create HSM agent actor: %v", err)
 	}
@@ -145,7 +145,7 @@ func TestManager_HSMIntegration(t *testing.T) {
 	}
 
 	// Add an agent
-	agent, err := manager.AddAgent("test-agent", "claude-code", "/tmp/test", map[string]interface{}{})
+	agent, err := manager.AddAgent("test-agent", "test-adapter", "/tmp/test", map[string]interface{}{})
 	if err != nil {
 		t.Fatalf("Failed to add agent: %v", err)
 	}
@@ -193,7 +193,7 @@ func TestManager_LegacyCompatibility(t *testing.T) {
 	}
 
 	// Add an agent
-	agent, err := manager.AddAgent("test-agent", "claude-code", "/tmp/test", map[string]interface{}{})
+	agent, err := manager.AddAgent("test-agent", "test-adapter", "/tmp/test", map[string]interface{}{})
 	if err != nil {
 		t.Fatalf("Failed to add agent: %v", err)
 	}

@@ -18,16 +18,16 @@ func TestNewAgentActor(t *testing.T) {
 	}{
 		{
 			name:     "valid agent",
-			agentName: "claude-code",
-			adapter:  "claude",
+			agentName: "test-agent",
+			adapter:  "test-adapter",
 			repoRoot: "/tmp/repo",
-			config:   map[string]interface{}{"model": "claude-3"},
+			config:   map[string]interface{}{"model": "test-model"},
 			wantErr:  false,
 		},
 		{
 			name:     "empty name",
 			agentName: "",
-			adapter:  "claude",
+			adapter:  "test-adapter",
 			repoRoot: "/tmp/repo",
 			config:   nil,
 			wantErr:  true,
@@ -35,7 +35,7 @@ func TestNewAgentActor(t *testing.T) {
 		{
 			name:     "invalid name with non-printable characters",
 			agentName: "agent\x00name",
-			adapter:  "claude",
+			adapter:  "test-adapter",
 			repoRoot: "/tmp/repo",
 			config:   nil,
 			wantErr:  true,
@@ -43,7 +43,7 @@ func TestNewAgentActor(t *testing.T) {
 		{
 			name:     "empty repo root",
 			agentName: "valid-name",
-			adapter:  "claude",
+			adapter:  "test-adapter",
 			repoRoot: "",
 			config:   nil,
 			wantErr:  true,
@@ -95,7 +95,7 @@ func TestNewAgentActor(t *testing.T) {
 }
 
 func TestAgentActorLifecycleTransitions(t *testing.T) {
-	actor, err := NewAgentActor("test-agent", "claude", "/tmp/repo", nil)
+	actor, err := NewAgentActor("test-agent", "test-adapter", "/tmp/repo", nil)
 	if err != nil {
 		t.Fatalf("NewAgentActor() failed: %v", err)
 	}
@@ -152,7 +152,7 @@ func TestAgentActorLifecycleTransitions(t *testing.T) {
 }
 
 func TestAgentActorPresenceTransitions(t *testing.T) {
-	actor, err := NewAgentActor("test-agent", "claude", "/tmp/repo", nil)
+	actor, err := NewAgentActor("test-agent", "test-adapter", "/tmp/repo", nil)
 	if err != nil {
 		t.Fatalf("NewAgentActor() failed: %v", err)
 	}
@@ -227,12 +227,12 @@ func TestManager(t *testing.T) {
 	}
 
 	// Test adding agents
-	agent1, err := manager.AddAgent("claude-code", "claude", "/tmp/repo1", map[string]interface{}{"model": "claude-3"})
+	agent1, err := manager.AddAgent("agent1", "test-adapter-1", "/tmp/repo1", map[string]interface{}{"model": "test-model"})
 	if err != nil {
 		t.Fatalf("AddAgent() failed: %v", err)
 	}
 
-	agent2, err := manager.AddAgent("cursor", "cursor", "/tmp/repo2", nil)
+	agent2, err := manager.AddAgent("agent2", "test-adapter-2", "/tmp/repo2", nil)
 	if err != nil {
 		t.Fatalf("AddAgent() failed: %v", err)
 	}
@@ -284,7 +284,7 @@ func TestManager(t *testing.T) {
 }
 
 func TestEventHandlers(t *testing.T) {
-	actor, err := NewAgentActor("test-agent", "claude", "/tmp/repo", nil)
+	actor, err := NewAgentActor("test-agent", "test-adapter", "/tmp/repo", nil)
 	if err != nil {
 		t.Fatalf("NewAgentActor() failed: %v", err)
 	}
@@ -320,7 +320,7 @@ func TestEventHandlers(t *testing.T) {
 }
 
 func TestInvalidTransitions(t *testing.T) {
-	actor, err := NewAgentActor("test-agent", "claude", "/tmp/repo", nil)
+	actor, err := NewAgentActor("test-agent", "test-adapter", "/tmp/repo", nil)
 	if err != nil {
 		t.Fatalf("NewAgentActor() failed: %v", err)
 	}
@@ -339,7 +339,7 @@ func TestInvalidTransitions(t *testing.T) {
 }
 
 func TestTimestampUpdates(t *testing.T) {
-	actor, err := NewAgentActor("test-agent", "claude", "/tmp/repo", nil)
+	actor, err := NewAgentActor("test-agent", "test-adapter", "/tmp/repo", nil)
 	if err != nil {
 		t.Fatalf("NewAgentActor() failed: %v", err)
 	}

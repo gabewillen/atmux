@@ -5,3 +5,9 @@ journal/
 # Build artifacts
 amux
 amux-node
+*.wasm
+# Large installer files
+*.deb
+*.rpm
+*.pkg
+*.msi

@@ -1,9 +1,17 @@
 Package main provides the amux CLI client.
 The CLI communicates with the amux daemon (amuxd) over JSON-RPC.
 
+- `func handleAgentAdd()`
+- `func handleAgentAttach()`
+- `func handleAgentList()`
+- `func handleAgentRemove()`
+- `func handleAgentStart()`
+- `func handleAgentStop()`
 - `func handleTest()`
 - `func handleTestRegression()`
+- `func loadAgentsFromConfig(resolver *paths.Resolver) ([]*api.Agent, error)` — loadAgentsFromConfig loads agents from .amux/config.toml
 - `func main()`
+- `func persistAgentConfig(resolver *paths.Resolver, agentData *api.Agent) error` — persistAgentConfig saves agent configuration to .amux/config.toml
 - `type TestResult` — TestResult represents a single test result
 - `type TestSnapshot` — TestSnapshot represents the structure of amux test snapshots
 - `version`
@@ -13,11 +21,47 @@ The CLI communicates with the amux daemon (amuxd) over JSON-RPC.
 #### version
 
 ```go
-const version = "v1.22.0-phase1"
+const version = "v1.22.0-phase2"
 ```
 
 
 ### Functions
+
+#### handleAgentAdd
+
+```go
+func handleAgentAdd()
+```
+
+#### handleAgentAttach
+
+```go
+func handleAgentAttach()
+```
+
+#### handleAgentList
+
+```go
+func handleAgentList()
+```
+
+#### handleAgentRemove
+
+```go
+func handleAgentRemove()
+```
+
+#### handleAgentStart
+
+```go
+func handleAgentStart()
+```
+
+#### handleAgentStop
+
+```go
+func handleAgentStop()
+```
 
 #### handleTest
 
@@ -31,11 +75,27 @@ func handleTest()
 func handleTestRegression()
 ```
 
+#### loadAgentsFromConfig
+
+```go
+func loadAgentsFromConfig(resolver *paths.Resolver) ([]*api.Agent, error)
+```
+
+loadAgentsFromConfig loads agents from .amux/config.toml
+
 #### main
 
 ```go
 func main()
 ```
+
+#### persistAgentConfig
+
+```go
+func persistAgentConfig(resolver *paths.Resolver, agentData *api.Agent) error
+```
+
+persistAgentConfig saves agent configuration to .amux/config.toml
 
 
 ## type TestResult

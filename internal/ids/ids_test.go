@@ -13,13 +13,13 @@ func TestAgentSlugFromName(t *testing.T) {
 	}{
 		{
 			name:     "simple name",
-			input:    "claude-code",
-			expected: "claude-code",
+			input:    "test-agent",
+			expected: "test-agent",
 		},
 		{
 			name:     "uppercase conversion",
-			input:    "Claude-Code",
-			expected: "claude-code",
+			input:    "Test-Agent",
+			expected: "test-agent",
 		},
 		{
 			name:     "special characters",
@@ -76,7 +76,7 @@ func TestValidateAgentSlug(t *testing.T) {
 	}{
 		{
 			name:    "valid slug",
-			input:   "claude-code",
+			input:   "test-agent",
 			wantErr: false,
 		},
 		{

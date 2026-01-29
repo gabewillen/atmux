@@ -36,8 +36,8 @@ func TestNormalizeAgentSlug(t *testing.T) {
 		expected string
 		wantErr  bool
 	}{
-		{"Claude Code", "claude-code", false},
-		{"cursor_123", "cursor-123", false},
+		{"Test Agent", "test-agent", false},
+		{"test_123", "test-123", false},
 		{"Test Agent!@#", "test-agent", false},
 		{"", "", true},
 		{"---", "", true},

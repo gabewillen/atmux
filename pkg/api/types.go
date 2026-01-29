@@ -18,7 +18,7 @@ type Agent struct {
 	// Slug is the normalized agent slug (derived from Name).
 	Slug string `json:"slug"`
 
-	// Adapter is the string name of the WASM adapter (e.g., "claude-code", "cursor").
+	// Adapter is the string name of the WASM adapter (e.g., "test-adapter-1", "test-adapter-2").
 	Adapter string `json:"adapter"`
 
 	// Name is a human-readable name for this agent instance.

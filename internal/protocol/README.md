@@ -17,7 +17,9 @@ Package protocol defines the remote communication protocol.
 - `type HandshakeRequest` — HandshakeRequest is the payload for the handshake request.
 - `type HandshakeResponse` — HandshakeResponse is the payload for the handshake response.
 - `type HsmNetDispatcher` — HsmNetDispatcher manages event routing.
+- `type HsmNet` — HsmNet manages peers and routing.
 - `type LocalBus` — LocalBus is an interface for the local event bus (e.g., internal/agent/bus.go).
+- `type Peer` — Peer represents a remote node in the hsmnet.
 - `type SpawnPayload` — SpawnPayload is the payload for the spawn command.
 - `type SpawnResponsePayload` — SpawnResponsePayload is the payload for the spawn response.
 
@@ -161,16 +163,75 @@ type HandshakeResponse struct {
 
 HandshakeResponse is the payload for the handshake response.
 
+## type HsmNet
+
+```go
+type HsmNet struct {
+	mu    sync.RWMutex
+	peers map[api.PeerID]*Peer
+	Self  api.PeerID
+}
+```
+
+HsmNet manages peers and routing.
+
+### Functions returning HsmNet
+
+#### NewHsmNet
+
+```go
+func NewHsmNet(self api.PeerID) *HsmNet
+```
+
+NewHsmNet creates a new HsmNet instance.
+
+
+### Methods
+
+#### HsmNet.GetPeer
+
+```go
+func () GetPeer(id api.PeerID) (*Peer, bool)
+```
+
+GetPeer retrieves a peer by ID.
+
+#### HsmNet.ListPeers
+
+```go
+func () ListPeers() []*Peer
+```
+
+ListPeers returns all known peers.
+
+#### HsmNet.MarkDisconnected
+
+```go
+func () MarkDisconnected(id api.PeerID)
+```
+
+MarkDisconnected marks a peer as disconnected.
+
+#### HsmNet.RegisterPeer
+
+```go
+func () RegisterPeer(p *Peer)
+```
+
+RegisterPeer adds or updates a peer.
+
+
 ## type HsmNetDispatcher
 
 ```go
 type HsmNetDispatcher struct {
 	mu            sync.RWMutex
-	localBus      LocalBus // Simplified interface for local bus
+	localBus      LocalBus
 	natsConn      *nats.Conn
 	peerID        api.PeerID
 	hostID        api.HostID
 	subjectPrefix string
+	Network       *HsmNet
 }
 ```
 
@@ -215,6 +276,20 @@ type LocalBus interface {
 ```
 
 LocalBus is an interface for the local event bus (e.g., internal/agent/bus.go).
+
+## type Peer
+
+```go
+type Peer struct {
+	ID        api.PeerID
+	Role      string
+	HostID    api.HostID
+	LastSeen  time.Time
+	Connected bool
+}
+```
+
+Peer represents a remote node in the hsmnet.
 
 ## type SpawnPayload
 

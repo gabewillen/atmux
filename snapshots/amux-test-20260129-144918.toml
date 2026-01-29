@@ -1,0 +1,102 @@
+[meta]
+timestamp = '2026-01-29T14:49:18Z'
+go_version = 'go1.25.6'
+
+[system]
+os = 'linux'
+arch = 'amd64'
+
+[config]
+agents = []
+
+[config.general]
+log_level = 'info'
+log_format = 'text'
+
+[config.timeouts]
+idle = '30s'
+stuck = '5m'
+
+[config.process]
+capture_mode = 'all'
+stream_buffer_size = '1MB'
+hook_mode = 'auto'
+poll_interval = '100ms'
+hook_socket_dir = '/tmp'
+
+[config.git]
+[config.git.merge]
+strategy = 'squash'
+allow_dirty = false
+
+[config.events]
+batch_window = '50ms'
+batch_max_events = 100
+batch_max_bytes = '64KB'
+batch_idle_flush = '10ms'
+
+[config.events.coalesce]
+io_streams = true
+presence = true
+activity = true
+
+[config.remote]
+transport = 'nats'
+buffer_size = '10MB'
+request_timeout = '5s'
+reconnect_max_attempts = 10
+reconnect_backoff_base = '1s'
+reconnect_backoff_max = '30s'
+
+[config.remote.nats]
+url = ''
+creds_path = ''
+subject_prefix = 'amux'
+kv_bucket = 'AMUX_KV'
+stream_events = 'AMUX_EVENTS'
+stream_pty = 'AMUX_PTY'
+heartbeat_interval = '5s'
+
+[config.remote.manager]
+enabled = false
+model = ''
+
+[config.nats]
+mode = 'embedded'
+topology = 'hub'
+hub_url = ''
+listen = '0.0.0.0:4222'
+advertise_url = ''
+jetstream_dir = '~/.amux/nats'
+
+[config.node]
+role = 'director'
+
+[config.daemon]
+socket_path = '~/.amux/amuxd.sock'
+autostart = true
+
+[config.plugins]
+dir = '~/.config/amux/plugins'
+allow_remote = true
+
+[config.telemetry]
+enabled = true
+service_name = 'amux'
+
+[config.telemetry.exporter]
+endpoint = ''
+protocol = ''
+
+[config.telemetry.traces]
+enabled = true
+sampler = 'parentbased_traceidratio'
+sampler_arg = 0.1
+
+[config.telemetry.metrics]
+enabled = true
+interval = '60s'
+
+[config.telemetry.logs]
+enabled = true
+level = 'info'

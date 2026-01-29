@@ -1,0 +1,39 @@
+timestamp = 2026-01-29T05:26:32.19038583Z
+version = "v0.1.0"
+go_version = "go1.25.6"
+module = "github.com/stateforward/amux"
+
+[dependencies]
+  "github.com/creack/pty" = "v1.1.11"
+  "github.com/stateforward/hsm-go" = "v0.1.0"
+  "github.com/tetratelabs/wazero" = "v1.8.0"
+
+[build_info]
+  build_time = "2026-01-29T05:26:32Z"
+  built_with = "go1.25.6"
+
+[system_info]
+  arch = "amd64"
+  os = "linux"
+
+[files]
+  [files."cmd/amux-node/main.go"]
+    path = "cmd/amux-node/main.go"
+    size = 178
+    mod_time = 1769625402
+    hash = "placeholder-hash"
+  [files."cmd/amux/main.go"]
+    path = "cmd/amux/main.go"
+    size = 6753
+    mod_time = 1769661775
+    hash = "placeholder-hash"
+  [files."go.mod"]
+    path = "go.mod"
+    size = 953
+    mod_time = 1769645996
+    hash = "placeholder-hash"
+  [files."go.sum"]
+    path = "go.sum"
+    size = 5457
+    mod_time = 1769645996
+    hash = "placeholder-hash"

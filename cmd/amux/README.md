@@ -1,6 +1,9 @@
 Package main implements the amux CLI client
 
+- `func agentAddCmd(args []string)`
 - `func agentCmd(args []string)`
+- `func agentListCmd(args []string)`
+- `func agentRemoveCmd(args []string)`
 - `func chatCmd(args []string)`
 - `func conformanceCmd(args []string)`
 - `func main()`
@@ -10,10 +13,28 @@ Package main implements the amux CLI client
 
 ### Functions
 
+#### agentAddCmd
+
+```go
+func agentAddCmd(args []string)
+```
+
 #### agentCmd
 
 ```go
 func agentCmd(args []string)
+```
+
+#### agentListCmd
+
+```go
+func agentListCmd(args []string)
+```
+
+#### agentRemoveCmd
+
+```go
+func agentRemoveCmd(args []string)
 ```
 
 #### chatCmd

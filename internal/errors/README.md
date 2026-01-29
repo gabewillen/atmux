@@ -5,7 +5,8 @@
 Package errors implements error handling conventions for the amux project
 
 - `ErrNotImplemented, ErrInvalidInput, ErrInternal` — Sentinel errors for the common package
-- `func Wrapf(err error, format string, args ...interface{}) error` — Wrapf wraps an error with additional context using fmt.Errorf Usage: errors.Wrapf(err, "context: %w", err) - following spec convention
+- `func Wrap(err error, context string) error` — Wrap wraps an error with additional context Usage: errors.Wrap(err, "context") - following spec convention
+- `func Wrapf(err error, format string, args ...interface{}) error` — Wrapf wraps an error with additional context using fmt.Errorf Usage: errors.Wrapf(err, "processing file %s", filename) - following spec convention
 
 ### Variables
 
@@ -29,6 +30,15 @@ Sentinel errors for the common package
 
 ### Functions
 
+#### Wrap
+
+```go
+func Wrap(err error, context string) error
+```
+
+Wrap wraps an error with additional context
+Usage: errors.Wrap(err, "context") - following spec convention
+
 #### Wrapf
 
 ```go
@@ -36,6 +46,6 @@ func Wrapf(err error, format string, args ...interface{}) error
 ```
 
 Wrapf wraps an error with additional context using fmt.Errorf
-Usage: errors.Wrapf(err, "context: %w", err) - following spec convention
+Usage: errors.Wrapf(err, "processing file %s", filename) - following spec convention
 
 

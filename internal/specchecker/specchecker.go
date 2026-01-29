@@ -3,7 +3,6 @@ package specchecker
 
 import (
 	"fmt"
-	"io/ioutil"
 	"os"
 	"strings"
 )
@@ -21,7 +20,7 @@ func CheckSpecPresenceAndVersion(specPath string) error {
 	}
 
 	// Read the file content
-	content, err := ioutil.ReadFile(specPath)
+	content, err := os.ReadFile(specPath)
 	if err != nil {
 		return fmt.Errorf("error reading spec file: %w", err)
 	}
@@ -38,7 +37,7 @@ func CheckSpecPresenceAndVersion(specPath string) error {
 
 // GetSpecVersion extracts the version from the spec file
 func GetSpecVersion(specPath string) (string, error) {
-	content, err := ioutil.ReadFile(specPath)
+	content, err := os.ReadFile(specPath)
 	if err != nil {
 		return "", fmt.Errorf("error reading spec file: %w", err)
 	}

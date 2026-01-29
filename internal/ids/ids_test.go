@@ -104,7 +104,11 @@ func TestCanonicalizeRepoRoot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to change directory: %v", err)
 	}
-	defer os.Chdir(origDir) // Restore original directory
+	defer func() {
+		if err := os.Chdir(origDir); err != nil {
+			t.Errorf("Failed to restore original directory: %v", err)
+		}
+	}() // Restore original directory
 	
 	canonical, err := CanonicalizeRepoRoot(relPath)
 	if err != nil {

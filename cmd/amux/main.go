@@ -206,8 +206,62 @@ func conformanceCmd(args []string) {
 }
 
 func agentCmd(args []string) {
-	fmt.Println("Agent management commands...")
-	// Implementation would go here
+	if len(args) == 0 {
+		fmt.Println("Usage: amux agent [add|list|remove]")
+		return
+	}
+
+	subcommand := args[0]
+	switch subcommand {
+	case "add":
+		agentAddCmd(args[1:])
+	case "list":
+		agentListCmd(args[1:])
+	case "remove":
+		agentRemoveCmd(args[1:])
+	default:
+		fmt.Printf("Unknown agent subcommand: %s\n", subcommand)
+		fmt.Println("Available subcommands: add, list, remove")
+		os.Exit(1)
+	}
+}
+
+func agentAddCmd(args []string) {
+	if len(args) < 2 {
+		fmt.Println("Usage: amux agent add <name> <adapter>")
+		fmt.Println("Example: amux agent add my-agent claude-code")
+		os.Exit(1)
+	}
+
+	name := args[0]
+	adapter := args[1]
+
+	// For now, just print what would happen
+	fmt.Printf("Would add agent: name=%s, adapter=%s\n", name, adapter)
+
+	// In a real implementation, this would call the daemon via JSON-RPC
+	// to add the agent with the specified parameters
+}
+
+func agentListCmd(args []string) {
+	// For now, just print what would happen
+	fmt.Println("Listing agents...")
+
+	// In a real implementation, this would call the daemon via JSON-RPC
+	// to list all agents
+}
+
+func agentRemoveCmd(args []string) {
+	if len(args) < 1 {
+		fmt.Println("Usage: amux agent remove <agent-id>")
+		os.Exit(1)
+	}
+
+	agentID := args[0]
+	fmt.Printf("Would remove agent: %s\n", agentID)
+
+	// In a real implementation, this would call the daemon via JSON-RPC
+	// to remove the specified agent
 }
 
 func chatCmd(args []string) {

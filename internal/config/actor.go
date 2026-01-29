@@ -96,6 +96,7 @@ func (a *Actor) Subscribe() (<-chan Config, func()) {
 			// Recover from panic in case the channel is closed
 			if r := recover(); r != nil {
 				// Channel was closed, just return
+				_ = r // Use the recovered value to avoid SA9003 warning
 			}
 		}()
 

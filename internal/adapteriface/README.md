@@ -6,11 +6,15 @@ Package adapteriface implements a stable interface for adapter-provided pattern 
 that can be used by other packages during Phase 0 before the full WASM implementation is complete in Phase 8.
 
 - `func ExecuteAction(ctx context.Context, action Action) error` — ExecuteAction is a convenience function to execute an action using the global interface
+- `func SetGlobalInterface(iface Interface)` — SetGlobalInterface sets the global adapter interface
+- `func contains(s, substr string) bool` — Helper function to check if a string contains a substring
+- `func find(s, substr string) bool` — Helper function to find a substring
 - `type Action` — Action represents an action to be taken based on a match
 - `type Interface` — Interface defines the interface for adapter-provided pattern matching and actions
 - `type Manifest` — Manifest describes the adapter's capabilities
 - `type Match` — Match represents a pattern match result
 - `type NoopInterface` — NoopInterface is a no-op implementation of the Interface
+- `type WASMInterface` — WASMInterface is a WASM-based implementation of the Interface
 
 ### Functions
 
@@ -21,6 +25,30 @@ func ExecuteAction(ctx context.Context, action Action) error
 ```
 
 ExecuteAction is a convenience function to execute an action using the global interface
+
+#### SetGlobalInterface
+
+```go
+func SetGlobalInterface(iface Interface)
+```
+
+SetGlobalInterface sets the global adapter interface
+
+#### contains
+
+```go
+func contains(s, substr string) bool
+```
+
+Helper function to check if a string contains a substring
+
+#### find
+
+```go
+func find(s, substr string) bool
+```
+
+Helper function to find a substring
 
 
 ## type Action
@@ -157,6 +185,55 @@ func () GetManifest() Manifest
 GetManifest implements the Interface
 
 #### NoopInterface.MatchPatterns
+
+```go
+func () MatchPatterns(ctx context.Context, input string) ([]Match, error)
+```
+
+MatchPatterns implements the Interface
+
+
+## type WASMInterface
+
+```go
+type WASMInterface struct {
+	manifest Manifest
+	mutex    sync.RWMutex
+}
+```
+
+WASMInterface is a WASM-based implementation of the Interface
+
+### Functions returning WASMInterface
+
+#### NewWASMInterface
+
+```go
+func NewWASMInterface(manifest Manifest) *WASMInterface
+```
+
+NewWASMInterface creates a new WASM-based adapter interface
+
+
+### Methods
+
+#### WASMInterface.ExecuteAction
+
+```go
+func () ExecuteAction(ctx context.Context, action Action) error
+```
+
+ExecuteAction implements the Interface
+
+#### WASMInterface.GetManifest
+
+```go
+func () GetManifest() Manifest
+```
+
+GetManifest implements the Interface
+
+#### WASMInterface.MatchPatterns
 
 ```go
 func () MatchPatterns(ctx context.Context, input string) ([]Match, error)

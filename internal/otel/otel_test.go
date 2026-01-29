@@ -47,7 +47,9 @@ func TestGetTracer(t *testing.T) {
 	defer func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		provider.Shutdown(ctx)
+		if err := provider.Shutdown(ctx); err != nil {
+			t.Errorf("Failed to shutdown provider: %v", err)
+		}
 	}()
 	
 	tracer := provider.GetTracer("test-component")
@@ -76,7 +78,9 @@ func TestGetMeter(t *testing.T) {
 	defer func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		provider.Shutdown(ctx)
+		if err := provider.Shutdown(ctx); err != nil {
+			t.Errorf("Failed to shutdown provider: %v", err)
+		}
 	}()
 	
 	meter := provider.GetMeter("test-component")
@@ -97,7 +101,9 @@ func TestTracerProvider(t *testing.T) {
 	defer func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		provider.Shutdown(ctx)
+		if err := provider.Shutdown(ctx); err != nil {
+			t.Errorf("Failed to shutdown provider: %v", err)
+		}
 	}()
 	
 	tp := provider.TracerProvider()
@@ -130,7 +136,9 @@ func TestMeterProvider(t *testing.T) {
 	defer func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		provider.Shutdown(ctx)
+		if err := provider.Shutdown(ctx); err != nil {
+			t.Errorf("Failed to shutdown provider: %v", err)
+		}
 	}()
 	
 	mp := provider.MeterProvider()

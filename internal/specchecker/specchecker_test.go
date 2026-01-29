@@ -2,7 +2,7 @@
 package specchecker
 
 import (
-	"io/ioutil"
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -21,7 +21,7 @@ func TestCheckSpecPresenceAndVersion(t *testing.T) {
 This is a test spec file.
 `
 
-	err := ioutil.WriteFile(specPath, []byte(specContent), 0644)
+	err := os.WriteFile(specPath, []byte(specContent), 0644)
 	if err != nil {
 		t.Fatalf("Failed to write spec file: %v", err)
 	}
@@ -49,7 +49,7 @@ This is a test spec file with wrong version.
 `
 
 	wrongVersionPath := filepath.Join(tempDir, "wrong-version.md")
-	err = ioutil.WriteFile(wrongVersionPath, []byte(wrongVersionContent), 0644)
+	err = os.WriteFile(wrongVersionPath, []byte(wrongVersionContent), 0644)
 	if err != nil {
 		t.Fatalf("Failed to write wrong version spec file: %v", err)
 	}
@@ -74,7 +74,7 @@ func TestGetSpecVersion(t *testing.T) {
 This is a test spec file.
 `
 
-	err := ioutil.WriteFile(specPath1, []byte(specContent1), 0644)
+	err := os.WriteFile(specPath1, []byte(specContent1), 0644)
 	if err != nil {
 		t.Fatalf("Failed to write spec file: %v", err)
 	}
@@ -98,7 +98,7 @@ Status: Draft
 This is another test spec file.
 `
 
-	err = ioutil.WriteFile(specPath2, []byte(specContent2), 0644)
+	err = os.WriteFile(specPath2, []byte(specContent2), 0644)
 	if err != nil {
 		t.Fatalf("Failed to write spec file: %v", err)
 	}
@@ -121,7 +121,7 @@ Status: Draft
 This is a test spec file with no version.
 `
 
-	err = ioutil.WriteFile(specPath3, []byte(specContent3), 0644)
+	err = os.WriteFile(specPath3, []byte(specContent3), 0644)
 	if err != nil {
 		t.Fatalf("Failed to write spec file: %v", err)
 	}

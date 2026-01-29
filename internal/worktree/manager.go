@@ -105,14 +105,19 @@ func (m *Manager) MergeAgent(agent api.Agent, strategy string, allowDirty bool) 
 	// Use explicit branch name: amux/<slug>
 	agentBranch := fmt.Sprintf("amux/%s", agent.Slug)
 
-	// Base branch... we should merge INTO the base branch.
-	// But we are in the worktree? No, we should probably run the merge in the MAIN repo?
-	// Spec says: "target_branch defaults to the repository base_branch"
-	// But we don't have base_branch in config yet, assuming HEAD of main repo.
+	// 3. Resolve base branch (target for merge)
+	// TODO: Support configuration override for base_branch
+	baseBranch, err := GetDefaultBranch(agent.RepoRoot)
+	if err != nil {
+		return errors.Wrap(err, "failed to resolve base branch")
+	}
 
-	// Wait, if we are merging the agent's changes, we want to bring them into the main repo.
-	// So we should execute merge in `agent.RepoRoot`, merging `amux/<slug>`.
+	// 4. Checkout base branch in repo root to prepare for merge
+	// Note: This modifies the state of the main repo check out.
+	if err := Checkout(agent.RepoRoot, baseBranch); err != nil {
+		return errors.Wrapf(err, "failed to checkout base branch %q", baseBranch)
+	}
 
-	// Helper `Merge(repoPath, branch, strategy)` runs in `repoPath`.
+	// 5. Execute merge
 	return Merge(agent.RepoRoot, agentBranch, strategy)
 }

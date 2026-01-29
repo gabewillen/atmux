@@ -107,6 +107,34 @@ func GetHeadBranch(repoPath string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
+// GetDefaultBranch attempts to determine the default branch of the repository.
+// It tries origin's HEAD first, then falls back to main/master.
+func GetDefaultBranch(repoPath string) (string, error) {
+	// Try to get the remote HEAD
+	cmd := exec.Command("git", "symbolic-ref", "refs/remotes/origin/HEAD")
+	cmd.Dir = repoPath
+	out, err := cmd.Output()
+	if err == nil {
+		// Output looks like "refs/remotes/origin/main"
+		ref := strings.TrimSpace(string(out))
+		parts := strings.Split(ref, "/")
+		if len(parts) > 0 {
+			return parts[len(parts)-1], nil
+		}
+	}
+
+	// Fallback: check if main exists
+	if err := EnsureBranch(repoPath, "main", ""); err == nil {
+		return "main", nil
+	}
+	// Check if master exists
+	if err := EnsureBranch(repoPath, "master", ""); err == nil {
+		return "master", nil
+	}
+
+	return "", errors.New("could not determine default branch")
+}
+
 // IsDirty checks if the working directory has uncommitted changes.
 func IsDirty(path string) (bool, error) {
 	cmd := exec.Command("git", "status", "--porcelain")
@@ -142,6 +170,16 @@ func Merge(repoPath, branch, strategy string) error {
 	cmd.Dir = repoPath
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return errors.Wrapf(err, "git merge failed (%s): %s", strategy, string(out))
+	}
+	return nil
+}
+
+// Checkout checks out the specified branch in the repository.
+func Checkout(repoPath, branch string) error {
+	cmd := exec.Command("git", "checkout", branch)
+	cmd.Dir = repoPath
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return errors.Wrapf(err, "git checkout failed: %s", string(out))
 	}
 	return nil
 }

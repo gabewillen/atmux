@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"syscall"
 	"time"
 
+	"github.com/agentflare-ai/amux/internal/config"
 	"github.com/agentflare-ai/amux/pkg/api"
 	"github.com/creack/pty"
 	"github.com/stateforward/hsm-go"
@@ -22,8 +24,13 @@ func SpawnAgent(ctx context.Context, a *Agent) error {
 	// Check if state transitioned to Starting (or verify logic via HSM state check if possible)
 	// For now we assume if no error, we proceed.
 
+	// Determine target branch
+	// Ideally this comes from config or default logic.
+	// For now, let's use the repo's HEAD as base, which EnsureWorktree defaults to if empty.
+	targetBranch, _ := GetAgentTargetBranch(a) 
+
 	// Ensure Worktree
-	worktreePath, err := EnsureWorktree(a.RepoRoot, a.Slug, "main") // TODO: get target branch from config
+	worktreePath, err := EnsureWorktree(a.RepoRoot, a.Slug, targetBranch)
 	if err != nil {
 		hsm.Dispatch(ctx, a.Lifecycle, hsm.Event{Name: EventError})
 		return fmt.Errorf("failed to ensure worktree: %w", err)
@@ -31,9 +38,6 @@ func SpawnAgent(ctx context.Context, a *Agent) error {
 	a.Worktree = worktreePath
 
 	// Prepare command
-	// Ideally, the command comes from the adapter or config.
-	// For Phase 2, we just spawn a shell or a placeholder since we don't have the adapter runtime yet.
-	// Let's use /bin/sh for local agent smoke testing if no command specified.
 	cmdName := "/bin/sh" 
 	// In real implementation, we'd query the adapter for the command.
 	
@@ -72,8 +76,7 @@ func SpawnAgent(ctx context.Context, a *Agent) error {
 		// Close PTY
 		ptmx.Close()
 		
-		// Remove session? Or keep as history?
-		// For now, keep it but mark agent as Terminated.
+		// Dispatch Exited
 		hsm.Dispatch(context.Background(), a.Lifecycle, hsm.Event{Name: EventExited})
 	}()
 
@@ -87,18 +90,34 @@ func StopAgent(ctx context.Context, a *Agent) error {
 	
 	for _, s := range a.Sessions {
 		if s.Cmd != nil && s.Cmd.Process != nil {
-			// Graceful kill
-			s.Cmd.Process.Signal(os.Interrupt)
+			pid := s.Cmd.Process.Pid
 			
-			// Wait a bit then force kill?
-			// For simplicity in Phase 2, just Kill if not waiting.
-			// Ideally we use a select with timeout.
-			go func(proc *os.Process) {
-				time.Sleep(1 * time.Second)
-				proc.Kill()
-			}(s.Cmd.Process)
+			// Try to kill process group
+			// We use negative PID to signal the process group.
+			// pty.Start creates a session leader, so the PGID is the PID.
+			if err := syscall.Kill(-pid, syscall.SIGTERM); err != nil {
+				// Fallback to process only if group fails
+				_ = s.Cmd.Process.Signal(syscall.SIGTERM)
+			}
+			
+			// Schedule force kill
+			go func(p int) {
+				time.Sleep(5 * time.Second)
+				// Force kill group
+				_ = syscall.Kill(-p, syscall.SIGKILL)
+			}(pid)
 		}
 	}
 	
 	return nil
+}
+
+// GetAgentTargetBranch helps resolve the branch to use for the worktree.
+// This duplicates logic from SelectMergeStrategy a bit but for worktree creation.
+func GetAgentTargetBranch(a *Agent) (string, error) {
+	// Assuming GitConfig is available globally or we can peek at project config?
+	// But 'a.Config' is AgentConfig.
+	// We might need to look at repo root.
+	// For now return empty to let EnsureWorktree use HEAD.
+	return "", nil
 }

@@ -4,7 +4,8 @@
 
 - `EventSpawn, EventStarted, EventExited, EventError, EventStop, EventConnect, EventDisconnect, EventBusy, EventIdle, EventAway, EventBack` — Events
 - `func AddAgent(cfg *config.Config, newAgent config.AgentConfig) error` — AddAgent validates and persists a new agent configuration.
-- `func EnsureWorktree(repoRoot api.RepoRoot, slug api.AgentSlug, targetBranch string) (string, error)` — EnsureWorktree creates or reuses a worktree for the given agent.
+- `func EnsureWorktree(repoRoot api.RepoRoot, slug api.AgentSlug, baseBranch string) (string, error)` — EnsureWorktree creates or reuses a worktree for the given agent.
+- `func GetAgentTargetBranch(a *Agent) (string, error)` — GetAgentTargetBranch helps resolve the branch to use for the worktree.
 - `func MessageError(format string, a ...any) error` — MessageError creates a formatted error.
 - `func NewLifecycleHSM(agent *Agent) hsm.Instance` — NewLifecycleHSM creates a new lifecycle HSM for the agent.
 - `func NewPresenceHSM(agent *Agent) hsm.Instance` — NewPresenceHSM creates a new presence HSM for the agent.
@@ -175,11 +176,20 @@ It requires the location.repo_path to be a valid git repository.
 #### EnsureWorktree
 
 ```go
-func EnsureWorktree(repoRoot api.RepoRoot, slug api.AgentSlug, targetBranch string) (string, error)
+func EnsureWorktree(repoRoot api.RepoRoot, slug api.AgentSlug, baseBranch string) (string, error)
 ```
 
 EnsureWorktree creates or reuses a worktree for the given agent.
 It returns the path to the worktree.
+
+#### GetAgentTargetBranch
+
+```go
+func GetAgentTargetBranch(a *Agent) (string, error)
+```
+
+GetAgentTargetBranch helps resolve the branch to use for the worktree.
+This duplicates logic from SelectMergeStrategy a bit but for worktree creation.
 
 #### MessageError
 

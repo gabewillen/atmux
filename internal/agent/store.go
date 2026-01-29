@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 
 	"github.com/agentflare-ai/amux/internal/config"
+	"github.com/agentflare-ai/amux/internal/paths"
 	"github.com/agentflare-ai/amux/pkg/api"
 )
 
@@ -17,21 +18,20 @@ func AddAgent(cfg *config.Config, newAgent config.AgentConfig) error {
 	}
 
 	repoPath := newAgent.Location.RepoPath
-	// If repo_path is missing, we can't persist project-scoped config correctly without knowing where.
-	// However, the spec says "If location.repo_path is unset, the director MUST use the git repository root that contains the request working directory".
-	// But AddAgent here is likely called by the CLI/Daemon which should have resolved the repo root.
-	// For now, let's assume RepoPath is required for persistence or the caller must resolve it.
-	
 	if repoPath == "" {
-		// Fallback: assume current directory is inside a repo?
-		// But we need to write to .amux/config.toml inside the repo root.
-		// Let's require the caller to provide resolved RepoPath in the config or we fail.
 		return fmt.Errorf("agent location.repo_path is required")
 	}
 
+	// Canonicalize
+	canonicalPath, err := paths.CanonicalizeRepoRoot(repoPath)
+	if err != nil {
+		return fmt.Errorf("failed to canonicalize repo path: %w", err)
+	}
+	newAgent.Location.RepoPath = canonicalPath
+
 	// Validate it's a git repo
-	if !isGitRepo(repoPath) {
-		return fmt.Errorf("path %s is not a git repository", repoPath)
+	if !isGitRepo(canonicalPath) {
+		return fmt.Errorf("path %s is not a git repository", canonicalPath)
 	}
 
 	// Check for duplicates
@@ -46,7 +46,7 @@ func AddAgent(cfg *config.Config, newAgent config.AgentConfig) error {
 	cfg.Agents = append(cfg.Agents, newAgent)
 	
 	// We save to Project Config
-	if err := config.SaveProjectConfig(cfg, repoPath); err != nil {
+	if err := config.SaveProjectConfig(cfg, canonicalPath); err != nil {
 		return fmt.Errorf("failed to save project config: %w", err)
 	}
 
@@ -66,8 +66,7 @@ func ValidateAgentConfig(c config.AgentConfig) error {
 
 func isGitRepo(path string) bool {
 	// Simple check: .git directory exists
-	// Ideally we use git command or internal/paths logic if available.
-	// Since we don't have a full git lib, checking .git is a reasonable heuristic for local repos.
+	// ideally use git rev-parse --is-inside-work-tree
 	gitDir := filepath.Join(path, ".git")
 	info, err := os.Stat(gitDir)
 	return err == nil && info.IsDir()

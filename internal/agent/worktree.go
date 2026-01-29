@@ -3,6 +3,7 @@ package agent
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 
 	"github.com/agentflare-ai/amux/internal/paths"
@@ -11,9 +12,13 @@ import (
 
 // EnsureWorktree creates or reuses a worktree for the given agent.
 // It returns the path to the worktree.
-func EnsureWorktree(repoRoot api.RepoRoot, slug api.AgentSlug, targetBranch string) (string, error) {
+func EnsureWorktree(repoRoot api.RepoRoot, slug api.AgentSlug, baseBranch string) (string, error) {
 	if err := slug.Validate(); err != nil {
 		return "", fmt.Errorf("invalid agent slug: %w", err)
+	}
+
+	if baseBranch == "" {
+		baseBranch = "HEAD"
 	}
 
 	worktreesDir := paths.DefaultWorktreesDir(string(repoRoot))
@@ -34,24 +39,22 @@ func EnsureWorktree(repoRoot api.RepoRoot, slug api.AgentSlug, targetBranch stri
 	}
 
 	// Create directory structure
-	// Note: In a real git worktree implementation, we would call `git worktree add`.
-	// Since we are implementing the core logic first, we will simulate the creation structure.
 	// The spec says: "Worktrees shall be created in .amux/worktrees/{agent_slug}/ under the agent’s repo_root".
-	
-	if err := os.MkdirAll(agentWorktreePath, 0755); err != nil {
-		return "", fmt.Errorf("failed to create worktree directory: %w", err)
+	// Ensure parent dir exists
+	if err := os.MkdirAll(worktreesDir, 0755); err != nil {
+		return "", fmt.Errorf("failed to create worktrees dir: %w", err)
 	}
 
-	// Create a marker file to simulate git worktree for now?
-	// Or we just assume the dir creation is enough for "isolation" in this phase unless we invoke git.
-	// The plan says "Implement worktree isolation...". 
-	// Spec §5.3.4 says "Create or reuse the worktree...".
-	// Ideally we shell out to git.
-	// But let's verify if we should shell out to git here.
-	// Plan says: "git merge strategy implementation hooks" is a separate output.
-	// "Implement worktree isolation" implies creating the folder.
-	// Let's create the folder. Integration tests later will verify git behavior if we hook it up.
-	// For now, ensuring the directory exists at the correct path satisfies the path layout requirement.
+	// Create git worktree
+	// branch name: amux/{slug}
+	branchName := fmt.Sprintf("amux/%s", slug)
+
+	// git worktree add -B amux/{slug} .amux/worktrees/{slug} {baseBranch}
+	cmd := exec.Command("git", "worktree", "add", "-B", branchName, agentWorktreePath, baseBranch)
+	cmd.Dir = string(repoRoot)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return "", fmt.Errorf("failed to create git worktree: %s: %w", string(out), err)
+	}
 
 	return agentWorktreePath, nil
 }
@@ -61,14 +64,22 @@ func RemoveWorktree(repoRoot api.RepoRoot, slug api.AgentSlug) error {
 	worktreesDir := paths.DefaultWorktreesDir(string(repoRoot))
 	agentWorktreePath := filepath.Join(worktreesDir, string(slug))
 
-	// Aggressive removal per spec
-	// "Remove the git worktree: git worktree remove .amux/worktrees/{agent_slug}"
-	// If we aren't using real git worktrees yet, os.RemoveAll is the equivalent.
-	
-	if err := os.RemoveAll(agentWorktreePath); err != nil {
-		return fmt.Errorf("failed to remove worktree: %w", err)
+	// Check if it exists first
+	if _, err := os.Stat(agentWorktreePath); os.IsNotExist(err) {
+		return nil
 	}
-	
-	// Also try to cleanup .worktrees dir if empty? Not required by spec but nice.
+
+	// git worktree remove
+	cmd := exec.Command("git", "worktree", "remove", "--force", agentWorktreePath)
+	cmd.Dir = string(repoRoot)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to remove worktree: %s: %w", string(out), err)
+	}
+
+	// Prune to clean up metadata
+	cmdPrune := exec.Command("git", "worktree", "prune")
+	cmdPrune.Dir = string(repoRoot)
+	_ = cmdPrune.Run() // Ignore error on prune
+
 	return nil
 }

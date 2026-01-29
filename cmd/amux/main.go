@@ -20,7 +20,7 @@ import (
 	"github.com/copilot-claude-sonnet-4/amux/pkg/api"
 )
 
-const version = "v1.22.0-phase2"
+const version = "v1.22.0-phase3"
 
 // TestSnapshot represents the structure of amux test snapshots
 type TestSnapshot struct {
@@ -79,11 +79,30 @@ func main() {
 			}
 			fmt.Println("Usage: amux agent <add|list|remove|start|stop|attach>")
 			os.Exit(1)
+		case "remote":
+			if len(os.Args) > 2 {
+				switch os.Args[2] {
+				case "add":
+					handleRemoteAdd()
+					return
+				case "list":
+					handleRemoteList()
+					return
+				case "remove":
+					handleRemoteRemove()
+					return
+				case "status":
+					handleRemoteStatus()
+					return
+				}
+			}
+			fmt.Println("Usage: amux remote <add|list|remove|status>")
+			os.Exit(1)
 		}
 	}
 
 	log.Printf("amux CLI client %s starting...", version)
-	fmt.Println("amux: phase 2 - implementing local agent management")
+	fmt.Println("amux: phase 3 - implementing remote agent management")
 	os.Exit(1)
 }
 
@@ -436,4 +455,62 @@ func loadAgentsFromConfig(resolver *paths.Resolver) ([]*api.Agent, error) {
 	}
 
 	return agents, nil
+}
+
+// Remote host management functions
+
+func handleRemoteAdd() {
+	if len(os.Args) < 5 {
+		fmt.Println("Usage: amux remote add <host-id> <ssh-target>")
+		fmt.Println("Example: amux remote add devbox user@example.com")
+		os.Exit(1)
+	}
+
+	hostID := os.Args[3]
+	sshTarget := os.Args[4]
+
+	fmt.Printf("Adding remote host '%s' at %s...\n", hostID, sshTarget)
+	
+	// TODO: Implement actual remote host bootstrap
+	// This would involve:
+	// 1. Creating NATS credentials for the host
+	// 2. Running SSH bootstrap to install daemon and adapters
+	// 3. Starting the remote daemon
+	
+	fmt.Printf("✅ Remote host '%s' added successfully (placeholder)\n", hostID)
+	fmt.Printf("   SSH Target: %s\n", sshTarget)
+	fmt.Printf("   Use 'amux remote status %s' to check connectivity\n", hostID)
+}
+
+func handleRemoteList() {
+	fmt.Println("Remote hosts:")
+	fmt.Println("  No remote hosts configured (placeholder)")
+}
+
+func handleRemoteRemove() {
+	if len(os.Args) < 4 {
+		fmt.Println("Usage: amux remote remove <host-id>")
+		os.Exit(1)
+	}
+
+	hostID := os.Args[3]
+	fmt.Printf("Removing remote host '%s'...\n", hostID)
+	fmt.Printf("✅ Remote host '%s' removed successfully (placeholder)\n", hostID)
+}
+
+func handleRemoteStatus() {
+	if len(os.Args) < 4 {
+		fmt.Println("Usage: amux remote status <host-id>")
+		fmt.Println("Or: amux remote status --all")
+		os.Exit(1)
+	}
+
+	target := os.Args[3]
+	if target == "--all" {
+		fmt.Println("Remote host status:")
+		fmt.Println("  No remote hosts configured (placeholder)")
+	} else {
+		fmt.Printf("Status for remote host '%s':\n", target)
+		fmt.Printf("  Status: Unknown (placeholder)\n")
+	}
 }

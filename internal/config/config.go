@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/BurntSushi/toml"
@@ -36,10 +37,21 @@ type Config struct {
 	// Agent configurations (opaque to core)
 	Agents map[string]interface{} `toml:"agents"`
 
-	// Remote settings
+	// Remote settings for NATS-based multi-host orchestration
 	Remote struct {
-		Enabled bool   `toml:"enabled"`
-		Hub     string `toml:"hub"`
+		Enabled        bool   `toml:"enabled"`
+		Hub            string `toml:"hub"`
+		RequestTimeout string `toml:"request_timeout"` // duration string
+		BufferSize     int    `toml:"buffer_size"`
+		Manager        struct {
+			Enabled bool `toml:"enabled"`
+		} `toml:"manager"`
+		NATS struct {
+			URL           string `toml:"url"`
+			CredsPath     string `toml:"creds_path"`
+			SubjectPrefix string `toml:"subject_prefix"`
+			KVBucket      string `toml:"kv_bucket"`
+		} `toml:"nats"`
 	} `toml:"remote"`
 }
 
@@ -52,6 +64,11 @@ func Load() (*Config, error) {
 	config.Daemon.SocketPath = filepath.Join(os.Getenv("HOME"), ".amux", "amuxd.sock")
 	config.Daemon.LogLevel = "info"
 	config.Remote.Enabled = false
+	config.Remote.RequestTimeout = "30s"
+	config.Remote.BufferSize = 16384  // 16KB default buffer
+	config.Remote.Manager.Enabled = false
+	config.Remote.NATS.SubjectPrefix = "amux"
+	config.Remote.NATS.KVBucket = "AMUX_KV"
 	config.Agents = make(map[string]interface{})
 
 	// Load from TOML files (implementation deferred)
@@ -99,10 +116,34 @@ func loadFromEnv(config *Config) error {
 			config.Remote.Enabled = (value == "true")
 		case "remote_hub":
 			config.Remote.Hub = value
+		case "remote_request_timeout":
+			config.Remote.RequestTimeout = value
+		case "remote_buffer_size":
+			if size := parseInt(value); size > 0 {
+				config.Remote.BufferSize = size
+			}
+		case "remote_manager_enabled":
+			config.Remote.Manager.Enabled = (value == "true")
+		case "remote_nats_url":
+			config.Remote.NATS.URL = value
+		case "remote_nats_creds_path":
+			config.Remote.NATS.CredsPath = value
+		case "remote_nats_subject_prefix":
+			config.Remote.NATS.SubjectPrefix = value
+		case "remote_nats_kv_bucket":
+			config.Remote.NATS.KVBucket = value
 		}
 	}
 
 	return nil
+}
+
+// parseInt safely parses an integer string, returning 0 on error.
+func parseInt(s string) int {
+	if i, err := strconv.Atoi(s); err == nil {
+		return i
+	}
+	return 0
 }
 
 // SaveToFile writes configuration to a TOML file.

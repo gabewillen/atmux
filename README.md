@@ -11,6 +11,7 @@
 - [internal/paths](internal/paths/README.md) — Package paths provides centralized filesystem path resolution for amux.
 - [internal/protocol](internal/protocol/README.md) — Package protocol provides event dispatch and routing interfaces.
 - [internal/pty](internal/pty/README.md) — Package pty provides PTY creation and lifecycle for amux (spec §4.2.4, §7).
+- [internal/remote](internal/remote/README.md) — bootstrap.go implements SSH bootstrap for remote hosts per spec §5.5.2, §5.5.3, §5.5.6.4.
 - [internal/spec](internal/spec/README.md) — Package spec provides spec version checking and validation.
 - [internal/telemetry](internal/telemetry/README.md) — Package telemetry provides OpenTelemetry instrumentation for amux.
 - [internal/worktree](internal/worktree/README.md) — Package worktree provides git worktree create/remove for agent isolation (spec §5.3, §5.3.1, §5.3.2).

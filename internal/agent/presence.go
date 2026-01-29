@@ -4,10 +4,9 @@ package agent
 
 import (
 	"context"
-	"sync"
 
-	"github.com/agentflare-ai/amux/pkg/api"
 	"github.com/agentflare-ai/amux/internal/protocol"
+	"github.com/agentflare-ai/amux/pkg/api"
 	"github.com/stateforward/hsm-go"
 )
 
@@ -35,7 +34,6 @@ type presenceActor struct {
 	hsm.HSM
 	AgentID   api.ID
 	Dispatcher protocol.Dispatcher
-	mu        sync.Mutex
 }
 
 // PresenceModel defines the presence HSM (spec §6.5).

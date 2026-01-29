@@ -436,7 +436,6 @@ type lifecycleActor struct {
 	hsm.HSM
 	AgentID    api.ID
 	Dispatcher protocol.Dispatcher
-	mu         sync.Mutex
 }
 ```
 
@@ -449,7 +448,6 @@ type presenceActor struct {
 	hsm.HSM
 	AgentID    api.ID
 	Dispatcher protocol.Dispatcher
-	mu         sync.Mutex
 }
 ```
 

@@ -4,10 +4,9 @@ package agent
 
 import (
 	"context"
-	"sync"
 
-	"github.com/agentflare-ai/amux/pkg/api"
 	"github.com/agentflare-ai/amux/internal/protocol"
+	"github.com/agentflare-ai/amux/pkg/api"
 	"github.com/stateforward/hsm-go"
 )
 
@@ -33,7 +32,6 @@ type lifecycleActor struct {
 	hsm.HSM
 	AgentID   api.ID
 	Dispatcher protocol.Dispatcher
-	mu        sync.Mutex
 }
 
 // LifecycleModel defines the agent lifecycle HSM (spec §5.4).

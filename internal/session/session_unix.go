@@ -3,7 +3,6 @@
 package session
 
 import (
-	"fmt"
 	"os"
 	"syscall"
 )

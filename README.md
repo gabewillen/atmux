@@ -9,7 +9,7 @@
 - [internal/inference](internal/inference/README.md)
 - [internal/monitor](internal/monitor/README.md)
 - [internal/paths](internal/paths/README.md)
-- [internal/process](internal/process/README.md) — Package process tracks child processes spawned by agents.
+- [internal/process](internal/process/README.md)
 - [internal/protocol](internal/protocol/README.md) — Package protocol defines the remote communication protocol.
 - [internal/pty](internal/pty/README.md)
 - [internal/remote](internal/remote/README.md)

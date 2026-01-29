@@ -512,68 +512,68 @@ Track spawned processes, intercept exec where required, emit process and I/O eve
 - Notification gating pipeline + storage for subscriptions
 
 ### TODO list
-- [ ] Run `amux test` to capture the baseline snapshot for Phase 6
+- [x] Run `amux test` to capture the baseline snapshot for Phase 6
   - Spec reference(s): §12.6.1–§12.6.3
   - Acceptance criteria: a new `snapshots/amux-test-*.toml` exists under `<module_root>/snapshots/` and is retained as the baseline for Phase 6 regression checking.
 
-- [ ] Implement process model, process tree tracking, and events
+- [x] Implement process model, process tree tracking, and events
   - Spec reference(s): §8.2, §8.6, §8.4
   - Acceptance criteria: process start/exit events emitted; parent-child tree maintained; tests cover common shells and subprocess patterns.
 
-- [ ] Implement process interception via hook libraries (LD_PRELOAD/DYLD_INSERT_LIBRARIES) and fallback polling as specified
+- [x] Implement process interception via hook libraries (LD_PRELOAD/DYLD_INSERT_LIBRARIES) and fallback polling as specified
   - Spec reference(s): §8.3, §B.8, §B.9
   - Acceptance criteria: hook builds on supported platforms; intercepted exec events reach tracker; polling fallback works when hooks unavailable.
 
-- [ ] Implement hook library compilation pipeline and artifact packaging
+- [x] Implement hook library compilation pipeline and artifact packaging
   - Spec reference(s): §8.3.9, §4.2.6, §4.2.7
   - Acceptance criteria: per-platform c-shared hook libraries are built (Linux/macOS; amd64/arm64) and placed under `hooks/bin/`; the main binaries can locate/load the correct hook artifact; build verification is covered by an automated build script.
 
-- [ ] Implement hook protocol: wire framing, FD passing, and I/O pipe architecture
+- [x] Implement hook protocol: wire framing, FD passing, and I/O pipe architecture
   - Spec reference(s): §8.3.2, §8.3.2.1, §8.3.3, §8.3.4
   - Acceptance criteria: hook-to-tracker protocol frames are parsed correctly; SCM_RIGHTS FD passing works in integration tests; stdin/stdout/stderr pipes are attributed to the correct process and agent.
 
-- [ ] Implement environment inheritance, I/O attribution, and process-tree tracking semantics
+- [x] Implement environment inheritance, I/O attribution, and process-tree tracking semantics
   - Spec reference(s): §8.3.5, §8.3.7, §8.3.8
   - Acceptance criteria: child processes inherit required env vars; I/O attribution rules match the spec; process tree remains accurate across nested execs.
 
-- [ ] Implement subscriptions and filters for process events and I/O streams
+- [x] Implement subscriptions and filters for process events and I/O streams
   - Spec reference(s): §8.5, §8.4.2
   - Acceptance criteria: subscriber receives only requested events; backpressure handled per spec batching strategy.
 
-- [ ] Implement batching/coalescing pipeline and batcher HSM
+- [x] Implement batching/coalescing pipeline and batcher HSM
   - Spec reference(s): §8.4.3.1–§8.4.3.5
   - Acceptance criteria: batch sizes and timing follow spec; coalescing rules match; deterministic tests for coalescing.
 
-- [ ] Implement LLM-gated notifications with liquidgen and observability for throughput
+- [x] Implement LLM-gated notifications with liquidgen and observability for throughput
   - Spec reference(s): §8.4.3.6, §4.2.10, §4.2.9
   - Acceptance criteria: gating prompt uses required model IDs; token streaming supported; tokens/sec and queue latency metrics emitted; failure modes return errors and fall back per spec.
 
-- [ ] Implement Notification MCP server transport, framing, and concurrency
+- [x] Implement Notification MCP server transport, framing, and concurrency
   - Spec reference(s): §8.4.3.7
   - Acceptance criteria: when `events.subscriptions.enabled = true`, the director listens on a Unix domain stream socket at `events.subscriptions.socket_path`; transport uses newline-delimited UTF-8 JSON-RPC 2.0 (one JSON object per line); multiple concurrent clients are supported; server-to-client notifications are delivered as JSON-RPC notifications.
 
-- [ ] Implement embedding runtime and model asset packaging for semantic subscriptions
+- [x] Implement embedding runtime and model asset packaging for semantic subscriptions
   - Spec reference(s): §8.4.3.7, §4.2.6
   - Acceptance criteria: supported ONNX embedding models can be loaded from `models/` (default all-MiniLM-L6-v2 or implementation-chosen default among the spec list); required ONNX Runtime shared libraries are packaged under `models/onnxruntime/` and load successfully on supported platforms; embeddings are computed on CPU; resolved model choice and embedding latency are observable via OTel metrics/logs.
 
-- [ ] Implement MCP notification subscriptions storage using SQLite + sqlite-vec embeddings
+- [x] Implement MCP notification subscriptions storage using SQLite + sqlite-vec embeddings
   - Spec reference(s): §8.4.3.7
   - Acceptance criteria: sqlite + sqlite-vec are available and the vector extension loads in supported environments; embeddings are stored and queried via vector similarity search; subscription matching returns stable results; migrations and schema tests exist; performance meets spec expectations for typical subscription sets.
 
-- [ ] Implement stream capture modes and dispatch behavior
+- [x] Implement stream capture modes and dispatch behavior
   - Spec reference(s): §8.4.4–§8.4.5
   - Acceptance criteria: capture modes selectable by config; events dispatched correctly; conformance suite “notification flows” pass.
 
 
-- [ ] The implementation MUST maintain inline Go documentation and MUST regenerate per-package `README.md` files via `go-docmd`
+- [x] The implementation MUST maintain inline Go documentation and MUST regenerate per-package `README.md` files via `go-docmd`
   - Spec reference(s): §4.2.6.1
   - Acceptance criteria: every package and exported identifier added or modified in this phase MUST include `go doc`-suitable comments; running `go run github.com/agentflare-ai/go-docmd@latest -cmd -all -inplace ./...` at the module root MUST produce no uncommitted changes; generated per-package `README.md` files MUST be committed.
 
-- [ ] Run `amux test --regression` at the end of Phase 6 to verify no regressions relative to the Phase 6 baseline snapshot
+- [x] Run `amux test --regression` at the end of Phase 6 to verify no regressions relative to the Phase 6 baseline snapshot
   - Spec reference(s): §12.6.5
   - Acceptance criteria: `amux test --regression` exits 0; any regressions are fixed before Phase 6 is considered complete; the new snapshot is written to `<module_root>/snapshots/`.
 
-- [ ] Update this plan’s TODOs for Phase 6, remove unused code/scripts, and commit Phase 6 to git
+- [x] Update this plan’s TODOs for Phase 6, remove unused code/scripts, and commit Phase 6 to git
   - Spec reference(s): N/A (plan process requirement)
   - Acceptance criteria: Phase 6 TODOs are updated; `git status` is clean; the Phase 6 baseline + latest snapshots are retained; a Phase 6 commit exists in git history.
 ---

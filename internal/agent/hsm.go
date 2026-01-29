@@ -42,48 +42,48 @@ func on(name string) hsm.RedefinableElement {
 // Pending -> Starting -> Running (containing Presence) -> Terminated / Errored
 var AgentModel = hsm.Define("agent",
 	hsm.State("pending",
-		hsm.Transition(on(EventStart), hsm.Target("starting")),
+		hsm.Transition(on(EventStart), hsm.Target("/agent/starting")),
 	),
 	hsm.State("starting",
-		hsm.Transition(on(EventStarted), hsm.Target("running")),
-		hsm.Transition(on(EventError), hsm.Target("errored")),
-		hsm.Transition(on(EventStop), hsm.Target("terminated")),
+		hsm.Transition(on(EventStarted), hsm.Target("/agent/running")),
+		hsm.Transition(on(EventError), hsm.Target("/agent/errored")),
+		hsm.Transition(on(EventStop), hsm.Target("/agent/terminated")),
 	),
 	hsm.State("running",
 		// Presence Sub-states
 		hsm.State("online",
-			hsm.Transition(on(EventActivityDetected), hsm.Target("busy")),
-			hsm.Transition(on(EventInactivity), hsm.Target("away")),
+			hsm.Transition(on(EventActivityDetected), hsm.Target("/agent/running/busy")),
+			hsm.Transition(on(EventInactivity), hsm.Target("/agent/running/away")),
 		),
 		hsm.State("busy",
-			hsm.Transition(on(EventInactivity), hsm.Target("online")),
+			hsm.Transition(on(EventInactivity), hsm.Target("/agent/running/online")),
 		),
 		hsm.State("away",
-			hsm.Transition(on(EventActivityDetected), hsm.Target("online")),
+			hsm.Transition(on(EventActivityDetected), hsm.Target("/agent/running/online")),
 		),
 		// Manual presence overrides using Guards
 		hsm.Transition(
-			on(EventSetPresence), hsm.Target("online"),
+			on(EventSetPresence), hsm.Target("/agent/running/online"),
 			hsm.Guard(presenceIs(api.PresenceOnline)),
 		),
 		hsm.Transition(
-			on(EventSetPresence), hsm.Target("busy"),
+			on(EventSetPresence), hsm.Target("/agent/running/busy"),
 			hsm.Guard(presenceIs(api.PresenceBusy)),
 		),
 		hsm.Transition(
-			on(EventSetPresence), hsm.Target("away"),
+			on(EventSetPresence), hsm.Target("/agent/running/away"),
 			hsm.Guard(presenceIs(api.PresenceAway)),
 		),
 		// Note: "offline" is effectively represented by non-running states or handled by parent.
 		// If explicit "offline" state is needed within running (e.g. connected but hidden), add it.
 		// For now, adhering to Online/Busy/Away as active presence states.
 
-		hsm.Initial(hsm.Target("online")),
+		hsm.Initial(hsm.Target("/agent/running/online")),
 
 		// Parent transitions
-		hsm.Transition(on(EventStop), hsm.Target("terminated")),
-		hsm.Transition(on(EventError), hsm.Target("errored")),
-		hsm.Transition(on(EventTerminated), hsm.Target("terminated")),
+		hsm.Transition(on(EventStop), hsm.Target("/agent/terminated")),
+		hsm.Transition(on(EventError), hsm.Target("/agent/errored")),
+		hsm.Transition(on(EventTerminated), hsm.Target("/agent/terminated")),
 	),
 	hsm.State("terminated"),
 	hsm.State("errored"),

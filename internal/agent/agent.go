@@ -31,6 +31,10 @@ func NewAgent(name, adapter, repoRoot string) *AgentActor {
 		},
 	}
 
+	// Initialize HSM
+	// We must use hsm.New to initialize the embedded HSM before starting.
+	a = hsm.New(a, &AgentModel)
+
 	// Start the HSM
 	hsm.Start(context.Background(), a, &AgentModel)
 	return a

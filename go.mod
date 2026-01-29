@@ -10,6 +10,11 @@ require (
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/google/uuid v1.6.0 // indirect
+	github.com/klauspost/compress v1.18.0 // indirect
+	github.com/nats-io/jwt/v2 v2.8.0 // indirect
+	github.com/nats-io/nats.go v1.48.0 // indirect
+	github.com/nats-io/nkeys v0.4.14 // indirect
+	github.com/nats-io/nuid v1.0.1 // indirect
 	github.com/stateforward/hsm-go v0.0.0-20260124064619-14d9b71481ec // indirect
 	github.com/stateforward/hsm-go/kind v0.0.0-20260124060507-9cca10687b7c // indirect
 	github.com/stateforward/hsm-go/muid v0.0.0-20260124060507-9cca10687b7c // indirect
@@ -20,5 +25,6 @@ require (
 	go.opentelemetry.io/otel/metric v1.39.0 // indirect
 	go.opentelemetry.io/otel/sdk v1.39.0 // indirect
 	go.opentelemetry.io/otel/trace v1.39.0 // indirect
-	golang.org/x/sys v0.39.0 // indirect
+	golang.org/x/crypto v0.47.0 // indirect
+	golang.org/x/sys v0.40.0 // indirect
 )

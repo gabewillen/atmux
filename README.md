@@ -19,7 +19,13 @@
 - [internal/process](internal/process/README.md) — Package process provides process tracking and interception for amux.
 - [internal/protocol](internal/protocol/README.md) — Package protocol provides the remote communication protocol for amux.
 - [internal/pty](internal/pty/README.md) — Package pty provides PTY (pseudo-terminal) management for amux.
-- [internal/session](internal/session/README.md) — Package session provides local agent session management with owned PTYs.
+- [internal/remote/auth](internal/remote/auth/README.md) — Package auth provides per-host NATS credential generation and subject authorization for amux remote orchestration.
+- [internal/remote/bootstrap](internal/remote/bootstrap/README.md) — Package bootstrap implements SSH-based bootstrapping of remote hosts.
+- [internal/remote/buffer](internal/remote/buffer/README.md) — Package buffer provides a ring buffer for PTY output replay.
+- [internal/remote/director](internal/remote/director/README.md) — Package director implements the director-side remote orchestration for amux.
+- [internal/remote/manager](internal/remote/manager/README.md) — Package manager implements the manager-role daemon for amux remote agents.
+- [internal/remote/natsconn](internal/remote/natsconn/README.md) — Package natsconn provides NATS connection management for amux.
+- [internal/session](internal/session/README.md) — Adapter bridges the session.Manager to the agent.SessionSpawner interface, breaking the import cycle between agent and session packages.
 - [internal/shutdown](internal/shutdown/README.md) — Package shutdown provides HSM-based graceful shutdown for amux.
 - [internal/telemetry](internal/telemetry/README.md) — Package telemetry provides OpenTelemetry instrumentation for amux.
 - [internal/tui](internal/tui/README.md) — Package tui provides terminal screen decoding and TUI XML encoding for amux.

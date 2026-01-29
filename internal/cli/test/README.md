@@ -21,6 +21,7 @@ See spec §12.6 for the full specification.
 - `func sha256Hex(data []byte) string`
 - `func writeSnapshot(moduleRoot string, snapshot *Snapshot) error`
 - `func writeSnapshotToStdout(snapshot *Snapshot)`
+- `pkgLineRegex` — pkgLineRegex matches "pkg: <package>" lines in go test -bench output.
 - `type Benchmark` — Benchmark contains benchmark results.
 - `type MetaInfo` — MetaInfo contains snapshot metadata.
 - `type Snapshot` — Snapshot represents the test snapshot TOML structure.
@@ -36,6 +37,14 @@ var BenchmarkRegex = regexp.MustCompile(`^Benchmark(\w+)(?:-\d+)?\s+(\d+)\s+([\d
 ```
 
 BenchmarkRegex matches benchmark output lines.
+
+#### pkgLineRegex
+
+```go
+var pkgLineRegex = regexp.MustCompile(`^pkg:\s+(\S+)`)
+```
+
+pkgLineRegex matches "pkg: <package>" lines in go test -bench output.
 
 
 ### Functions
@@ -134,6 +143,16 @@ func ParseBenchmarkOutput(output string, pkg string) []Benchmark
 
 ParseBenchmarkOutput parses go test -bench output into Benchmark entries.
 
+#### ParseBenchmarksMultiPkg
+
+```go
+func ParseBenchmarksMultiPkg(output string) []Benchmark
+```
+
+ParseBenchmarksMultiPkg parses go test -bench output that may contain
+results from multiple packages (as produced by "go test -bench=. ./...").
+Package context is tracked via "pkg:" lines emitted by the test runner.
+
 
 ## type MetaInfo
 
@@ -211,7 +230,7 @@ StepResult contains the result of a single step.
 #### runCommand
 
 ```go
-func runCommand(ctx context.Context, dir string, args []string) *StepResult
+func runCommand(ctx context.Context, dir string, args []string) (*StepResult, []byte)
 ```
 
 

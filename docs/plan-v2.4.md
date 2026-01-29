@@ -333,68 +333,68 @@ Implement remote host manager/director roles, NATS subjects, handshake, request-
 - Robust reconnection with buffering and replay ordering
 
 ### TODO list
-- [ ] Run `amux test` to capture the baseline snapshot for Phase 3
+- [x] Run `amux test` to capture the baseline snapshot for Phase 3
   - Spec reference(s): §12.6.1–§12.6.3
   - Acceptance criteria: a new `snapshots/amux-test-*.toml` exists under `<module_root>/snapshots/` and is retained as the baseline for Phase 3 regression checking.
 
-- [ ] Implement SSH bootstrap for remote hosts (daemon install/config, per-host NATS creds provisioning)
+- [x] Implement SSH bootstrap for remote hosts (daemon install/config, per-host NATS creds provisioning)
   - Spec reference(s): §5.5.2, §5.5.3, §5.5.6.4
   - Acceptance criteria: director provisions a unique credential per `host_id`; credential copied to `remote.nats.creds_path` with permissions <= `0600`; remote daemon starts and connects using the credential.
 
-- [ ] Implement hub NATS server configuration (director role) and manager leaf server configuration
+- [x] Implement hub NATS server configuration (director role) and manager leaf server configuration
   - Spec reference(s): §5.5.6.1, §5.5.6.2, §5.5.7
   - Acceptance criteria: hub accepts leaf connections; `remote.nats.subject_prefix` is honored for all subjects; integration test validates a director and manager-role daemon can connect and exchange handshake.
 
-- [ ] Implement JetStream KV bucket provisioning and required durable state keys
+- [x] Implement JetStream KV bucket provisioning and required durable state keys
   - Spec reference(s): §5.5.6.3
   - Acceptance criteria: director creates KV bucket (default `AMUX_KV`) if missing; `hosts/<host_id>/info`, `hosts/<host_id>/heartbeat`, and `sessions/<host_id>/<session_id>` keys are written and read back as UTF-8 JSON; reconnect uses KV session metadata for recovery tests.
 
-- [ ] Implement NATS authentication and per-host subject authorization rules
+- [x] Implement NATS authentication and per-host subject authorization rules
   - Spec reference(s): §5.5.6.4
   - Acceptance criteria: for a given `host_id`, publish/subscribe permissions are restricted to the exact subject sets in the spec; unauthorized publish/subscribe attempts are denied by the NATS server in tests; credentials are unique per `host_id` and never reused.
 
-- [ ] Implement NATS subject namespaces and message envelopes for remote protocol
+- [x] Implement NATS subject namespaces and message envelopes for remote protocol
   - Spec reference(s): §5.5.7.1, §5.5.7.5, §9.1.3
   - Acceptance criteria: subject strings match spec; director subscribes/publishes correct subjects; message schema validated via JSON fixtures.
 
-- [ ] Implement request-reply control operations (spawn/kill/replay) with timeout and fail-fast semantics
+- [x] Implement request-reply control operations (spawn/kill/replay) with timeout and fail-fast semantics
   - Spec reference(s): §5.5.7.2, §5.5.7.2.1
   - Acceptance criteria: director uses `remote.request_timeout`; disconnected hosts are rejected without sending NATS requests; `not_ready` errors block retries until `connection.established` observed.
 
-- [ ] Implement handshake exchange and readiness gating
+- [x] Implement handshake exchange and readiness gating
   - Spec reference(s): §5.5.7.3
   - Acceptance criteria: daemon sends handshake request on connect; director validates host_id; daemon rejects pre-handshake spawn/kill/replay with `error` `code="not_ready"`; collision handling works.
 
-- [ ] Implement remote spawn idempotency by agent_id and session_conflict behavior
+- [x] Implement remote spawn idempotency by agent_id and session_conflict behavior
   - Spec reference(s): §5.5.7.3 (spawn)
   - Acceptance criteria: second spawn for same agent_id returns existing session_id; conflicting repo_path or agent_slug returns `session_conflict`.
 
-- [ ] Implement PTY I/O subjects and payload chunking behavior
+- [x] Implement PTY I/O subjects and payload chunking behavior
   - Spec reference(s): §5.5.7.4
   - Acceptance criteria: PTY out published to `P.pty.<host_id>.<session_id>.out`; PTY in subscribed on `.in`; chunking never exceeds configured NATS max payload.
 
-- [ ] Implement per-session replay buffer (ring buffer) with ordering and live-output gating
+- [x] Implement per-session replay buffer (ring buffer) with ordering and live-output gating
   - Spec reference(s): §5.5.7.3 (Replay buffer and ordering)
   - Acceptance criteria: buffer capped at `remote.buffer_size`; disabled when 0; replay publishes snapshot oldest-to-newest; replay bytes always published before live bytes after replay request.
 
-- [ ] Implement connection recovery, hub disconnection buffering, and replay-before-live semantics after reconnect
+- [x] Implement connection recovery, hub disconnection buffering, and replay-before-live semantics after reconnect
   - Spec reference(s): §5.5.8
   - Acceptance criteria: during hub disconnection PTY output continues and is retained for replay; cross-host pubs buffer up to `remote.buffer_size` total, drop-oldest, FIFO per subject; after reconnect, no live PTY out subject publishes until replay request handled.
 
-- [ ] Implement remote session manager behaviors and director-visible exit events
+- [x] Implement remote session manager behaviors and director-visible exit events
   - Spec reference(s): §5.5.9
   - Acceptance criteria: unexpected agent exit emits event; optional remediation actions (if enabled) emit events describing actions taken.
 
 
-- [ ] The implementation MUST maintain inline Go documentation and MUST regenerate per-package `README.md` files via `go-docmd`
+- [x] The implementation MUST maintain inline Go documentation and MUST regenerate per-package `README.md` files via `go-docmd`
   - Spec reference(s): §4.2.6.1
   - Acceptance criteria: every package and exported identifier added or modified in this phase MUST include `go doc`-suitable comments; running `go run github.com/agentflare-ai/go-docmd@latest -cmd -all -inplace ./...` at the module root MUST produce no uncommitted changes; generated per-package `README.md` files MUST be committed.
 
-- [ ] Run `amux test --regression` at the end of Phase 3 to verify no regressions relative to the Phase 3 baseline snapshot
+- [x] Run `amux test --regression` at the end of Phase 3 to verify no regressions relative to the Phase 3 baseline snapshot
   - Spec reference(s): §12.6.5
   - Acceptance criteria: `amux test --regression` exits 0; any regressions are fixed before Phase 3 is considered complete; the new snapshot is written to `<module_root>/snapshots/`.
 
-- [ ] Update this plan’s TODOs for Phase 3, remove unused code/scripts, and commit Phase 3 to git
+- [x] Update this plan's TODOs for Phase 3, remove unused code/scripts, and commit Phase 3 to git
   - Spec reference(s): N/A (plan process requirement)
   - Acceptance criteria: Phase 3 TODOs are updated; `git status` is clean; the Phase 3 baseline + latest snapshots are retained; a Phase 3 commit exists in git history.
 ---

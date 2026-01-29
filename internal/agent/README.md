@@ -14,6 +14,15 @@ for lifecycle management.
 
 See spec §5 for agent management requirements.
 
+Control provides the control plane that wires lifecycle HSM transitions
+to actual session spawn/stop/kill operations.
+
+The SessionSpawner interface breaks the import cycle between agent and
+session packages: agent defines the interface, session/adapter.go adapts
+*session.Manager to satisfy it.
+
+See spec §5.4 for lifecycle state machine and §5.6 for shutdown behavior.
+
 Lifecycle provides the HSM-based agent lifecycle state machine.
 
 The lifecycle HSM implements the state transitions defined in spec §5.4:
@@ -76,6 +85,9 @@ Transitions:
 - `type LifecycleHSM` — LifecycleHSM wraps an agent with HSM-driven lifecycle management.
 - `type Manager` — Manager manages agents, including worktree isolation and lifecycle tracking.
 - `type PresenceHSM` — PresenceHSM wraps an agent with HSM-driven presence management.
+- `type SessionHandle` — SessionHandle represents a running session.
+- `type SessionSpawner` — SessionSpawner is the interface that the agent control plane uses to spawn, stop, and kill sessions.
+- `type agentHSMs` — agentHSMs holds the per-agent lifecycle and presence HSMs plus control state.
 
 ### Constants
 
@@ -535,6 +547,8 @@ type Manager struct {
 	mu         sync.RWMutex
 	agents     map[muid.MUID]*Agent
 	slugs      map[string]muid.MUID // slug -> agent ID for collision detection
+	hsms       map[muid.MUID]*agentHSMs
+	sessions   SessionSpawner
 	dispatcher event.Dispatcher
 	resolver   *paths.Resolver
 	worktrees  *worktree.Manager
@@ -542,6 +556,11 @@ type Manager struct {
 	// baseBranches tracks the base_branch per repo_root, recorded at the time
 	// the first agent for that repository is added (spec §5.7.1).
 	baseBranches map[string]string
+
+	// mergeTargetBranch is the configured git.merge.target_branch fallback.
+	// Per spec §5.7.1, when git symbolic-ref fails (detached HEAD), base_branch
+	// MUST be set to this value. If this is also empty, the add operation MUST fail.
+	mergeTargetBranch string
 }
 ```
 
@@ -606,6 +625,25 @@ func () GetBySlug(slug string) *Agent
 
 GetBySlug returns an agent by its slug.
 
+#### Manager.Kill
+
+```go
+func () Kill(ctx context.Context, agentID muid.MUID) error
+```
+
+Kill forcefully terminates an agent's session.
+
+Like Stop, the stopping flag is set so watchSession transitions to
+Terminated rather than Errored.
+
+#### Manager.LifecycleHSMFor
+
+```go
+func () LifecycleHSMFor(agentID muid.MUID) *LifecycleHSM
+```
+
+LifecycleHSMFor returns the lifecycle HSM for an agent, or nil if not found.
+
 #### Manager.List
 
 ```go
@@ -613,6 +651,14 @@ func () List() []*Agent
 ```
 
 List returns all agents.
+
+#### Manager.PresenceHSMFor
+
+```go
+func () PresenceHSMFor(agentID muid.MUID) *PresenceHSM
+```
+
+PresenceHSMFor returns the presence HSM for an agent, or nil if not found.
 
 #### Manager.Remove
 
@@ -622,6 +668,7 @@ func () Remove(ctx context.Context, id muid.MUID, deleteBranch bool) error
 
 Remove removes an agent, cleaning up its worktree if configured.
 The deleteBranch parameter controls whether the agent's git branch is deleted.
+If the agent has a running session, it is stopped first.
 
 #### Manager.Roster
 
@@ -631,6 +678,24 @@ func () Roster() []api.RosterEntry
 
 Roster returns the roster entries for all agents.
 
+#### Manager.SetMergeTargetBranch
+
+```go
+func () SetMergeTargetBranch(branch string)
+```
+
+SetMergeTargetBranch sets the configured git.merge.target_branch fallback.
+Per spec §5.7.1, this value is used as base_branch when the repository is
+in detached HEAD state (git symbolic-ref fails).
+
+#### Manager.SetSessionSpawner
+
+```go
+func () SetSessionSpawner(s SessionSpawner)
+```
+
+SetSessionSpawner sets the session spawner used by control plane methods.
+
 #### Manager.SlugExists
 
 ```go
@@ -638,6 +703,29 @@ func () SlugExists(slug string) bool
 ```
 
 SlugExists returns true if an agent with the given slug exists.
+
+#### Manager.Start
+
+```go
+func () Start(ctx context.Context, agentID muid.MUID, shell string, args ...string) error
+```
+
+Start transitions an agent from Pending to Running by spawning a session.
+
+The lifecycle HSM is driven through: Pending → Starting → Running.
+If the spawn fails, the lifecycle transitions to Errored.
+A watchSession goroutine is launched to monitor the session.
+
+#### Manager.Stop
+
+```go
+func () Stop(ctx context.Context, agentID muid.MUID) error
+```
+
+Stop gracefully stops an agent's session and waits for it to exit.
+
+The stopping flag is set so watchSession knows this was intentional
+and transitions to Terminated (not Errored).
 
 #### Manager.resolveLocalRepoRoot
 
@@ -648,6 +736,20 @@ func () resolveLocalRepoRoot(loc api.Location) (string, error)
 resolveLocalRepoRoot resolves the repo_root for a local agent.
 If location.RepoPath is set, it is validated; otherwise the current
 working directory's repo root is used.
+
+#### Manager.watchSession
+
+```go
+func () watchSession(agentID muid.MUID, handle SessionHandle)
+```
+
+watchSession monitors a session and drives the lifecycle HSM when it exits.
+
+Uses context.Background() because this goroutine outlives the Start call
+that launched it. The caller's context may be canceled independently.
+
+If stopping is true (intentional Stop/Kill), lifecycle → Terminated.
+If stopping is false (unexpected crash), lifecycle → Errored.
 
 
 ## type PresenceHSM
@@ -742,5 +844,84 @@ func () setPresenceState(state api.PresenceState)
 ```
 
 setPresenceState updates the internal state and synchronizes with the agent.
+
+
+## type SessionHandle
+
+```go
+type SessionHandle interface {
+	// Done returns a channel that is closed when the session exits.
+	Done() <-chan struct{}
+
+	// ExitErr returns the process exit error, or nil if exited cleanly.
+	ExitErr() error
+}
+```
+
+SessionHandle represents a running session. The agent package uses this
+to monitor session lifetime without importing the session package.
+
+## type SessionSpawner
+
+```go
+type SessionSpawner interface {
+	// SpawnAgent creates and starts a new PTY session for an agent.
+	SpawnAgent(ctx context.Context, ag *Agent, shell string, args ...string) (SessionHandle, error)
+
+	// StopAgent gracefully stops the session for an agent.
+	StopAgent(ctx context.Context, agentID muid.MUID) error
+
+	// KillAgent forcefully terminates the session for an agent.
+	KillAgent(ctx context.Context, agentID muid.MUID) error
+
+	// RemoveSession removes a session from the session manager.
+	RemoveSession(agentID muid.MUID)
+}
+```
+
+SessionSpawner is the interface that the agent control plane uses to
+spawn, stop, and kill sessions. It is satisfied by session.Adapter.
+
+## type agentHSMs
+
+```go
+type agentHSMs struct {
+	lifecycle *LifecycleHSM
+	presence  *PresenceHSM
+
+	// lifecycleInstance is the started HSM instance for lifecycle.
+	lifecycleInstance hsm.Instance
+
+	// presenceInstance is the started HSM instance for presence.
+	presenceInstance hsm.Instance
+
+	// stopping is set to true when Stop or Kill is called intentionally.
+	// watchSession uses this to distinguish intentional shutdown from crash.
+	stopping bool
+
+	// mu protects the stopping flag.
+	mu sync.Mutex
+}
+```
+
+agentHSMs holds the per-agent lifecycle and presence HSMs plus control state.
+
+### Methods
+
+#### agentHSMs.isStopping
+
+```go
+func () isStopping() bool
+```
+
+isStopping atomically reads the stopping flag.
+
+#### agentHSMs.setStopping
+
+```go
+func () setStopping(v bool)
+```
+
+setStopping atomically sets the stopping flag.
 
 

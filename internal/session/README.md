@@ -2,6 +2,12 @@
 
 `import "github.com/agentflare-ai/amux/internal/session"`
 
+Adapter bridges the session.Manager to the agent.SessionSpawner interface,
+breaking the import cycle between agent and session packages.
+
+The agent package defines SessionSpawner; this adapter wraps *session.Manager
+to satisfy it. The agent package never imports session directly.
+
 Package session provides local agent session management with owned PTYs.
 
 A session represents a running agent PTY instance. Each agent has at most
@@ -13,9 +19,67 @@ state transitions (Pending → Starting → Running → Terminated/Errored).
 
 See spec §5.4, §5.6, and §B.5 for lifecycle, shutdown, and PTY ownership.
 
+- `type Adapter` — Adapter wraps a *Manager to satisfy agent.SessionSpawner.
 - `type Manager` — Manager manages active sessions for agents.
 - `type Session` — Session represents a running agent PTY session.
 - `type State` — State represents the session state.
+
+## type Adapter
+
+```go
+type Adapter struct {
+	mgr *Manager
+}
+```
+
+Adapter wraps a *Manager to satisfy agent.SessionSpawner.
+
+### Functions returning Adapter
+
+#### NewAdapter
+
+```go
+func NewAdapter(mgr *Manager) *Adapter
+```
+
+NewAdapter creates a new session adapter for the given session manager.
+
+
+### Methods
+
+#### Adapter.KillAgent
+
+```go
+func () KillAgent(ctx context.Context, agentID muid.MUID) error
+```
+
+KillAgent forcefully terminates the session for an agent.
+
+#### Adapter.RemoveSession
+
+```go
+func () RemoveSession(agentID muid.MUID)
+```
+
+RemoveSession removes a session from the session manager.
+
+#### Adapter.SpawnAgent
+
+```go
+func () SpawnAgent(ctx context.Context, ag *agent.Agent, shell string, args ...string) (agent.SessionHandle, error)
+```
+
+SpawnAgent creates and starts a new PTY session for an agent.
+Returns a SessionHandle that can be used to monitor the session.
+
+#### Adapter.StopAgent
+
+```go
+func () StopAgent(ctx context.Context, agentID muid.MUID) error
+```
+
+StopAgent gracefully stops the session for an agent.
+
 
 ## type Manager
 

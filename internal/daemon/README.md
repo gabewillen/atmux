@@ -15,6 +15,8 @@ See spec §12 for the full daemon specification.
 
 - `Version` — Version is the daemon version string.
 - `func Run(ctx context.Context, args []string) error` — Run starts the daemon with the given arguments.
+- `func getHostID() string` — getHostID returns the host identifier from env or generates one.
+- `func parseArgs(cfg *config.Config, args []string)` — parseArgs overrides config values from command-line arguments.
 - `func runDirector(ctx context.Context, cfg *config.Config) error`
 - `func runManager(ctx context.Context, cfg *config.Config) error`
 - `func showHelp() error`
@@ -40,6 +42,22 @@ func Run(ctx context.Context, args []string) error
 ```
 
 Run starts the daemon with the given arguments.
+
+#### getHostID
+
+```go
+func getHostID() string
+```
+
+getHostID returns the host identifier from env or generates one.
+
+#### parseArgs
+
+```go
+func parseArgs(cfg *config.Config, args []string)
+```
+
+parseArgs overrides config values from command-line arguments.
 
 #### runDirector
 

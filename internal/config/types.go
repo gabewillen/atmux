@@ -12,6 +12,8 @@ type Config struct {
 	Process ProcessConfig
 	// Git controls merge behavior.
 	Git GitConfig
+	// Shutdown controls graceful shutdown behavior.
+	Shutdown ShutdownConfig
 	// Events configures event batching and coalescing.
 	Events EventsConfig
 	// Remote controls remote transport configuration.
@@ -76,6 +78,14 @@ type GitMergeConfig struct {
 	AllowDirty bool
 	// TargetBranch overrides the base branch.
 	TargetBranch string
+}
+
+// ShutdownConfig controls graceful shutdown behavior.
+type ShutdownConfig struct {
+	// DrainTimeout is the duration before forcing termination.
+	DrainTimeout time.Duration
+	// CleanupWorktrees removes worktrees and branches on shutdown.
+	CleanupWorktrees bool
 }
 
 // EventsConfig configures event batching/coalescing.

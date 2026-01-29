@@ -1,5 +1,6 @@
 - `func benchKey(item benchmark) string`
 - `func benchmarkIndex(items []benchmark) map[string]benchmark`
+- `func connectDaemon(ctx context.Context) (*rpc.Client, *paths.Resolver, config.Config, error)`
 - `func encodeSnapshot(s snapshot) (string, error)`
 - `func ensureExecutables(names []string) error`
 - `func findBaselineSnapshot(moduleRoot string, currentPath string) (string, error)`
@@ -8,13 +9,27 @@
 - `func formatStringArray(values []string) string`
 - `func hashBytes(data []byte) string`
 - `func main()`
+- `func parseAgentRefFlags(name string, args []string) (map[string]any, error)`
 - `func parseCoverageTotal(profilePath string) (float64, error)`
 - `func parseStringArray(value any) ([]string, bool)`
 - `func quoteString(value string) string`
+- `func runAgent(args []string) error`
+- `func runAgentAdd(args []string) error`
+- `func runAgentAttach(args []string) error`
+- `func runAgentList(args []string) error`
+- `func runAgentRefCommand(args []string, method string) error`
+- `func runAgentRemove(args []string) error`
+- `func runAgentRestart(args []string) error`
+- `func runAgentStart(args []string) error`
+- `func runAgentStop(args []string) error`
+- `func runGit(args []string) error`
+- `func runGitMerge(args []string) error`
 - `func runSteps(moduleRoot string) (map[string]stepResult, error)`
 - `func runTest(args []string) error`
+- `func startDaemon(ctx context.Context, resolver *paths.Resolver, socketPath string) error`
 - `func summarizeSteps(w io.Writer, steps map[string]stepResult) error`
 - `func toInt(value any) int`
+- `func waitForSocket(ctx context.Context, socketPath string) error`
 - `func writeSnapshotFile(moduleRoot string, snap snapshot) (string, error)`
 - `specVersion`
 - `type benchmark`
@@ -45,6 +60,12 @@ func benchKey(item benchmark) string
 
 ```go
 func benchmarkIndex(items []benchmark) map[string]benchmark
+```
+
+#### connectDaemon
+
+```go
+func connectDaemon(ctx context.Context) (*rpc.Client, *paths.Resolver, config.Config, error)
 ```
 
 #### encodeSnapshot
@@ -95,6 +116,12 @@ func hashBytes(data []byte) string
 func main()
 ```
 
+#### parseAgentRefFlags
+
+```go
+func parseAgentRefFlags(name string, args []string) (map[string]any, error)
+```
+
 #### parseCoverageTotal
 
 ```go
@@ -113,6 +140,72 @@ func parseStringArray(value any) ([]string, bool)
 func quoteString(value string) string
 ```
 
+#### runAgent
+
+```go
+func runAgent(args []string) error
+```
+
+#### runAgentAdd
+
+```go
+func runAgentAdd(args []string) error
+```
+
+#### runAgentAttach
+
+```go
+func runAgentAttach(args []string) error
+```
+
+#### runAgentList
+
+```go
+func runAgentList(args []string) error
+```
+
+#### runAgentRefCommand
+
+```go
+func runAgentRefCommand(args []string, method string) error
+```
+
+#### runAgentRemove
+
+```go
+func runAgentRemove(args []string) error
+```
+
+#### runAgentRestart
+
+```go
+func runAgentRestart(args []string) error
+```
+
+#### runAgentStart
+
+```go
+func runAgentStart(args []string) error
+```
+
+#### runAgentStop
+
+```go
+func runAgentStop(args []string) error
+```
+
+#### runGit
+
+```go
+func runGit(args []string) error
+```
+
+#### runGitMerge
+
+```go
+func runGitMerge(args []string) error
+```
+
 #### runSteps
 
 ```go
@@ -125,6 +218,12 @@ func runSteps(moduleRoot string) (map[string]stepResult, error)
 func runTest(args []string) error
 ```
 
+#### startDaemon
+
+```go
+func startDaemon(ctx context.Context, resolver *paths.Resolver, socketPath string) error
+```
+
 #### summarizeSteps
 
 ```go
@@ -135,6 +234,12 @@ func summarizeSteps(w io.Writer, steps map[string]stepResult) error
 
 ```go
 func toInt(value any) int
+```
+
+#### waitForSocket
+
+```go
+func waitForSocket(ctx context.Context, socketPath string) error
 ```
 
 #### writeSnapshotFile

@@ -3,6 +3,7 @@ package pty
 import (
 	"fmt"
 	"os"
+	"os/exec"
 
 	"github.com/creack/pty"
 )
@@ -20,6 +21,18 @@ func Open() (*Pair, error) {
 		return nil, fmt.Errorf("pty open: %w", err)
 	}
 	return &Pair{Master: master, Slave: slave}, nil
+}
+
+// Start starts a command with a new PTY and returns the master.
+func Start(cmd *exec.Cmd) (*os.File, error) {
+	if cmd == nil {
+		return nil, fmt.Errorf("pty start: command is nil")
+	}
+	master, err := pty.Start(cmd)
+	if err != nil {
+		return nil, fmt.Errorf("pty start: %w", err)
+	}
+	return master, nil
 }
 
 // Close closes the PTY pair.

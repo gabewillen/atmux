@@ -12,14 +12,17 @@ overrides, and value parsing conventions defined by the spec.
 - `EnvOverridePrefix` — EnvOverridePrefix is the required environment variable prefix.
 - `byteSizePattern`
 - `func AdapterNames(cfg Config) []string` — AdapterNames returns a sorted list of adapter names in config.
+- `func EncodeTOML(data map[string]any) ([]byte, error)` — EncodeTOML encodes a nested map into TOML.
 - `func EnvMap() map[string]string` — EnvMap returns a map of the current process environment.
 - `func EnvOverrides(env map[string]string) (map[string]any, error)` — EnvOverrides converts environment variables into a TOML-like map overlay.
 - `func FindSensitiveKeys(node map[string]any, prefix string) []string` — FindSensitiveKeys returns dot-paths for keys that look sensitive.
+- `func LoadConfigFile(path string) (map[string]any, error)` — LoadConfigFile reads and parses a TOML config file.
 - `func MergeMaps(base map[string]any, override map[string]any) error` — MergeMaps overlays override onto base recursively.
 - `func ParseTOML(data []byte) (map[string]any, error)` — ParseTOML parses a minimal TOML subset into a nested map.
 - `func RedactSensitive(node map[string]any) map[string]any` — RedactSensitive returns a copy of the map with sensitive values replaced.
 - `func ResolveConfigPath(root string, path string) (string, error)` — ResolveConfigPath ensures config paths exist and are within repo when needed.
 - `func ValidateSemverConstraint(expr string) error` — ValidateSemverConstraint validates a conjunction of semver comparisons.
+- `func WriteConfigFile(path string, data map[string]any) error` — WriteConfigFile writes a TOML config file.
 - `func adapterNamesFromMap(root map[string]any) []string`
 - `func adapterPatterns(cfg AdapterConfig) map[string]any`
 - `func applyAdapters(cfg *Config, raw map[string]any) error`
@@ -33,14 +36,20 @@ overrides, and value parsing conventions defined by the spec.
 - `func applyPlugins(cfg *Config, raw map[string]any, resolver *paths.Resolver) error`
 - `func applyProcess(cfg *Config, raw map[string]any, resolver *paths.Resolver) error`
 - `func applyRemote(cfg *Config, raw map[string]any, resolver *paths.Resolver) error`
+- `func applyShutdown(cfg *Config, raw map[string]any) error`
 - `func applyTelemetry(cfg *Config, raw map[string]any) error`
 - `func applyTimeouts(cfg *Config, raw map[string]any) error`
 - `func cloneMap(source map[string]any) map[string]any`
 - `func compare(changes *[]ConfigChange, path string, oldVal any, newVal any)`
 - `func expandPath(resolver *paths.Resolver, value string) string`
+- `func flattenEntry(prefix string, value any, out map[string]any) error`
+- `func formatArray(values []any) (string, error)`
+- `func formatValue(value any) (string, error)`
 - `func getOrCreateArrayTable(root map[string]any, path []string) ([]any, error)`
 - `func getOrCreateTable(root map[string]any, path []string) (map[string]any, error)`
+- `func isArrayTable(value any) bool`
 - `func isSensitiveKey(key string) bool`
+- `func isTable(value any) bool`
 - `func mergeAdapterDefaults(target map[string]any, provider AdapterDefaultsProvider) error`
 - `func mergeAdapterFiles(target map[string]any, adapters []string, pathFn func(string) string, logger *log.Logger) error`
 - `func mergeFile(target map[string]any, path string, logger *log.Logger) error`
@@ -62,6 +71,8 @@ overrides, and value parsing conventions defined by the spec.
 - `func validateAdapterConstraint(name string, section map[string]any) error`
 - `func validateAdapterDefaults(name string, parsed map[string]any) error`
 - `func warnSensitive(logger *log.Logger, path string, parsed map[string]any)`
+- `func writeArrayTable(b *strings.Builder, path []string, entries []any) error`
+- `func writeTable(b *strings.Builder, path []string, table map[string]any) error`
 - `semverConstraintPattern`
 - `type AdapterConfig` — AdapterConfig holds adapter-specific configuration.
 - `type AdapterDefault` — AdapterDefault provides adapter-scoped default configuration in TOML.
@@ -86,6 +97,7 @@ overrides, and value parsing conventions defined by the spec.
 - `type RemoteConfig` — RemoteConfig configures remote transport settings.
 - `type RemoteManagerConfig` — RemoteManagerConfig configures manager behavior.
 - `type RemoteNATSConfig` — RemoteNATSConfig configures NATS transport.
+- `type ShutdownConfig` — ShutdownConfig controls graceful shutdown behavior.
 - `type TelemetryConfig` — TelemetryConfig configures OpenTelemetry.
 - `type TelemetryExporterConfig` — TelemetryExporterConfig configures the OTLP exporter.
 - `type TelemetryLogsConfig` — TelemetryLogsConfig configures logs.
@@ -180,6 +192,14 @@ func AdapterNames(cfg Config) []string
 
 AdapterNames returns a sorted list of adapter names in config.
 
+#### EncodeTOML
+
+```go
+func EncodeTOML(data map[string]any) ([]byte, error)
+```
+
+EncodeTOML encodes a nested map into TOML.
+
 #### EnvMap
 
 ```go
@@ -203,6 +223,14 @@ func FindSensitiveKeys(node map[string]any, prefix string) []string
 ```
 
 FindSensitiveKeys returns dot-paths for keys that look sensitive.
+
+#### LoadConfigFile
+
+```go
+func LoadConfigFile(path string) (map[string]any, error)
+```
+
+LoadConfigFile reads and parses a TOML config file.
 
 #### MergeMaps
 
@@ -243,6 +271,14 @@ func ValidateSemverConstraint(expr string) error
 ```
 
 ValidateSemverConstraint validates a conjunction of semver comparisons.
+
+#### WriteConfigFile
+
+```go
+func WriteConfigFile(path string, data map[string]any) error
+```
+
+WriteConfigFile writes a TOML config file.
 
 #### adapterNamesFromMap
 
@@ -322,6 +358,12 @@ func applyProcess(cfg *Config, raw map[string]any, resolver *paths.Resolver) err
 func applyRemote(cfg *Config, raw map[string]any, resolver *paths.Resolver) error
 ```
 
+#### applyShutdown
+
+```go
+func applyShutdown(cfg *Config, raw map[string]any) error
+```
+
 #### applyTelemetry
 
 ```go
@@ -352,6 +394,24 @@ func compare(changes *[]ConfigChange, path string, oldVal any, newVal any)
 func expandPath(resolver *paths.Resolver, value string) string
 ```
 
+#### flattenEntry
+
+```go
+func flattenEntry(prefix string, value any, out map[string]any) error
+```
+
+#### formatArray
+
+```go
+func formatArray(values []any) (string, error)
+```
+
+#### formatValue
+
+```go
+func formatValue(value any) (string, error)
+```
+
 #### getOrCreateArrayTable
 
 ```go
@@ -364,10 +424,22 @@ func getOrCreateArrayTable(root map[string]any, path []string) ([]any, error)
 func getOrCreateTable(root map[string]any, path []string) (map[string]any, error)
 ```
 
+#### isArrayTable
+
+```go
+func isArrayTable(value any) bool
+```
+
 #### isSensitiveKey
 
 ```go
 func isSensitiveKey(key string) bool
+```
+
+#### isTable
+
+```go
+func isTable(value any) bool
 ```
 
 #### mergeAdapterDefaults
@@ -496,6 +568,18 @@ func validateAdapterDefaults(name string, parsed map[string]any) error
 func warnSensitive(logger *log.Logger, path string, parsed map[string]any)
 ```
 
+#### writeArrayTable
+
+```go
+func writeArrayTable(b *strings.Builder, path []string, entries []any) error
+```
+
+#### writeTable
+
+```go
+func writeTable(b *strings.Builder, path []string, table map[string]any) error
+```
+
 
 ## type AdapterConfig
 
@@ -615,6 +699,8 @@ type Config struct {
 	Process ProcessConfig
 	// Git controls merge behavior.
 	Git GitConfig
+	// Shutdown controls graceful shutdown behavior.
+	Shutdown ShutdownConfig
 	// Events configures event batching and coalescing.
 	Events EventsConfig
 	// Remote controls remote transport configuration.
@@ -1009,6 +1095,19 @@ type RemoteNATSConfig struct {
 ```
 
 RemoteNATSConfig configures NATS transport.
+
+## type ShutdownConfig
+
+```go
+type ShutdownConfig struct {
+	// DrainTimeout is the duration before forcing termination.
+	DrainTimeout time.Duration
+	// CleanupWorktrees removes worktrees and branches on shutdown.
+	CleanupWorktrees bool
+}
+```
+
+ShutdownConfig controls graceful shutdown behavior.
 
 ## type TelemetryConfig
 

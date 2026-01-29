@@ -60,6 +60,30 @@ func (r *Resolver) WorktreePath(agentSlug string) string {
 	return filepath.Join(r.WorktreesDir(), agentSlug)
 }
 
+// AmuxRootForRepo returns the .amux directory for the provided repo root.
+func AmuxRootForRepo(repoRoot string) string {
+	if repoRoot == "" {
+		return ""
+	}
+	return filepath.Join(repoRoot, ".amux")
+}
+
+// WorktreesDirForRepo returns the worktrees directory for the provided repo root.
+func WorktreesDirForRepo(repoRoot string) string {
+	if repoRoot == "" {
+		return ""
+	}
+	return filepath.Join(AmuxRootForRepo(repoRoot), "worktrees")
+}
+
+// WorktreePathForRepo returns the worktree path for the provided repo root and slug.
+func WorktreePathForRepo(repoRoot, agentSlug string) string {
+	if repoRoot == "" {
+		return ""
+	}
+	return filepath.Join(WorktreesDirForRepo(repoRoot), agentSlug)
+}
+
 // UserConfigPath returns the user config path (~/.config/amux/config.toml).
 func (r *Resolver) UserConfigPath() string {
 	return filepath.Join(r.homeDir, ".config", "amux", "config.toml")

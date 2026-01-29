@@ -9,8 +9,11 @@ The core loads adapters by string name via the WASM registry.
 - `ErrAdapterInvalid, ErrAdapterMissingExport, ErrAdapterManifestMismatch, ErrAdapterExecutionFailed`
 - `ErrAdapterNotFound` — ErrAdapterNotFound is returned when a named adapter cannot be loaded.
 - `type ActionFormatter` — ActionFormatter converts a high-level action into agent input.
+- `type AdapterCommands` — AdapterCommands describes commands used to control the agent.
+- `type AdapterPatterns` — AdapterPatterns defines adapter output detection patterns.
 - `type Adapter` — Adapter is the runtime-facing interface to a loaded adapter.
-- `type Manifest` — Manifest describes the minimal adapter manifest fields needed by the runtime.
+- `type CLIRequirement` — CLIRequirement describes the adapter CLI requirements.
+- `type Manifest` — Manifest describes adapter capabilities and requirements.
 - `type NoopAdapter` — NoopAdapter returns no matches and echoes input.
 - `type NoopFormatter` — NoopFormatter returns the input unchanged.
 - `type NoopMatcher` — NoopMatcher returns no matches.
@@ -73,6 +76,7 @@ ActionFormatter converts a high-level action into agent input.
 ```go
 type Adapter interface {
 	Name() string
+	Manifest() Manifest
 	Matcher() PatternMatcher
 	Formatter() ActionFormatter
 }
@@ -80,15 +84,75 @@ type Adapter interface {
 
 Adapter is the runtime-facing interface to a loaded adapter.
 
+## type AdapterCommands
+
+```go
+type AdapterCommands struct {
+	// Start is the argv used to start the agent.
+	Start []string `json:"start"`
+	// SendMessage formats an outbound message.
+	SendMessage string `json:"send_message"`
+}
+```
+
+AdapterCommands describes commands used to control the agent.
+
+## type AdapterPatterns
+
+```go
+type AdapterPatterns struct {
+	// Prompt detects readiness for input.
+	Prompt string `json:"prompt"`
+	// RateLimit detects rate limiting.
+	RateLimit string `json:"rate_limit"`
+	// Error detects error output.
+	Error string `json:"error"`
+	// Completion detects task completion.
+	Completion string `json:"completion"`
+	// Message detects outbound messages.
+	Message string `json:"message,omitempty"`
+}
+```
+
+AdapterPatterns defines adapter output detection patterns.
+
+## type CLIRequirement
+
+```go
+type CLIRequirement struct {
+	// Binary is the CLI binary name.
+	Binary string `json:"binary"`
+	// VersionCmd is the command used to fetch the CLI version.
+	VersionCmd string `json:"version_cmd"`
+	// VersionRe is the regex to parse the version.
+	VersionRe string `json:"version_re"`
+	// Constraint is the semantic version constraint.
+	Constraint string `json:"constraint"`
+}
+```
+
+CLIRequirement describes the adapter CLI requirements.
+
 ## type Manifest
 
 ```go
 type Manifest struct {
+	// Name is the adapter identifier.
 	Name string `json:"name"`
+	// Version is the adapter version string.
+	Version string `json:"version"`
+	// Description is a human-readable description.
+	Description string `json:"description,omitempty"`
+	// CLI defines CLI requirements.
+	CLI CLIRequirement `json:"cli"`
+	// Patterns defines output patterns.
+	Patterns AdapterPatterns `json:"patterns"`
+	// Commands defines adapter commands.
+	Commands AdapterCommands `json:"commands"`
 }
 ```
 
-Manifest describes the minimal adapter manifest fields needed by the runtime.
+Manifest describes adapter capabilities and requirements.
 
 ## type NoopAdapter
 
@@ -120,6 +184,14 @@ func () Formatter() ActionFormatter
 ```
 
 Formatter returns a noop formatter.
+
+#### NoopAdapter.Manifest
+
+```go
+func () Manifest() Manifest
+```
+
+Manifest returns the noop manifest.
 
 #### NoopAdapter.Matcher
 
@@ -266,16 +338,17 @@ func () findModule(name string) (string, []byte, error)
 
 ```go
 type wasmAdapter struct {
-	name       string
-	module     api.Module
-	memory     api.Memory
-	alloc      api.Function
-	free       api.Function
-	manifestFn api.Function
-	onOutputFn api.Function
-	formatFn   api.Function
-	onEventFn  api.Function
-	mu         sync.Mutex
+	name          string
+	module        api.Module
+	memory        api.Memory
+	alloc         api.Function
+	free          api.Function
+	manifestFn    api.Function
+	onOutputFn    api.Function
+	formatFn      api.Function
+	onEventFn     api.Function
+	manifestCache Manifest
+	mu            sync.Mutex
 }
 ```
 
@@ -295,6 +368,14 @@ func newWasmAdapter(name string, module api.Module) (*wasmAdapter, error)
 ```go
 func () Formatter() ActionFormatter
 ```
+
+#### wasmAdapter.Manifest
+
+```go
+func () Manifest() Manifest
+```
+
+Manifest returns the adapter manifest.
 
 #### wasmAdapter.Matcher
 

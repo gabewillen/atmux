@@ -175,9 +175,6 @@ func (a Agent) Validate() error {
 	if strings.TrimSpace(a.Name) == "" {
 		return fmt.Errorf("agent: %w", ErrInvalidAgent)
 	}
-	if strings.TrimSpace(a.About) == "" {
-		return fmt.Errorf("agent: %w", ErrInvalidAgent)
-	}
 	if strings.TrimSpace(string(a.Adapter)) == "" {
 		return fmt.Errorf("agent: %w", ErrInvalidAgent)
 	}

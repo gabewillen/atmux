@@ -8,12 +8,16 @@ All event dispatch flows through NATS-backed implementations.
 
 - `ErrNATSNotConnected, ErrNATSProtocol`
 - `func Subject(parts ...string) string` — Subject joins subject segments for NATS routing.
+- `func parseLength(raw string) (int, error)`
 - `func parseMsgLine(line string) (string, string, int, error)`
 - `type Dispatcher` — Dispatcher publishes and subscribes to events over NATS.
+- `type EmbeddedServer` — EmbeddedServer provides a minimal NATS-compatible server for local use.
 - `type Event` — Event is the generic event envelope used for dispatch.
 - `type NATSDispatcher` — NATSDispatcher publishes and subscribes to events over NATS.
 - `type Subscription` — Subscription represents an active event subscription.
+- `type connState`
 - `type natsSubscription`
+- `type subscription`
 
 ### Variables
 
@@ -39,6 +43,12 @@ func Subject(parts ...string) string
 
 Subject joins subject segments for NATS routing.
 
+#### parseLength
+
+```go
+func parseLength(raw string) (int, error)
+```
+
 #### parseMsgLine
 
 ```go
@@ -56,6 +66,91 @@ type Dispatcher interface {
 ```
 
 Dispatcher publishes and subscribes to events over NATS.
+
+## type EmbeddedServer
+
+```go
+type EmbeddedServer struct {
+	listener net.Listener
+	mu       sync.Mutex
+	closed   bool
+	subs     map[string]*subscription
+}
+```
+
+EmbeddedServer provides a minimal NATS-compatible server for local use.
+
+### Functions returning EmbeddedServer
+
+#### StartEmbeddedServer
+
+```go
+func StartEmbeddedServer(ctx context.Context, addr string) (*EmbeddedServer, error)
+```
+
+StartEmbeddedServer starts a local NATS-compatible server.
+
+
+### Methods
+
+#### EmbeddedServer.Close
+
+```go
+func () Close() error
+```
+
+Close stops the embedded server.
+
+#### EmbeddedServer.URL
+
+```go
+func () URL() string
+```
+
+URL returns the nats:// URL for the embedded server.
+
+#### EmbeddedServer.acceptLoop
+
+```go
+func () acceptLoop(ctx context.Context)
+```
+
+#### EmbeddedServer.handleConn
+
+```go
+func () handleConn(ctx context.Context, state *connState)
+```
+
+#### EmbeddedServer.handlePub
+
+```go
+func () handlePub(state *connState, line string)
+```
+
+#### EmbeddedServer.handleSub
+
+```go
+func () handleSub(state *connState, line string)
+```
+
+#### EmbeddedServer.handleUnsub
+
+```go
+func () handleUnsub(state *connState, line string)
+```
+
+#### EmbeddedServer.publish
+
+```go
+func () publish(subject string, payload []byte)
+```
+
+#### EmbeddedServer.removeConn
+
+```go
+func () removeConn(state *connState)
+```
+
 
 ## type Event
 
@@ -169,6 +264,33 @@ type Subscription interface {
 
 Subscription represents an active event subscription.
 
+## type connState
+
+```go
+type connState struct {
+	conn   net.Conn
+	reader *bufio.Reader
+	writer *bufio.Writer
+	mu     sync.Mutex
+	sids   map[string]struct{}
+}
+```
+
+### Methods
+
+#### connState.sendMessage
+
+```go
+func () sendMessage(subject, sid string, payload []byte)
+```
+
+#### connState.writeLine
+
+```go
+func () writeLine(line string) error
+```
+
+
 ## type natsSubscription
 
 ```go
@@ -186,4 +308,14 @@ type natsSubscription struct {
 func () Unsubscribe() error
 ```
 
+
+## type subscription
+
+```go
+type subscription struct {
+	connState *connState
+	subject   string
+	sid       string
+}
+```
 

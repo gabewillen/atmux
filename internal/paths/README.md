@@ -8,10 +8,13 @@ It is the single source of truth for repo-scoped, user-scoped, and runtime
 paths derived from config and environment variables.
 
 - `ErrRepoRootNotFound` — ErrRepoRootNotFound is returned when a git repository root cannot be located.
+- `func AmuxRootForRepo(repoRoot string) string` — AmuxRootForRepo returns the .amux directory for the provided repo root.
 - `func CanonicalizeRepoRoot(path string, homeDir string) (string, error)` — CanonicalizeRepoRoot applies repo_root canonicalization rules.
 - `func FindRepoRoot(start string) (string, error)` — FindRepoRoot searches upward from start for a git repository root.
 - `func SlugifyAgent(name string) string` — SlugifyAgent derives the agent slug per the spec rules.
 - `func UniqueAgentSlug(name string, used map[string]struct{}) string` — UniqueAgentSlug ensures the agent slug is unique within the provided set.
+- `func WorktreePathForRepo(repoRoot, agentSlug string) string` — WorktreePathForRepo returns the worktree path for the provided repo root and slug.
+- `func WorktreesDirForRepo(repoRoot string) string` — WorktreesDirForRepo returns the worktrees directory for the provided repo root.
 - `func expandHomePath(path string, homeOverride string) (string, error)`
 - `type Resolver` — Resolver resolves filesystem paths based on repo root and user home.
 
@@ -27,6 +30,14 @@ ErrRepoRootNotFound is returned when a git repository root cannot be located.
 
 
 ### Functions
+
+#### AmuxRootForRepo
+
+```go
+func AmuxRootForRepo(repoRoot string) string
+```
+
+AmuxRootForRepo returns the .amux directory for the provided repo root.
 
 #### CanonicalizeRepoRoot
 
@@ -59,6 +70,22 @@ func UniqueAgentSlug(name string, used map[string]struct{}) string
 ```
 
 UniqueAgentSlug ensures the agent slug is unique within the provided set.
+
+#### WorktreePathForRepo
+
+```go
+func WorktreePathForRepo(repoRoot, agentSlug string) string
+```
+
+WorktreePathForRepo returns the worktree path for the provided repo root and slug.
+
+#### WorktreesDirForRepo
+
+```go
+func WorktreesDirForRepo(repoRoot string) string
+```
+
+WorktreesDirForRepo returns the worktrees directory for the provided repo root.
 
 #### expandHomePath
 

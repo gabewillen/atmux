@@ -27,11 +27,6 @@ var (
 	ErrAdapterExecutionFailed = errors.New("adapter execution failed")
 )
 
-// Manifest describes the minimal adapter manifest fields needed by the runtime.
-type Manifest struct {
-	Name string `json:"name"`
-}
-
 // WazeroRegistry loads adapters from WASM modules using wazero.
 type WazeroRegistry struct {
 	resolver *paths.Resolver
@@ -100,6 +95,7 @@ func (r *WazeroRegistry) Load(ctx context.Context, name string) (Adapter, error)
 		_ = module.Close(ctx)
 		return nil, fmt.Errorf("load adapter %s: %w", name, ErrAdapterManifestMismatch)
 	}
+	adapter.manifestCache = manifest
 	return adapter, nil
 }
 
@@ -144,6 +140,7 @@ type wasmAdapter struct {
 	onOutputFn api.Function
 	formatFn   api.Function
 	onEventFn  api.Function
+	manifestCache Manifest
 	mu         sync.Mutex
 }
 
@@ -179,6 +176,11 @@ func newWasmAdapter(name string, module api.Module) (*wasmAdapter, error) {
 
 func (w *wasmAdapter) Name() string {
 	return w.name
+}
+
+// Manifest returns the adapter manifest.
+func (w *wasmAdapter) Manifest() Manifest {
+	return w.manifestCache
 }
 
 func (w *wasmAdapter) Matcher() PatternMatcher {

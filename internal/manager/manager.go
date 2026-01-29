@@ -1,0 +1,764 @@
+package manager
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/agentflare-ai/amux/internal/adapter"
+	"github.com/agentflare-ai/amux/internal/agent"
+	"github.com/agentflare-ai/amux/internal/config"
+	"github.com/agentflare-ai/amux/internal/git"
+	"github.com/agentflare-ai/amux/internal/paths"
+	"github.com/agentflare-ai/amux/internal/protocol"
+	"github.com/agentflare-ai/amux/internal/session"
+	"github.com/agentflare-ai/amux/pkg/api"
+)
+
+var (
+	// ErrAgentNotFound is returned when an agent cannot be found.
+	ErrAgentNotFound = errors.New("agent not found")
+	// ErrAgentAmbiguous is returned when a name matches multiple agents.
+	ErrAgentAmbiguous = errors.New("agent name is ambiguous")
+	// ErrAgentInvalid is returned when an agent request is invalid.
+	ErrAgentInvalid = errors.New("agent invalid")
+)
+
+// AddRequest describes a local agent add request.
+type AddRequest struct {
+	Name     string
+	About    string
+	Adapter  string
+	Location api.Location
+	Cwd      string
+}
+
+// RemoveRequest describes an agent removal request.
+type RemoveRequest struct {
+	AgentID api.AgentID
+	Name    string
+}
+
+// AgentRecord describes a managed agent.
+type AgentRecord struct {
+	ID       api.AgentID
+	Name     string
+	About    string
+	Adapter  string
+	RepoRoot string
+	Worktree string
+	Slug     string
+	Presence string
+	Location api.Location
+}
+
+type agentState struct {
+	runtime  *agent.Agent
+	slug     string
+	repoRoot string
+	worktree string
+	session  *session.LocalSession
+	config   config.AgentConfig
+}
+
+// LocalManager manages local agents and sessions.
+type LocalManager struct {
+	resolver   *paths.Resolver
+	dispatcher protocol.Dispatcher
+	cfg        config.Config
+	git        *git.Runner
+	mu         sync.Mutex
+	agents     map[api.AgentID]*agentState
+	nameIndex  map[string][]api.AgentID
+	bases      map[string]string
+	registries map[string]adapter.Registry
+	registryFactory func(*paths.Resolver) (adapter.Registry, error)
+}
+
+// NewLocalManager constructs a LocalManager.
+func NewLocalManager(ctx context.Context, resolver *paths.Resolver, cfg config.Config, dispatcher protocol.Dispatcher) (*LocalManager, error) {
+	if resolver == nil {
+		return nil, fmt.Errorf("new manager: %w", ErrAgentInvalid)
+	}
+	if dispatcher == nil {
+		return nil, fmt.Errorf("new manager: %w", ErrAgentInvalid)
+	}
+	mgr := &LocalManager{
+		resolver:   resolver,
+		dispatcher: dispatcher,
+		cfg:        cfg,
+		git:        git.NewRunner(),
+		agents:     make(map[api.AgentID]*agentState),
+		nameIndex:  make(map[string][]api.AgentID),
+		bases:      make(map[string]string),
+		registries: make(map[string]adapter.Registry),
+		registryFactory: func(resolver *paths.Resolver) (adapter.Registry, error) {
+			return adapter.NewWazeroRegistry(context.Background(), resolver)
+		},
+	}
+	if err := mgr.loadFromConfig(ctx); err != nil {
+		return nil, fmt.Errorf("new manager: %w", err)
+	}
+	return mgr, nil
+}
+
+// AddAgent adds and starts a local agent.
+func (m *LocalManager) AddAgent(ctx context.Context, req AddRequest) (AgentRecord, error) {
+	if strings.TrimSpace(req.Name) == "" || strings.TrimSpace(req.Adapter) == "" {
+		return AgentRecord{}, fmt.Errorf("add agent: %w", ErrAgentInvalid)
+	}
+	location, repoRoot, err := m.resolveLocation(req)
+	if err != nil {
+		return AgentRecord{}, fmt.Errorf("add agent: %w", err)
+	}
+	if err := ensureGitRepo(repoRoot); err != nil {
+		return AgentRecord{}, fmt.Errorf("add agent: %w", err)
+	}
+	m.mu.Lock()
+	used := make(map[string]struct{})
+	for _, state := range m.agents {
+		used[state.slug] = struct{}{}
+	}
+	slug := paths.UniqueAgentSlug(req.Name, used)
+	m.mu.Unlock()
+	worktree, err := m.git.EnsureWorktree(ctx, repoRoot, slug)
+	if err != nil {
+		return AgentRecord{}, fmt.Errorf("add agent: %w", err)
+	}
+	agentMeta, err := api.NewAgent(req.Name, req.About, api.AdapterRef(req.Adapter), repoRoot, worktree.Path, location)
+	if err != nil {
+		return AgentRecord{}, fmt.Errorf("add agent: %w", err)
+	}
+	runtime, err := agent.NewAgent(agentMeta, m.dispatcher)
+	if err != nil {
+		return AgentRecord{}, fmt.Errorf("add agent: %w", err)
+	}
+	cfgEntry := config.AgentConfig{
+		Name:    req.Name,
+		About:   req.About,
+		Adapter: req.Adapter,
+		Location: config.AgentLocationConfig{
+			Type:     location.Type.String(),
+			Host:     location.Host,
+			RepoPath: repoRoot,
+		},
+	}
+	if err := m.appendAgentConfig(cfgEntry); err != nil {
+		_ = m.git.RemoveWorktree(ctx, repoRoot, slug, m.cfg.Shutdown.CleanupWorktrees)
+		return AgentRecord{}, fmt.Errorf("add agent: %w", err)
+	}
+	state := &agentState{
+		runtime:  runtime,
+		slug:     slug,
+		repoRoot: repoRoot,
+		worktree: worktree.Path,
+		config:   cfgEntry,
+	}
+	m.mu.Lock()
+	m.agents[agentMeta.ID] = state
+	m.nameIndex[req.Name] = append(m.nameIndex[req.Name], agentMeta.ID)
+	m.cfg.Agents = append(m.cfg.Agents, cfgEntry)
+	m.mu.Unlock()
+	if _, err := m.baseBranch(ctx, repoRoot); err != nil {
+		_ = m.removeAgentConfig(cfgEntry)
+		_ = m.git.RemoveWorktree(ctx, repoRoot, slug, m.cfg.Shutdown.CleanupWorktrees)
+		m.mu.Lock()
+		delete(m.agents, agentMeta.ID)
+		m.removeNameIndexLocked(req.Name, agentMeta.ID)
+		m.mu.Unlock()
+		return AgentRecord{}, fmt.Errorf("add agent: %w", err)
+	}
+	if _, err := m.startSession(ctx, agentMeta.ID); err != nil {
+		_ = m.removeAgentConfig(cfgEntry)
+		_ = m.git.RemoveWorktree(ctx, repoRoot, slug, m.cfg.Shutdown.CleanupWorktrees)
+		m.mu.Lock()
+		delete(m.agents, agentMeta.ID)
+		m.removeNameIndexLocked(req.Name, agentMeta.ID)
+		m.mu.Unlock()
+		return AgentRecord{}, fmt.Errorf("add agent: %w", err)
+	}
+	m.emit(ctx, "agent.added", AgentRecord{
+		ID:       agentMeta.ID,
+		Name:     req.Name,
+		About:    req.About,
+		Adapter:  req.Adapter,
+		RepoRoot: repoRoot,
+		Worktree: worktree.Path,
+		Slug:     slug,
+		Presence: statePresence(runtime),
+		Location: location,
+	})
+	return AgentRecord{
+		ID:       agentMeta.ID,
+		Name:     req.Name,
+		About:    req.About,
+		Adapter:  req.Adapter,
+		RepoRoot: repoRoot,
+		Worktree: worktree.Path,
+		Slug:     slug,
+		Presence: statePresence(runtime),
+		Location: location,
+	}, nil
+}
+
+// RemoveAgent removes an agent and its worktree.
+func (m *LocalManager) RemoveAgent(ctx context.Context, req RemoveRequest) error {
+	state, id, err := m.findAgent(req)
+	if err != nil {
+		return fmt.Errorf("remove agent: %w", err)
+	}
+	if err := m.stopSession(ctx, id); err != nil {
+		return fmt.Errorf("remove agent: %w", err)
+	}
+	if err := m.removeAgentConfig(state.config); err != nil {
+		return fmt.Errorf("remove agent: %w", err)
+	}
+	if err := m.git.RemoveWorktree(ctx, state.repoRoot, state.slug, m.cfg.Shutdown.CleanupWorktrees); err != nil {
+		return fmt.Errorf("remove agent: %w", err)
+	}
+	m.mu.Lock()
+	delete(m.agents, id)
+	m.removeNameIndexLocked(state.config.Name, id)
+	m.removeConfigEntryLocked(state.config)
+	m.mu.Unlock()
+	m.emit(ctx, "agent.removed", AgentRecord{ID: id, Name: state.config.Name, Slug: state.slug, RepoRoot: state.repoRoot})
+	return nil
+}
+
+// ListAgents returns the current roster.
+func (m *LocalManager) ListAgents() ([]AgentRecord, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	records := make([]AgentRecord, 0, len(m.agents))
+	for id, state := range m.agents {
+		records = append(records, AgentRecord{
+			ID:       id,
+			Name:     state.config.Name,
+			About:    state.config.About,
+			Adapter:  state.config.Adapter,
+			RepoRoot: state.repoRoot,
+			Worktree: state.worktree,
+			Slug:     state.slug,
+			Presence: statePresence(state.runtime),
+			Location: state.runtime.Location,
+		})
+	}
+	return records, nil
+}
+
+// StartAgent starts an existing agent session.
+func (m *LocalManager) StartAgent(ctx context.Context, id api.AgentID) error {
+	if _, err := m.startSession(ctx, id); err != nil {
+		return fmt.Errorf("start agent: %w", err)
+	}
+	return nil
+}
+
+// StopAgent stops a running agent session.
+func (m *LocalManager) StopAgent(ctx context.Context, id api.AgentID) error {
+	if err := m.stopSession(ctx, id); err != nil {
+		return fmt.Errorf("stop agent: %w", err)
+	}
+	return nil
+}
+
+// RestartAgent restarts a running agent session.
+func (m *LocalManager) RestartAgent(ctx context.Context, id api.AgentID) error {
+	m.mu.Lock()
+	state := m.agents[id]
+	sess := (*session.LocalSession)(nil)
+	if state != nil {
+		sess = state.session
+	}
+	m.mu.Unlock()
+	if sess == nil {
+		if _, err := m.startSession(ctx, id); err != nil {
+			return fmt.Errorf("restart agent: %w", err)
+		}
+		return nil
+	}
+	if err := sess.Restart(ctx); err != nil {
+		return fmt.Errorf("restart agent: %w", err)
+	}
+	return nil
+}
+
+// AttachAgent attaches to a running agent PTY.
+func (m *LocalManager) AttachAgent(id api.AgentID) (*os.File, error) {
+	m.mu.Lock()
+	state := m.agents[id]
+	sess := (*session.LocalSession)(nil)
+	if state != nil {
+		sess = state.session
+	}
+	m.mu.Unlock()
+	if sess == nil {
+		return nil, fmt.Errorf("attach agent: %w", ErrAgentNotFound)
+	}
+	file, err := sess.Attach()
+	if err != nil {
+		return nil, fmt.Errorf("attach agent: %w", err)
+	}
+	return file, nil
+}
+
+// MergeAgent integrates an agent branch into a target branch.
+func (m *LocalManager) MergeAgent(ctx context.Context, id api.AgentID, strategy git.MergeStrategy, targetBranch string) (git.MergeResult, error) {
+	m.mu.Lock()
+	state := m.agents[id]
+	m.mu.Unlock()
+	if state == nil {
+		return git.MergeResult{}, fmt.Errorf("merge agent: %w", ErrAgentNotFound)
+	}
+	if strategy == "" {
+		strategy = git.MergeStrategy(m.cfg.Git.Merge.Strategy)
+	}
+	baseBranch, err := m.baseBranch(ctx, state.repoRoot)
+	if err != nil {
+		return git.MergeResult{}, fmt.Errorf("merge agent: %w", err)
+	}
+	m.emit(ctx, "git.merge.requested", map[string]any{
+		"repo_root":     state.repoRoot,
+		"agent_slug":    state.slug,
+		"strategy":      string(strategy),
+		"target_branch": targetBranch,
+	})
+	result, err := m.git.Merge(ctx, git.MergeOptions{
+		RepoRoot:     state.repoRoot,
+		WorktreePath: state.worktree,
+		AgentSlug:    state.slug,
+		Strategy:     strategy,
+		TargetBranch: targetBranch,
+		BaseBranch:   baseBranch,
+		AllowDirty:   m.cfg.Git.Merge.AllowDirty,
+	})
+	if err != nil {
+		name := "git.merge.failed"
+		if errors.Is(err, git.ErrMergeConflict) {
+			name = "git.merge.conflict"
+		}
+		m.emit(ctx, name, map[string]any{
+			"repo_root":     state.repoRoot,
+			"agent_slug":    state.slug,
+			"strategy":      string(strategy),
+			"target_branch": targetBranch,
+			"error":         err.Error(),
+		})
+		return git.MergeResult{}, fmt.Errorf("merge agent: %w", err)
+	}
+	m.emit(ctx, "git.merge.completed", map[string]any{
+		"repo_root":     state.repoRoot,
+		"agent_slug":    state.slug,
+		"strategy":      string(result.Strategy),
+		"target_branch": result.TargetBranch,
+	})
+	return result, nil
+}
+
+func (m *LocalManager) startSession(ctx context.Context, id api.AgentID) (*session.LocalSession, error) {
+	m.mu.Lock()
+	state := m.agents[id]
+	m.mu.Unlock()
+	if state == nil {
+		return nil, fmt.Errorf("start session: %w", ErrAgentNotFound)
+	}
+	if state.session != nil {
+		return state.session, nil
+	}
+	repoResolver, err := paths.NewResolver(state.repoRoot)
+	if err != nil {
+		return nil, fmt.Errorf("start session: %w", err)
+	}
+	registry, err := m.registry(repoResolver)
+	if err != nil {
+		return nil, fmt.Errorf("start session: %w", err)
+	}
+	adapterInstance, err := registry.Load(ctx, state.config.Adapter)
+	if err != nil {
+		return nil, fmt.Errorf("start session: %w", err)
+	}
+	manifest := adapterInstance.Manifest()
+	if len(manifest.Commands.Start) == 0 {
+		return nil, fmt.Errorf("start session: %w", ErrAgentInvalid)
+	}
+	sessionMeta, err := api.NewSession(id, state.repoRoot, state.worktree, state.runtime.Location)
+	if err != nil {
+		return nil, fmt.Errorf("start session: %w", err)
+	}
+	sess, err := session.NewLocalSession(sessionMeta, state.runtime, session.Command{Argv: manifest.Commands.Start}, state.worktree, session.Config{DrainTimeout: m.cfg.Shutdown.DrainTimeout})
+	if err != nil {
+		return nil, fmt.Errorf("start session: %w", err)
+	}
+	if err := sess.Start(ctx); err != nil {
+		return nil, fmt.Errorf("start session: %w", err)
+	}
+	m.mu.Lock()
+	state.session = sess
+	m.mu.Unlock()
+	return sess, nil
+}
+
+func (m *LocalManager) stopSession(ctx context.Context, id api.AgentID) error {
+	m.mu.Lock()
+	state := m.agents[id]
+	if state == nil {
+		m.mu.Unlock()
+		return fmt.Errorf("stop session: %w", ErrAgentNotFound)
+	}
+	sess := state.session
+	state.session = nil
+	m.mu.Unlock()
+	if sess == nil {
+		return nil
+	}
+	if err := sess.Stop(ctx); err != nil {
+		return fmt.Errorf("stop session: %w", err)
+	}
+	return nil
+}
+
+func (m *LocalManager) baseBranch(ctx context.Context, repoRoot string) (string, error) {
+	m.mu.Lock()
+	base := m.bases[repoRoot]
+	m.mu.Unlock()
+	if base != "" {
+		return base, nil
+	}
+	branch, err := m.git.DetectBaseBranch(ctx, repoRoot, m.cfg.Git.Merge.TargetBranch)
+	if err != nil {
+		return "", fmt.Errorf("base branch: %w", err)
+	}
+	m.mu.Lock()
+	m.bases[repoRoot] = branch
+	m.mu.Unlock()
+	return branch, nil
+}
+
+func (m *LocalManager) registry(resolver *paths.Resolver) (adapter.Registry, error) {
+	key := resolver.RepoRoot()
+	m.mu.Lock()
+	reg := m.registries[key]
+	m.mu.Unlock()
+	if reg != nil {
+		return reg, nil
+	}
+	factory := m.registryFactory
+	if factory == nil {
+		factory = func(resolver *paths.Resolver) (adapter.Registry, error) {
+			return adapter.NewWazeroRegistry(context.Background(), resolver)
+		}
+	}
+	runtime, err := factory(resolver)
+	if err != nil {
+		return nil, fmt.Errorf("adapter registry: %w", err)
+	}
+	m.mu.Lock()
+	m.registries[key] = runtime
+	m.mu.Unlock()
+	return runtime, nil
+}
+
+// SetRegistryFactory overrides the adapter registry factory.
+func (m *LocalManager) SetRegistryFactory(factory func(*paths.Resolver) (adapter.Registry, error)) {
+	if m == nil || factory == nil {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.registryFactory = factory
+}
+
+func (m *LocalManager) resolveLocation(req AddRequest) (api.Location, string, error) {
+	location := req.Location
+	if location.Type == api.LocationLocal {
+		repoRoot := location.RepoPath
+		if strings.TrimSpace(repoRoot) == "" {
+			cwd := req.Cwd
+			if cwd == "" {
+				repoRoot = m.resolver.RepoRoot()
+			} else {
+				root, err := paths.FindRepoRoot(cwd)
+				if err != nil {
+					return api.Location{}, "", fmt.Errorf("repo root: %w", err)
+				}
+				repoRoot = root
+			}
+		} else {
+			root, err := paths.FindRepoRoot(repoRoot)
+			if err != nil {
+				return api.Location{}, "", fmt.Errorf("repo root: %w", err)
+			}
+			repoRoot = root
+		}
+		canonical, err := paths.CanonicalizeRepoRoot(repoRoot, m.resolver.HomeDir())
+		if err != nil {
+			return api.Location{}, "", fmt.Errorf("repo root: %w", err)
+		}
+		location.RepoPath = canonical
+		return location, canonical, nil
+	}
+	return api.Location{}, "", fmt.Errorf("location: %w", ErrAgentInvalid)
+}
+
+func (m *LocalManager) findAgent(req RemoveRequest) (*agentState, api.AgentID, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !req.AgentID.IsZero() {
+		state := m.agents[req.AgentID]
+		if state == nil {
+			return nil, api.AgentID{}, ErrAgentNotFound
+		}
+		return state, req.AgentID, nil
+	}
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
+		return nil, api.AgentID{}, ErrAgentNotFound
+	}
+	ids := m.nameIndex[name]
+	if len(ids) == 0 {
+		return nil, api.AgentID{}, ErrAgentNotFound
+	}
+	if len(ids) > 1 {
+		return nil, api.AgentID{}, ErrAgentAmbiguous
+	}
+	id := ids[0]
+	state := m.agents[id]
+	if state == nil {
+		return nil, api.AgentID{}, ErrAgentNotFound
+	}
+	return state, id, nil
+}
+
+func (m *LocalManager) loadFromConfig(ctx context.Context) error {
+	used := make(map[string]struct{})
+	for _, entry := range m.cfg.Agents {
+		locTypeRaw := entry.Location.Type
+		if strings.TrimSpace(locTypeRaw) == "" {
+			locTypeRaw = "local"
+		}
+		locType, err := api.ParseLocationType(locTypeRaw)
+		if err != nil {
+			return fmt.Errorf("load agent: %w", err)
+		}
+		location := api.Location{Type: locType, Host: entry.Location.Host}
+		repoRoot := entry.Location.RepoPath
+		if repoRoot == "" {
+			repoRoot = m.resolver.RepoRoot()
+		}
+		canonical, err := paths.CanonicalizeRepoRoot(repoRoot, m.resolver.HomeDir())
+		if err != nil {
+			return fmt.Errorf("load agent: %w", err)
+		}
+		location.RepoPath = canonical
+		slug := paths.UniqueAgentSlug(entry.Name, used)
+		used[slug] = struct{}{}
+		worktree := paths.WorktreePathForRepo(canonical, slug)
+		agentMeta, err := api.NewAgent(entry.Name, entry.About, api.AdapterRef(entry.Adapter), canonical, worktree, location)
+		if err != nil {
+			return fmt.Errorf("load agent: %w", err)
+		}
+		runtime, err := agent.NewAgent(agentMeta, m.dispatcher)
+		if err != nil {
+			return fmt.Errorf("load agent: %w", err)
+		}
+		state := &agentState{
+			runtime:  runtime,
+			slug:     slug,
+			repoRoot: canonical,
+			worktree: worktree,
+			config:   entry,
+		}
+		m.agents[agentMeta.ID] = state
+		m.nameIndex[entry.Name] = append(m.nameIndex[entry.Name], agentMeta.ID)
+		if _, err := m.baseBranch(ctx, canonical); err != nil {
+			return fmt.Errorf("load agent: %w", err)
+		}
+	}
+	return nil
+}
+
+func (m *LocalManager) appendAgentConfig(entry config.AgentConfig) error {
+	path := m.resolver.ProjectConfigPath()
+	raw, err := config.LoadConfigFile(path)
+	if err != nil {
+		return fmt.Errorf("append config: %w", err)
+	}
+	agents := extractAgents(raw)
+	agents = append(agents, entry)
+	if len(agents) == 0 {
+		delete(raw, "agents")
+	} else {
+		raw["agents"] = encodeAgents(agents)
+	}
+	if err := config.WriteConfigFile(path, raw); err != nil {
+		return fmt.Errorf("append config: %w", err)
+	}
+	return nil
+}
+
+func (m *LocalManager) removeAgentConfig(entry config.AgentConfig) error {
+	path := m.resolver.ProjectConfigPath()
+	raw, err := config.LoadConfigFile(path)
+	if err != nil {
+		return fmt.Errorf("remove config: %w", err)
+	}
+	agents := extractAgents(raw)
+	filtered := make([]config.AgentConfig, 0, len(agents))
+	removed := false
+	for _, candidate := range agents {
+		if !removed && sameAgent(candidate, entry) {
+			removed = true
+			continue
+		}
+		filtered = append(filtered, candidate)
+	}
+	if len(filtered) == 0 {
+		delete(raw, "agents")
+	} else {
+		raw["agents"] = encodeAgents(filtered)
+	}
+	if err := config.WriteConfigFile(path, raw); err != nil {
+		return fmt.Errorf("remove config: %w", err)
+	}
+	return nil
+}
+
+func extractAgents(raw map[string]any) []config.AgentConfig {
+	listRaw, ok := raw["agents"].([]any)
+	if !ok {
+		return nil
+	}
+	var agents []config.AgentConfig
+	for _, item := range listRaw {
+		entry, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		cfg := config.AgentConfig{}
+		if value, ok := entry["name"].(string); ok {
+			cfg.Name = value
+		}
+		if value, ok := entry["about"].(string); ok {
+			cfg.About = value
+		}
+		if value, ok := entry["adapter"].(string); ok {
+			cfg.Adapter = value
+		}
+		if locRaw, ok := entry["location"].(map[string]any); ok {
+			if value, ok := locRaw["type"].(string); ok {
+				cfg.Location.Type = value
+			}
+			if value, ok := locRaw["host"].(string); ok {
+				cfg.Location.Host = value
+			}
+			if value, ok := locRaw["repo_path"].(string); ok {
+				cfg.Location.RepoPath = value
+			}
+		}
+		agents = append(agents, cfg)
+	}
+	return agents
+}
+
+func encodeAgents(agents []config.AgentConfig) []any {
+	entries := make([]any, 0, len(agents))
+	for _, agentCfg := range agents {
+		entry := map[string]any{
+			"name":    agentCfg.Name,
+			"about":   agentCfg.About,
+			"adapter": agentCfg.Adapter,
+			"location": map[string]any{
+				"type":      agentCfg.Location.Type,
+				"host":      agentCfg.Location.Host,
+				"repo_path": agentCfg.Location.RepoPath,
+			},
+		}
+		entries = append(entries, entry)
+	}
+	return entries
+}
+
+func sameAgent(a, b config.AgentConfig) bool {
+	if a.Name != b.Name || a.Adapter != b.Adapter {
+		return false
+	}
+	if a.Location.Type != b.Location.Type || a.Location.Host != b.Location.Host {
+		return false
+	}
+	if filepath.Clean(a.Location.RepoPath) != filepath.Clean(b.Location.RepoPath) {
+		return false
+	}
+	return true
+}
+
+func ensureGitRepo(repoRoot string) error {
+	if strings.TrimSpace(repoRoot) == "" {
+		return fmt.Errorf("repo root: %w", ErrAgentInvalid)
+	}
+	gitDir := filepath.Join(repoRoot, ".git")
+	if _, err := os.Stat(gitDir); err != nil {
+		return fmt.Errorf("repo root: %w", err)
+	}
+	return nil
+}
+
+func statePresence(runtime *agent.Agent) string {
+	if runtime == nil || runtime.Presence == nil {
+		return "unknown"
+	}
+	state := runtime.Presence.State()
+	if state == "" {
+		return agent.PresenceOffline
+	}
+	return lastStateSegment(state)
+}
+
+func lastStateSegment(state string) string {
+	idx := strings.LastIndex(state, "/")
+	if idx == -1 {
+		return state
+	}
+	return state[idx+1:]
+}
+
+func (m *LocalManager) emit(ctx context.Context, name string, payload any) {
+	event := protocol.Event{Name: name, Payload: payload, OccurredAt: time.Now().UTC()}
+	_ = m.dispatcher.Publish(ctx, protocol.Subject("events", "agent"), event)
+}
+
+func (m *LocalManager) removeNameIndexLocked(name string, id api.AgentID) {
+	ids := m.nameIndex[name]
+	if len(ids) == 0 {
+		return
+	}
+	updated := ids[:0]
+	for _, candidate := range ids {
+		if candidate == id {
+			continue
+		}
+		updated = append(updated, candidate)
+	}
+	if len(updated) == 0 {
+		delete(m.nameIndex, name)
+		return
+	}
+	m.nameIndex[name] = updated
+}
+
+func (m *LocalManager) removeConfigEntryLocked(entry config.AgentConfig) {
+	filtered := m.cfg.Agents[:0]
+	removed := false
+	for _, candidate := range m.cfg.Agents {
+		if !removed && sameAgent(candidate, entry) {
+			removed = true
+			continue
+		}
+		filtered = append(filtered, candidate)
+	}
+	m.cfg.Agents = filtered
+}

@@ -113,6 +113,10 @@ func DefaultConfig(resolver *paths.Resolver) Config {
 				AllowDirty: false,
 			},
 		},
+		Shutdown: ShutdownConfig{
+			DrainTimeout:    mustDuration("30s"),
+			CleanupWorktrees: false,
+		},
 		Events: EventsConfig{
 			BatchWindow:    mustDuration("50ms"),
 			BatchMaxEvents: 100,

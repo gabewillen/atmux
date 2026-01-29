@@ -22,6 +22,9 @@ func DecodeConfig(defaults Config, raw map[string]any, resolver *paths.Resolver)
 	if err := applyGit(&cfg, raw); err != nil {
 		return Config{}, err
 	}
+	if err := applyShutdown(&cfg, raw); err != nil {
+		return Config{}, err
+	}
 	if err := applyEvents(&cfg, raw); err != nil {
 		return Config{}, err
 	}
@@ -136,6 +139,24 @@ func applyGit(cfg *Config, raw map[string]any) error {
 	}
 	if value, ok := parseString(merge["target_branch"]); ok {
 		cfg.Git.Merge.TargetBranch = value
+	}
+	return nil
+}
+
+func applyShutdown(cfg *Config, raw map[string]any) error {
+	section, ok := raw["shutdown"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	if value, ok := section["drain_timeout"]; ok {
+		parsed, err := parseDurationValue(value)
+		if err != nil {
+			return fmt.Errorf("shutdown.drain_timeout: %w", err)
+		}
+		cfg.Shutdown.DrainTimeout = parsed
+	}
+	if value, ok := parseBool(section["cleanup_worktrees"]); ok {
+		cfg.Shutdown.CleanupWorktrees = value
 	}
 	return nil
 }

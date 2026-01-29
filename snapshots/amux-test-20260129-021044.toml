@@ -1,0 +1,20 @@
+Timestamp = 2026-01-29T02:10:44.728030251Z
+
+[Results]
+[Results.bench]
+status = 'skipped'
+
+[Results.coverage]
+status = 'skipped'
+
+[Results.test]
+status = 'passed'
+
+[Results.test_race]
+status = 'passed'
+
+[Results.tidy]
+status = 'passed'
+
+[Results.vet]
+status = 'passed'

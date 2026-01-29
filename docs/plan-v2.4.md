@@ -255,9 +255,10 @@ Implement authoritative types, identifiers, and HSM-driven lifecycle and presenc
   - Status: Complete — internal/agent PresenceModel, Actor.DispatchPresence; presence.changed events.
 
 
-- [ ] The implementation MUST maintain inline Go documentation and MUST regenerate per-package `README.md` files via `go-docmd`
+- [x] The implementation MUST maintain inline Go documentation and MUST regenerate per-package `README.md` files via `go-docmd`
   - Spec reference(s): §4.2.6.1
   - Acceptance criteria: every package and exported identifier added or modified in this phase MUST include `go doc`-suitable comments; running `go run github.com/agentflare-ai/go-docmd@latest -cmd -all -inplace ./...` at the module root MUST produce no uncommitted changes; generated per-package `README.md` files MUST be committed.
+  - Status: Complete — Phase 1 packages documented; docs-check passes with no uncommitted changes.
 
 - [x] Run `amux test --regression` at the end of Phase 1 to verify no regressions relative to the Phase 1 baseline snapshot
   - Spec reference(s): §12.6.5

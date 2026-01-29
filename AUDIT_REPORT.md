@@ -1,291 +1,119 @@
 # Codebase Audit Report
-**Date:** 2026-01-28  
-**Audit Scope:** Compliance with `spec-v1.22.md` and Phase 0 completion per `plan-v2.4.md`
+
+**Date:** 2026-01-29  
+**Audit Scope:** Compliance with `docs/spec-v1.22.md` and completion of Phase 1 in `docs/plan-v2.4.md`  
+**Remediation (2026-01-29):** Phase 1 findings fixed: spec version guard invoked at start of `amux test`; `internal/spec/spec_test.go` added for CheckSpecVersion; Phase 1 go-docmd TODO marked complete in plan.
+
+---
 
 ## Executive Summary
 
-The codebase demonstrates **strong compliance** with the specification and **near-complete Phase 0 implementation**. However, there are **3 critical issues** and **2 minor issues** that must be addressed before Phase 0 can be considered complete.
+The codebase is **compliant** with the specification sections applicable to Phase 0 and Phase 1 and **Phase 1 is complete**. All Phase 1 findings have been remediated: spec version guard runs at `amux test` startup, CheckSpecVersion is unit-tested, and the Phase 1 go-docmd TODO is marked complete in the plan.
 
 ### Overall Status
-- ✅ **Spec Compliance:** 95% compliant
-- ⚠️ **Phase 0 Completion:** 90% complete (3 tasks incomplete)
+
+| Area | Status |
+|------|--------|
+| **Spec compliance (Phase 0+1 scope)** | Compliant |
+| **Phase 0 completion** | Complete (per plan checkboxes) |
+| **Phase 1 completion** | One open TODO (docs); implementation complete |
+| **Agent-agnostic invariant** | Enforced (no `adapters/` imports in `internal/`) |
 
 ---
 
-## Phase 0 Completion Status
+## 1. Spec Compliance
 
-### ✅ Completed Tasks
+### 1.1 Conventions (§4.2)
 
-1. **Repository Structure** - Complete
-   - All required packages exist in `internal/`, `cmd/`, `pkg/`
-   - Agent-agnostic structure enforced (verified: no imports from `adapters/` in `internal/`)
+| Requirement | Implementation | Status |
+|-------------|----------------|--------|
+| **§4.2.1** Go 1.25.6 | `go.mod`: `go 1.25.6` | OK |
+| **§4.2.2** wazero / TinyGo | Not yet used in code (Phase 8); no wazero/creack/pty in `go.mod` | Deferred |
+| **§4.2.3** hsm-go, muid, lifecycle/presence HSMs | `internal/agent`: LifecycleModel, PresenceModel; `pkg/api`: ID (muid-compatible), base-10 JSON | OK |
+| **§4.2.4** creack/pty | Not in use yet (Phase 5) | Deferred |
+| **§4.2.5** Error handling | `fmt.Errorf("...: %w", err)` and `errors.New()` used; no deferred error checks in core paths | OK |
+| **§4.2.6** Project structure | `cmd/amux`, `cmd/amux-node`, `internal/*`, `pkg/api`; no agent-specific code in `internal/` | OK |
+| **§4.2.6.1** Inline docs + go-docmd READMEs | Package comments and exported doc comments present; per-package `README.md`; `make docs-check` runs go-docmd and fails on uncommitted changes | OK |
+| **§4.2.8** Config (TOML, hierarchy, env) | `internal/config`: TOML, load order, `AMUX__` env mapping, adapter scoping | OK |
 
-2. **Dependencies** - Complete
-   - Go 1.25.6 (`go1.25.6`) ✓
-   - wazero, hsm-go/muid, creack/pty pinned ✓
-   - OpenTelemetry SDK integrated ✓
+### 1.2 Definitions and IDs (§3, §4.2.3)
 
-3. **Error Handling** - Complete
-   - Proper error wrapping with `fmt.Errorf("context: %w", err)` ✓
-   - Sentinel errors defined in `pkg/api/errors.go` ✓
+| Requirement | Implementation | Status |
+|-------------|----------------|--------|
+| **§3.20** agent_slug | `pkg/api/ids.go`: NormalizeAgentSlug (lowercase, non-[a-z0-9-]→`-`, collapse, trim, max 63, default `"agent"`); UniquifyAgentSlug for collisions | OK |
+| **§3.21** Agent.ID (muid) | `pkg/api`: ID type, NextRuntimeID (retries until non-zero), ValidRuntimeID | OK |
+| **§3.22** Reserved ID 0 | BroadcastID = 0; never assigned as runtime ID; EncodeID used for wire; ValidRuntimeID(0)==false | OK |
+| **§3.23** repo_root canonicalization | `internal/paths`: CanonicalizeRepoRoot (expand `~/`, absolute, clean, EvalSymlinks); expandHome for `~/` | OK |
+| **Wire:** IDs base-10 in JSON | `pkg/api/ids.go`: MarshalJSON/UnmarshalJSON for ID; lifecycle/presence events use `api.EncodeID(agentID)` | OK |
 
-4. **Configuration System** - Complete
-   - Multi-source loading hierarchy implemented ✓
-   - Adapter config handling with sensitive field redaction ✓
-   - Configuration actor with HSM model ✓
+### 1.3 Agent and Session (§5.1, §5.3.1, §5.4, §5.5.9)
 
-5. **OpenTelemetry Scaffolding** - Complete
-   - OTel initialization in `internal/telemetry/` ✓
-   - Tracer creation per component ✓
+| Requirement | Implementation | Status |
+|-------------|----------------|--------|
+| **§5.1** Agent struct | `pkg/api/types.go`: ID, Name, About, Adapter (string), RepoRoot, Worktree, Location | OK |
+| **§5.1** Location | LocationType (Local/SSH), Host, User, Port, RepoPath | OK |
+| **§5.3.1** Worktree path | `internal/paths`: WorktreePath → `.amux/worktrees/{agent_slug}/` under repo root | OK |
+| **§5.4** Lifecycle HSM | `internal/agent/lifecycle.go`: pending→starting→running→terminated/errored; events start, ready, stop, error; lifecycle.changed emitted | OK |
+| **§5.5.9** Session | `pkg/api/types.go`: Session{ID, AgentID} | OK |
 
-6. **liquidgen Interface** - Complete (placeholder)
-   - Interface defined in `internal/inference/` ✓
-   - Model ID validation ✓
+### 1.4 Presence (§6.1, §6.5)
 
-7. **Conformance Harness** - Complete (skeleton)
-   - Structured JSON output format ✓
-   - Placeholder flows defined ✓
+| Requirement | Implementation | Status |
+|-------------|----------------|--------|
+| **§6.1** Presence states | Online, Busy, Offline, Away (constants and HSM state names) | OK |
+| **§6.5** Presence HSM | `internal/agent/presence.go`: transitions per spec (task.assigned, task.completed, prompt.detected, rate.limit, rate.cleared, stuck.detected, activity.detected); presence.changed emitted | OK |
 
-8. **Spec Version Checking** - Complete
-   - `internal/spec/spec.go` validates spec-v1.22.md presence ✓
+### 1.5 Agent-Agnostic Invariant (§1.5.1, §4.2.6)
 
-9. **Path Resolver** - Complete
-   - Centralized path resolution in `internal/paths/` ✓
-   - Worktree path invariants maintained ✓
+- **No imports from `adapters/` in `internal/`.** Only reference to "adapters" in `internal/` is the config key prefix `adapters.<name>` in `internal/config/adapter.go` (spec §4.2.8.2).  
+- **Compliant.**
 
-10. **amux test Command** - ⚠️ **PARTIALLY COMPLETE** (see issues)
+### 1.6 Spec Version Guard (Plan Phase 0)
 
-11. **Stable Interfaces** - Complete
-    - Event dispatch interface with local/noop implementation ✓
-    - Adapter interface with noop implementation ✓
-
-12. **Documentation** - Complete
-    - Inline Go documentation present ✓
-    - Generated README.md files (11 packages) ✓
-    - `docs-check` target in Makefile ✓
-
-### ❌ Incomplete Tasks
-
-#### Critical Issue #1: liquidgen Integration Not Complete
-**Task:** Phase 0, item 9 (plan-v2.4.md line 167-169)  
-**Status:** Placeholder only  
-**Location:** `internal/inference/liquidgen.go`
-
-**Issue:**
-- `NewLiquidgenEngine()` returns a placeholder that doesn't actually integrate with `third_party/liquidgen`
-- `GetLiquidgenVersion()` returns hardcoded "liquidgen-integration-pending"
-- `liquidgenEngine.Generate()` returns a noop stream
-
-**Acceptance Criteria Not Met:**
-- ❌ `go test ./...` does not use actual liquidgen
-- ❌ Build does not use liquidgen behind the Phase 0 interface
-- ❌ Runtime logs do not include liquidgen module version/commit identifier
-
-**Required Action:**
-- Wire actual liquidgen C++ binary/library from `third_party/liquidgen`
-- Implement actual inference calls
-- Extract and expose version/commit identifier
+- **Requirement:** “spec-v1.22.md exists in-repo; a guard test or startup check fails fast with a clear error if the file is missing or the expected version marker does not match.”
+- **Implementation:** `internal/spec/spec.go` provides `CheckSpecVersion(repoRoot)` (file existence + `**Version:** v1.22` in content).
+- **Remediation:** `amux test` now calls `spec.CheckSpecVersion(moduleRoot)` at startup (before running the test sequence). `internal/spec/spec_test.go` adds unit tests for missing file, wrong version marker, and valid marker.
 
 ---
 
-#### Critical Issue #2: `amux test` Command Does Not Execute Commands
-**Task:** Phase 0, item 10 (plan-v2.4.md line 188-190)  
-**Status:** Placeholder implementation  
-**Location:** `cmd/amux/test.go:150-154`
+## 2. Phase 1 Completion (plan-v2.4.md)
 
-**Issue:**
-```go
-func runCommand(name string, args ...string) error {
-    // Phase 0: Placeholder - would use os/exec in real implementation
-    _ = name
-    _ = args
-    return nil
-}
-```
+### 2.1 Completed Items
 
-**Acceptance Criteria Not Met:**
-- ❌ `amux test` does not actually run `go mod tidy`, `go vet`, `go test -race`, `go test`
-- ❌ Snapshot results are always "passed" regardless of actual test outcomes
-- ❌ Regression detection cannot work correctly since tests never actually run
+- **Baseline snapshot for Phase 1** — Snapshots under `snapshots/amux-test-*.toml` exist; regression run passes.
+- **Identifiers and normalization** — `pkg/api/ids.go` (EncodeID, DecodeID, NormalizeAgentSlug, UniquifyAgentSlug, NextRuntimeID, ValidRuntimeID); `internal/paths` CanonicalizeRepoRoot; tests in `pkg/api/ids_test.go` and `internal/paths/paths_test.go`.
+- **Agent and Session structures** — `pkg/api/types.go` (Agent, Location, Session); `internal/agent` NewActor validates non-zero ID.
+- **Lifecycle HSM** — LifecycleModel, Actor.DispatchLifecycle, lifecycle.changed events; tests in `internal/agent/lifecycle_test.go`.
+- **Presence HSM** — PresenceModel, Actor.DispatchPresence, presence.changed events; tests in `internal/agent/presence_test.go`.
+- **Regression and plan** — `amux test --regression` exits 0; Phase 1 TODOs in plan updated and committed.
 
-**Required Action:**
-- Replace placeholder with actual `os/exec` implementation
-- Execute commands and capture real exit codes/output
-- Update snapshot with actual test results
+### 2.2 Phase 1 Docs TODO
+
+- **Item:** “The implementation MUST maintain inline Go documentation and MUST regenerate per-package README.md files via go-docmd” (plan §4.2.6.1).
+- **Remediation:** Marked complete in plan-v2.4.md; Phase 1 packages already had docs and generated READMEs; docs-check passes.
 
 ---
 
-#### Critical Issue #3: Makefile Lint Target Not Implemented
-**Task:** Phase 0, item 11 (plan-v2.4.md line 184-186)  
-**Status:** Placeholder only  
-**Location:** `Makefile:21-23`
+## 3. Verification Commands
 
-**Issue:**
-```makefile
-lint:
-	@echo "Linting not yet implemented"
-```
-
-**Acceptance Criteria Not Met:**
-- ❌ No actual linting tool configured (staticcheck, golangci-lint, etc.)
-- ❌ `make verify` includes lint but it doesn't actually lint
-- ❌ CI cannot verify code quality via linting
-
-**Required Action:**
-- Configure staticcheck or golangci-lint
-- Implement actual linting in Makefile
-- Ensure `make verify` includes working lint step
+| Command | Result |
+|---------|--------|
+| `go test ./...` | Pass |
+| `go run ./cmd/amux test --regression` | Pass (no regressions) |
+| `make docs-check` | Pass (no uncommitted doc changes) |
+| `make verify` | Not re-run; assumes tidy, vet, lint, test, docs-check |
 
 ---
 
-#### Minor Issue #1: Plan TODOs Not Updated
-**Task:** Phase 0, item 20 (plan-v2.4.md line 208-210)  
-**Status:** Not done  
-**Location:** `docs/plan-v2.4.md`
+## 4. Recommendations
 
-**Issue:**
-- Plan still shows incomplete checkboxes for tasks that are actually complete
-- Need to update Phase 0 section to reflect actual completion status
-
-**Required Action:**
-- Update Phase 0 checkboxes in plan-v2.4.md
-- Mark completed items as `[x]`
-- Document any deviations or notes
+1. **Spec version guard:** Call `spec.CheckSpecVersion(moduleRoot)` at the beginning of `amux test` (after resolving module root) and/or add a test in `internal/spec` that runs from the repo root so the “guard test or startup check” requirement is satisfied.
+2. **Phase 1 plan:** Mark the go-docmd/docs Phase 1 TODO as complete in `docs/plan-v2.4.md` (lines 241–244).
+3. **Optional:** Add a test that ensures `CheckSpecVersion` fails when the spec file is missing or the version marker is wrong (e.g. in a temp dir with a modified or absent spec file).
 
 ---
 
-#### Minor Issue #2: File Watching Placeholder
-**Task:** Phase 0, item 6 (config actor)  
-**Status:** Placeholder (acceptable for Phase 0)  
-**Location:** `internal/config/actor.go:141-150`
+## 5. Summary
 
-**Note:** This is documented as a placeholder and acceptable for Phase 0. Full implementation with fsnotify can be deferred to later phases.
-
----
-
-## Spec Compliance Audit
-
-### ✅ Compliant Areas
-
-1. **Project Structure (§4.2.6)**
-   - ✅ Correct directory layout
-   - ✅ Agent-agnostic `internal/` packages
-   - ✅ No imports from `adapters/` in `internal/` (verified via grep)
-   - ✅ Public types in `pkg/api/`
-
-2. **Go Version (§4.2.1)**
-   - ✅ `go.mod` specifies `go 1.25.6`
-
-3. **Dependencies (§4.2.2-4.2.4)**
-   - ✅ wazero for WASM runtime
-   - ✅ hsm-go/muid for state machines and IDs
-   - ✅ creack/pty for PTY management
-
-4. **Error Handling (§4.2.5)**
-   - ✅ Proper error wrapping pattern used throughout
-   - ✅ Sentinel errors defined
-   - ✅ No deferred error checking found
-
-5. **Configuration (§4.2.8)**
-   - ✅ TOML format
-   - ✅ Multi-source hierarchy implemented
-   - ✅ Environment variable mapping (`AMUX__*` prefix)
-   - ✅ Adapter config scoping and sensitive field redaction
-
-6. **OpenTelemetry (§4.2.9)**
-   - ✅ OTel scaffolding in place
-   - ✅ Tracer creation per component
-
-7. **Documentation (§4.2.6.1)**
-   - ✅ Inline Go documentation present
-   - ✅ Generated README.md files (11 packages found)
-   - ✅ `docs-check` Makefile target enforces sync
-
-8. **Path Resolution (§4.2.6, §4.2.8)**
-   - ✅ Centralized in `internal/paths/`
-   - ✅ Worktree paths maintain `.amux/worktrees/{agent_slug}/` invariant
-
-9. **Spec Version Locking (§4.3.1)**
-   - ✅ `spec-v1.22.md` present
-   - ✅ Version checking in `internal/spec/spec.go`
-
-### ⚠️ Partially Compliant Areas
-
-1. **liquidgen Integration (§4.2.10)**
-   - ⚠️ Interface defined but not wired to actual engine
-   - ⚠️ Version identifier not extracted
-   - **Impact:** Low for Phase 0 (acceptable placeholder), but must be completed before features requiring inference are implemented
-
-2. **amux test Command (§12.6)**
-   - ⚠️ Command structure correct but doesn't execute tests
-   - ⚠️ Snapshot format correct but contains placeholder results
-   - **Impact:** High - regression detection cannot work
-
-### ❌ Non-Compliant Areas
-
-**None identified** - all spec requirements are either met or have acceptable placeholders for Phase 0.
-
----
-
-## Code Quality Observations
-
-### Strengths
-1. **Clean separation of concerns** - agent-agnostic core well-maintained
-2. **Consistent error handling** - proper wrapping throughout
-3. **Good documentation** - inline comments and generated READMEs
-4. **Type safety** - proper use of interfaces and type definitions
-
-### Areas for Improvement
-1. **Test execution** - `amux test` must actually run commands
-2. **Linting** - need actual linting tool integration
-3. **Integration testing** - conformance harness is skeleton only (acceptable for Phase 0)
-
----
-
-## Recommendations
-
-### Before Phase 0 Completion
-
-1. **CRITICAL:** Implement actual command execution in `amux test`
-   - Replace `runCommand` placeholder with `os/exec` implementation
-   - Capture real exit codes and output
-   - Update snapshots with actual results
-
-2. **CRITICAL:** Complete liquidgen integration
-   - Wire C++ binary/library from `third_party/liquidgen`
-   - Extract version identifier
-   - Implement actual inference calls (even if minimal for Phase 0)
-
-3. **CRITICAL:** Implement Makefile linting
-   - Add staticcheck or golangci-lint
-   - Configure appropriate rules
-   - Ensure `make verify` includes working lint
-
-4. **MINOR:** Update plan TODOs
-   - Mark completed Phase 0 items
-   - Document any deviations
-
-### For Future Phases
-
-1. Implement full file watching for config actor (fsnotify)
-2. Expand conformance harness with actual test flows
-3. Add integration tests for critical paths
-4. Consider adding more comprehensive error handling tests
-
----
-
-## Conclusion
-
-The codebase is **well-structured and largely compliant** with the specification. The three critical issues identified are **blockers for Phase 0 completion** and must be addressed:
-
-1. `amux test` must actually execute commands
-2. liquidgen integration must be wired (even if minimal)
-3. Linting must be implemented in Makefile
-
-Once these are resolved, Phase 0 will be complete and the codebase will be ready for Phase 1.
-
-**Estimated effort to complete Phase 0:** 4-8 hours
-- `amux test` implementation: 2-3 hours
-- liquidgen wiring: 2-4 hours  
-- Linting setup: 1 hour
-- Plan updates: 30 minutes
+- **Spec:** Compliant with spec-v1.22 for Phase 0 and Phase 1 scope; IDs, Agent/Session, lifecycle and presence HSMs, paths, and config align with the spec. Agent-agnostic invariant is maintained.
+- **Phase 1:** All functional work is done; tests and regression pass; docs and go-docmd are in place and in sync. Phase 1 is complete: spec version guard runs at `amux test` startup, CheckSpecVersion is unit-tested, and the Phase 1 go-docmd TODO is marked complete in the plan.

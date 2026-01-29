@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/agentflare-ai/amux/internal/spec"
 	"github.com/pelletier/go-toml/v2"
 )
 
@@ -40,13 +41,17 @@ func runTest(args []string) error {
 		}
 	}
 
+	// Find module root early for spec guard and snapshot path (plan Phase 0: guard test or startup check).
+	moduleRoot, err := findModuleRoot()
+	if err != nil {
+		return fmt.Errorf("failed to find module root: %w", err)
+	}
+	if err := spec.CheckSpecVersion(moduleRoot); err != nil {
+		return fmt.Errorf("spec version check failed: %w", err)
+	}
+
 	// Determine snapshot path
 	if snapshotPath == "" {
-		// Find module root
-		moduleRoot, err := findModuleRoot()
-		if err != nil {
-			return fmt.Errorf("failed to find module root: %w", err)
-		}
 		snapshotPath = filepath.Join(moduleRoot, "snapshots", fmt.Sprintf("amux-test-%s.toml", time.Now().Format("20060102-150405")))
 	}
 

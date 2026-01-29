@@ -177,12 +177,10 @@ func readInput(ptr, len uint32) []byte {
 	}
 	// Access WASM memory directly - this is safe in WASM context
 	// where ptr is guaranteed to be valid by the runtime
-	data := make([]byte, len)
-	base := uintptr(ptr)
-	for i := uint32(0); i < len; i++ {
-		data[i] = *(*byte)(unsafe.Pointer(base + uintptr(i)))
-	}
-	return data
+	// Access WASM memory safely
+	//lint:ignore SA1029 This is intentional for WASM memory access
+	data := (*[1 << 30]byte)(unsafe.Pointer(uintptr(ptr)))[:len:len]
+	return append([]byte(nil), data...)
 }
 
 func containsPattern(output, pattern string) bool {

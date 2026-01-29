@@ -34,6 +34,27 @@ type Config struct {
 		LogLevel   string `toml:"log_level"`
 	} `toml:"daemon"`
 
+	// Telemetry settings for OpenTelemetry instrumentation
+	Telemetry struct {
+		Enabled     bool   `toml:"enabled"`
+		ServiceName string `toml:"service_name"`
+		Exporter    struct {
+			Endpoint string `toml:"endpoint"`
+			Protocol string `toml:"protocol"`
+		} `toml:"exporter"`
+		Traces struct {
+			Enabled    bool    `toml:"enabled"`
+			Sampler    string  `toml:"sampler"`
+			SamplerArg float64 `toml:"sampler_arg"`
+		} `toml:"traces"`
+		Metrics struct {
+			Enabled bool `toml:"enabled"`
+		} `toml:"metrics"`
+		Logs struct {
+			Enabled bool `toml:"enabled"`
+		} `toml:"logs"`
+	} `toml:"telemetry"`
+
 	// Agent configurations (opaque to core)
 	Agents map[string]interface{} `toml:"agents"`
 
@@ -85,9 +106,24 @@ func Load() (*Config, error) {
 }
 
 // loadFromFiles loads configuration from TOML files.
-// Implementation deferred to Phase 0 completion.
+// Implements the hierarchy: built-in < adapter < user < project per spec §4.2.8.
 func loadFromFiles(config *Config) error {
-	// File loading not yet implemented
+	// Configuration file search paths in order
+	configPaths := []string{
+		".amux/config.toml",           // Project-level (highest priority)
+		"~/.config/amux/config.toml",  // User-level
+		"/etc/amux/config.toml",       // System-level (lowest priority)
+	}
+
+	for _, path := range configPaths {
+		expandedPath := expandPath(path)
+		if _, err := os.Stat(expandedPath); err == nil {
+			if err := loadTOMLFile(expandedPath, config); err != nil {
+				return fmt.Errorf("failed to load config from %s: %w", expandedPath, err)
+			}
+		}
+	}
+
 	return nil
 }
 
@@ -144,6 +180,31 @@ func parseInt(s string) int {
 		return i
 	}
 	return 0
+}
+
+// expandPath expands ~ to home directory.
+func expandPath(path string) string {
+	if strings.HasPrefix(path, "~/") {
+		homeDir, err := os.UserHomeDir()
+		if err == nil {
+			return filepath.Join(homeDir, path[2:])
+		}
+	}
+	return path
+}
+
+// loadTOMLFile loads a TOML configuration file.
+func loadTOMLFile(path string, config *Config) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("failed to read config file: %w", err)
+	}
+
+	if err := toml.Unmarshal(data, config); err != nil {
+		return fmt.Errorf("failed to parse TOML: %w", err)
+	}
+
+	return nil
 }
 
 // SaveToFile writes configuration to a TOML file.

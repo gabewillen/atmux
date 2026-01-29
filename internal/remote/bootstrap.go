@@ -94,7 +94,7 @@ func createBootstrapZip(config BootstrapConfig) ([]byte, error) {
 	// Add adapter modules
 	for _, adapterPath := range config.AdapterPaths {
 		filename := filepath.Base(adapterPath)
-		zipPath := "adapters/" + filename
+		zipPath := "bootstrap-adapters/" + filename
 		if err := addFileToZip(w, adapterPath, zipPath); err != nil {
 			w.Close()
 			return nil, fmt.Errorf("failed to add adapter %s to ZIP: %w", adapterPath, err)
@@ -177,7 +177,7 @@ func extractBootstrapOnRemote(ctx context.Context, sshHost, remotePath string, t
 		fmt.Sprintf("cd ~/.amux/bootstrap && unzip -o %s", filepath.Base(remotePath)),
 		"cp ~/.amux/bootstrap/amux-manager ~/.local/bin/amux-manager",
 		"chmod +x ~/.local/bin/amux-manager",
-		"cp ~/.amux/bootstrap/adapters/* ~/.config/amux/adapters/ 2>/dev/null || true",
+		"cp ~/.amux/bootstrap/bootstrap-adapters/* ~/.config/amux/adapters/ 2>/dev/null || true",
 	}
 	
 	for _, cmdStr := range commands {

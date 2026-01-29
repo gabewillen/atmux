@@ -20,6 +20,8 @@
 - [internal/process](internal/process/README.md) — Package process provides generic child process tracking functionality.
 - [internal/protocol](internal/protocol/README.md) — Package protocol provides remote communication transport functionality.
 - [internal/pty](internal/pty/README.md) — Package pty provides PTY session management for agents.
+- [internal/remote](internal/remote/README.md) — Package remote implements remote host management, SSH bootstrap, NATS connectivity and control plane operations for distributed agent orchestration.
+- [internal/telemetry](internal/telemetry/README.md) — Package telemetry provides OpenTelemetry instrumentation for amux.
 - [internal/tui](internal/tui/README.md) — Package tui provides terminal user interface functionality.
 - [pkg/api](pkg/api/README.md) — Package api provides public types for the amux system.
 

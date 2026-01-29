@@ -7,6 +7,10 @@ The CLI communicates with the amux daemon (amuxd) over JSON-RPC.
 - `func handleAgentRemove()`
 - `func handleAgentStart()`
 - `func handleAgentStop()`
+- `func handleRemoteAdd()`
+- `func handleRemoteList()`
+- `func handleRemoteRemove()`
+- `func handleRemoteStatus()`
 - `func handleTest()`
 - `func handleTestRegression()`
 - `func loadAgentsFromConfig(resolver *paths.Resolver) ([]*api.Agent, error)` — loadAgentsFromConfig loads agents from .amux/config.toml
@@ -21,7 +25,7 @@ The CLI communicates with the amux daemon (amuxd) over JSON-RPC.
 #### version
 
 ```go
-const version = "v1.22.0-phase2"
+const version = "v1.22.0-phase3"
 ```
 
 
@@ -61,6 +65,30 @@ func handleAgentStart()
 
 ```go
 func handleAgentStop()
+```
+
+#### handleRemoteAdd
+
+```go
+func handleRemoteAdd()
+```
+
+#### handleRemoteList
+
+```go
+func handleRemoteList()
+```
+
+#### handleRemoteRemove
+
+```go
+func handleRemoteRemove()
+```
+
+#### handleRemoteStatus
+
+```go
+func handleRemoteStatus()
 ```
 
 #### handleTest

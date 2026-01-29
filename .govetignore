@@ -1,1 +1,3 @@
-adapters/
+# Ignore WASM-specific unsafe.Pointer usage in adapters
+# These are safe in WASM context where pointers are guaranteed valid
+adapters/*/main.go

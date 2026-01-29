@@ -7,8 +7,10 @@ This package handles the configuration hierarchy: built-in < adapter < user < pr
 with env vars using AMUX__ prefix. Adapter configs are treated as opaque.
 
 - `ErrConfigNotFound, ErrInvalidConfig, ErrLoadFailed` — Common sentinel errors for configuration operations.
+- `func expandPath(path string) string` — expandPath expands ~ to home directory.
 - `func loadFromEnv(config *Config) error` — loadFromEnv applies environment variable overrides with AMUX__ prefix.
 - `func loadFromFiles(config *Config) error` — loadFromFiles loads configuration from TOML files.
+- `func loadTOMLFile(path string, config *Config) error` — loadTOMLFile loads a TOML configuration file.
 - `func parseInt(s string) int` — parseInt safely parses an integer string, returning 0 on error.
 - `type Config` — Config represents the amux configuration structure.
 
@@ -34,6 +36,14 @@ Common sentinel errors for configuration operations.
 
 ### Functions
 
+#### expandPath
+
+```go
+func expandPath(path string) string
+```
+
+expandPath expands ~ to home directory.
+
 #### loadFromEnv
 
 ```go
@@ -49,7 +59,15 @@ func loadFromFiles(config *Config) error
 ```
 
 loadFromFiles loads configuration from TOML files.
-Implementation deferred to Phase 0 completion.
+Implements the hierarchy: built-in < adapter < user < project per spec §4.2.8.
+
+#### loadTOMLFile
+
+```go
+func loadTOMLFile(path string, config *Config) error
+```
+
+loadTOMLFile loads a TOML configuration file.
 
 #### parseInt
 
@@ -69,6 +87,27 @@ type Config struct {
 		SocketPath string `toml:"socket_path"`
 		LogLevel   string `toml:"log_level"`
 	} `toml:"daemon"`
+
+	// Telemetry settings for OpenTelemetry instrumentation
+	Telemetry struct {
+		Enabled     bool   `toml:"enabled"`
+		ServiceName string `toml:"service_name"`
+		Exporter    struct {
+			Endpoint string `toml:"endpoint"`
+			Protocol string `toml:"protocol"`
+		} `toml:"exporter"`
+		Traces struct {
+			Enabled    bool    `toml:"enabled"`
+			Sampler    string  `toml:"sampler"`
+			SamplerArg float64 `toml:"sampler_arg"`
+		} `toml:"traces"`
+		Metrics struct {
+			Enabled bool `toml:"enabled"`
+		} `toml:"metrics"`
+		Logs struct {
+			Enabled bool `toml:"enabled"`
+		} `toml:"logs"`
+	} `toml:"telemetry"`
 
 	// Agent configurations (opaque to core)
 	Agents map[string]interface{} `toml:"agents"`

@@ -30,6 +30,19 @@ func NewResolver(start string) (*Resolver, error) {
 	return &Resolver{repoRoot: repoRoot, homeDir: homeDir}, nil
 }
 
+// NewResolverOptionalRepo creates a resolver when repo root is optional.
+func NewResolverOptionalRepo(start string) (*Resolver, error) {
+	repoRoot, err := FindRepoRoot(start)
+	if err != nil {
+		repoRoot = ""
+	}
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return nil, fmt.Errorf("new resolver: %w", err)
+	}
+	return &Resolver{repoRoot: repoRoot, homeDir: homeDir}, nil
+}
+
 // RepoRoot returns the resolved repository root.
 func (r *Resolver) RepoRoot() string {
 	return r.repoRoot

@@ -18,6 +18,7 @@ import (
 	"github.com/agentflare-ai/amux/internal/paths"
 	"github.com/agentflare-ai/amux/internal/protocol"
 	"github.com/agentflare-ai/amux/pkg/api"
+	"github.com/nats-io/nats.go"
 )
 
 type stubRegistry struct {
@@ -103,6 +104,10 @@ func (r *recordDispatcher) MaxPayload() int {
 	return 1024 * 1024
 }
 
+func (r *recordDispatcher) JetStream() nats.JetStreamContext {
+	return nil
+}
+
 func (r *recordDispatcher) Closed() <-chan struct{} {
 	ch := make(chan struct{})
 	close(ch)
@@ -116,7 +121,11 @@ func TestAddAgentWritesConfig(t *testing.T) {
 		t.Fatalf("resolver: %v", err)
 	}
 	cfg := config.DefaultConfig(resolver)
-	server, err := protocol.StartEmbeddedServer(context.Background(), "127.0.0.1:0", protocol.EmbeddedServerConfig{})
+	cfg.NATS.JetStreamDir = filepath.Join(t.TempDir(), "nats")
+	server, err := protocol.StartHubServer(context.Background(), protocol.HubServerConfig{
+		Listen:       "127.0.0.1:-1",
+		JetStreamDir: cfg.NATS.JetStreamDir,
+	})
 	if err != nil {
 		t.Fatalf("start nats: %v", err)
 	}
@@ -175,7 +184,11 @@ func TestAddAgentRequiresRepo(t *testing.T) {
 		t.Fatalf("resolver: %v", err)
 	}
 	cfg := config.DefaultConfig(resolver)
-	server, err := protocol.StartEmbeddedServer(context.Background(), "127.0.0.1:0", protocol.EmbeddedServerConfig{})
+	cfg.NATS.JetStreamDir = filepath.Join(t.TempDir(), "nats")
+	server, err := protocol.StartHubServer(context.Background(), protocol.HubServerConfig{
+		Listen:       "127.0.0.1:-1",
+		JetStreamDir: cfg.NATS.JetStreamDir,
+	})
 	if err != nil {
 		t.Fatalf("start nats: %v", err)
 	}
@@ -221,7 +234,11 @@ func TestAddAgentRequiresRepoPathForMultiRepo(t *testing.T) {
 		t.Fatalf("resolver: %v", err)
 	}
 	cfg := config.DefaultConfig(resolver)
-	server, err := protocol.StartEmbeddedServer(context.Background(), "127.0.0.1:0", protocol.EmbeddedServerConfig{})
+	cfg.NATS.JetStreamDir = filepath.Join(t.TempDir(), "nats")
+	server, err := protocol.StartHubServer(context.Background(), protocol.HubServerConfig{
+		Listen:       "127.0.0.1:-1",
+		JetStreamDir: cfg.NATS.JetStreamDir,
+	})
 	if err != nil {
 		t.Fatalf("start nats: %v", err)
 	}

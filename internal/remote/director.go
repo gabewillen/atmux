@@ -3,6 +3,7 @@ package remote
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -14,6 +15,7 @@ import (
 	"github.com/agentflare-ai/amux/internal/config"
 	"github.com/agentflare-ai/amux/internal/protocol"
 	"github.com/agentflare-ai/amux/pkg/api"
+	"github.com/nats-io/nats.go"
 )
 
 // DirectorOptions configures the director runtime.
@@ -60,8 +62,11 @@ func NewDirector(cfg config.Config, dispatcher protocol.Dispatcher, options Dire
 		}
 		hostID = resolved
 	}
-	peerID := api.NewPeerID()
-	kv, err := NewKVStore(cfg.NATS.JetStreamDir, cfg.Remote.NATS.KVBucket)
+	peerID, err := LoadOrCreatePeerID(cfg.NATS.JetStreamDir)
+	if err != nil {
+		return nil, fmt.Errorf("remote director: %w", err)
+	}
+	kv, err := NewKVStore(dispatcher.JetStream(), cfg.Remote.NATS.KVBucket)
 	if err != nil {
 		return nil, fmt.Errorf("remote director: %w", err)
 	}
@@ -101,27 +106,38 @@ func (d *Director) Start(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("remote director: %w", err)
 	}
+	commSubject := protocol.Subject(d.subjectPrefix, "comm", ">")
+	_, err = d.dispatcher.SubscribeRaw(ctx, commSubject, d.handleCommMessage)
+	if err != nil {
+		return fmt.Errorf("remote director: %w", err)
+	}
 	return nil
 }
 
 // EnsureHost bootstraps the remote host and returns its host ID.
-func (d *Director) EnsureHost(ctx context.Context, location api.Location) (api.HostID, Credential, error) {
+func (d *Director) EnsureHost(ctx context.Context, location api.Location, adapters []AdapterBundle) (api.HostID, Credential, error) {
 	hostID, err := HostIDFromLocation(location)
 	if err != nil {
 		return "", Credential{}, fmt.Errorf("ensure host: %w", err)
 	}
-	cred, err := d.creds.GetOrCreate(hostID.String())
+	cred, err := d.creds.GetOrCreate(hostID.String(), d.subjectPrefix, d.cfg.Remote.NATS.KVBucket)
+	if err != nil {
+		return "", Credential{}, fmt.Errorf("ensure host: %w", err)
+	}
+	hubClient, err := hubClientURL(d.cfg)
 	if err != nil {
 		return "", Credential{}, fmt.Errorf("ensure host: %w", err)
 	}
 	req := BootstrapRequest{
 		HostID:        hostID,
 		Location:      location,
-		HubURL:        hubURL(d.cfg),
+		LeafURL:       hubURL(d.cfg),
+		HubClientURL:  hubClient,
 		CredsPath:     d.cfg.Remote.NATS.CredsPath,
 		SubjectPrefix: d.subjectPrefix,
 		KVBucket:      d.cfg.Remote.NATS.KVBucket,
 		ManagerModel:  d.cfg.Remote.Manager.Model,
+		Adapters:      adapters,
 	}
 	if err := d.bootstrapper.Bootstrap(ctx, req, cred); err != nil {
 		return "", Credential{}, fmt.Errorf("ensure host: %w", err)
@@ -206,6 +222,10 @@ func (d *Director) sendControl(ctx context.Context, hostID api.HostID, msg Contr
 	subject := ControlSubject(d.subjectPrefix, hostID)
 	reply, err := d.dispatcher.Request(ctx, subject, data, d.requestTimeout)
 	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, nats.ErrNoResponders) {
+			d.setReady(hostID, false)
+			d.setConnected(hostID, false)
+		}
 		return ControlMessage{}, fmt.Errorf("control: %w", err)
 	}
 	resp, err := DecodeControlMessage(reply.Data)
@@ -218,6 +238,7 @@ func (d *Director) sendControl(ctx context.Context, hostID api.HostID, msg Contr
 			return ControlMessage{}, fmt.Errorf("control: %w", err)
 		}
 		if payload.Code == "not_ready" {
+			d.setReady(hostID, false)
 			return ControlMessage{}, fmt.Errorf("control: %w", ErrNotReady)
 		}
 		return ControlMessage{}, fmt.Errorf("control: %w", fmt.Errorf("%s", payload.Message))
@@ -259,9 +280,12 @@ func (d *Director) handleHandshake(msg protocol.Message) {
 	d.mu.Lock()
 	if existing, ok := d.hosts[hostID]; ok {
 		if existing.peerID.String() != peerID.String() {
-			d.mu.Unlock()
-			_ = d.replyError(msg.Reply, "handshake", "host_conflict", "host already connected")
-			return
+			if existing.connected {
+				d.mu.Unlock()
+				_ = d.replyError(msg.Reply, "handshake", "host_conflict", "host already connected")
+				return
+			}
+			delete(d.peerIndex, existing.peerID.String())
 		}
 	}
 	if owner, ok := d.peerIndex[peerID.String()]; ok && owner != hostID {
@@ -321,12 +345,17 @@ func (d *Director) handleHostEvent(msg protocol.Message) {
 	if name == "connection.established" || name == "connection.recovered" {
 		d.setConnected(hostID, true)
 		d.setReady(hostID, true)
+		go d.requestReplay(context.Background(), hostID)
 		return
 	}
 	if name == "connection.lost" {
 		d.setReady(hostID, false)
 		d.setConnected(hostID, false)
 	}
+}
+
+func (d *Director) handleCommMessage(msg protocol.Message) {
+	_ = msg
 }
 
 func (d *Director) setReady(hostID api.HostID, ready bool) {
@@ -435,6 +464,36 @@ func (d *Director) writeSessionKV(ctx context.Context, hostID api.HostID, sessio
 	return nil
 }
 
+func (d *Director) requestReplay(ctx context.Context, hostID api.HostID) {
+	if d == nil || d.kv == nil {
+		return
+	}
+	prefix := fmt.Sprintf("sessions/%s/", hostID.String())
+	keys, err := d.kv.ListKeys(ctx, prefix)
+	if err != nil {
+		return
+	}
+	for _, key := range keys {
+		sessionID := strings.TrimPrefix(key, prefix)
+		if sessionID == "" {
+			continue
+		}
+		state := "running"
+		if data, err := d.kv.Get(ctx, key); err == nil && len(data) > 0 {
+			var payload struct {
+				State string `json:"state"`
+			}
+			if err := json.Unmarshal(data, &payload); err == nil && payload.State != "" {
+				state = payload.State
+			}
+		}
+		if state != "running" {
+			continue
+		}
+		_, _ = d.Replay(ctx, hostID, ReplayRequest{SessionID: sessionID})
+	}
+}
+
 // HostIDFromLocation derives host_id from location.
 func HostIDFromLocation(location api.Location) (api.HostID, error) {
 	host := strings.TrimSpace(location.Host)
@@ -459,6 +518,12 @@ func hubURL(cfg config.Config) string {
 	url := strings.TrimSpace(cfg.Remote.NATS.URL)
 	if url != "" {
 		return url
+	}
+	role := strings.TrimSpace(cfg.Node.Role)
+	if role != "manager" {
+		if url = strings.TrimSpace(cfg.NATS.LeafAdvertiseURL); url != "" {
+			return url
+		}
 	}
 	return cfg.NATS.HubURL
 }

@@ -31,6 +31,7 @@ type SpawnRequest struct {
 	AgentID   string            `json:"agent_id"`
 	AgentSlug string            `json:"agent_slug"`
 	RepoPath  string            `json:"repo_path"`
+	Adapter   string            `json:"adapter"`
 	Command   []string          `json:"command"`
 	Env       map[string]string `json:"env,omitempty"`
 }

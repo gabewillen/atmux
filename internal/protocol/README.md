@@ -6,52 +6,23 @@ Package protocol defines the event transport interfaces for amux.
 
 All event dispatch flows through NATS-backed implementations.
 
-- `ErrNATSNotConnected, ErrNATSProtocol`
-- `errAuthRequired`
 - `func Subject(parts ...string) string` — Subject joins subject segments for NATS routing.
-- `func decodeConnect(payload string, dest *map[string]any) error`
-- `func jsonUnmarshalStrict(data []byte, dest *map[string]any) error`
-- `func matchSubject(subject string, pattern string) bool`
-- `func parseLength(raw string) (int, error)`
-- `func parseMsgLine(line string) (string, string, int, error)`
-- `func parseReplyFromHeader(line string) string`
-- `func subjectAllowed(subject string, patterns []string) bool`
-- `type AuthConfig` — AuthConfig maps auth credentials to subject permissions.
-- `type ConnectInfo` — ConnectInfo captures CONNECT payload fields used for auth.
+- `func allocatePort(host string) (int, error)`
+- `func buildLeafURL(host string, port int, advertise string, tlsEnabled bool) string`
+- `func closeOnce(ch chan struct{})`
+- `func parsePort(raw string) (int, error)`
+- `func resolveLeafListen(cfg HubServerConfig, listenHost string, listenPort int) (string, int, error)`
+- `func splitHostPort(addr string) (string, int, error)`
 - `type Dispatcher` — Dispatcher publishes and subscribes to events over NATS.
-- `type EmbeddedServerConfig` — EmbeddedServerConfig configures the embedded NATS-compatible server.
-- `type EmbeddedServer` — EmbeddedServer provides a minimal NATS-compatible server for local use.
 - `type Event` — Event is the generic event envelope used for dispatch.
+- `type HubServerConfig` — HubServerConfig configures the embedded hub-mode NATS server.
+- `type LeafServerConfig` — LeafServerConfig configures the embedded leaf-mode NATS server.
 - `type Message` — Message is a raw NATS message payload with optional reply subject.
 - `type NATSDispatcher` — NATSDispatcher publishes and subscribes to events over NATS.
 - `type NATSOptions` — NATSOptions configures NATS connection metadata and auth.
-- `type Permissions` — Permissions defines publish and subscribe authorizations.
+- `type NATSServer` — NATSServer wraps a running NATS server instance.
 - `type Subscription` — Subscription represents an active event subscription.
-- `type UserAuth` — UserAuth defines a username/password and permissions pair.
-- `type connState`
 - `type natsSubscription`
-- `type subscriptionHandler`
-- `type subscription`
-
-### Variables
-
-#### ErrNATSNotConnected, ErrNATSProtocol
-
-```go
-var (
-	// ErrNATSNotConnected is returned when the dispatcher is not connected.
-	ErrNATSNotConnected = errors.New("nats not connected")
-	// ErrNATSProtocol is returned for malformed NATS protocol frames.
-	ErrNATSProtocol = errors.New("nats protocol error")
-)
-```
-
-#### errAuthRequired
-
-```go
-var errAuthRequired = errors.New("auth required")
-```
-
 
 ### Functions
 
@@ -63,81 +34,42 @@ func Subject(parts ...string) string
 
 Subject joins subject segments for NATS routing.
 
-#### decodeConnect
+#### allocatePort
 
 ```go
-func decodeConnect(payload string, dest *map[string]any) error
+func allocatePort(host string) (int, error)
 ```
 
-#### jsonUnmarshalStrict
+#### buildLeafURL
 
 ```go
-func jsonUnmarshalStrict(data []byte, dest *map[string]any) error
+func buildLeafURL(host string, port int, advertise string, tlsEnabled bool) string
 ```
 
-#### matchSubject
+#### closeOnce
 
 ```go
-func matchSubject(subject string, pattern string) bool
+func closeOnce(ch chan struct{})
 ```
 
-#### parseLength
+#### parsePort
 
 ```go
-func parseLength(raw string) (int, error)
+func parsePort(raw string) (int, error)
 ```
 
-#### parseMsgLine
+#### resolveLeafListen
 
 ```go
-func parseMsgLine(line string) (string, string, int, error)
+func resolveLeafListen(cfg HubServerConfig, listenHost string, listenPort int) (string, int, error)
 ```
 
-#### parseReplyFromHeader
+#### splitHostPort
 
 ```go
-func parseReplyFromHeader(line string) string
+func splitHostPort(addr string) (string, int, error)
 ```
 
-#### subjectAllowed
-
-```go
-func subjectAllowed(subject string, patterns []string) bool
-```
-
-
-## type AuthConfig
-
-```go
-type AuthConfig struct {
-	Tokens map[string]Permissions
-	Users  map[string]UserAuth
-}
-```
-
-AuthConfig maps auth credentials to subject permissions.
-
-### Methods
-
-#### AuthConfig.Authorize
-
-```go
-func () Authorize(info ConnectInfo) (Permissions, error)
-```
-
-
-## type ConnectInfo
-
-```go
-type ConnectInfo struct {
-	Token    string
-	User     string
-	Password string
-	Name     string
-}
-```
-
-ConnectInfo captures CONNECT payload fields used for auth.
 
 ## type Dispatcher
 
@@ -149,117 +81,12 @@ type Dispatcher interface {
 	SubscribeRaw(ctx context.Context, subject string, handler func(Message)) (Subscription, error)
 	Request(ctx context.Context, subject string, payload []byte, timeout time.Duration) (Message, error)
 	MaxPayload() int
+	JetStream() nats.JetStreamContext
 	Closed() <-chan struct{}
 }
 ```
 
 Dispatcher publishes and subscribes to events over NATS.
-
-## type EmbeddedServer
-
-```go
-type EmbeddedServer struct {
-	listener   net.Listener
-	mu         sync.Mutex
-	closed     bool
-	subs       map[*connState]map[string]*subscription
-	maxPayload int
-	auth       AuthConfig
-}
-```
-
-EmbeddedServer provides a minimal NATS-compatible server for local use.
-
-### Functions returning EmbeddedServer
-
-#### StartEmbeddedServer
-
-```go
-func StartEmbeddedServer(ctx context.Context, addr string, cfg EmbeddedServerConfig) (*EmbeddedServer, error)
-```
-
-StartEmbeddedServer starts a local NATS-compatible server.
-
-
-### Methods
-
-#### EmbeddedServer.Close
-
-```go
-func () Close() error
-```
-
-Close stops the embedded server.
-
-#### EmbeddedServer.URL
-
-```go
-func () URL() string
-```
-
-URL returns the nats:// URL for the embedded server.
-
-#### EmbeddedServer.acceptLoop
-
-```go
-func () acceptLoop(ctx context.Context)
-```
-
-#### EmbeddedServer.handleConn
-
-```go
-func () handleConn(ctx context.Context, state *connState)
-```
-
-#### EmbeddedServer.handleConnect
-
-```go
-func () handleConnect(state *connState, line string)
-```
-
-#### EmbeddedServer.handlePub
-
-```go
-func () handlePub(state *connState, line string)
-```
-
-#### EmbeddedServer.handleSub
-
-```go
-func () handleSub(state *connState, line string)
-```
-
-#### EmbeddedServer.handleUnsub
-
-```go
-func () handleUnsub(state *connState, line string)
-```
-
-#### EmbeddedServer.publish
-
-```go
-func () publish(subject, reply string, payload []byte)
-```
-
-#### EmbeddedServer.removeConn
-
-```go
-func () removeConn(state *connState)
-```
-
-
-## type EmbeddedServerConfig
-
-```go
-type EmbeddedServerConfig struct {
-	// MaxPayload sets the advertised max payload size.
-	MaxPayload int
-	// Auth configures per-connection authorization.
-	Auth AuthConfig
-}
-```
-
-EmbeddedServerConfig configures the embedded NATS-compatible server.
 
 ## type Event
 
@@ -272,6 +99,39 @@ type Event struct {
 ```
 
 Event is the generic event envelope used for dispatch.
+
+## type HubServerConfig
+
+```go
+type HubServerConfig struct {
+	Listen    string
+	Advertise string
+	// LeafListen is the leaf node listen address.
+	LeafListen string
+	// LeafAdvertiseURL is the advertised leaf node URL.
+	LeafAdvertiseURL  string
+	JetStreamDir      string
+	OperatorPublicKey string
+	SystemAccountKey  string
+	SystemAccountJWT  string
+	AccountPublicKey  string
+	AccountJWT        string
+}
+```
+
+HubServerConfig configures the embedded hub-mode NATS server.
+
+## type LeafServerConfig
+
+```go
+type LeafServerConfig struct {
+	Listen    string
+	HubURL    string
+	CredsPath string
+}
+```
+
+LeafServerConfig configures the embedded leaf-mode NATS server.
 
 ## type Message
 
@@ -289,17 +149,9 @@ Message is a raw NATS message payload with optional reply subject.
 
 ```go
 type NATSDispatcher struct {
-	conn       net.Conn
-	reader     *bufio.Reader
-	writer     *bufio.Writer
-	mu         sync.Mutex
-	subs       map[string]subscriptionHandler
-	closed     bool
-	closedCh   chan struct{}
-	nextSID    uint64
-	nextInbox  uint64
-	maxPayload int
-	options    NATSOptions
+	conn     *nats.Conn
+	js       nats.JetStreamContext
+	closedCh chan struct{}
 }
 ```
 
@@ -332,7 +184,15 @@ Close closes the underlying NATS connection.
 func () Closed() <-chan struct{}
 ```
 
-Closed returns a channel closed when the dispatcher connection ends.
+Closed returns a channel that closes when the connection closes.
+
+#### NATSDispatcher.JetStream
+
+```go
+func () JetStream() nats.JetStreamContext
+```
+
+JetStream returns the JetStream context.
 
 #### NATSDispatcher.MaxPayload
 
@@ -340,7 +200,7 @@ Closed returns a channel closed when the dispatcher connection ends.
 func () MaxPayload() int
 ```
 
-MaxPayload returns the server-advertised maximum payload size.
+MaxPayload returns the maximum payload size for the connection.
 
 #### NATSDispatcher.Publish
 
@@ -364,7 +224,7 @@ PublishRaw publishes a raw payload to a subject with optional reply.
 func () Request(ctx context.Context, subject string, payload []byte, timeout time.Duration) (Message, error)
 ```
 
-Request sends a request and waits for a single reply.
+Request sends a request and waits for a response.
 
 #### NATSDispatcher.Subscribe
 
@@ -382,48 +242,6 @@ func () SubscribeRaw(ctx context.Context, subject string, handler func(Message))
 
 SubscribeRaw subscribes to a subject and receives raw NATS messages.
 
-#### NATSDispatcher.handlerForSID
-
-```go
-func () handlerForSID(sid string) subscriptionHandler
-```
-
-#### NATSDispatcher.nextInboxSubject
-
-```go
-func () nextInboxSubject() string
-```
-
-#### NATSDispatcher.readInfo
-
-```go
-func () readInfo(ctx context.Context) error
-```
-
-#### NATSDispatcher.readLoop
-
-```go
-func () readLoop()
-```
-
-#### NATSDispatcher.sendConnect
-
-```go
-func () sendConnect(ctx context.Context) error
-```
-
-#### NATSDispatcher.unsubscribe
-
-```go
-func () unsubscribe(sid string) error
-```
-
-#### NATSDispatcher.writePong
-
-```go
-func () writePong() error
-```
-
 
 ## type NATSOptions
 
@@ -437,21 +255,87 @@ type NATSOptions struct {
 	Password string
 	// Token sets the auth token.
 	Token string
+	// CredsPath sets the path to a NATS .creds file.
+	CredsPath string
+	// AllowNoJetStream permits connections without JetStream enabled.
+	AllowNoJetStream bool
 }
 ```
 
 NATSOptions configures NATS connection metadata and auth.
 
-## type Permissions
+## type NATSServer
 
 ```go
-type Permissions struct {
-	Publish   []string
-	Subscribe []string
+type NATSServer struct {
+	server  *server.Server
+	leafURL string
 }
 ```
 
-Permissions defines publish and subscribe authorizations.
+NATSServer wraps a running NATS server instance.
+
+### Functions returning NATSServer
+
+#### StartHubServer
+
+```go
+func StartHubServer(ctx context.Context, cfg HubServerConfig) (*NATSServer, error)
+```
+
+StartHubServer starts a hub-mode NATS server with JetStream enabled.
+
+#### StartLeafServer
+
+```go
+func StartLeafServer(ctx context.Context, cfg LeafServerConfig) (*NATSServer, error)
+```
+
+StartLeafServer starts a leaf-mode NATS server connected to the hub.
+
+
+### Methods
+
+#### NATSServer.Close
+
+```go
+func () Close() error
+```
+
+Close stops the server.
+
+#### NATSServer.LeafCount
+
+```go
+func () LeafCount() int
+```
+
+LeafCount reports the number of leaf connections.
+
+#### NATSServer.LeafURL
+
+```go
+func () LeafURL() string
+```
+
+LeafURL returns the leaf connection URL for the server.
+
+#### NATSServer.Shutdown
+
+```go
+func () Shutdown()
+```
+
+Shutdown stops the server.
+
+#### NATSServer.URL
+
+```go
+func () URL() string
+```
+
+URL returns the client connection URL for the server.
+
 
 ## type Subscription
 
@@ -463,51 +347,11 @@ type Subscription interface {
 
 Subscription represents an active event subscription.
 
-## type UserAuth
-
-```go
-type UserAuth struct {
-	Password    string
-	Permissions Permissions
-}
-```
-
-UserAuth defines a username/password and permissions pair.
-
-## type connState
-
-```go
-type connState struct {
-	conn       net.Conn
-	reader     *bufio.Reader
-	writer     *bufio.Writer
-	mu         sync.Mutex
-	perms      Permissions
-	authorized bool
-}
-```
-
-### Methods
-
-#### connState.sendMessage
-
-```go
-func () sendMessage(subject, sid, reply string, payload []byte)
-```
-
-#### connState.writeLine
-
-```go
-func () writeLine(line string) error
-```
-
-
 ## type natsSubscription
 
 ```go
 type natsSubscription struct {
-	dispatcher *NATSDispatcher
-	sid        string
+	sub *nats.Subscription
 }
 ```
 
@@ -519,22 +363,4 @@ type natsSubscription struct {
 func () Unsubscribe() error
 ```
 
-
-## type subscription
-
-```go
-type subscription struct {
-	subject string
-	sid     string
-}
-```
-
-## type subscriptionHandler
-
-```go
-type subscriptionHandler struct {
-	onEvent func(Event)
-	onRaw   func(Message)
-}
-```
 

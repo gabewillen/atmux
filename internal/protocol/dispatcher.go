@@ -3,6 +3,8 @@ package protocol
 import (
 	"context"
 	"time"
+
+	"github.com/nats-io/nats.go"
 )
 
 // Event is the generic event envelope used for dispatch.
@@ -27,6 +29,7 @@ type Dispatcher interface {
 	SubscribeRaw(ctx context.Context, subject string, handler func(Message)) (Subscription, error)
 	Request(ctx context.Context, subject string, payload []byte, timeout time.Duration) (Message, error)
 	MaxPayload() int
+	JetStream() nats.JetStreamContext
 	Closed() <-chan struct{}
 }
 

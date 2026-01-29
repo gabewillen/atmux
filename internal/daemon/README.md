@@ -15,6 +15,8 @@ Package daemon hosts the JSON-RPC control plane.
 - `type agentRefParams`
 - `type agentSummary`
 - `type attachResult`
+- `type daemonStatusResult`
+- `type daemonStopParams`
 - `type locationParam`
 - `type mergeParams`
 
@@ -27,7 +29,7 @@ const (
 	// SpecVersion is the spec version implemented by the daemon.
 	SpecVersion = "v1.22"
 	// AmuxVersion is the daemon version string.
-	AmuxVersion = "dev"
+	AmuxVersion = "0.0.0-dev"
 )
 ```
 
@@ -64,7 +66,7 @@ type Daemon struct {
 	dispatcher protocol.Dispatcher
 	server     *rpc.Server
 	listener   net.Listener
-	embedded   *protocol.EmbeddedServer
+	embedded   *protocol.NATSServer
 	logger     *log.Logger
 	closeMu    sync.Mutex
 	closed     bool
@@ -162,6 +164,18 @@ func () handleGitMerge(ctx context.Context, raw json.RawMessage) (any, *rpc.Erro
 func () handlePing(ctx context.Context, raw json.RawMessage) (any, *rpc.Error)
 ```
 
+#### Daemon.handleStatus
+
+```go
+func () handleStatus(ctx context.Context, raw json.RawMessage) (any, *rpc.Error)
+```
+
+#### Daemon.handleStop
+
+```go
+func () handleStop(ctx context.Context, raw json.RawMessage) (any, *rpc.Error)
+```
+
 #### Daemon.handleVersion
 
 ```go
@@ -241,6 +255,25 @@ type agentSummary struct {
 ```go
 type attachResult struct {
 	SocketPath string `json:"socket_path"`
+}
+```
+
+## type daemonStatusResult
+
+```go
+type daemonStatusResult struct {
+	Role         string `json:"role"`
+	HubConnected bool   `json:"hub_connected"`
+	Ready        bool   `json:"ready"`
+	HostID       string `json:"host_id,omitempty"`
+}
+```
+
+## type daemonStopParams
+
+```go
+type daemonStopParams struct {
+	Force bool `json:"force"`
 }
 ```
 

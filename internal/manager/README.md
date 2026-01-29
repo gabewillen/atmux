@@ -5,6 +5,7 @@
 Package manager manages local agents, worktrees, and sessions.
 
 - `ErrAgentNotFound, ErrAgentAmbiguous, ErrAgentInvalid, ErrRepoPathRequired`
+- `func buildAdapterBundle(resolver *paths.Resolver, name string) (remote.AdapterBundle, error)`
 - `func encodeAgents(agents []config.AgentConfig) []any`
 - `func ensureGitRepo(repoRoot string) error`
 - `func extractAgents(raw map[string]any) []config.AgentConfig`
@@ -109,6 +110,12 @@ var shutdownModel = hsm.Define(
 
 
 ### Functions
+
+#### buildAdapterBundle
+
+```go
+func buildAdapterBundle(resolver *paths.Resolver, name string) (remote.AdapterBundle, error)
+```
 
 #### encodeAgents
 

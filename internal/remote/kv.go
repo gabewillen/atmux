@@ -4,30 +4,34 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
+
+	"github.com/nats-io/nats.go"
 )
 
-// KVStore provides a simple bucketed key-value store.
+// KVStore provides access to a JetStream KV bucket.
 type KVStore struct {
-	baseDir string
-	bucket  string
+	kv nats.KeyValue
 }
 
-// NewKVStore ensures the KV bucket directory exists.
-func NewKVStore(baseDir string, bucket string) (*KVStore, error) {
-	if strings.TrimSpace(baseDir) == "" {
-		return nil, fmt.Errorf("kv store: base dir is empty")
+// NewKVStore ensures the KV bucket exists.
+func NewKVStore(js nats.JetStreamContext, bucket string) (*KVStore, error) {
+	if js == nil {
+		return nil, fmt.Errorf("kv store: jetstream unavailable")
 	}
-	if strings.TrimSpace(bucket) == "" {
+	if bucket == "" {
 		return nil, fmt.Errorf("kv store: bucket is empty")
 	}
-	bucketDir := filepath.Join(baseDir, "kv", bucket)
-	if err := os.MkdirAll(bucketDir, 0o755); err != nil {
-		return nil, fmt.Errorf("kv store: %w", err)
+	kv, err := js.KeyValue(bucket)
+	if err != nil {
+		if errors.Is(err, nats.ErrBucketNotFound) {
+			kv, err = js.CreateKeyValue(&nats.KeyValueConfig{Bucket: bucket})
+		}
+		if err != nil {
+			return nil, fmt.Errorf("kv store: %w", err)
+		}
 	}
-	return &KVStore{baseDir: baseDir, bucket: bucket}, nil
+	return &KVStore{kv: kv}, nil
 }
 
 // Put writes a key-value entry as UTF-8 bytes.
@@ -35,17 +39,10 @@ func (k *KVStore) Put(ctx context.Context, key string, value []byte) error {
 	if ctx.Err() != nil {
 		return fmt.Errorf("kv put: %w", ctx.Err())
 	}
-	if k == nil {
+	if k == nil || k.kv == nil {
 		return fmt.Errorf("kv put: store is nil")
 	}
-	path, err := k.keyPath(key)
-	if err != nil {
-		return fmt.Errorf("kv put: %w", err)
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return fmt.Errorf("kv put: %w", err)
-	}
-	if err := os.WriteFile(path, value, 0o644); err != nil {
+	if _, err := k.kv.Put(key, value); err != nil {
 		return fmt.Errorf("kv put: %w", err)
 	}
 	return nil
@@ -56,31 +53,47 @@ func (k *KVStore) Get(ctx context.Context, key string) ([]byte, error) {
 	if ctx.Err() != nil {
 		return nil, fmt.Errorf("kv get: %w", ctx.Err())
 	}
-	if k == nil {
+	if k == nil || k.kv == nil {
 		return nil, fmt.Errorf("kv get: store is nil")
 	}
-	path, err := k.keyPath(key)
+	entry, err := k.kv.Get(key)
 	if err != nil {
-		return nil, fmt.Errorf("kv get: %w", err)
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
+		if errors.Is(err, nats.ErrKeyNotFound) {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("kv get: %w", err)
 	}
-	return data, nil
+	if entry == nil {
+		return nil, nil
+	}
+	return entry.Value(), nil
 }
 
-func (k *KVStore) keyPath(key string) (string, error) {
-	clean := strings.TrimSpace(key)
-	if clean == "" {
-		return "", fmt.Errorf("kv key: empty")
+// ListKeys returns all keys with the given prefix.
+func (k *KVStore) ListKeys(ctx context.Context, prefix string) ([]string, error) {
+	if ctx.Err() != nil {
+		return nil, fmt.Errorf("kv list: %w", ctx.Err())
 	}
-	if strings.Contains(clean, "..") {
-		return "", fmt.Errorf("kv key: invalid")
+	if k == nil || k.kv == nil {
+		return nil, fmt.Errorf("kv list: store is nil")
 	}
-	bucketDir := filepath.Join(k.baseDir, "kv", k.bucket)
-	return filepath.Join(bucketDir, filepath.FromSlash(clean)), nil
+	lister, err := k.kv.ListKeys()
+	if err != nil {
+		return nil, fmt.Errorf("kv list: %w", err)
+	}
+	defer func() {
+		_ = lister.Stop()
+	}()
+	keys := []string{}
+	for key := range lister.Keys() {
+		if prefix == "" || strings.HasPrefix(key, prefix) {
+			keys = append(keys, key)
+		}
+	}
+	for err := range lister.Error() {
+		if err != nil {
+			return nil, fmt.Errorf("kv list: %w", err)
+		}
+	}
+	return keys, nil
 }

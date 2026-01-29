@@ -23,7 +23,7 @@ const (
 	// SpecVersion is the spec version implemented by the daemon.
 	SpecVersion = "v1.22"
 	// AmuxVersion is the daemon version string.
-	AmuxVersion = "dev"
+	AmuxVersion = "0.0.0-dev"
 )
 
 // Daemon hosts the JSON-RPC control plane.
@@ -35,7 +35,7 @@ type Daemon struct {
 	dispatcher protocol.Dispatcher
 	server     *rpc.Server
 	listener   net.Listener
-	embedded   *protocol.EmbeddedServer
+	embedded   *protocol.NATSServer
 	logger     *log.Logger
 	closeMu    sync.Mutex
 	closed     bool
@@ -49,42 +49,68 @@ func New(ctx context.Context, resolver *paths.Resolver, cfg config.Config, logge
 	if logger == nil {
 		logger = log.New(os.Stderr, "amuxd ", log.LstdFlags)
 	}
-	var embedded *protocol.EmbeddedServer
+	var embedded *protocol.NATSServer
 	var dispatcher protocol.Dispatcher
 	var mgr *manager.Manager
 	var hostMgr *remote.HostManager
-	var err error
 	role := strings.TrimSpace(cfg.Node.Role)
 	if role == "" {
 		role = "director"
 	}
 	if role != "manager" {
 		mode := strings.TrimSpace(cfg.NATS.Mode)
-		if mode == "" || mode == "embedded" {
+		if mode == "" {
+			mode = "embedded"
+		}
+		credStore, err := remote.NewCredentialStore(cfg.NATS.JetStreamDir)
+		if err != nil {
+			return nil, fmt.Errorf("daemon: %w", err)
+		}
+		if mode != "external" {
 			addr := cfg.NATS.Listen
 			if strings.TrimSpace(addr) == "" {
-				addr = "127.0.0.1:0"
+				addr = "127.0.0.1:-1"
 			}
-			server, err := protocol.StartEmbeddedServer(ctx, addr, protocol.EmbeddedServerConfig{})
+			auth, err := credStore.HubAuth()
+			if err != nil {
+				return nil, fmt.Errorf("daemon: %w", err)
+			}
+			server, err := protocol.StartHubServer(ctx, protocol.HubServerConfig{
+				Listen:            addr,
+				Advertise:         cfg.NATS.AdvertiseURL,
+				LeafListen:        cfg.NATS.LeafListen,
+				LeafAdvertiseURL:  cfg.NATS.LeafAdvertiseURL,
+				JetStreamDir:      cfg.NATS.JetStreamDir,
+				OperatorPublicKey: auth.OperatorPublicKey,
+				SystemAccountKey:  auth.SystemAccountKey,
+				SystemAccountJWT:  auth.SystemAccountJWT,
+				AccountPublicKey:  auth.AccountPublicKey,
+				AccountJWT:        auth.AccountJWT,
+			})
 			if err != nil {
 				return nil, fmt.Errorf("daemon: %w", err)
 			}
 			embedded = server
-			dispatcher, err = protocol.NewNATSDispatcher(ctx, server.URL(), protocol.NATSOptions{})
-			if err != nil {
-				_ = server.Close()
-				return nil, fmt.Errorf("daemon: %w", err)
+			cfg.NATS.HubURL = embedded.URL()
+			if leafURL := embedded.LeafURL(); leafURL != "" {
+				cfg.Remote.NATS.URL = leafURL
 			}
-		} else {
-			url := cfg.Remote.NATS.URL
-			if strings.TrimSpace(url) == "" {
-				url = cfg.NATS.HubURL
+		}
+		if _, err := credStore.DirectorCredential(); err != nil {
+			if embedded != nil {
+				_ = embedded.Close()
 			}
-			d, err := protocol.NewNATSDispatcher(ctx, url, protocol.NATSOptions{})
-			if err != nil {
-				return nil, fmt.Errorf("daemon: %w", err)
+			return nil, fmt.Errorf("daemon: %w", err)
+		}
+		hubURL := cfg.NATS.HubURL
+		dispatcher, err = protocol.NewNATSDispatcher(ctx, hubURL, protocol.NATSOptions{
+			CredsPath: credStore.CredentialPath("director"),
+		})
+		if err != nil {
+			if embedded != nil {
+				_ = embedded.Close()
 			}
-			dispatcher = d
+			return nil, fmt.Errorf("daemon: %w", err)
 		}
 		mgr, err = manager.NewManager(ctx, resolver, cfg, dispatcher, AmuxVersion)
 		if err != nil {
@@ -94,7 +120,7 @@ func New(ctx context.Context, resolver *paths.Resolver, cfg config.Config, logge
 			return nil, fmt.Errorf("daemon: %w", err)
 		}
 	} else {
-		remoteMgr, err := remote.NewHostManager(cfg, resolver)
+		remoteMgr, err := remote.NewHostManager(cfg, resolver, AmuxVersion)
 		if err != nil {
 			return nil, fmt.Errorf("daemon: %w", err)
 		}

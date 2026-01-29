@@ -8,6 +8,7 @@ import (
 
 	"github.com/agentflare-ai/amux/internal/protocol"
 	"github.com/agentflare-ai/amux/pkg/api"
+	"github.com/nats-io/nats.go"
 	"github.com/stateforward/hsm-go"
 )
 
@@ -58,6 +59,10 @@ func (r *recordDispatcher) Request(ctx context.Context, subject string, payload 
 
 func (r *recordDispatcher) MaxPayload() int {
 	return 1024 * 1024
+}
+
+func (r *recordDispatcher) JetStream() nats.JetStreamContext {
+	return nil
 }
 
 func (r *recordDispatcher) Closed() <-chan struct{} {

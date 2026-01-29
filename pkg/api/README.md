@@ -7,6 +7,7 @@ Package api defines public types shared between amux clients and the daemon.
 The API types are stable, JSON-serializable, and enforce the wire conventions
 required by the amux specification.
 
+- `BroadcastID` — BroadcastID is the reserved runtime ID for broadcast messages.
 - `ErrEmptyID, ErrZeroID`
 - `ErrInvalidLocationType, ErrInvalidLocation, ErrInvalidAgent, ErrInvalidSession`
 - `defaultIDGenerator`
@@ -14,6 +15,7 @@ required by the amux specification.
 - `func validateWorktree(repoRoot, worktree string) error`
 - `type AdapterRef` — AdapterRef is the string name of an adapter loaded from the WASM registry.
 - `type AgentID` — AgentID is the runtime identifier for an agent.
+- `type AgentMessage` — AgentMessage represents a participant communication payload.
 - `type Agent` — Agent describes the core metadata for a managed agent.
 - `type HostID` — HostID is the identifier for a host manager.
 - `type LocationType` — LocationType describes where an agent runs.
@@ -22,6 +24,18 @@ required by the amux specification.
 - `type RuntimeID` — RuntimeID is a JSON-safe wrapper around muid.MUID that encodes as base-10 strings.
 - `type SessionID` — SessionID is the runtime identifier for a session.
 - `type Session` — Session describes runtime session metadata for an agent.
+- `type TargetID` — TargetID is a runtime ID that permits the broadcast sentinel (0).
+
+### Constants
+
+#### BroadcastID
+
+```go
+const BroadcastID muid.MUID = 0
+```
+
+BroadcastID is the reserved runtime ID for broadcast messages.
+
 
 ### Variables
 
@@ -206,6 +220,21 @@ func () Value() muid.MUID
 
 Value returns the underlying muid.MUID.
 
+
+## type AgentMessage
+
+```go
+type AgentMessage struct {
+	ID        RuntimeID `json:"id"`
+	From      RuntimeID `json:"from"`
+	To        TargetID  `json:"to"`
+	ToSlug    string    `json:"to_slug"`
+	Content   string    `json:"content"`
+	Timestamp time.Time `json:"timestamp"`
+}
+```
+
+AgentMessage represents a participant communication payload.
 
 ## type HostID
 
@@ -606,6 +635,78 @@ func () UnmarshalJSON(data []byte) error
 UnmarshalJSON decodes a JSON string containing a base-10 integer ID.
 
 #### SessionID.Value
+
+```go
+func () Value() muid.MUID
+```
+
+Value returns the underlying muid.MUID.
+
+
+## type TargetID
+
+```go
+type TargetID struct {
+	value muid.MUID
+}
+```
+
+TargetID is a runtime ID that permits the broadcast sentinel (0).
+
+### Functions returning TargetID
+
+#### ParseTargetID
+
+```go
+func ParseTargetID(raw string) (TargetID, error)
+```
+
+ParseTargetID parses a base-10 encoded ID string, allowing zero.
+
+#### TargetIDFromRuntime
+
+```go
+func TargetIDFromRuntime(id RuntimeID) TargetID
+```
+
+TargetIDFromRuntime converts a runtime ID to a target ID.
+
+
+### Methods
+
+#### TargetID.IsBroadcast
+
+```go
+func () IsBroadcast() bool
+```
+
+IsBroadcast reports whether the ID is the broadcast sentinel.
+
+#### TargetID.MarshalJSON
+
+```go
+func () MarshalJSON() ([]byte, error)
+```
+
+MarshalJSON encodes the ID as a JSON string containing a base-10 integer.
+
+#### TargetID.String
+
+```go
+func () String() string
+```
+
+String returns the base-10 string form of the ID.
+
+#### TargetID.UnmarshalJSON
+
+```go
+func () UnmarshalJSON(data []byte) error
+```
+
+UnmarshalJSON decodes a JSON string containing a base-10 integer ID.
+
+#### TargetID.Value
 
 ```go
 func () Value() muid.MUID

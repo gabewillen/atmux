@@ -15,7 +15,8 @@ Package remote implements NATS-based remote orchestration for amux.
 - `func EventsSubject(prefix string, hostID api.HostID) string` — EventsSubject returns the subject for host events.
 - `func HandshakeSubject(prefix string, hostID api.HostID) string` — HandshakeSubject returns the subject for handshake requests.
 - `func HostIDFromLocation(location api.Location) (api.HostID, error)` — HostIDFromLocation derives host_id from location.
-- `func HostPermissions(prefix string, hostID api.HostID) protocol.Permissions` — HostPermissions returns the per-host subject permissions.
+- `func HostPermissions(prefix string, hostID api.HostID, kvBucket string) jwt.Permissions` — HostPermissions returns the per-host subject permissions.
+- `func LoadOrCreatePeerID(dir string) (api.PeerID, error)` — LoadOrCreatePeerID loads a persisted peer ID or creates a new one.
 - `func ManagerCommSubject(prefix string, hostID api.HostID) string` — ManagerCommSubject returns the subject for a manager channel.
 - `func NewPTYConn(ctx context.Context, dispatcher protocol.Dispatcher, prefix string, hostID api.HostID, sessionID api.SessionID) (net.Conn, error)` — NewPTYConn returns a net.Conn that bridges PTY I/O over NATS.
 - `func NowRFC3339() string` — NowRFC3339 returns the current time in RFC3339 UTC format.
@@ -24,15 +25,28 @@ Package remote implements NATS-based remote orchestration for amux.
 - `func PtyInSubject(prefix string, hostID api.HostID, sessionID api.SessionID) string` — PtyInSubject returns the subject for PTY input.
 - `func PtyOutSubject(prefix string, hostID api.HostID, sessionID api.SessionID) string` — PtyOutSubject returns the subject for PTY output.
 - `func SubjectPrefix(prefix string) string` — SubjectPrefix normalizes the configured subject prefix.
+- `func addZipBytes(w *zip.Writer, data []byte, destPath string, mode os.FileMode) error`
+- `func addZipFile(w *zip.Writer, srcPath, destPath string, mode os.FileMode) error`
 - `func bootstrapConfig(req BootstrapRequest) ([]byte, error)`
+- `func buildBootstrapZip(ctx context.Context, req BootstrapRequest, runner SSHRunner) ([]byte, error)`
+- `func buildManagerBinary(ctx context.Context, goos, goarch string) (string, error)`
 - `func chunkBytes(maxPayload int, data []byte) [][]byte`
+- `func deriveHubURLFromLeaf(raw string) (string, error)`
+- `func detectRemoteArch(ctx context.Context, location api.Location, runner SSHRunner) (string, string, error)`
 - `func ensureRepo(repoRoot string) error`
+- `func findModuleRoot() (string, error)`
 - `func hostnameFallback() string`
+- `func hubClientURL(cfg config.Config) (string, error)`
 - `func hubURL(cfg config.Config) string`
+- `func isHubConnected(output []byte) bool`
+- `func loadOrCreateKeyPair(path string, prefix nkeys.PrefixByte) (nkeys.KeyPair, error)`
+- `func mapGOARCH(raw string) (string, error)`
+- `func mapGOOS(raw string) (string, error)`
 - `func reconnectDelay(cfg config.Config, attempt int) time.Duration`
 - `func shellEscape(raw string) string`
 - `func sshOptions(location api.Location) []string`
 - `func sshTarget(location api.Location) string`
+- `type AdapterBundle` — AdapterBundle describes an adapter WASM module to bootstrap.
 - `type BootstrapRequest` — BootstrapRequest describes a remote bootstrap request.
 - `type Bootstrapper` — Bootstrapper provisions remote credentials and configuration.
 - `type ConnectionEstablishedPayload` — ConnectionEstablishedPayload is the payload for connection.established.
@@ -40,15 +54,17 @@ Package remote implements NATS-based remote orchestration for amux.
 - `type ConnectionRecoveredPayload` — ConnectionRecoveredPayload is the payload for connection.recovered.
 - `type ControlMessage` — ControlMessage is the envelope for remote control requests.
 - `type CredentialStore` — CredentialStore persists host credentials on disk.
-- `type Credential` — Credential holds the per-host auth token.
+- `type Credential` — Credential holds the per-host NATS credential file bytes.
 - `type DirectorOptions` — DirectorOptions configures the director runtime.
 - `type Director` — Director orchestrates remote hosts via NATS.
 - `type ErrorPayload` — ErrorPayload describes a control error response.
 - `type EventMessage` — EventMessage wraps a remote event in a wire envelope.
 - `type ExecSSHRunner` — ExecSSHRunner executes SSH commands using the system ssh binary.
 - `type HandshakePayload` — HandshakePayload is the handshake request/response payload.
+- `type HostManagerStatus` — HostManagerStatus reports manager connection state.
 - `type HostManager` — HostManager runs sessions and responds to remote control requests.
-- `type KVStore` — KVStore provides a simple bucketed key-value store.
+- `type HubAuth` — HubAuth contains JWT material for hub server configuration.
+- `type KVStore` — KVStore provides access to a JetStream KV bucket.
 - `type KillRequest` — KillRequest describes a kill request payload.
 - `type KillResponse` — KillResponse describes a kill response payload.
 - `type MessageType` — MessageType describes the remote event envelope type.
@@ -61,6 +77,7 @@ Package remote implements NATS-based remote orchestration for amux.
 - `type SpawnRequest` — SpawnRequest describes a spawn request payload.
 - `type SpawnResponse` — SpawnResponse describes a spawn response payload.
 - `type WireEvent` — WireEvent describes an event payload.
+- `type adapterOutboundMessage`
 - `type hostState`
 - `type queuedMessage`
 - `type remoteSession`
@@ -176,10 +193,18 @@ HostIDFromLocation derives host_id from location.
 #### HostPermissions
 
 ```go
-func HostPermissions(prefix string, hostID api.HostID) protocol.Permissions
+func HostPermissions(prefix string, hostID api.HostID, kvBucket string) jwt.Permissions
 ```
 
 HostPermissions returns the per-host subject permissions.
+
+#### LoadOrCreatePeerID
+
+```go
+func LoadOrCreatePeerID(dir string) (api.PeerID, error)
+```
+
+LoadOrCreatePeerID loads a persisted peer ID or creates a new one.
 
 #### ManagerCommSubject
 
@@ -245,10 +270,34 @@ func SubjectPrefix(prefix string) string
 
 SubjectPrefix normalizes the configured subject prefix.
 
+#### addZipBytes
+
+```go
+func addZipBytes(w *zip.Writer, data []byte, destPath string, mode os.FileMode) error
+```
+
+#### addZipFile
+
+```go
+func addZipFile(w *zip.Writer, srcPath, destPath string, mode os.FileMode) error
+```
+
 #### bootstrapConfig
 
 ```go
 func bootstrapConfig(req BootstrapRequest) ([]byte, error)
+```
+
+#### buildBootstrapZip
+
+```go
+func buildBootstrapZip(ctx context.Context, req BootstrapRequest, runner SSHRunner) ([]byte, error)
+```
+
+#### buildManagerBinary
+
+```go
+func buildManagerBinary(ctx context.Context, goos, goarch string) (string, error)
 ```
 
 #### chunkBytes
@@ -257,10 +306,28 @@ func bootstrapConfig(req BootstrapRequest) ([]byte, error)
 func chunkBytes(maxPayload int, data []byte) [][]byte
 ```
 
+#### deriveHubURLFromLeaf
+
+```go
+func deriveHubURLFromLeaf(raw string) (string, error)
+```
+
+#### detectRemoteArch
+
+```go
+func detectRemoteArch(ctx context.Context, location api.Location, runner SSHRunner) (string, string, error)
+```
+
 #### ensureRepo
 
 ```go
 func ensureRepo(repoRoot string) error
+```
+
+#### findModuleRoot
+
+```go
+func findModuleRoot() (string, error)
 ```
 
 #### hostnameFallback
@@ -269,10 +336,40 @@ func ensureRepo(repoRoot string) error
 func hostnameFallback() string
 ```
 
+#### hubClientURL
+
+```go
+func hubClientURL(cfg config.Config) (string, error)
+```
+
 #### hubURL
 
 ```go
 func hubURL(cfg config.Config) string
+```
+
+#### isHubConnected
+
+```go
+func isHubConnected(output []byte) bool
+```
+
+#### loadOrCreateKeyPair
+
+```go
+func loadOrCreateKeyPair(path string, prefix nkeys.PrefixByte) (nkeys.KeyPair, error)
+```
+
+#### mapGOARCH
+
+```go
+func mapGOARCH(raw string) (string, error)
+```
+
+#### mapGOOS
+
+```go
+func mapGOOS(raw string) (string, error)
 ```
 
 #### reconnectDelay
@@ -300,17 +397,32 @@ func sshTarget(location api.Location) string
 ```
 
 
+## type AdapterBundle
+
+```go
+type AdapterBundle struct {
+	Name string
+	Wasm []byte
+}
+```
+
+AdapterBundle describes an adapter WASM module to bootstrap.
+
 ## type BootstrapRequest
 
 ```go
 type BootstrapRequest struct {
-	HostID        api.HostID
-	Location      api.Location
-	HubURL        string
+	HostID   api.HostID
+	Location api.Location
+	// LeafURL is the hub leaf listen URL for manager leaf connections.
+	LeafURL string
+	// HubClientURL is the hub client URL for direct JetStream access.
+	HubClientURL  string
 	CredsPath     string
 	SubjectPrefix string
 	KVBucket      string
 	ManagerModel  string
+	Adapters      []AdapterBundle
 }
 ```
 
@@ -413,29 +525,13 @@ NewErrorMessage constructs a control error response.
 
 ```go
 type Credential struct {
-	Token string `json:"token"`
+	data []byte
 }
 ```
 
-Credential holds the per-host auth token.
+Credential holds the per-host NATS credential file bytes.
 
 ### Functions returning Credential
-
-#### LoadCredential
-
-```go
-func LoadCredential(path string) (Credential, error)
-```
-
-LoadCredential reads a credential from disk.
-
-#### NewCredential
-
-```go
-func NewCredential() (Credential, error)
-```
-
-NewCredential generates a new credential.
 
 #### ParseCredential
 
@@ -443,7 +539,7 @@ NewCredential generates a new credential.
 func ParseCredential(data []byte) (Credential, error)
 ```
 
-ParseCredential decodes a credential from JSON.
+ParseCredential validates and wraps credential bytes.
 
 
 ### Methods
@@ -454,14 +550,21 @@ ParseCredential decodes a credential from JSON.
 func () Marshal() ([]byte, error)
 ```
 
-Marshal serializes the credential to JSON.
+Marshal returns the credential bytes.
 
 
 ## type CredentialStore
 
 ```go
 type CredentialStore struct {
-	baseDir string
+	baseDir     string
+	operatorKP  nkeys.KeyPair
+	systemKP    nkeys.KeyPair
+	accountKP   nkeys.KeyPair
+	operatorJWT string
+	systemJWT   string
+	accountJWT  string
+	mu          sync.Mutex
 }
 ```
 
@@ -480,13 +583,55 @@ NewCredentialStore constructs a credential store rooted at baseDir.
 
 ### Methods
 
+#### CredentialStore.CredentialPath
+
+```go
+func () CredentialPath(name string) string
+```
+
+CredentialPath returns the on-disk path for a named credential.
+
+#### CredentialStore.DirectorCredential
+
+```go
+func () DirectorCredential() (Credential, error)
+```
+
+DirectorCredential returns a credential with full subject access.
+
 #### CredentialStore.GetOrCreate
 
 ```go
-func () GetOrCreate(hostID string) (Credential, error)
+func () GetOrCreate(hostID string, subjectPrefix string, kvBucket string) (Credential, error)
 ```
 
 GetOrCreate returns a credential for the host, creating one if missing.
+
+#### CredentialStore.HubAuth
+
+```go
+func () HubAuth() (HubAuth, error)
+```
+
+HubAuth returns operator and account JWT material for hub configuration.
+
+#### CredentialStore.getOrCreateCredential
+
+```go
+func () getOrCreateCredential(name string, perms jwt.Permissions) (Credential, error)
+```
+
+#### CredentialStore.newCredential
+
+```go
+func () newCredential(name string, perms jwt.Permissions) (Credential, error)
+```
+
+#### CredentialStore.refreshJWTs
+
+```go
+func () refreshJWTs() error
+```
 
 
 ## type Director
@@ -535,7 +680,7 @@ AttachPTY opens a PTY connection via NATS subjects.
 #### Director.EnsureHost
 
 ```go
-func () EnsureHost(ctx context.Context, location api.Location) (api.HostID, Credential, error)
+func () EnsureHost(ctx context.Context, location api.Location, adapters []AdapterBundle) (api.HostID, Credential, error)
 ```
 
 EnsureHost bootstraps the remote host and returns its host ID.
@@ -586,6 +731,12 @@ Start subscribes to handshake and host events subjects.
 func () ensureConnected(hostID api.HostID) error
 ```
 
+#### Director.handleCommMessage
+
+```go
+func () handleCommMessage(msg protocol.Message)
+```
+
 #### Director.handleHandshake
 
 ```go
@@ -602,6 +753,12 @@ func () handleHostEvent(msg protocol.Message)
 
 ```go
 func () replyError(reply, requestType, code, message string) error
+```
+
+#### Director.requestReplay
+
+```go
+func () requestReplay(ctx context.Context, hostID api.HostID)
 ```
 
 #### Director.sendControl
@@ -701,6 +858,14 @@ func () Run(ctx context.Context, target string, options []string, command string
 
 Run executes an SSH command.
 
+#### ExecSSHRunner.RunOutput
+
+```go
+func () RunOutput(ctx context.Context, target string, options []string, command string, stdin []byte) ([]byte, error)
+```
+
+RunOutput executes an SSH command and returns combined output.
+
 
 ## type HandshakePayload
 
@@ -725,11 +890,18 @@ type HostManager struct {
 	subjectPrefix string
 	hostID        api.HostID
 	peerID        api.PeerID
+	directorPeer  api.PeerID
+	version       string
 	bufferSize    int
 	outbox        *Outbox
+	kv            *KVStore
+	leaf          *protocol.NATSServer
+	registry      adapter.Registry
+	registryClose func(context.Context) error
 	mu            sync.Mutex
 	sessions      map[api.SessionID]*remoteSession
 	agentIndex    map[api.AgentID]*remoteSession
+	subscribed    bool
 	ready         bool
 	connected     bool
 	everConnected bool
@@ -743,13 +915,21 @@ HostManager runs sessions and responds to remote control requests.
 #### NewHostManager
 
 ```go
-func NewHostManager(cfg config.Config, resolver *paths.Resolver) (*HostManager, error)
+func NewHostManager(cfg config.Config, resolver *paths.Resolver, version string) (*HostManager, error)
 ```
 
 NewHostManager constructs a host manager.
 
 
 ### Methods
+
+#### HostManager.SetRegistry
+
+```go
+func () SetRegistry(reg adapter.Registry, closer func(context.Context) error)
+```
+
+SetRegistry overrides the adapter registry used by the host manager.
 
 #### HostManager.Start
 
@@ -759,10 +939,42 @@ func () Start(ctx context.Context) error
 
 Start connects to NATS and begins serving control requests.
 
+#### HostManager.Status
+
+```go
+func () Status() HostManagerStatus
+```
+
+Status returns the current connection state for the host manager.
+
+#### HostManager.buildAgentMessage
+
+```go
+func () buildAgentMessage(session *remoteSession, payload adapterOutboundMessage) (api.AgentMessage, bool)
+```
+
+#### HostManager.commSubjectForTarget
+
+```go
+func () commSubjectForTarget(target api.TargetID) string
+```
+
 #### HostManager.connect
 
 ```go
 func () connect(ctx context.Context) error
+```
+
+#### HostManager.deliverMessage
+
+```go
+func () deliverMessage(session *remoteSession, payload api.AgentMessage)
+```
+
+#### HostManager.ensureLeafServer
+
+```go
+func () ensureLeafServer(ctx context.Context) error
 ```
 
 #### HostManager.expandPath
@@ -777,6 +989,12 @@ func () expandPath(path string) string
 func () flushOutbox()
 ```
 
+#### HostManager.handleCommMessage
+
+```go
+func () handleCommMessage(msg protocol.Message)
+```
+
 #### HostManager.handleControl
 
 ```go
@@ -787,6 +1005,12 @@ func () handleControl(msg protocol.Message)
 
 ```go
 func () handleKill(reply string, control ControlMessage)
+```
+
+#### HostManager.handleOutboundMessages
+
+```go
+func () handleOutboundMessages(session *remoteSession, chunk []byte)
 ```
 
 #### HostManager.handleOutput
@@ -819,6 +1043,12 @@ func () handleReplay(reply string, control ControlMessage)
 func () handleSpawn(reply string, control ControlMessage)
 ```
 
+#### HostManager.heartbeatLoop
+
+```go
+func () heartbeatLoop(ctx context.Context)
+```
+
 #### HostManager.isReady
 
 ```go
@@ -831,6 +1061,12 @@ func () isReady() bool
 func () markDisconnected(reason string)
 ```
 
+#### HostManager.monitorLeaf
+
+```go
+func () monitorLeaf(ctx context.Context)
+```
+
 #### HostManager.observeSession
 
 ```go
@@ -841,6 +1077,18 @@ func () observeSession(session *remoteSession)
 
 ```go
 func () performHandshake(ctx context.Context, recovered bool) error
+```
+
+#### HostManager.publishAgentMessage
+
+```go
+func () publishAgentMessage(session *remoteSession, msg api.AgentMessage)
+```
+
+#### HostManager.publishComm
+
+```go
+func () publishComm(subject string, payload []byte)
 ```
 
 #### HostManager.publishConnectionEvent
@@ -885,33 +1133,94 @@ func () replyError(reply, requestType, code, message string) error
 func () replySpawn(reply string, agentID api.AgentID, sessionID api.SessionID)
 ```
 
+#### HostManager.resolveToID
+
+```go
+func () resolveToID(slug string) (api.TargetID, bool)
+```
+
+#### HostManager.subscribeComm
+
+```go
+func () subscribeComm(ctx context.Context) error
+```
+
 #### HostManager.subscribeControl
 
 ```go
 func () subscribeControl(ctx context.Context) error
 ```
 
+#### HostManager.wasConnected
+
+```go
+func () wasConnected() bool
+```
+
+#### HostManager.writeHeartbeat
+
+```go
+func () writeHeartbeat(ctx context.Context) error
+```
+
+#### HostManager.writeHostKV
+
+```go
+func () writeHostKV(ctx context.Context) error
+```
+
+#### HostManager.writeSessionKV
+
+```go
+func () writeSessionKV(ctx context.Context, session *remoteSession, state string, sessionErr error) error
+```
+
+
+## type HostManagerStatus
+
+```go
+type HostManagerStatus struct {
+	Connected bool
+	Ready     bool
+	HostID    string
+}
+```
+
+HostManagerStatus reports manager connection state.
+
+## type HubAuth
+
+```go
+type HubAuth struct {
+	OperatorPublicKey string
+	SystemAccountKey  string
+	SystemAccountJWT  string
+	AccountPublicKey  string
+	AccountJWT        string
+}
+```
+
+HubAuth contains JWT material for hub server configuration.
 
 ## type KVStore
 
 ```go
 type KVStore struct {
-	baseDir string
-	bucket  string
+	kv nats.KeyValue
 }
 ```
 
-KVStore provides a simple bucketed key-value store.
+KVStore provides access to a JetStream KV bucket.
 
 ### Functions returning KVStore
 
 #### NewKVStore
 
 ```go
-func NewKVStore(baseDir string, bucket string) (*KVStore, error)
+func NewKVStore(js nats.JetStreamContext, bucket string) (*KVStore, error)
 ```
 
-NewKVStore ensures the KV bucket directory exists.
+NewKVStore ensures the KV bucket exists.
 
 
 ### Methods
@@ -924,6 +1233,14 @@ func () Get(ctx context.Context, key string) ([]byte, error)
 
 Get loads a key value if it exists.
 
+#### KVStore.ListKeys
+
+```go
+func () ListKeys(ctx context.Context, prefix string) ([]string, error)
+```
+
+ListKeys returns all keys with the given prefix.
+
 #### KVStore.Put
 
 ```go
@@ -931,12 +1248,6 @@ func () Put(ctx context.Context, key string, value []byte) error
 ```
 
 Put writes a key-value entry as UTF-8 bytes.
-
-#### KVStore.keyPath
-
-```go
-func () keyPath(key string) (string, error)
-```
 
 
 ## type KillRequest
@@ -1113,6 +1424,7 @@ ReplayResponse describes a replay response payload.
 ```go
 type SSHRunner interface {
 	Run(ctx context.Context, target string, options []string, command string, stdin []byte) error
+	RunOutput(ctx context.Context, target string, options []string, command string, stdin []byte) ([]byte, error)
 }
 ```
 
@@ -1125,6 +1437,7 @@ type SpawnRequest struct {
 	AgentID   string            `json:"agent_id"`
 	AgentSlug string            `json:"agent_slug"`
 	RepoPath  string            `json:"repo_path"`
+	Adapter   string            `json:"adapter"`
 	Command   []string          `json:"command"`
 	Env       map[string]string `json:"env,omitempty"`
 }
@@ -1154,6 +1467,19 @@ type WireEvent struct {
 
 WireEvent describes an event payload.
 
+## type adapterOutboundMessage
+
+```go
+type adapterOutboundMessage struct {
+	ToSlug    string `json:"to_slug"`
+	Content   string `json:"content"`
+	ID        string `json:"id,omitempty"`
+	From      string `json:"from,omitempty"`
+	To        string `json:"to,omitempty"`
+	Timestamp string `json:"timestamp,omitempty"`
+}
+```
+
 ## type hostState
 
 ```go
@@ -1181,10 +1507,13 @@ type remoteSession struct {
 	agentID    api.AgentID
 	sessionID  api.SessionID
 	slug       string
+	adapter    string
 	repoPath   string
 	worktree   string
 	runtime    *session.LocalSession
 	buffer     *ReplayBuffer
+	matcher    adapter.PatternMatcher
+	formatter  adapter.ActionFormatter
 	replayGate bool
 	replaying  bool
 	pending    [][]byte

@@ -251,7 +251,11 @@ func (m *Manager) addRemoteAgent(ctx context.Context, req AddRequest, location a
 	slug := paths.UniqueAgentSlug(req.Name, used)
 	m.mu.Unlock()
 	worktree := paths.WorktreePathForRepo(repoRoot, slug)
-	hostID, _, err := m.remoteDirector.EnsureHost(ctx, location)
+	adapterBundle, err := buildAdapterBundle(m.resolver, req.Adapter)
+	if err != nil {
+		return AgentRecord{}, fmt.Errorf("add agent: %w", err)
+	}
+	hostID, _, err := m.remoteDirector.EnsureHost(ctx, location, []remote.AdapterBundle{adapterBundle})
 	if err != nil {
 		return AgentRecord{}, fmt.Errorf("add agent: %w", err)
 	}
@@ -285,6 +289,7 @@ func (m *Manager) addRemoteAgent(ctx context.Context, req AddRequest, location a
 		AgentID:   agentID.String(),
 		AgentSlug: slug,
 		RepoPath:  repoRoot,
+		Adapter:   req.Adapter,
 		Command:   manifest.Commands.Start,
 	}
 	resp, err := m.spawnRemote(ctx, hostID, spawnReq)
@@ -679,6 +684,7 @@ func (m *Manager) startRemoteSession(ctx context.Context, id api.AgentID, state 
 		AgentID:   id.String(),
 		AgentSlug: state.slug,
 		RepoPath:  state.repoRoot,
+		Adapter:   state.config.Adapter,
 		Command:   manifest.Commands.Start,
 	}
 	resp, err := m.spawnRemote(ctx, state.remoteHost, req)
@@ -812,6 +818,24 @@ func (m *Manager) resolveLocation(req AddRequest) (api.Location, string, error) 
 		return location, location.RepoPath, nil
 	}
 	return api.Location{}, "", fmt.Errorf("location: %w", ErrAgentInvalid)
+}
+
+func buildAdapterBundle(resolver *paths.Resolver, name string) (remote.AdapterBundle, error) {
+	if resolver == nil {
+		return remote.AdapterBundle{}, fmt.Errorf("adapter bundle: %w", ErrAgentInvalid)
+	}
+	if strings.TrimSpace(name) == "" {
+		return remote.AdapterBundle{}, fmt.Errorf("adapter bundle: %w", ErrAgentInvalid)
+	}
+	wasmPath, err := adapter.FindWasmPath(resolver, name)
+	if err != nil {
+		return remote.AdapterBundle{}, fmt.Errorf("adapter bundle: %w", err)
+	}
+	data, err := os.ReadFile(wasmPath)
+	if err != nil {
+		return remote.AdapterBundle{}, fmt.Errorf("adapter bundle: %w", err)
+	}
+	return remote.AdapterBundle{Name: name, Wasm: data}, nil
 }
 
 func (m *Manager) validateMultiRepo(repoRoot string, explicitRepoPath bool) error {

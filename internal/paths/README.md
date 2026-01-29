@@ -124,6 +124,14 @@ func NewResolver(start string) (*Resolver, error)
 
 NewResolver creates a resolver rooted at the discovered repo and user home.
 
+#### NewResolverOptionalRepo
+
+```go
+func NewResolverOptionalRepo(start string) (*Resolver, error)
+```
+
+NewResolverOptionalRepo creates a resolver when repo root is optional.
+
 
 ### Methods
 

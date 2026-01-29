@@ -170,8 +170,12 @@ type NATSConfig struct {
 	HubURL string
 	// Listen is the listen address.
 	Listen string
+	// LeafListen is the leaf listen address.
+	LeafListen string
 	// AdvertiseURL is the advertised URL.
 	AdvertiseURL string
+	// LeafAdvertiseURL is the advertised leaf URL.
+	LeafAdvertiseURL string
 	// JetStreamDir is the JetStream storage directory.
 	JetStreamDir string
 }

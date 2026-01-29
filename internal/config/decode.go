@@ -303,8 +303,14 @@ func applyNATS(cfg *Config, raw map[string]any, resolver *paths.Resolver) error 
 	if value, ok := parseString(section["listen"]); ok {
 		cfg.NATS.Listen = value
 	}
+	if value, ok := parseString(section["leaf_listen"]); ok {
+		cfg.NATS.LeafListen = value
+	}
 	if value, ok := parseString(section["advertise_url"]); ok {
 		cfg.NATS.AdvertiseURL = value
+	}
+	if value, ok := parseString(section["leaf_advertise_url"]); ok {
+		cfg.NATS.LeafAdvertiseURL = value
 	}
 	if value, ok := parseString(section["jetstream_dir"]); ok {
 		cfg.NATS.JetStreamDir = expandPath(resolver, value)

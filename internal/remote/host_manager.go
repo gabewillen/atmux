@@ -2,10 +2,15 @@ package remote
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -23,10 +28,13 @@ type remoteSession struct {
 	agentID    api.AgentID
 	sessionID  api.SessionID
 	slug       string
+	adapter    string
 	repoPath   string
 	worktree   string
 	runtime    *session.LocalSession
 	buffer     *ReplayBuffer
+	matcher    adapter.PatternMatcher
+	formatter  adapter.ActionFormatter
 	replayGate bool
 	replaying  bool
 	pending    [][]byte
@@ -41,18 +49,41 @@ type HostManager struct {
 	subjectPrefix string
 	hostID        api.HostID
 	peerID        api.PeerID
+	directorPeer  api.PeerID
+	version       string
 	bufferSize    int
 	outbox        *Outbox
+	kv            *KVStore
+	leaf          *protocol.NATSServer
+	registry      adapter.Registry
+	registryClose func(context.Context) error
 	mu            sync.Mutex
 	sessions      map[api.SessionID]*remoteSession
 	agentIndex    map[api.AgentID]*remoteSession
+	subscribed    bool
 	ready         bool
 	connected     bool
 	everConnected bool
 }
 
+// HostManagerStatus reports manager connection state.
+type HostManagerStatus struct {
+	Connected bool
+	Ready     bool
+	HostID    string
+}
+
+// SetRegistry overrides the adapter registry used by the host manager.
+func (m *HostManager) SetRegistry(reg adapter.Registry, closer func(context.Context) error) {
+	if m == nil {
+		return
+	}
+	m.registry = reg
+	m.registryClose = closer
+}
+
 // NewHostManager constructs a host manager.
-func NewHostManager(cfg config.Config, resolver *paths.Resolver) (*HostManager, error) {
+func NewHostManager(cfg config.Config, resolver *paths.Resolver, version string) (*HostManager, error) {
 	hostID := strings.TrimSpace(cfg.Remote.Manager.HostID)
 	if hostID == "" {
 		name, err := os.Hostname()
@@ -70,12 +101,21 @@ func NewHostManager(cfg config.Config, resolver *paths.Resolver) (*HostManager, 
 	if bufferSize < 0 {
 		bufferSize = 0
 	}
+	peerDir := cfg.NATS.JetStreamDir
+	if peerDir == "" && resolver != nil {
+		peerDir = filepath.Join(resolver.HomeDir(), ".amux")
+	}
+	peerID, err := LoadOrCreatePeerID(peerDir)
+	if err != nil {
+		return nil, fmt.Errorf("host manager: %w", err)
+	}
 	return &HostManager{
 		cfg:           cfg,
 		resolver:      resolver,
 		subjectPrefix: SubjectPrefix(cfg.Remote.NATS.SubjectPrefix),
 		hostID:        parsedHostID,
-		peerID:        api.NewPeerID(),
+		peerID:        peerID,
+		version:       version,
 		bufferSize:    bufferSize,
 		outbox:        NewOutbox(bufferSize),
 		sessions:      make(map[api.SessionID]*remoteSession),
@@ -83,57 +123,93 @@ func NewHostManager(cfg config.Config, resolver *paths.Resolver) (*HostManager, 
 	}, nil
 }
 
+// Status returns the current connection state for the host manager.
+func (m *HostManager) Status() HostManagerStatus {
+	if m == nil {
+		return HostManagerStatus{}
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return HostManagerStatus{
+		Connected: m.connected,
+		Ready:     m.ready,
+		HostID:    m.hostID.String(),
+	}
+}
+
 // Start connects to NATS and begins serving control requests.
 func (m *HostManager) Start(ctx context.Context) error {
-	attempts := 0
-	for {
-		if err := m.connect(ctx); err == nil {
-			select {
-			case <-ctx.Done():
-				return nil
-			case <-m.dispatcher.Closed():
-				m.markDisconnected("io_error")
+	if m.registry == nil {
+		registry, err := adapter.NewWazeroRegistry(ctx, m.resolver)
+		if err != nil {
+			return fmt.Errorf("host manager: %w", err)
+		}
+		m.registry = registry
+		m.registryClose = registry.Close
+		defer func() {
+			if m.registryClose != nil {
+				_ = m.registryClose(context.Background())
 			}
-		} else {
-			m.markDisconnected("io_error")
-		}
-		attempts++
-		if m.cfg.Remote.ReconnectMaxAttempts > 0 && attempts >= m.cfg.Remote.ReconnectMaxAttempts {
-			return fmt.Errorf("host manager: reconnect attempts exceeded")
-		}
-		backoff := reconnectDelay(m.cfg, attempts)
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-time.After(backoff):
-		}
+		}()
+	}
+	if err := m.ensureLeafServer(ctx); err != nil {
+		return fmt.Errorf("host manager: %w", err)
+	}
+	if err := m.connect(ctx); err != nil {
+		return err
+	}
+	go m.monitorLeaf(ctx)
+	go m.heartbeatLoop(ctx)
+	select {
+	case <-ctx.Done():
+		return nil
+	case <-m.dispatcher.Closed():
+		m.markDisconnected("io_error")
+		return fmt.Errorf("host manager: dispatcher closed")
 	}
 }
 
 func (m *HostManager) connect(ctx context.Context) error {
-	creds, err := LoadCredential(m.cfg.Remote.NATS.CredsPath)
+	credsPath := strings.TrimSpace(m.cfg.Remote.NATS.CredsPath)
+	if credsPath == "" {
+		return fmt.Errorf("host manager: %w", ErrInvalidMessage)
+	}
+	if _, err := os.Stat(credsPath); err != nil {
+		return fmt.Errorf("host manager: %w", err)
+	}
+	if m.leaf == nil {
+		return fmt.Errorf("host manager: leaf server unavailable")
+	}
+	leafDispatcher, err := protocol.NewNATSDispatcher(ctx, m.leaf.URL(), protocol.NATSOptions{
+		Name:             "amux-manager-leaf",
+		AllowNoJetStream: true,
+	})
 	if err != nil {
 		return fmt.Errorf("host manager: %w", err)
 	}
-	dispatcher, err := protocol.NewNATSDispatcher(ctx, hubURL(m.cfg), protocol.NATSOptions{Token: creds.Token})
+	hubClientURL, err := hubClientURL(m.cfg)
 	if err != nil {
+		_ = leafDispatcher.Close(ctx)
+		return fmt.Errorf("host manager: %w", err)
+	}
+	hubDispatcher, err := protocol.NewNATSDispatcher(ctx, hubClientURL, protocol.NATSOptions{
+		Name:      "amux-manager-hub",
+		CredsPath: credsPath,
+	})
+	if err != nil {
+		_ = leafDispatcher.Close(ctx)
+		return fmt.Errorf("host manager: %w", err)
+	}
+	kv, err := NewKVStore(hubDispatcher.JetStream(), m.cfg.Remote.NATS.KVBucket)
+	if err != nil {
+		_ = hubDispatcher.Close(ctx)
+		_ = leafDispatcher.Close(ctx)
 		return fmt.Errorf("host manager: %w", err)
 	}
 	m.mu.Lock()
-	m.dispatcher = dispatcher
-	m.connected = true
-	wasConnected := m.everConnected
-	m.everConnected = true
+	m.dispatcher = leafDispatcher
+	m.kv = kv
 	m.mu.Unlock()
-	if err := m.subscribeControl(ctx); err != nil {
-		_ = dispatcher.Close(ctx)
-		return err
-	}
-	if err := m.performHandshake(ctx, wasConnected); err != nil {
-		_ = dispatcher.Close(ctx)
-		return err
-	}
-	m.flushOutbox()
 	return nil
 }
 
@@ -153,7 +229,16 @@ func (m *HostManager) performHandshake(ctx context.Context, recovered bool) erro
 		return fmt.Errorf("host manager: %w", err)
 	}
 	subject := HandshakeSubject(m.subjectPrefix, m.hostID)
-	reply, err := m.dispatcher.Request(ctx, subject, data, m.cfg.Remote.RequestTimeout)
+	timeout := m.cfg.Remote.RequestTimeout
+	if timeout <= 0 {
+		timeout = 5 * time.Second
+	}
+	if timeout > time.Second {
+		timeout = time.Second
+	}
+	reqCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	reply, err := m.dispatcher.Request(reqCtx, subject, data, timeout)
 	if err != nil {
 		return fmt.Errorf("host manager: %w", err)
 	}
@@ -168,9 +253,32 @@ func (m *HostManager) performHandshake(ctx context.Context, recovered bool) erro
 		}
 		return fmt.Errorf("host manager: %w", ErrNotReady)
 	}
+	var respPayload HandshakePayload
+	if err := DecodePayload(resp, &respPayload); err != nil {
+		return fmt.Errorf("host manager: %w", err)
+	}
+	if respPayload.Role == "director" {
+		if peerID, err := api.ParsePeerID(respPayload.PeerID); err == nil {
+			m.mu.Lock()
+			m.directorPeer = peerID
+			m.mu.Unlock()
+		}
+	}
 	m.mu.Lock()
 	m.ready = true
+	m.connected = true
+	m.everConnected = true
+	needSubscribe := !m.subscribed
+	m.subscribed = true
 	m.mu.Unlock()
+	if needSubscribe {
+		if err := m.subscribeControl(ctx); err != nil {
+			return fmt.Errorf("host manager: %w", err)
+		}
+	}
+	if err := m.writeHostKV(context.Background()); err != nil {
+		return fmt.Errorf("host manager: %w", err)
+	}
 	if recovered {
 		m.publishConnectionEvent(ctx, "connection.recovered", ConnectionRecoveredPayload{
 			PeerID:    m.peerID.String(),
@@ -185,6 +293,165 @@ func (m *HostManager) performHandshake(ctx context.Context, recovered bool) erro
 	return nil
 }
 
+func (m *HostManager) ensureLeafServer(ctx context.Context) error {
+	m.mu.Lock()
+	if m.leaf != nil {
+		m.mu.Unlock()
+		return nil
+	}
+	m.mu.Unlock()
+	listen := strings.TrimSpace(m.cfg.NATS.Listen)
+	if listen == "" {
+		listen = "127.0.0.1:-1"
+	}
+	leaf, err := protocol.StartLeafServer(ctx, protocol.LeafServerConfig{
+		Listen:    listen,
+		HubURL:    hubURL(m.cfg),
+		CredsPath: m.cfg.Remote.NATS.CredsPath,
+	})
+	if err != nil {
+		return err
+	}
+	m.mu.Lock()
+	m.leaf = leaf
+	m.mu.Unlock()
+	return nil
+}
+
+func (m *HostManager) monitorLeaf(ctx context.Context) {
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+	attempts := 0
+	nextAttempt := time.Time{}
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+		if time.Now().After(nextAttempt) && !m.isReady() {
+			recovered := m.wasConnected()
+			if err := m.performHandshake(ctx, recovered); err != nil {
+				if recovered {
+					m.markDisconnected("handshake_failed")
+				}
+				attempts++
+				nextAttempt = time.Now().Add(reconnectDelay(m.cfg, attempts))
+			} else {
+				attempts = 0
+				nextAttempt = time.Time{}
+				m.flushOutbox()
+			}
+		}
+	}
+}
+
+func (m *HostManager) heartbeatLoop(ctx context.Context) {
+	interval := m.cfg.Remote.NATS.HeartbeatInterval
+	if interval <= 0 {
+		interval = 5 * time.Second
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+		if !m.isReady() {
+			continue
+		}
+		if err := m.writeHeartbeat(ctx); err != nil {
+			m.markDisconnected("heartbeat_failed")
+			continue
+		}
+	}
+}
+
+func (m *HostManager) writeHeartbeat(ctx context.Context) error {
+	m.mu.Lock()
+	kv := m.kv
+	hostID := m.hostID
+	m.mu.Unlock()
+	if kv == nil {
+		return fmt.Errorf("heartbeat: kv unavailable")
+	}
+	payload := map[string]any{"timestamp": NowRFC3339()}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("heartbeat: %w", err)
+	}
+	if err := kv.Put(ctx, fmt.Sprintf("hosts/%s/heartbeat", hostID.String()), data); err != nil {
+		return fmt.Errorf("heartbeat: %w", err)
+	}
+	return nil
+}
+
+func (m *HostManager) writeHostKV(ctx context.Context) error {
+	m.mu.Lock()
+	kv := m.kv
+	hostID := m.hostID
+	peerID := m.peerID
+	version := m.version
+	m.mu.Unlock()
+	if kv == nil {
+		return fmt.Errorf("host kv: kv unavailable")
+	}
+	payload := map[string]any{
+		"version":    version,
+		"os":         runtime.GOOS,
+		"arch":       runtime.GOARCH,
+		"peer_id":    peerID.String(),
+		"started_at": NowRFC3339(),
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("host kv: %w", err)
+	}
+	if err := kv.Put(ctx, fmt.Sprintf("hosts/%s/info", hostID.String()), data); err != nil {
+		return fmt.Errorf("host kv: %w", err)
+	}
+	return nil
+}
+
+func (m *HostManager) writeSessionKV(ctx context.Context, session *remoteSession, state string, sessionErr error) error {
+	if session == nil {
+		return fmt.Errorf("session kv: missing session")
+	}
+	m.mu.Lock()
+	kv := m.kv
+	hostID := m.hostID
+	m.mu.Unlock()
+	if kv == nil {
+		return fmt.Errorf("session kv: kv unavailable")
+	}
+	payload := map[string]any{
+		"agent_id":   session.agentID.String(),
+		"agent_slug": session.slug,
+		"repo_path":  session.repoPath,
+		"state":      state,
+	}
+	if sessionErr != nil {
+		payload["error"] = sessionErr.Error()
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("session kv: %w", err)
+	}
+	key := fmt.Sprintf("sessions/%s/%s", hostID.String(), session.sessionID.String())
+	if err := kv.Put(ctx, key, data); err != nil {
+		return fmt.Errorf("session kv: %w", err)
+	}
+	return nil
+}
+
+func (m *HostManager) wasConnected() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.everConnected
+}
+
 func (m *HostManager) subscribeControl(ctx context.Context) error {
 	ctlSubject := ControlSubject(m.subjectPrefix, m.hostID)
 	_, err := m.dispatcher.SubscribeRaw(ctx, ctlSubject, m.handleControl)
@@ -193,6 +460,28 @@ func (m *HostManager) subscribeControl(ctx context.Context) error {
 	}
 	ptySubject := protocol.Subject(m.subjectPrefix, "pty", m.hostID.String(), "*", "in")
 	_, err = m.dispatcher.SubscribeRaw(ctx, ptySubject, m.handlePTYInput)
+	if err != nil {
+		return fmt.Errorf("host manager: %w", err)
+	}
+	if err := m.subscribeComm(ctx); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (m *HostManager) subscribeComm(ctx context.Context) error {
+	managerSubject := ManagerCommSubject(m.subjectPrefix, m.hostID)
+	_, err := m.dispatcher.SubscribeRaw(ctx, managerSubject, m.handleCommMessage)
+	if err != nil {
+		return fmt.Errorf("host manager: %w", err)
+	}
+	agentSubject := protocol.Subject(m.subjectPrefix, "comm", "agent", m.hostID.String(), ">")
+	_, err = m.dispatcher.SubscribeRaw(ctx, agentSubject, m.handleCommMessage)
+	if err != nil {
+		return fmt.Errorf("host manager: %w", err)
+	}
+	broadcastSubject := BroadcastCommSubject(m.subjectPrefix)
+	_, err = m.dispatcher.SubscribeRaw(ctx, broadcastSubject, m.handleCommMessage)
 	if err != nil {
 		return fmt.Errorf("host manager: %w", err)
 	}
@@ -249,6 +538,10 @@ func (m *HostManager) handleSpawn(reply string, control ControlMessage) {
 		_ = m.replyError(reply, "spawn", "invalid_request", "missing agent slug")
 		return
 	}
+	if strings.TrimSpace(req.Adapter) == "" {
+		_ = m.replyError(reply, "spawn", "invalid_request", "missing adapter")
+		return
+	}
 	repoRoot := m.expandPath(req.RepoPath)
 	if repoRoot == "" {
 		_ = m.replyError(reply, "spawn", "invalid_repo", "repo path required")
@@ -260,7 +553,7 @@ func (m *HostManager) handleSpawn(reply string, control ControlMessage) {
 	}
 	m.mu.Lock()
 	if existing, ok := m.agentIndex[agentID]; ok {
-		if existing.slug != req.AgentSlug || existing.repoPath != repoRoot {
+		if existing.slug != req.AgentSlug || existing.repoPath != repoRoot || existing.adapter != req.Adapter {
 			m.mu.Unlock()
 			_ = m.replyError(reply, "spawn", "session_conflict", "session conflict")
 			return
@@ -291,7 +584,19 @@ func (m *HostManager) handleSpawn(reply string, control ControlMessage) {
 		}
 		cmd.Env = env
 	}
-	sess, err := session.NewLocalSession(sessionMeta, nil, cmd, worktree, &adapter.NoopMatcher{}, m.dispatcher, session.Config{DrainTimeout: m.cfg.Shutdown.DrainTimeout})
+	registry := m.registry
+	if registry == nil {
+		_ = m.replyError(reply, "spawn", "internal", "adapter registry unavailable")
+		return
+	}
+	adapterInstance, err := registry.Load(context.Background(), req.Adapter)
+	if err != nil {
+		_ = m.replyError(reply, "spawn", "invalid_request", "failed to load adapter")
+		return
+	}
+	matcher := adapterInstance.Matcher()
+	formatter := adapterInstance.Formatter()
+	sess, err := session.NewLocalSession(sessionMeta, nil, cmd, worktree, matcher, m.dispatcher, session.Config{DrainTimeout: m.cfg.Shutdown.DrainTimeout})
 	if err != nil {
 		_ = m.replyError(reply, "spawn", "invalid_request", "failed to start session")
 		return
@@ -304,10 +609,18 @@ func (m *HostManager) handleSpawn(reply string, control ControlMessage) {
 		agentID:   agentID,
 		sessionID: sessionMeta.ID,
 		slug:      req.AgentSlug,
+		adapter:   req.Adapter,
 		repoPath:  repoRoot,
 		worktree:  worktree,
 		runtime:   sess,
 		buffer:    NewReplayBuffer(m.bufferSize),
+		matcher:   matcher,
+		formatter: formatter,
+	}
+	if err := m.writeSessionKV(context.Background(), remoteSess, "running", nil); err != nil {
+		_ = sess.Kill(context.Background())
+		_ = m.replyError(reply, "spawn", "internal", "failed to persist session")
+		return
 	}
 	m.mu.Lock()
 	m.sessions[sessionMeta.ID] = remoteSess
@@ -357,6 +670,7 @@ func (m *HostManager) handleKill(reply string, control ControlMessage) {
 			delete(m.sessions, sessionID)
 			delete(m.agentIndex, session.agentID)
 			m.mu.Unlock()
+			_ = m.writeSessionKV(context.Background(), session, "terminated", nil)
 		}
 	}
 	payload := KillResponse{SessionID: sessionID.String(), Killed: killed}
@@ -447,11 +761,62 @@ func (m *HostManager) handlePTYInput(msg protocol.Message) {
 	_ = session.runtime.Send(msg.Data)
 }
 
+func (m *HostManager) handleCommMessage(msg protocol.Message) {
+	if len(msg.Data) == 0 {
+		return
+	}
+	var payload api.AgentMessage
+	if err := json.Unmarshal(msg.Data, &payload); err != nil {
+		return
+	}
+	target := payload.To
+	if target.IsBroadcast() {
+		m.mu.Lock()
+		sessions := make([]*remoteSession, 0, len(m.sessions))
+		for _, sess := range m.sessions {
+			sessions = append(sessions, sess)
+		}
+		m.mu.Unlock()
+		for _, sess := range sessions {
+			m.deliverMessage(sess, payload)
+		}
+		return
+	}
+	var targetSession *remoteSession
+	m.mu.Lock()
+	for _, sess := range m.sessions {
+		if sess != nil && sess.agentID.Value() == target.Value() {
+			targetSession = sess
+			break
+		}
+	}
+	m.mu.Unlock()
+	if targetSession == nil {
+		return
+	}
+	m.deliverMessage(targetSession, payload)
+}
+
+func (m *HostManager) deliverMessage(session *remoteSession, payload api.AgentMessage) {
+	if session == nil || session.runtime == nil || session.formatter == nil {
+		return
+	}
+	formatted, err := session.formatter.Format(context.Background(), payload.Content)
+	if err != nil {
+		return
+	}
+	if formatted == "" {
+		return
+	}
+	_ = session.runtime.Send([]byte(formatted))
+}
+
 func (m *HostManager) handleOutput(session *remoteSession, chunk []byte) {
 	if session == nil || len(chunk) == 0 {
 		return
 	}
 	session.buffer.Add(chunk)
+	m.handleOutboundMessages(session, chunk)
 	m.mu.Lock()
 	connected := m.connected
 	m.mu.Unlock()
@@ -467,6 +832,179 @@ func (m *HostManager) handleOutput(session *remoteSession, chunk []byte) {
 	}
 	session.mu.Unlock()
 	m.publishPTY(session.sessionID, chunk)
+}
+
+type adapterOutboundMessage struct {
+	ToSlug    string `json:"to_slug"`
+	Content   string `json:"content"`
+	ID        string `json:"id,omitempty"`
+	From      string `json:"from,omitempty"`
+	To        string `json:"to,omitempty"`
+	Timestamp string `json:"timestamp,omitempty"`
+}
+
+func (m *HostManager) handleOutboundMessages(session *remoteSession, chunk []byte) {
+	if session == nil || session.matcher == nil {
+		return
+	}
+	matches, err := session.matcher.Match(context.Background(), chunk)
+	if err != nil {
+		return
+	}
+	for _, match := range matches {
+		if strings.ToLower(strings.TrimSpace(match.Pattern)) != "message" {
+			continue
+		}
+		var payload adapterOutboundMessage
+		if err := json.Unmarshal([]byte(match.Text), &payload); err != nil {
+			continue
+		}
+		if payload.ToSlug == "" || payload.Content == "" {
+			continue
+		}
+		msg, ok := m.buildAgentMessage(session, payload)
+		if !ok {
+			continue
+		}
+		m.publishAgentMessage(session, msg)
+	}
+}
+
+func (m *HostManager) buildAgentMessage(session *remoteSession, payload adapterOutboundMessage) (api.AgentMessage, bool) {
+	if session == nil {
+		return api.AgentMessage{}, false
+	}
+	msg := api.AgentMessage{
+		ToSlug:  payload.ToSlug,
+		Content: payload.Content,
+	}
+	if payload.ID != "" && payload.ID != "0" {
+		id, err := api.ParseRuntimeID(payload.ID)
+		if err != nil {
+			return api.AgentMessage{}, false
+		}
+		msg.ID = id
+	} else {
+		msg.ID = api.NewRuntimeID()
+	}
+	if payload.From != "" {
+		from, err := api.ParseRuntimeID(payload.From)
+		if err != nil {
+			return api.AgentMessage{}, false
+		}
+		msg.From = from
+	} else {
+		msg.From = session.agentID.RuntimeID
+	}
+	if payload.Timestamp != "" {
+		if ts, err := time.Parse(time.RFC3339Nano, payload.Timestamp); err == nil {
+			msg.Timestamp = ts.UTC()
+		}
+	}
+	if msg.Timestamp.IsZero() {
+		msg.Timestamp = time.Now().UTC()
+	}
+	if payload.To != "" {
+		if target, err := api.ParseTargetID(payload.To); err == nil {
+			msg.To = target
+			return msg, true
+		}
+	}
+	target, ok := m.resolveToID(payload.ToSlug)
+	if !ok {
+		return api.AgentMessage{}, false
+	}
+	msg.To = target
+	return msg, true
+}
+
+func (m *HostManager) resolveToID(slug string) (api.TargetID, bool) {
+	target := strings.ToLower(strings.TrimSpace(slug))
+	switch target {
+	case "all", "broadcast", "*":
+		return api.TargetID{}, true
+	case "director":
+		m.mu.Lock()
+		peer := m.directorPeer
+		m.mu.Unlock()
+		if peer.IsZero() {
+			return api.TargetID{}, false
+		}
+		return api.TargetIDFromRuntime(peer.RuntimeID), true
+	case "manager":
+		return api.TargetIDFromRuntime(m.peerID.RuntimeID), true
+	}
+	if strings.HasPrefix(target, "manager@") {
+		if strings.TrimPrefix(target, "manager@") == strings.ToLower(m.hostID.String()) {
+			return api.TargetIDFromRuntime(m.peerID.RuntimeID), true
+		}
+		return api.TargetID{}, false
+	}
+	m.mu.Lock()
+	for _, sess := range m.sessions {
+		if sess != nil && strings.EqualFold(sess.slug, slug) {
+			m.mu.Unlock()
+			return api.TargetIDFromRuntime(sess.agentID.RuntimeID), true
+		}
+	}
+	m.mu.Unlock()
+	return api.TargetID{}, false
+}
+
+func (m *HostManager) publishAgentMessage(session *remoteSession, msg api.AgentMessage) {
+	if session == nil {
+		return
+	}
+	data, err := json.Marshal(msg)
+	if err != nil {
+		return
+	}
+	sender := AgentCommSubject(m.subjectPrefix, m.hostID, session.agentID)
+	if msg.To.IsBroadcast() {
+		m.publishComm(sender, data)
+		m.publishComm(BroadcastCommSubject(m.subjectPrefix), data)
+		return
+	}
+	if msg.To.Value() == session.agentID.Value() {
+		m.publishComm(sender, data)
+		return
+	}
+	m.publishComm(sender, data)
+	recipient := m.commSubjectForTarget(msg.To)
+	if recipient != "" {
+		m.publishComm(recipient, data)
+	}
+}
+
+func (m *HostManager) commSubjectForTarget(target api.TargetID) string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if target.Value() == m.peerID.Value() {
+		return ManagerCommSubject(m.subjectPrefix, m.hostID)
+	}
+	if m.directorPeer.Value() != 0 && target.Value() == m.directorPeer.Value() {
+		return DirectorCommSubject(m.subjectPrefix)
+	}
+	for _, sess := range m.sessions {
+		if sess != nil && sess.agentID.Value() == target.Value() {
+			return AgentCommSubject(m.subjectPrefix, m.hostID, sess.agentID)
+		}
+	}
+	return ""
+}
+
+func (m *HostManager) publishComm(subject string, payload []byte) {
+	if subject == "" {
+		return
+	}
+	m.mu.Lock()
+	connected := m.connected
+	m.mu.Unlock()
+	if !connected {
+		m.outbox.Enqueue(subject, payload)
+		return
+	}
+	_ = m.dispatcher.PublishRaw(context.Background(), subject, payload, "")
 }
 
 func (m *HostManager) replaySession(session *remoteSession) {
@@ -533,6 +1071,10 @@ func (m *HostManager) flushOutbox() {
 
 func (m *HostManager) markDisconnected(reason string) {
 	m.mu.Lock()
+	if !m.connected && !m.ready {
+		m.mu.Unlock()
+		return
+	}
 	m.connected = false
 	m.ready = false
 	for _, sess := range m.sessions {
@@ -565,6 +1107,7 @@ func (m *HostManager) observeSession(session *remoteSession) {
 		payload["error"] = err.Error()
 	}
 	m.publishHostEvent(context.Background(), "session.exited", payload)
+	_ = m.writeSessionKV(context.Background(), session, "exited", err)
 }
 
 func (m *HostManager) isReady() bool {
@@ -627,4 +1170,42 @@ func reconnectDelay(cfg config.Config, attempt int) time.Duration {
 		return max
 	}
 	return delay
+}
+
+func hubClientURL(cfg config.Config) (string, error) {
+	clientURL := strings.TrimSpace(cfg.NATS.HubURL)
+	if clientURL != "" {
+		return clientURL, nil
+	}
+	leafURL := strings.TrimSpace(cfg.Remote.NATS.URL)
+	if leafURL == "" {
+		return "", fmt.Errorf("hub url unavailable")
+	}
+	derived, err := deriveHubURLFromLeaf(leafURL)
+	if err != nil {
+		return "", err
+	}
+	return derived, nil
+}
+
+func deriveHubURLFromLeaf(raw string) (string, error) {
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return "", fmt.Errorf("derive hub url: %w", err)
+	}
+	host := parsed.Hostname()
+	portStr := parsed.Port()
+	if host == "" || portStr == "" {
+		return "", fmt.Errorf("derive hub url: missing host or port")
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		return "", fmt.Errorf("derive hub url: %w", err)
+	}
+	if port <= 3200 {
+		return "", fmt.Errorf("derive hub url: invalid leaf port")
+	}
+	port -= 3200
+	parsed.Host = net.JoinHostPort(host, strconv.Itoa(port))
+	return parsed.String(), nil
 }

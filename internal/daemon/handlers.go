@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/agentflare-ai/amux/internal/git"
@@ -23,6 +24,17 @@ type agentAddParams struct {
 	Adapter  string        `json:"adapter"`
 	Location locationParam `json:"location"`
 	Cwd      string        `json:"cwd"`
+}
+
+type daemonStopParams struct {
+	Force bool `json:"force"`
+}
+
+type daemonStatusResult struct {
+	Role         string `json:"role"`
+	HubConnected bool   `json:"hub_connected"`
+	Ready        bool   `json:"ready"`
+	HostID       string `json:"host_id,omitempty"`
 }
 
 type locationParam struct {
@@ -66,6 +78,8 @@ type mergeParams struct {
 func (d *Daemon) registerHandlers() {
 	d.server.Register("daemon.ping", d.handlePing)
 	d.server.Register("daemon.version", d.handleVersion)
+	d.server.Register("daemon.status", d.handleStatus)
+	d.server.Register("daemon.stop", d.handleStop)
 	d.server.Register("agent.add", d.handleAgentAdd)
 	d.server.Register("agent.list", d.handleAgentList)
 	d.server.Register("agent.remove", d.handleAgentRemove)
@@ -87,6 +101,43 @@ func (d *Daemon) handleVersion(ctx context.Context, raw json.RawMessage) (any, *
 	_ = ctx
 	_ = raw
 	return map[string]any{"amux_version": AmuxVersion, "spec_version": SpecVersion}, nil
+}
+
+func (d *Daemon) handleStatus(ctx context.Context, raw json.RawMessage) (any, *rpc.Error) {
+	_ = ctx
+	_ = raw
+	if d == nil {
+		return nil, rpcInternal(fmt.Errorf("daemon status: daemon is nil"))
+	}
+	status := daemonStatusResult{
+		Role: strings.TrimSpace(d.cfg.Node.Role),
+	}
+	if status.Role == "" {
+		status.Role = "director"
+	}
+	if d.hostMgr != nil {
+		hostStatus := d.hostMgr.Status()
+		status.HubConnected = hostStatus.Connected
+		status.Ready = hostStatus.Ready
+		status.HostID = hostStatus.HostID
+	} else if d.dispatcher != nil {
+		status.HubConnected = true
+		status.Ready = true
+	}
+	return status, nil
+}
+
+func (d *Daemon) handleStop(ctx context.Context, raw json.RawMessage) (any, *rpc.Error) {
+	var params daemonStopParams
+	if len(raw) > 0 {
+		if err := decodeParams(raw, &params); err != nil {
+			return nil, err
+		}
+	}
+	go func() {
+		_ = d.Close(context.Background(), params.Force)
+	}()
+	return map[string]any{"ok": true}, nil
 }
 
 func (d *Daemon) handleAgentAdd(ctx context.Context, raw json.RawMessage) (any, *rpc.Error) {

@@ -27,7 +27,11 @@ func TestLocalSessionStartStop(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ensure worktree: %v", err)
 	}
-	server, err := protocol.StartEmbeddedServer(ctx, "127.0.0.1:0", protocol.EmbeddedServerConfig{})
+	jetstreamDir := filepath.Join(t.TempDir(), "nats")
+	server, err := protocol.StartHubServer(ctx, protocol.HubServerConfig{
+		Listen:       "127.0.0.1:-1",
+		JetStreamDir: jetstreamDir,
+	})
 	if err != nil {
 		t.Fatalf("start nats: %v", err)
 	}

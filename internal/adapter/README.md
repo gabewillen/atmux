@@ -8,6 +8,7 @@ The core loads adapters by string name via the WASM registry.
 
 - `ErrAdapterInvalid, ErrAdapterMissingExport, ErrAdapterManifestMismatch, ErrAdapterExecutionFailed`
 - `ErrAdapterNotFound` — ErrAdapterNotFound is returned when a named adapter cannot be loaded.
+- `func FindWasmPath(resolver *paths.Resolver, name string) (string, error)` — FindWasmPath locates the WASM module for the named adapter.
 - `func callConfigDefault(ctx context.Context, module api.Module, freeFn api.Function, configFn api.Function) ([]byte, error)`
 - `func firstResult(results []uint64) (uint64, bool)`
 - `func loadAdapterDefaults(ctx context.Context, runtime wazero.Runtime, module adapterModule) ([]byte, string, error)`
@@ -67,6 +68,14 @@ ErrAdapterNotFound is returned when a named adapter cannot be loaded.
 
 
 ### Functions
+
+#### FindWasmPath
+
+```go
+func FindWasmPath(resolver *paths.Resolver, name string) (string, error)
+```
+
+FindWasmPath locates the WASM module for the named adapter.
 
 #### callConfigDefault
 

@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/agentflare-ai/amux/internal/adapter"
 	"github.com/agentflare-ai/amux/internal/config"
 	"github.com/agentflare-ai/amux/internal/git"
 	"github.com/agentflare-ai/amux/internal/paths"
@@ -25,32 +26,34 @@ func TestRemoteHandshakeAndSpawn(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	hostID := api.MustParseHostID("testhost")
-	cred := Credential{Token: "test-token"}
-	server, err := protocol.StartEmbeddedServer(ctx, "127.0.0.1:0", protocol.EmbeddedServerConfig{
-		Auth: protocol.AuthConfig{
-			Tokens: map[string]protocol.Permissions{
-				cred.Token: HostPermissions("amux", hostID),
-			},
-			Users: map[string]protocol.UserAuth{
-				"director": {
-					Password: "director",
-					Permissions: protocol.Permissions{
-						Publish:   []string{">"},
-						Subscribe: []string{">"},
-					},
-				},
-			},
-		},
+	jetstreamDir := filepath.Join(t.TempDir(), "nats")
+	credStore, err := NewCredentialStore(jetstreamDir)
+	if err != nil {
+		t.Fatalf("cred store: %v", err)
+	}
+	auth, err := credStore.HubAuth()
+	if err != nil {
+		t.Fatalf("hub auth: %v", err)
+	}
+	server, err := protocol.StartHubServer(ctx, protocol.HubServerConfig{
+		Listen:            "127.0.0.1:-1",
+		JetStreamDir:      jetstreamDir,
+		OperatorPublicKey: auth.OperatorPublicKey,
+		SystemAccountKey:  auth.SystemAccountKey,
+		SystemAccountJWT:  auth.SystemAccountJWT,
+		AccountPublicKey:  auth.AccountPublicKey,
+		AccountJWT:        auth.AccountJWT,
 	})
 	if err != nil {
 		t.Fatalf("start nats: %v", err)
 	}
 	defer func() {
-		if err := server.Close(); err != nil {
-			t.Fatalf("close nats: %v", err)
-		}
+		_ = server.Close()
 	}()
-	dirDisp, err := protocol.NewNATSDispatcher(ctx, server.URL(), protocol.NATSOptions{User: "director", Password: "director"})
+	if _, err := credStore.DirectorCredential(); err != nil {
+		t.Fatalf("director creds: %v", err)
+	}
+	dirDisp, err := protocol.NewNATSDispatcher(ctx, server.URL(), protocol.NATSOptions{CredsPath: credStore.CredentialPath("director")})
 	if err != nil {
 		t.Fatalf("director dispatcher: %v", err)
 	}
@@ -58,8 +61,8 @@ func TestRemoteHandshakeAndSpawn(t *testing.T) {
 		_ = dirDisp.Close(context.Background())
 	}()
 	cfg := config.DefaultConfig(resolver)
-	cfg.Remote.NATS.URL = server.URL()
-	cfg.NATS.JetStreamDir = filepath.Join(t.TempDir(), "nats")
+	cfg.Remote.NATS.URL = server.LeafURL()
+	cfg.NATS.JetStreamDir = jetstreamDir
 	director, err := NewDirector(cfg, dirDisp, DirectorOptions{Version: "test", HostID: api.MustParseHostID("director")})
 	if err != nil {
 		t.Fatalf("director: %v", err)
@@ -77,25 +80,23 @@ func TestRemoteHandshakeAndSpawn(t *testing.T) {
 	if err != nil {
 		t.Fatalf("handshake subscribe: %v", err)
 	}
-	credPath := filepath.Join(t.TempDir(), "nats.creds")
-	credBytes, err := cred.Marshal()
-	if err != nil {
-		t.Fatalf("cred: %v", err)
-	}
-	if err := os.WriteFile(credPath, credBytes, 0o600); err != nil {
-		t.Fatalf("write creds: %v", err)
+	if _, err := credStore.GetOrCreate(hostID.String(), "amux", "AMUX_KV"); err != nil {
+		t.Fatalf("host creds: %v", err)
 	}
 	mgrCfg := config.DefaultConfig(resolver)
 	mgrCfg.Node.Role = "manager"
-	mgrCfg.Remote.NATS.URL = server.URL()
-	mgrCfg.Remote.NATS.CredsPath = credPath
+	mgrCfg.Remote.NATS.URL = server.LeafURL()
+	mgrCfg.Remote.NATS.CredsPath = credStore.CredentialPath(hostID.String())
 	mgrCfg.Remote.NATS.SubjectPrefix = "amux"
 	mgrCfg.Remote.Manager.HostID = hostID.String()
-	mgrCfg.NATS.JetStreamDir = filepath.Join(t.TempDir(), "nats")
-	hostMgr, err := NewHostManager(mgrCfg, resolver)
+	mgrCfg.NATS.JetStreamDir = jetstreamDir
+	mgrCfg.NATS.HubURL = server.URL()
+	mgrCfg.NATS.Listen = "127.0.0.1:-1"
+	hostMgr, err := NewHostManager(mgrCfg, resolver, "test")
 	if err != nil {
 		t.Fatalf("host manager: %v", err)
 	}
+	hostMgr.SetRegistry(stubRegistry{}, nil)
 	startErr := make(chan error, 1)
 	go func() {
 		startErr <- hostMgr.Start(ctx)
@@ -123,6 +124,7 @@ func TestRemoteHandshakeAndSpawn(t *testing.T) {
 		AgentID:   api.NewAgentID().String(),
 		AgentSlug: "test-agent",
 		RepoPath:  repoRoot,
+		Adapter:   "noop",
 		Command:   []string{os.Args[0], "-test.run=TestRemoteHelperProcess"},
 		Env: map[string]string{
 			"AMUX_HELPER": "1",
@@ -198,4 +200,10 @@ func runGit(t *testing.T, dir string, args ...string) {
 func execGit(ctx context.Context, dir string, args ...string) (git.ExecResult, error) {
 	runner := git.NewRunner()
 	return runner.Exec(ctx, dir, args...)
+}
+
+type stubRegistry struct{}
+
+func (stubRegistry) Load(ctx context.Context, name string) (adapter.Adapter, error) {
+	return adapter.NewNoopAdapter(name), nil
 }

@@ -469,7 +469,7 @@ reconnect_backoff_base = "1s"
 reconnect_backoff_max = "30s"
 
 [remote.nats]
-url = "nats://amux-host:4222"             # NATS server on the amux host (director host)
+url = "nats://amux-host:7422"             # Hub leaf listen URL for manager leaf connections
 creds_path = "~/.config/amux/nats.creds"  # Per-host NATS credential file (provisioned during SSH bootstrap; scoped to this host, see §5.5.6.4)
 subject_prefix = "amux"                   # Root subject namespace for all amux traffic
 kv_bucket = "AMUX_KV"                     # JetStream KV bucket for remote state
@@ -486,7 +486,9 @@ mode = "embedded"              # embedded, external
 topology = "hub"               # hub, leaf
 hub_url = "nats://amux-host:4222"  # Required when topology="leaf"
 listen = "0.0.0.0:4222"
+leaf_listen = "0.0.0.0:7422"
 advertise_url = "nats://amux-host:4222"
+leaf_advertise_url = "nats://amux-host:7422"
 jetstream_dir = "~/.amux/nats"
 
 [node]
@@ -1210,6 +1212,9 @@ Manager-role nodes MUST authenticate their leaf-mode connection to the hub NATS 
 Let `P = remote.nats.subject_prefix` (default `amux`). The hub MUST enforce that traffic attributable to a given `host_id` is restricted to the following subject permissions when transiting the leaf→hub link:
 
 Publish:
+- `$JS.API.>` (JetStream API for KV operations)
+- `$KV.<kv_bucket>.>` (JetStream KV subject namespace for the configured bucket)
+- `_INBOX.>` (request-reply responses)
 - `P.handshake.<host_id>` (handshake request)
 - `P.events.<host_id>` (host events)
 - `P.pty.<host_id>.*.out` (PTY output from daemon to director)

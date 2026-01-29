@@ -13,7 +13,6 @@ Package daemon hosts the JSON-RPC control plane.
 - `type agentAddResult`
 - `type agentListResult`
 - `type agentRefParams`
-- `type agentSummary`
 - `type attachResult`
 - `type daemonStatusResult`
 - `type daemonStopParams`
@@ -225,7 +224,7 @@ type agentAddResult struct {
 
 ```go
 type agentListResult struct {
-	Agents []agentSummary `json:"agents"`
+	Roster []api.RosterEntry `json:"roster"`
 }
 ```
 
@@ -235,18 +234,6 @@ type agentListResult struct {
 type agentRefParams struct {
 	AgentID string `json:"agent_id"`
 	Name    string `json:"name"`
-}
-```
-
-## type agentSummary
-
-```go
-type agentSummary struct {
-	AgentID  api.AgentID `json:"agent_id"`
-	Name     string      `json:"name"`
-	Adapter  string      `json:"adapter"`
-	Presence string      `json:"presence"`
-	RepoRoot string      `json:"repo_root"`
 }
 ```
 

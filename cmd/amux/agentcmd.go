@@ -9,6 +9,8 @@ import (
 	"net"
 	"os"
 	"strings"
+
+	"github.com/agentflare-ai/amux/pkg/api"
 )
 
 func runAgent(args []string) error {
@@ -93,20 +95,18 @@ func runAgentList(args []string) error {
 	}
 	defer func() { _ = client.Close() }()
 	var result struct {
-		Agents []struct {
-			AgentID  string `json:"agent_id"`
-			Name     string `json:"name"`
-			Adapter  string `json:"adapter"`
-			Presence string `json:"presence"`
-			RepoRoot string `json:"repo_root"`
-		} `json:"agents"`
+		Roster []api.RosterEntry `json:"roster"`
 	}
 	if err := client.Call(ctx, "agent.list", map[string]any{}, &result); err != nil {
 		return fmt.Errorf("agent list: %w", err)
 	}
 	writer := bufio.NewWriter(os.Stdout)
-	for _, agent := range result.Agents {
-		fmt.Fprintf(writer, "%s\t%s\t%s\t%s\t%s\n", agent.AgentID, agent.Name, agent.Adapter, agent.Presence, agent.RepoRoot)
+	for _, entry := range result.Roster {
+		id := entry.RuntimeID.String()
+		if entry.AgentID != nil {
+			id = entry.AgentID.String()
+		}
+		fmt.Fprintf(writer, "%s\t%s\t%s\t%s\t%s\t%s\n", entry.Kind, id, entry.Name, entry.Adapter, entry.Presence, entry.RepoRoot)
 	}
 	return writer.Flush()
 }

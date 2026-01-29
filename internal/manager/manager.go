@@ -48,30 +48,20 @@ type RemoveRequest struct {
 	Name    string
 }
 
-// AgentRecord describes a managed agent.
-type AgentRecord struct {
-	ID       api.AgentID
-	Name     string
-	About    string
-	Adapter  string
-	RepoRoot string
-	Worktree string
-	Slug     string
-	Presence string
-	Location api.Location
-}
-
 type agentState struct {
 	runtime          *agent.Agent
 	slug             string
 	repoRoot         string
 	worktree         string
 	session          *session.LocalSession
+	formatter        adapter.ActionFormatter
 	remoteHost       api.HostID
 	remoteSession    api.SessionID
 	remote           bool
 	config           config.AgentConfig
 	explicitRepoPath bool
+	presence         string
+	task             string
 }
 
 // Manager manages local and remote agents and sessions.
@@ -87,6 +77,7 @@ type Manager struct {
 	bases           map[string]string
 	registries      map[string]adapter.Registry
 	registryFactory func(*paths.Resolver) (adapter.Registry, error)
+	subs            []protocol.Subscription
 	shutdownMu      sync.Mutex
 	shutdown        *shutdownController
 }
@@ -123,27 +114,33 @@ func NewManager(ctx context.Context, resolver *paths.Resolver, cfg config.Config
 	if err := mgr.loadFromConfig(ctx); err != nil {
 		return nil, fmt.Errorf("new manager: %w", err)
 	}
+	if err := mgr.startPresenceRouting(ctx); err != nil {
+		return nil, fmt.Errorf("new manager: %w", err)
+	}
+	if err := mgr.startMessageRouting(ctx); err != nil {
+		return nil, fmt.Errorf("new manager: %w", err)
+	}
 	return mgr, nil
 }
 
 // AddAgent adds and starts a local agent.
-func (m *Manager) AddAgent(ctx context.Context, req AddRequest) (AgentRecord, error) {
+func (m *Manager) AddAgent(ctx context.Context, req AddRequest) (api.RosterEntry, error) {
 	if strings.TrimSpace(req.Name) == "" || strings.TrimSpace(req.Adapter) == "" {
-		return AgentRecord{}, fmt.Errorf("add agent: %w", ErrAgentInvalid)
+		return api.RosterEntry{}, fmt.Errorf("add agent: %w", ErrAgentInvalid)
 	}
 	explicitRepoPath := strings.TrimSpace(req.Location.RepoPath) != ""
 	location, repoRoot, err := m.resolveLocation(req)
 	if err != nil {
-		return AgentRecord{}, fmt.Errorf("add agent: %w", err)
+		return api.RosterEntry{}, fmt.Errorf("add agent: %w", err)
 	}
 	if location.Type == api.LocationSSH {
 		return m.addRemoteAgent(ctx, req, location, repoRoot, explicitRepoPath)
 	}
 	if err := ensureGitRepo(repoRoot); err != nil {
-		return AgentRecord{}, fmt.Errorf("add agent: %w", err)
+		return api.RosterEntry{}, fmt.Errorf("add agent: %w", err)
 	}
 	if err := m.validateMultiRepo(repoRoot, explicitRepoPath); err != nil {
-		return AgentRecord{}, fmt.Errorf("add agent: %w", err)
+		return api.RosterEntry{}, fmt.Errorf("add agent: %w", err)
 	}
 	m.mu.Lock()
 	used := make(map[string]struct{})
@@ -154,15 +151,15 @@ func (m *Manager) AddAgent(ctx context.Context, req AddRequest) (AgentRecord, er
 	m.mu.Unlock()
 	worktree, err := m.git.EnsureWorktree(ctx, repoRoot, slug)
 	if err != nil {
-		return AgentRecord{}, fmt.Errorf("add agent: %w", err)
+		return api.RosterEntry{}, fmt.Errorf("add agent: %w", err)
 	}
 	agentMeta, err := api.NewAgent(req.Name, req.About, api.AdapterRef(req.Adapter), repoRoot, worktree.Path, location)
 	if err != nil {
-		return AgentRecord{}, fmt.Errorf("add agent: %w", err)
+		return api.RosterEntry{}, fmt.Errorf("add agent: %w", err)
 	}
 	runtime, err := agent.NewAgent(agentMeta, m.dispatcher)
 	if err != nil {
-		return AgentRecord{}, fmt.Errorf("add agent: %w", err)
+		return api.RosterEntry{}, fmt.Errorf("add agent: %w", err)
 	}
 	cfgEntry := config.AgentConfig{
 		Name:    req.Name,
@@ -176,7 +173,7 @@ func (m *Manager) AddAgent(ctx context.Context, req AddRequest) (AgentRecord, er
 	}
 	if err := m.appendAgentConfig(cfgEntry); err != nil {
 		_ = m.git.RemoveWorktree(ctx, repoRoot, slug, m.cfg.Shutdown.CleanupWorktrees)
-		return AgentRecord{}, fmt.Errorf("add agent: %w", err)
+		return api.RosterEntry{}, fmt.Errorf("add agent: %w", err)
 	}
 	state := &agentState{
 		runtime:          runtime,
@@ -185,6 +182,7 @@ func (m *Manager) AddAgent(ctx context.Context, req AddRequest) (AgentRecord, er
 		worktree:         worktree.Path,
 		config:           cfgEntry,
 		explicitRepoPath: explicitRepoPath,
+		presence:         agent.PresenceOnline,
 	}
 	m.mu.Lock()
 	m.agents[agentMeta.ID] = state
@@ -198,7 +196,7 @@ func (m *Manager) AddAgent(ctx context.Context, req AddRequest) (AgentRecord, er
 		delete(m.agents, agentMeta.ID)
 		m.removeNameIndexLocked(req.Name, agentMeta.ID)
 		m.mu.Unlock()
-		return AgentRecord{}, fmt.Errorf("add agent: %w", err)
+		return api.RosterEntry{}, fmt.Errorf("add agent: %w", err)
 	}
 	if _, err := m.startSession(ctx, agentMeta.ID); err != nil {
 		_ = m.removeAgentConfig(cfgEntry)
@@ -207,41 +205,23 @@ func (m *Manager) AddAgent(ctx context.Context, req AddRequest) (AgentRecord, er
 		delete(m.agents, agentMeta.ID)
 		m.removeNameIndexLocked(req.Name, agentMeta.ID)
 		m.mu.Unlock()
-		return AgentRecord{}, fmt.Errorf("add agent: %w", err)
+		return api.RosterEntry{}, fmt.Errorf("add agent: %w", err)
 	}
-	m.emitAgentEvent(ctx, "agent.added", AgentRecord{
-		ID:       agentMeta.ID,
-		Name:     req.Name,
-		About:    req.About,
-		Adapter:  req.Adapter,
-		RepoRoot: repoRoot,
-		Worktree: worktree.Path,
-		Slug:     slug,
-		Presence: statePresence(runtime),
-		Location: location,
-	})
-	return AgentRecord{
-		ID:       agentMeta.ID,
-		Name:     req.Name,
-		About:    req.About,
-		Adapter:  req.Adapter,
-		RepoRoot: repoRoot,
-		Worktree: worktree.Path,
-		Slug:     slug,
-		Presence: statePresence(runtime),
-		Location: location,
-	}, nil
+	record := m.rosterEntry(agentMeta.ID, state)
+	m.emitAgentEvent(ctx, "agent.added", record)
+	m.emitRosterUpdated(ctx)
+	return record, nil
 }
 
-func (m *Manager) addRemoteAgent(ctx context.Context, req AddRequest, location api.Location, repoRoot string, explicitRepoPath bool) (AgentRecord, error) {
+func (m *Manager) addRemoteAgent(ctx context.Context, req AddRequest, location api.Location, repoRoot string, explicitRepoPath bool) (api.RosterEntry, error) {
 	if m.remoteDirector == nil {
-		return AgentRecord{}, fmt.Errorf("add agent: %w", ErrAgentInvalid)
+		return api.RosterEntry{}, fmt.Errorf("add agent: %w", ErrAgentInvalid)
 	}
 	if strings.TrimSpace(location.Host) == "" {
-		return AgentRecord{}, fmt.Errorf("add agent: %w", ErrAgentInvalid)
+		return api.RosterEntry{}, fmt.Errorf("add agent: %w", ErrAgentInvalid)
 	}
 	if strings.TrimSpace(repoRoot) == "" {
-		return AgentRecord{}, fmt.Errorf("add agent: %w", ErrRepoPathRequired)
+		return api.RosterEntry{}, fmt.Errorf("add agent: %w", ErrRepoPathRequired)
 	}
 	m.mu.Lock()
 	used := make(map[string]struct{})
@@ -253,23 +233,23 @@ func (m *Manager) addRemoteAgent(ctx context.Context, req AddRequest, location a
 	worktree := paths.WorktreePathForRepo(repoRoot, slug)
 	adapterBundle, err := buildAdapterBundle(m.resolver, req.Adapter)
 	if err != nil {
-		return AgentRecord{}, fmt.Errorf("add agent: %w", err)
+		return api.RosterEntry{}, fmt.Errorf("add agent: %w", err)
 	}
 	hostID, _, err := m.remoteDirector.EnsureHost(ctx, location, []remote.AdapterBundle{adapterBundle})
 	if err != nil {
-		return AgentRecord{}, fmt.Errorf("add agent: %w", err)
+		return api.RosterEntry{}, fmt.Errorf("add agent: %w", err)
 	}
 	registry, err := m.registry(m.resolver)
 	if err != nil {
-		return AgentRecord{}, fmt.Errorf("add agent: %w", err)
+		return api.RosterEntry{}, fmt.Errorf("add agent: %w", err)
 	}
 	adapterInstance, err := registry.Load(ctx, req.Adapter)
 	if err != nil {
-		return AgentRecord{}, fmt.Errorf("add agent: %w", err)
+		return api.RosterEntry{}, fmt.Errorf("add agent: %w", err)
 	}
 	manifest := adapterInstance.Manifest()
 	if len(manifest.Commands.Start) == 0 {
-		return AgentRecord{}, fmt.Errorf("add agent: %w", ErrAgentInvalid)
+		return api.RosterEntry{}, fmt.Errorf("add agent: %w", ErrAgentInvalid)
 	}
 	agentID := api.NewAgentID()
 	cfgEntry := config.AgentConfig{
@@ -283,9 +263,11 @@ func (m *Manager) addRemoteAgent(ctx context.Context, req AddRequest, location a
 		},
 	}
 	if err := m.appendAgentConfig(cfgEntry); err != nil {
-		return AgentRecord{}, fmt.Errorf("add agent: %w", err)
+		return api.RosterEntry{}, fmt.Errorf("add agent: %w", err)
 	}
 	spawnReq := remote.SpawnRequest{
+		Name:      req.Name,
+		About:     req.About,
 		AgentID:   agentID.String(),
 		AgentSlug: slug,
 		RepoPath:  repoRoot,
@@ -295,12 +277,12 @@ func (m *Manager) addRemoteAgent(ctx context.Context, req AddRequest, location a
 	resp, err := m.spawnRemote(ctx, hostID, spawnReq)
 	if err != nil {
 		_ = m.removeAgentConfig(cfgEntry)
-		return AgentRecord{}, fmt.Errorf("add agent: %w", err)
+		return api.RosterEntry{}, fmt.Errorf("add agent: %w", err)
 	}
 	sessionID, err := api.ParseSessionID(resp.SessionID)
 	if err != nil {
 		_ = m.removeAgentConfig(cfgEntry)
-		return AgentRecord{}, fmt.Errorf("add agent: %w", err)
+		return api.RosterEntry{}, fmt.Errorf("add agent: %w", err)
 	}
 	state := &agentState{
 		slug:             slug,
@@ -311,24 +293,16 @@ func (m *Manager) addRemoteAgent(ctx context.Context, req AddRequest, location a
 		remote:           true,
 		remoteHost:       hostID,
 		remoteSession:    sessionID,
+		presence:         agent.PresenceOnline,
 	}
 	m.mu.Lock()
 	m.agents[agentID] = state
 	m.nameIndex[req.Name] = append(m.nameIndex[req.Name], agentID)
 	m.cfg.Agents = append(m.cfg.Agents, cfgEntry)
 	m.mu.Unlock()
-	record := AgentRecord{
-		ID:       agentID,
-		Name:     req.Name,
-		About:    req.About,
-		Adapter:  req.Adapter,
-		RepoRoot: repoRoot,
-		Worktree: worktree,
-		Slug:     slug,
-		Presence: statePresence(state.runtime),
-		Location: location,
-	}
+	record := m.rosterEntry(agentID, state)
 	m.emitAgentEvent(ctx, "agent.added", record)
+	m.emitRosterUpdated(ctx)
 	return record, nil
 }
 
@@ -354,37 +328,22 @@ func (m *Manager) RemoveAgent(ctx context.Context, req RemoveRequest) error {
 	m.removeNameIndexLocked(state.config.Name, id)
 	m.removeConfigEntryLocked(state.config)
 	m.mu.Unlock()
-	m.emitAgentEvent(ctx, "agent.removed", AgentRecord{ID: id, Name: state.config.Name, Slug: state.slug, RepoRoot: state.repoRoot})
+	entry := m.rosterEntry(id, state)
+	m.emitAgentEvent(ctx, "agent.removed", entry)
+	m.emitRosterUpdated(ctx)
 	return nil
 }
 
-// ListAgents returns the current roster.
-func (m *Manager) ListAgents() ([]AgentRecord, error) {
+// ListAgents returns the current roster entries.
+func (m *Manager) ListAgents() ([]api.RosterEntry, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	records := make([]AgentRecord, 0, len(m.agents))
+	records := make([]api.RosterEntry, 0, len(m.agents)+2)
+	records = append(records, m.systemRosterLocked()...)
 	for id, state := range m.agents {
-		location := api.Location{Type: api.LocationLocal}
-		if state.runtime != nil {
-			location = state.runtime.Location
-		} else if state.config.Location.Type != "" {
-			locType, err := api.ParseLocationType(state.config.Location.Type)
-			if err == nil {
-				location = api.Location{Type: locType, Host: state.config.Location.Host, RepoPath: state.config.Location.RepoPath}
-			}
-		}
-		records = append(records, AgentRecord{
-			ID:       id,
-			Name:     state.config.Name,
-			About:    state.config.About,
-			Adapter:  state.config.Adapter,
-			RepoRoot: state.repoRoot,
-			Worktree: state.worktree,
-			Slug:     state.slug,
-			Presence: statePresence(state.runtime),
-			Location: location,
-		})
+		records = append(records, m.rosterEntry(id, state))
 	}
+	sortRoster(records)
 	return records, nil
 }
 
@@ -612,6 +571,7 @@ func (m *Manager) startSession(ctx context.Context, id api.AgentID) (*session.Lo
 	if len(manifest.Commands.Start) == 0 {
 		return nil, fmt.Errorf("start session: %w", ErrAgentInvalid)
 	}
+	formatter := adapterInstance.Formatter()
 	sessionMeta, err := api.NewSession(id, state.repoRoot, state.worktree, state.runtime.Location)
 	if err != nil {
 		return nil, fmt.Errorf("start session: %w", err)
@@ -625,6 +585,10 @@ func (m *Manager) startSession(ctx context.Context, id api.AgentID) (*session.Lo
 	}
 	m.mu.Lock()
 	state.session = sess
+	state.formatter = formatter
+	if strings.TrimSpace(state.presence) == "" {
+		state.presence = agent.PresenceOnline
+	}
 	m.mu.Unlock()
 	return sess, nil
 }
@@ -651,6 +615,7 @@ func (m *Manager) stopSession(ctx context.Context, id api.AgentID) error {
 	}
 	sess := state.session
 	state.session = nil
+	state.formatter = nil
 	m.mu.Unlock()
 	if sess == nil {
 		return nil
@@ -681,6 +646,8 @@ func (m *Manager) startRemoteSession(ctx context.Context, id api.AgentID, state 
 		return fmt.Errorf("start remote session: %w", ErrAgentInvalid)
 	}
 	req := remote.SpawnRequest{
+		Name:      state.config.Name,
+		About:     state.config.About,
 		AgentID:   id.String(),
 		AgentSlug: state.slug,
 		RepoPath:  state.repoRoot,
@@ -950,6 +917,7 @@ func (m *Manager) loadFromConfig(ctx context.Context) error {
 				worktree:         worktree,
 				config:           entry,
 				explicitRepoPath: explicitRepoPath,
+				presence:         agent.PresenceOffline,
 			}
 			m.agents[agentMeta.ID] = state
 			m.nameIndex[entry.Name] = append(m.nameIndex[entry.Name], agentMeta.ID)
@@ -982,6 +950,7 @@ func (m *Manager) loadFromConfig(ctx context.Context) error {
 				explicitRepoPath: explicitRepoPath,
 				remote:           true,
 				remoteHost:       hostID,
+				presence:         agent.PresenceOffline,
 			}
 			m.agents[agentID] = state
 			m.nameIndex[entry.Name] = append(m.nameIndex[entry.Name], agentID)
@@ -1130,15 +1099,21 @@ func ensureGitRepo(repoRoot string) error {
 	return fmt.Errorf("repo root: %w", ErrAgentInvalid)
 }
 
-func statePresence(runtime *agent.Agent) string {
-	if runtime == nil || runtime.Presence == nil {
-		return "unknown"
-	}
-	state := runtime.Presence.State()
-	if state == "" {
+func statePresence(state *agentState) string {
+	if state == nil {
 		return agent.PresenceOffline
 	}
-	return lastStateSegment(state)
+	if strings.TrimSpace(state.presence) != "" {
+		return strings.ToLower(strings.TrimSpace(state.presence))
+	}
+	if state.runtime == nil || state.runtime.Presence == nil {
+		return agent.PresenceOffline
+	}
+	current := state.runtime.Presence.State()
+	if current == "" {
+		return agent.PresenceOffline
+	}
+	return lastStateSegment(current)
 }
 
 func lastStateSegment(state string) string {

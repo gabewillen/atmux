@@ -68,6 +68,17 @@ func (id *TargetID) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// OutboundMessage describes an adapter-emitted outbound message payload.
+type OutboundMessage struct {
+	AgentID   *AgentID `json:"agent_id,omitempty"`
+	ToSlug    string   `json:"to_slug"`
+	Content   string   `json:"content"`
+	ID        string   `json:"id,omitempty"`
+	From      string   `json:"from,omitempty"`
+	To        string   `json:"to,omitempty"`
+	Timestamp string   `json:"timestamp,omitempty"`
+}
+
 // AgentMessage represents a participant communication payload.
 type AgentMessage struct {
 	ID        RuntimeID `json:"id"`

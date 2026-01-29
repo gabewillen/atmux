@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/agentflare-ai/amux/internal/adapter"
+	"github.com/agentflare-ai/amux/internal/agent"
 	"github.com/agentflare-ai/amux/internal/config"
 	"github.com/agentflare-ai/amux/internal/git"
 	"github.com/agentflare-ai/amux/internal/paths"
@@ -571,6 +572,20 @@ func (m *HostManager) handleSpawn(reply string, control ControlMessage) {
 		return
 	}
 	location := api.Location{Type: api.LocationSSH, Host: m.hostID.String(), RepoPath: repoRoot}
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
+		name = req.AgentSlug
+	}
+	agentMeta, err := api.NewAgentWithID(agentID, name, req.About, api.AdapterRef(req.Adapter), repoRoot, worktree, location)
+	if err != nil {
+		_ = m.replyError(reply, "spawn", "invalid_request", "invalid agent metadata")
+		return
+	}
+	runtime, err := agent.NewAgent(agentMeta, m.dispatcher)
+	if err != nil {
+		_ = m.replyError(reply, "spawn", "invalid_request", "failed to create agent runtime")
+		return
+	}
 	sessionMeta, err := api.NewSession(agentID, repoRoot, worktree, location)
 	if err != nil {
 		_ = m.replyError(reply, "spawn", "invalid_request", "invalid session")
@@ -596,7 +611,7 @@ func (m *HostManager) handleSpawn(reply string, control ControlMessage) {
 	}
 	matcher := adapterInstance.Matcher()
 	formatter := adapterInstance.Formatter()
-	sess, err := session.NewLocalSession(sessionMeta, nil, cmd, worktree, matcher, m.dispatcher, session.Config{DrainTimeout: m.cfg.Shutdown.DrainTimeout})
+	sess, err := session.NewLocalSession(sessionMeta, runtime, cmd, worktree, matcher, m.dispatcher, session.Config{DrainTimeout: m.cfg.Shutdown.DrainTimeout})
 	if err != nil {
 		_ = m.replyError(reply, "spawn", "invalid_request", "failed to start session")
 		return
@@ -834,15 +849,6 @@ func (m *HostManager) handleOutput(session *remoteSession, chunk []byte) {
 	m.publishPTY(session.sessionID, chunk)
 }
 
-type adapterOutboundMessage struct {
-	ToSlug    string `json:"to_slug"`
-	Content   string `json:"content"`
-	ID        string `json:"id,omitempty"`
-	From      string `json:"from,omitempty"`
-	To        string `json:"to,omitempty"`
-	Timestamp string `json:"timestamp,omitempty"`
-}
-
 func (m *HostManager) handleOutboundMessages(session *remoteSession, chunk []byte) {
 	if session == nil || session.matcher == nil {
 		return
@@ -855,7 +861,7 @@ func (m *HostManager) handleOutboundMessages(session *remoteSession, chunk []byt
 		if strings.ToLower(strings.TrimSpace(match.Pattern)) != "message" {
 			continue
 		}
-		var payload adapterOutboundMessage
+		var payload api.OutboundMessage
 		if err := json.Unmarshal([]byte(match.Text), &payload); err != nil {
 			continue
 		}
@@ -870,7 +876,7 @@ func (m *HostManager) handleOutboundMessages(session *remoteSession, chunk []byt
 	}
 }
 
-func (m *HostManager) buildAgentMessage(session *remoteSession, payload adapterOutboundMessage) (api.AgentMessage, bool) {
+func (m *HostManager) buildAgentMessage(session *remoteSession, payload api.OutboundMessage) (api.AgentMessage, bool) {
 	if session == nil {
 		return api.AgentMessage{}, false
 	}

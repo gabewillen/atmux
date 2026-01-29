@@ -84,6 +84,28 @@ func ParseHandshakeSubject(prefix string, subject string) (api.HostID, error) {
 	return id, nil
 }
 
+// ParseEventsSubject extracts the host_id from an events subject.
+func ParseEventsSubject(prefix string, subject string) (api.HostID, error) {
+	prefixParts := strings.Split(SubjectPrefix(prefix), ".")
+	parts := strings.Split(subject, ".")
+	if len(parts) != len(prefixParts)+2 {
+		return "", fmt.Errorf("parse events subject: %w", ErrInvalidSubject)
+	}
+	for i, part := range prefixParts {
+		if parts[i] != part {
+			return "", fmt.Errorf("parse events subject: %w", ErrInvalidSubject)
+		}
+	}
+	if parts[len(prefixParts)] != "events" {
+		return "", fmt.Errorf("parse events subject: %w", ErrInvalidSubject)
+	}
+	id, err := api.ParseHostID(parts[len(prefixParts)+1])
+	if err != nil {
+		return "", fmt.Errorf("parse events subject: %w", err)
+	}
+	return id, nil
+}
+
 // ParseSessionSubject extracts the session_id from a PTY subject.
 func ParseSessionSubject(prefix string, subject string) (api.HostID, api.SessionID, string, error) {
 	prefixParts := strings.Split(SubjectPrefix(prefix), ".")

@@ -53,15 +53,7 @@ type agentAddResult struct {
 }
 
 type agentListResult struct {
-	Agents []agentSummary `json:"agents"`
-}
-
-type agentSummary struct {
-	AgentID  api.AgentID `json:"agent_id"`
-	Name     string      `json:"name"`
-	Adapter  string      `json:"adapter"`
-	Presence string      `json:"presence"`
-	RepoRoot string      `json:"repo_root"`
+	Roster []api.RosterEntry `json:"roster"`
 }
 
 type attachResult struct {
@@ -164,7 +156,10 @@ func (d *Daemon) handleAgentAdd(ctx context.Context, raw json.RawMessage) (any, 
 	if err != nil {
 		return nil, rpcInternal(err)
 	}
-	return agentAddResult{AgentID: record.ID}, nil
+	if record.AgentID == nil {
+		return nil, rpcInternal(fmt.Errorf("agent add: %w", manager.ErrAgentInvalid))
+	}
+	return agentAddResult{AgentID: *record.AgentID}, nil
 }
 
 func (d *Daemon) handleAgentList(ctx context.Context, raw json.RawMessage) (any, *rpc.Error) {
@@ -173,17 +168,7 @@ func (d *Daemon) handleAgentList(ctx context.Context, raw json.RawMessage) (any,
 	if err != nil {
 		return nil, rpcInternal(err)
 	}
-	result := agentListResult{Agents: make([]agentSummary, 0, len(records))}
-	for _, record := range records {
-		result.Agents = append(result.Agents, agentSummary{
-			AgentID:  record.ID,
-			Name:     record.Name,
-			Adapter:  record.Adapter,
-			Presence: record.Presence,
-			RepoRoot: record.RepoRoot,
-		})
-	}
-	return result, nil
+	return agentListResult{Roster: records}, nil
 }
 
 func (d *Daemon) handleAgentRemove(ctx context.Context, raw json.RawMessage) (any, *rpc.Error) {
@@ -276,7 +261,7 @@ func (d *Daemon) handleAgentAttach(ctx context.Context, raw json.RawMessage) (an
 	}
 	var repoRoot string
 	for _, record := range records {
-		if record.ID == id {
+		if record.AgentID != nil && *record.AgentID == id {
 			repoRoot = record.RepoRoot
 			break
 		}
@@ -329,11 +314,14 @@ func (d *Daemon) resolveAgentID(params agentRefParams) (api.AgentID, error) {
 	}
 	var match api.AgentID
 	for _, record := range records {
+		if record.Kind != api.RosterAgent || record.AgentID == nil {
+			continue
+		}
 		if record.Name == params.Name {
 			if !match.IsZero() {
 				return api.AgentID{}, fmt.Errorf("agent name is ambiguous")
 			}
-			match = record.ID
+			match = *record.AgentID
 		}
 	}
 	if match.IsZero() {

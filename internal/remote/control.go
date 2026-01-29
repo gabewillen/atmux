@@ -28,6 +28,8 @@ type ErrorPayload struct {
 
 // SpawnRequest describes a spawn request payload.
 type SpawnRequest struct {
+	Name      string            `json:"name,omitempty"`
+	About     string            `json:"about,omitempty"`
 	AgentID   string            `json:"agent_id"`
 	AgentSlug string            `json:"agent_slug"`
 	RepoPath  string            `json:"repo_path"`

@@ -161,7 +161,7 @@ func TestAddAgentWritesConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("add agent: %v", err)
 	}
-	if record.ID.IsZero() {
+	if record.AgentID == nil || record.AgentID.IsZero() {
 		t.Fatalf("expected agent id")
 	}
 	configPath := resolver.ProjectConfigPath()
@@ -276,7 +276,7 @@ func TestAddAgentRequiresRepoPathForMultiRepo(t *testing.T) {
 		t.Fatalf("add agent alpha: %v", err)
 	}
 	t.Cleanup(func() {
-		if err := mgr.RemoveAgent(context.Background(), RemoveRequest{AgentID: alpha.ID}); err != nil {
+		if err := mgr.RemoveAgent(context.Background(), RemoveRequest{AgentID: *alpha.AgentID}); err != nil {
 			t.Errorf("remove agent alpha: %v", err)
 		}
 	})
@@ -303,7 +303,7 @@ func TestAddAgentRequiresRepoPathForMultiRepo(t *testing.T) {
 		t.Fatalf("add agent beta: %v", err)
 	}
 	t.Cleanup(func() {
-		if err := mgr.RemoveAgent(context.Background(), RemoveRequest{AgentID: beta.ID}); err != nil {
+		if err := mgr.RemoveAgent(context.Background(), RemoveRequest{AgentID: *beta.AgentID}); err != nil {
 			t.Errorf("remove agent beta: %v", err)
 		}
 	})
@@ -333,6 +333,81 @@ func TestShutdownEmitsEvents(t *testing.T) {
 	}
 	if _, ok := names[shutdownEventDrainComplete]; !ok {
 		t.Fatalf("expected %s event", shutdownEventDrainComplete)
+	}
+}
+
+func TestRosterUpdatedEvent(t *testing.T) {
+	repoRoot := initRepo(t)
+	resolver, err := paths.NewResolver(repoRoot)
+	if err != nil {
+		t.Fatalf("resolver: %v", err)
+	}
+	cfg := config.DefaultConfig(resolver)
+	cfg.NATS.JetStreamDir = filepath.Join(t.TempDir(), "nats")
+	server, err := protocol.StartHubServer(context.Background(), protocol.HubServerConfig{
+		Listen:       "127.0.0.1:-1",
+		JetStreamDir: cfg.NATS.JetStreamDir,
+	})
+	if err != nil {
+		t.Fatalf("start nats: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := server.Close(); err != nil {
+			t.Errorf("close nats: %v", err)
+		}
+	})
+	dispatcher, err := protocol.NewNATSDispatcher(context.Background(), server.URL(), protocol.NATSOptions{})
+	if err != nil {
+		t.Fatalf("connect nats: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := dispatcher.Close(context.Background()); err != nil {
+			t.Errorf("close dispatcher: %v", err)
+		}
+	})
+	mgr, err := NewManager(context.Background(), resolver, cfg, dispatcher, "test")
+	if err != nil {
+		t.Fatalf("manager: %v", err)
+	}
+	mgr.SetRegistryFactory(func(resolver *paths.Resolver) (adapter.Registry, error) {
+		_ = resolver
+		return &stubRegistry{cmd: []string{"env", "AMUX_HELPER=1", os.Args[0], "-test.run=TestManagerHelperProcess"}}, nil
+	})
+	events := make(chan protocol.Event, 4)
+	sub, err := dispatcher.Subscribe(context.Background(), protocol.Subject("events", "presence"), func(event protocol.Event) {
+		if event.Name == "roster.updated" {
+			events <- event
+		}
+	})
+	if err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := sub.Unsubscribe(); err != nil {
+			t.Errorf("unsubscribe: %v", err)
+		}
+	})
+	record, err := mgr.AddAgent(context.Background(), AddRequest{
+		Name:     "alpha",
+		Adapter:  "stub",
+		Location: api.Location{Type: api.LocationLocal},
+		Cwd:      repoRoot,
+	})
+	if err != nil {
+		t.Fatalf("add agent: %v", err)
+	}
+	if record.AgentID == nil {
+		t.Fatalf("expected agent id")
+	}
+	t.Cleanup(func() {
+		if err := mgr.RemoveAgent(context.Background(), RemoveRequest{AgentID: *record.AgentID}); err != nil {
+			t.Errorf("remove agent: %v", err)
+		}
+	})
+	select {
+	case <-events:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("expected roster.updated event")
 	}
 }
 

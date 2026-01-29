@@ -20,7 +20,10 @@ required by the amux specification.
 - `type HostID` — HostID is the identifier for a host manager.
 - `type LocationType` — LocationType describes where an agent runs.
 - `type Location` — Location describes where an agent should run.
+- `type OutboundMessage` — OutboundMessage describes an adapter-emitted outbound message payload.
 - `type PeerID` — PeerID is the runtime identifier for a peer.
+- `type RosterEntry` — RosterEntry describes a roster entry for an agent or system participant.
+- `type RosterKind` — RosterKind describes the roster entry type.
 - `type RuntimeID` — RuntimeID is a JSON-safe wrapper around muid.MUID that encodes as base-10 strings.
 - `type SessionID` — SessionID is the runtime identifier for a session.
 - `type Session` — Session describes runtime session metadata for an agent.
@@ -359,6 +362,22 @@ func () UnmarshalJSON(data []byte) error
 UnmarshalJSON decodes a location type from a string.
 
 
+## type OutboundMessage
+
+```go
+type OutboundMessage struct {
+	AgentID   *AgentID `json:"agent_id,omitempty"`
+	ToSlug    string   `json:"to_slug"`
+	Content   string   `json:"content"`
+	ID        string   `json:"id,omitempty"`
+	From      string   `json:"from,omitempty"`
+	To        string   `json:"to,omitempty"`
+	Timestamp string   `json:"timestamp,omitempty"`
+}
+```
+
+OutboundMessage describes an adapter-emitted outbound message payload.
+
 ## type PeerID
 
 ```go
@@ -437,6 +456,51 @@ func () Value() muid.MUID
 ```
 
 Value returns the underlying muid.MUID.
+
+
+## type RosterEntry
+
+```go
+type RosterEntry struct {
+	Kind      RosterKind `json:"kind"`
+	RuntimeID RuntimeID  `json:"runtime_id"`
+	AgentID   *AgentID   `json:"agent_id,omitempty"`
+	Name      string     `json:"name"`
+	About     string     `json:"about,omitempty"`
+	Adapter   AdapterRef `json:"adapter,omitempty"`
+	RepoRoot  string     `json:"repo_root,omitempty"`
+	Worktree  string     `json:"worktree,omitempty"`
+	Slug      string     `json:"slug,omitempty"`
+	Presence  string     `json:"presence"`
+	Task      string     `json:"task,omitempty"`
+	Location  *Location  `json:"location,omitempty"`
+}
+```
+
+RosterEntry describes a roster entry for an agent or system participant.
+
+## type RosterKind
+
+```go
+type RosterKind string
+```
+
+RosterKind describes the roster entry type.
+
+### Constants
+
+#### RosterAgent, RosterManager, RosterDirector
+
+```go
+const (
+	// RosterAgent represents a managed agent.
+	RosterAgent RosterKind = "agent"
+	// RosterManager represents a host manager participant.
+	RosterManager RosterKind = "manager"
+	// RosterDirector represents the director participant.
+	RosterDirector RosterKind = "director"
+)
+```
 
 
 ## type RuntimeID

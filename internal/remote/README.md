@@ -20,6 +20,7 @@ Package remote implements NATS-based remote orchestration for amux.
 - `func ManagerCommSubject(prefix string, hostID api.HostID) string` — ManagerCommSubject returns the subject for a manager channel.
 - `func NewPTYConn(ctx context.Context, dispatcher protocol.Dispatcher, prefix string, hostID api.HostID, sessionID api.SessionID) (net.Conn, error)` — NewPTYConn returns a net.Conn that bridges PTY I/O over NATS.
 - `func NowRFC3339() string` — NowRFC3339 returns the current time in RFC3339 UTC format.
+- `func ParseEventsSubject(prefix string, subject string) (api.HostID, error)` — ParseEventsSubject extracts the host_id from an events subject.
 - `func ParseHandshakeSubject(prefix string, subject string) (api.HostID, error)` — ParseHandshakeSubject extracts the host_id from a handshake subject.
 - `func ParseSessionSubject(prefix string, subject string) (api.HostID, api.SessionID, string, error)` — ParseSessionSubject extracts the session_id from a PTY subject.
 - `func PtyInSubject(prefix string, hostID api.HostID, sessionID api.SessionID) string` — PtyInSubject returns the subject for PTY input.
@@ -63,6 +64,7 @@ Package remote implements NATS-based remote orchestration for amux.
 - `type HandshakePayload` — HandshakePayload is the handshake request/response payload.
 - `type HostManagerStatus` — HostManagerStatus reports manager connection state.
 - `type HostManager` — HostManager runs sessions and responds to remote control requests.
+- `type HostSnapshot` — HostSnapshot captures the director's view of a host manager.
 - `type HubAuth` — HubAuth contains JWT material for hub server configuration.
 - `type KVStore` — KVStore provides access to a JetStream KV bucket.
 - `type KillRequest` — KillRequest describes a kill request payload.
@@ -77,7 +79,6 @@ Package remote implements NATS-based remote orchestration for amux.
 - `type SpawnRequest` — SpawnRequest describes a spawn request payload.
 - `type SpawnResponse` — SpawnResponse describes a spawn response payload.
 - `type WireEvent` — WireEvent describes an event payload.
-- `type adapterOutboundMessage`
 - `type hostState`
 - `type queuedMessage`
 - `type remoteSession`
@@ -229,6 +230,14 @@ func NowRFC3339() string
 ```
 
 NowRFC3339 returns the current time in RFC3339 UTC format.
+
+#### ParseEventsSubject
+
+```go
+func ParseEventsSubject(prefix string, subject string) (api.HostID, error)
+```
+
+ParseEventsSubject extracts the host_id from an events subject.
 
 #### ParseHandshakeSubject
 
@@ -685,6 +694,14 @@ func () EnsureHost(ctx context.Context, location api.Location, adapters []Adapte
 
 EnsureHost bootstraps the remote host and returns its host ID.
 
+#### Director.HostID
+
+```go
+func () HostID() api.HostID
+```
+
+HostID returns the director's host ID.
+
 #### Director.HostReady
 
 ```go
@@ -693,6 +710,22 @@ func () HostReady(hostID api.HostID) bool
 
 HostReady reports whether the host is ready for control requests.
 
+#### Director.HostSnapshot
+
+```go
+func () HostSnapshot(hostID api.HostID) (HostSnapshot, bool)
+```
+
+HostSnapshot returns a snapshot of a host manager's connection state.
+
+#### Director.Hosts
+
+```go
+func () Hosts() []HostSnapshot
+```
+
+Hosts returns snapshots of all known host managers.
+
 #### Director.Kill
 
 ```go
@@ -700,6 +733,14 @@ func () Kill(ctx context.Context, hostID api.HostID, req KillRequest) (KillRespo
 ```
 
 Kill requests a remote kill for the host.
+
+#### Director.PeerID
+
+```go
+func () PeerID() api.PeerID
+```
+
+PeerID returns the director's peer ID.
 
 #### Director.Replay
 
@@ -950,7 +991,7 @@ Status returns the current connection state for the host manager.
 #### HostManager.buildAgentMessage
 
 ```go
-func () buildAgentMessage(session *remoteSession, payload adapterOutboundMessage) (api.AgentMessage, bool)
+func () buildAgentMessage(session *remoteSession, payload api.OutboundMessage) (api.AgentMessage, bool)
 ```
 
 #### HostManager.commSubjectForTarget
@@ -1187,6 +1228,19 @@ type HostManagerStatus struct {
 ```
 
 HostManagerStatus reports manager connection state.
+
+## type HostSnapshot
+
+```go
+type HostSnapshot struct {
+	HostID    api.HostID
+	PeerID    api.PeerID
+	Connected bool
+	Ready     bool
+}
+```
+
+HostSnapshot captures the director's view of a host manager.
 
 ## type HubAuth
 
@@ -1434,6 +1488,8 @@ SSHRunner executes SSH commands.
 
 ```go
 type SpawnRequest struct {
+	Name      string            `json:"name,omitempty"`
+	About     string            `json:"about,omitempty"`
 	AgentID   string            `json:"agent_id"`
 	AgentSlug string            `json:"agent_slug"`
 	RepoPath  string            `json:"repo_path"`
@@ -1466,19 +1522,6 @@ type WireEvent struct {
 ```
 
 WireEvent describes an event payload.
-
-## type adapterOutboundMessage
-
-```go
-type adapterOutboundMessage struct {
-	ToSlug    string `json:"to_slug"`
-	Content   string `json:"content"`
-	ID        string `json:"id,omitempty"`
-	From      string `json:"from,omitempty"`
-	To        string `json:"to,omitempty"`
-	Timestamp string `json:"timestamp,omitempty"`
-}
-```
 
 ## type hostState
 

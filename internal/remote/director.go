@@ -32,6 +32,14 @@ type hostState struct {
 	ready     bool
 }
 
+// HostSnapshot captures the director's view of a host manager.
+type HostSnapshot struct {
+	HostID    api.HostID
+	PeerID    api.PeerID
+	Connected bool
+	Ready     bool
+}
+
 // Director orchestrates remote hosts via NATS.
 type Director struct {
 	cfg            config.Config
@@ -47,6 +55,63 @@ type Director struct {
 	mu             sync.Mutex
 	hosts          map[api.HostID]*hostState
 	peerIndex      map[string]api.HostID
+}
+
+// HostID returns the director's host ID.
+func (d *Director) HostID() api.HostID {
+	if d == nil {
+		return ""
+	}
+	return d.hostID
+}
+
+// PeerID returns the director's peer ID.
+func (d *Director) PeerID() api.PeerID {
+	if d == nil {
+		return api.PeerID{}
+	}
+	return d.peerID
+}
+
+// HostSnapshot returns a snapshot of a host manager's connection state.
+func (d *Director) HostSnapshot(hostID api.HostID) (HostSnapshot, bool) {
+	if d == nil {
+		return HostSnapshot{}, false
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	state, ok := d.hosts[hostID]
+	if !ok {
+		return HostSnapshot{}, false
+	}
+	return HostSnapshot{
+		HostID:    state.hostID,
+		PeerID:    state.peerID,
+		Connected: state.connected,
+		Ready:     state.ready,
+	}, true
+}
+
+// Hosts returns snapshots of all known host managers.
+func (d *Director) Hosts() []HostSnapshot {
+	if d == nil {
+		return nil
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	hosts := make([]HostSnapshot, 0, len(d.hosts))
+	for _, state := range d.hosts {
+		if state == nil {
+			continue
+		}
+		hosts = append(hosts, HostSnapshot{
+			HostID:    state.hostID,
+			PeerID:    state.peerID,
+			Connected: state.connected,
+			Ready:     state.ready,
+		})
+	}
+	return hosts
 }
 
 // NewDirector constructs a director orchestrator.

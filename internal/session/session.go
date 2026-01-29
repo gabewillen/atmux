@@ -3,6 +3,7 @@ package session
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -434,11 +435,15 @@ func (s *LocalSession) handleOutput(ctx context.Context, chunk []byte) {
 			if s.agent == nil {
 				continue
 			}
-			payload := map[string]any{
-				"agent_id": s.agent.ID,
-				"pattern":  match.Pattern,
-				"text":     match.Text,
+			var payload api.OutboundMessage
+			if err := json.Unmarshal([]byte(match.Text), &payload); err != nil {
+				continue
 			}
+			if payload.ToSlug == "" || payload.Content == "" {
+				continue
+			}
+			agentID := s.agent.ID
+			payload.AgentID = &agentID
 			_ = s.dispatcher.Publish(ctx, protocol.Subject("events", "message"), protocol.Event{
 				Name:       "message.outbound",
 				Payload:    payload,

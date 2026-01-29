@@ -1,1 +1,7 @@
 journal/
+# Agent runtime directories
+.amux/worktrees/
+.amux/config.toml
+# Build artifacts
+amux
+amux-node

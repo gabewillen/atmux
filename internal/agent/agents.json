@@ -1,0 +1,18 @@
+[
+  {
+    "ID": 1169636148815026977,
+    "Name": "test-agent",
+    "Slug": "test-agent",
+    "About": "",
+    "Adapter": "claude-code",
+    "RepoRoot": "/tmp/TestManagerBaseBranch2419630207/001",
+    "Worktree": "/tmp/TestManagerBaseBranch2419630207/001/.amux/worktrees/test-agent",
+    "Location": {
+      "Type": 0,
+      "Host": "",
+      "User": "",
+      "Port": 0,
+      "RepoPath": ""
+    }
+  }
+]

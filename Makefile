@@ -45,9 +45,8 @@ docs-check: docs-gen ## Check that generated docs are in sync
 		echo "✅ Generated documentation is in sync."; \
 	fi
 
-conformance: ## Run conformance tests (placeholder)
-	@echo "Conformance suite not yet implemented (Phase 0)"
-	@exit 1
+conformance: ## Run conformance tests
+	go test -v ./internal/conformance/...
 
 amux-test: build ## Run amux test to create baseline snapshot
 	./bin/amux test

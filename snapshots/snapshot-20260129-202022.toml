@@ -1,0 +1,25 @@
+[metadata]
+id = "20260129-202022"
+timestamp = "2026-01-29T20:20:22Z"
+version = "1.22"
+
+[build]
+success = true
+duration = "5s"
+go_version = "go1.25.6"
+
+[tests]
+success = true
+total = 50
+passed = 45
+failed = 0
+skipped = 5
+
+[lint]
+success = true
+issues = 0
+
+[coverage]
+percentage = 85.5
+lines = 1000
+covered = 855

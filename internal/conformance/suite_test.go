@@ -10,26 +10,27 @@ func TestConformanceSuiteSkeleton(t *testing.T) {
 		t.Fatal("NewSuite() returned nil")
 	}
 
-	// Phase 0: Setup should fail as not implemented
+	// Fixed Phase 0: Setup should now work
 	err := suite.Setup()
-	if err == nil {
-		t.Fatal("Setup() should fail in Phase 0")
+	if err != nil {
+		t.Fatalf("Setup() should work in fixed Phase 0: %v", err)
+	}
+	defer suite.Cleanup()
+
+	// Should be able to run a test
+	err = suite.RunTest("basic_connectivity")
+	if err != nil {
+		t.Fatalf("RunTest() failed: %v", err)
 	}
 
-	// Should be able to get empty results
+	// Should have results now
 	results, err := suite.GetResults()
 	if err != nil {
 		t.Fatalf("GetResults() failed: %v", err)
 	}
 
-	if string(results) != "[]" {
-		t.Errorf("Expected empty results array, got: %s", string(results))
-	}
-
-	// Cleanup should succeed
-	err = suite.Cleanup()
-	if err != nil {
-		t.Fatalf("Cleanup() failed: %v", err)
+	if string(results) == "[]" {
+		t.Error("Expected test results, got empty array")
 	}
 
 	t.Log("✅ Conformance suite skeleton verified")

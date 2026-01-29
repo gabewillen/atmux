@@ -204,6 +204,7 @@ func readInput(ptr, len uint32) []byte {
 	
 	// Access WASM memory safely
 	//lint:ignore SA1029 This is intentional for WASM memory access
+	//nolint:govet // This unsafe.Pointer usage is necessary for WASM memory interface
 	data := (*[1 << 30]byte)(unsafe.Pointer(uintptr(ptr)))[:len:len]
 	return append([]byte(nil), data...)
 }

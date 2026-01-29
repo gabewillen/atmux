@@ -6,6 +6,7 @@ require (
 	github.com/BurntSushi/toml v1.6.0
 	github.com/creack/pty v1.1.24
 	github.com/nats-io/nats.go v1.48.0
+	github.com/spf13/cobra v1.10.2
 	github.com/stateforward/hsm-go v1.0.0
 	github.com/stateforward/hsm-go/muid v0.0.0-20260124064619-14d9b71481ec
 	github.com/tetratelabs/wazero v1.11.0
@@ -24,9 +25,11 @@ require (
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.22.0 // indirect
+	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/klauspost/compress v1.18.0 // indirect
 	github.com/nats-io/nkeys v0.4.11 // indirect
 	github.com/nats-io/nuid v1.0.1 // indirect
+	github.com/spf13/pflag v1.0.9 // indirect
 	github.com/stateforward/hsm-go/kind v0.0.0-20260124060507-9cca10687b7c // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.29.0 // indirect
 	go.opentelemetry.io/proto/otlp v1.3.1 // indirect

@@ -18,6 +18,7 @@ import (
 	
 	"github.com/copilot-claude-sonnet-4/amux/pkg/api"
 	"github.com/copilot-claude-sonnet-4/amux/internal/ids"
+	"github.com/copilot-claude-sonnet-4/amux/internal/pty"
 )
 
 // Common sentinel errors for agent operations.
@@ -298,6 +299,12 @@ type Manager struct {
 	// legacyAgents maps agent IDs to legacy actors (for backward compatibility during transition).
 	legacyAgents map[muid.MUID]*AgentActor
 
+	// sessions maps agent IDs to their active PTY sessions.
+	sessions map[muid.MUID]*api.Session
+
+	// ptySessions maps session IDs to PTY instances.
+	ptySessions map[muid.MUID]*pty.Session
+
 	// useHSM determines whether to use HSM actors (true) or legacy actors (false).
 	useHSM bool
 
@@ -311,6 +318,8 @@ func NewManager() (*Manager, error) {
 	return &Manager{
 		agents:       make(map[muid.MUID]*AgentHSMActor),
 		legacyAgents: make(map[muid.MUID]*AgentActor),
+		sessions:     make(map[muid.MUID]*api.Session),
+		ptySessions:  make(map[muid.MUID]*pty.Session),
 		useHSM:       true, // Use HSM by default per spec
 	}, nil
 }
@@ -321,6 +330,8 @@ func NewLegacyManager() (*Manager, error) {
 	return &Manager{
 		agents:       make(map[muid.MUID]*AgentHSMActor),
 		legacyAgents: make(map[muid.MUID]*AgentActor),
+		sessions:     make(map[muid.MUID]*api.Session),
+		ptySessions:  make(map[muid.MUID]*pty.Session),
 		useHSM:       false,
 	}, nil
 }
@@ -495,4 +506,119 @@ func (m *Manager) DispatchEvent(id muid.MUID, eventName string, data interface{}
 	} else {
 		return fmt.Errorf("DispatchEvent not supported for legacy agents; use StartAgent/TerminateAgent/UpdatePresence")
 	}
+}
+
+// StartSession creates a new PTY session for the specified agent.
+// This implements the PTY session ownership model per Phase 2 requirements.
+func (m *Manager) StartSession(agentID muid.MUID, workdir string) (*api.Session, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// Check if agent exists
+	var agent *AgentHSMActor
+	var exists bool
+	if m.useHSM {
+		agent, exists = m.agents[agentID]
+	} else {
+		// Legacy mode - check legacy agents
+		_, exists = m.legacyAgents[agentID]
+	}
+
+	if !exists {
+		return nil, fmt.Errorf("agent %s not found: %w", agentID, ErrAgentNotFound)
+	}
+
+	// Check if session already exists
+	if existingSession, found := m.sessions[agentID]; found {
+		return existingSession, nil
+	}
+
+	// Create new PTY session
+	ptySession, err := pty.NewSession()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create PTY session: %w", err)
+	}
+
+	// Create session metadata
+	sessionID := muid.Make()
+	session := &api.Session{
+		ID:               sessionID,
+		AgentID:          agentID,
+		PTYPath:          ptySession.SlaveName(),
+		WorkingDirectory: workdir,
+		Environment:      make(map[string]string),
+		CreatedAt:        time.Now(),
+		LastActivity:     time.Now(),
+	}
+
+	// Store the session and PTY
+	m.sessions[agentID] = session
+	m.ptySessions[sessionID] = ptySession
+
+	// Update agent state to Starting if using HSM
+	if m.useHSM && agent != nil {
+		agent.Dispatch(EvtStart, nil)
+	}
+
+	return session, nil
+}
+
+// StopSession terminates the PTY session for the specified agent.
+func (m *Manager) StopSession(agentID muid.MUID) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	session, exists := m.sessions[agentID]
+	if !exists {
+		return fmt.Errorf("no session found for agent %s: %w", agentID, ErrAgentNotFound)
+	}
+
+	// Close PTY session if it exists
+	if ptySession, found := m.ptySessions[session.ID]; found {
+		if err := ptySession.Close(); err != nil {
+			return fmt.Errorf("failed to close PTY session: %w", err)
+		}
+		delete(m.ptySessions, session.ID)
+	}
+
+	// Remove session
+	delete(m.sessions, agentID)
+
+	// Update agent state to Terminated if using HSM
+	if m.useHSM {
+		if agent, found := m.agents[agentID]; found {
+			agent.Dispatch(EvtTerminate, nil)
+		}
+	}
+
+	return nil
+}
+
+// GetSession retrieves the active session for the specified agent.
+func (m *Manager) GetSession(agentID muid.MUID) (*api.Session, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	session, exists := m.sessions[agentID]
+	if !exists {
+		return nil, fmt.Errorf("no session found for agent %s: %w", agentID, ErrAgentNotFound)
+	}
+
+	// Update last activity
+	session.LastActivity = time.Now()
+
+	return session, nil
+}
+
+// GetPTYSession retrieves the PTY session for direct I/O operations.
+func (m *Manager) GetPTYSession(sessionID muid.MUID) (*pty.Session, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	ptySession, exists := m.ptySessions[sessionID]
+	if !exists {
+		return nil, fmt.Errorf("PTY session not found: %s", sessionID)
+	}
+
+	return ptySession, nil
 }

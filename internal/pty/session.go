@@ -89,3 +89,11 @@ func (s *Session) Close() error {
 	}
 	return nil
 }
+
+// SlaveName returns the name/path of the slave PTY device.
+func (s *Session) SlaveName() string {
+	if s.slave == nil {
+		return ""
+	}
+	return s.slave.Name()
+}

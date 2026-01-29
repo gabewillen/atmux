@@ -16,10 +16,13 @@ and parsing conventions as specified in the amux specification.
 - `func getEnvWithPrefix(key string) string` — getEnvWithPrefix gets an environment variable with the AMUX__ prefix The key should already include the full variable name (e.g., "AMUX_CORE_REPO_ROOT")
 - `func isSensitiveField(fieldName string) bool` — isSensitiveField checks if a field name indicates sensitive data
 - `func mergeConfig(dst *Config, src *Config)` — mergeConfig merges source config into destination config
+- `func parseBytes(s string) (int64, error)` — parseBytes parses a string representation of bytes (e.g., "10MB", "1GB") into an int64
 - `type Actor` — Actor manages configuration with live updates and subscriptions
 - `type Config` — Config represents the main configuration structure
 - `type CoreConfig` — CoreConfig holds core application settings
 - `type LoggingConfig` — LoggingConfig holds logging settings
+- `type ManagerConfig` — ManagerConfig holds manager-specific settings
+- `type NATSConfig` — NATSConfig holds NATS connection and server settings
 - `type RemoteConfig` — RemoteConfig holds remote orchestration settings
 - `type ServerConfig` — ServerConfig holds server/daemon settings
 - `type TelemetryConfig` — TelemetryConfig holds OpenTelemetry settings
@@ -98,6 +101,14 @@ func mergeConfig(dst *Config, src *Config)
 ```
 
 mergeConfig merges source config into destination config
+
+#### parseBytes
+
+```go
+func parseBytes(s string) (int64, error)
+```
+
+parseBytes parses a string representation of bytes (e.g., "10MB", "1GB") into an int64
 
 
 ## type Actor
@@ -283,13 +294,45 @@ type LoggingConfig struct {
 
 LoggingConfig holds logging settings
 
+## type ManagerConfig
+
+```go
+type ManagerConfig struct {
+	Enabled bool `toml:"enabled" json:"enabled"` // Whether to run local supervisor loop
+}
+```
+
+ManagerConfig holds manager-specific settings
+
+## type NATSConfig
+
+```go
+type NATSConfig struct {
+	URL           string `toml:"url" json:"url"`                       // NATS server URL
+	CredsPath     string `toml:"creds_path" json:"creds_path"`         // Path to NATS credential file
+	SubjectPrefix string `toml:"subject_prefix" json:"subject_prefix"` // Root subject namespace for all amux traffic
+	KVBucket      string `toml:"kv_bucket" json:"kv_bucket"`           // JetStream KV bucket for remote state
+	StreamEvents  string `toml:"stream_events" json:"stream_events"`   // JetStream stream for EventMessage envelopes
+	StreamPTY     string `toml:"stream_pty" json:"stream_pty"`         // JetStream stream for PTY byte chunks
+}
+```
+
+NATSConfig holds NATS connection and server settings
+
 ## type RemoteConfig
 
 ```go
 type RemoteConfig struct {
-	Enabled   bool   `toml:"enabled" json:"enabled"`
-	NATSURL   string `toml:"nats_url" json:"nats_url"`
-	CredsPath string `toml:"creds_path" json:"creds_path"`
+	Enabled        bool          `toml:"enabled" json:"enabled"`
+	Transport      string        `toml:"transport" json:"transport"`             // nats or ssh_yamux
+	RequestTimeout time.Duration `toml:"request_timeout" json:"request_timeout"` // Timeout for NATS request-reply control operations
+	BufferSize     int64         `toml:"buffer_size" json:"buffer_size"`         // Size of replay buffer in bytes
+
+	// NATS-specific settings
+	NATS NATSConfig `toml:"nats" json:"nats"`
+
+	// Manager-specific settings
+	Manager ManagerConfig `toml:"manager" json:"manager"`
 }
 ```
 

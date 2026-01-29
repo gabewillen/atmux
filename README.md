@@ -20,7 +20,7 @@
 - [internal/otel](internal/otel/README.md) — Package otel implements OpenTelemetry scaffolding for the amux project
 - [internal/paths](internal/paths/README.md) — Package paths implements a centralized path resolution system for the amux project
 - [internal/process](internal/process/README.md) — Package process implements process tracking and interception (generic)
-- [internal/protocol](internal/protocol/README.md) — Package protocol implements remote communication protocol (transports events)
+- [internal/protocol](internal/protocol/README.md) — Package protocol implements remote communication protocol (transports events)  Package protocol implements remote communication protocol (transports events)  Package protocol implements remote communication protocol (transports events)  Package protocol implements remote communication protocol (transports events)  Package protocol implements remote communication protocol (transports events)  Package protocol implements remote communication protocol (transports events)  Package protocol implements remote communication protocol (transports events)  Package protocol implements remote communication protocol (transports events)  Package protocol implements remote communication protocol (transports events)
 - [internal/pty](internal/pty/README.md) — Package pty implements PTY management (generic PTY operations)
 - [internal/snapshot](internal/snapshot/README.md) — Package snapshot implements the snapshot functionality for amux test
 - [internal/specchecker](internal/specchecker/README.md) — Package specchecker implements verification that spec-v1.22.md is present and version-locked

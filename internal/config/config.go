@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -64,9 +65,31 @@ type TelemetryConfig struct {
 
 // RemoteConfig holds remote orchestration settings
 type RemoteConfig struct {
-	Enabled  bool   `toml:"enabled" json:"enabled"`
-	NATSURL  string `toml:"nats_url" json:"nats_url"`
-	CredsPath string `toml:"creds_path" json:"creds_path"`
+	Enabled       bool          `toml:"enabled" json:"enabled"`
+	Transport     string        `toml:"transport" json:"transport"`               // nats or ssh_yamux
+	RequestTimeout time.Duration `toml:"request_timeout" json:"request_timeout"` // Timeout for NATS request-reply control operations
+	BufferSize    int64         `toml:"buffer_size" json:"buffer_size"`         // Size of replay buffer in bytes
+
+	// NATS-specific settings
+	NATS NATSConfig `toml:"nats" json:"nats"`
+
+	// Manager-specific settings
+	Manager ManagerConfig `toml:"manager" json:"manager"`
+}
+
+// NATSConfig holds NATS connection and server settings
+type NATSConfig struct {
+	URL           string `toml:"url" json:"url"`                       // NATS server URL
+	CredsPath     string `toml:"creds_path" json:"creds_path"`       // Path to NATS credential file
+	SubjectPrefix string `toml:"subject_prefix" json:"subject_prefix"` // Root subject namespace for all amux traffic
+	KVBucket      string `toml:"kv_bucket" json:"kv_bucket"`         // JetStream KV bucket for remote state
+	StreamEvents  string `toml:"stream_events" json:"stream_events"`   // JetStream stream for EventMessage envelopes
+	StreamPTY     string `toml:"stream_pty" json:"stream_pty"`       // JetStream stream for PTY byte chunks
+}
+
+// ManagerConfig holds manager-specific settings
+type ManagerConfig struct {
+	Enabled bool `toml:"enabled" json:"enabled"` // Whether to run local supervisor loop
 }
 
 // LoadConfig loads configuration from multiple sources with precedence:
@@ -113,9 +136,23 @@ func getDefaultConfig() Config {
 			ServiceName: "amux",
 		},
 		Remote: RemoteConfig{
-			Enabled:  false,
-			NATSURL:  "nats://localhost:4222",
-			CredsPath: "",
+			Enabled:      false,
+			Transport:    "nats",
+			RequestTimeout: 5 * time.Second,
+			BufferSize:   10 * 1024 * 1024, // 10 MB
+
+			NATS: NATSConfig{
+				URL:           "nats://localhost:4222",
+				CredsPath:     "~/.config/amux/nats.creds",
+				SubjectPrefix: "amux",
+				KVBucket:      "AMUX_KV",
+				StreamEvents:  "AMUX_EVENTS",
+				StreamPTY:     "AMUX_PTY",
+			},
+
+			Manager: ManagerConfig{
+				Enabled: true,
+			},
 		},
 		Adapters: make(map[string]map[string]interface{}),
 	}
@@ -183,11 +220,45 @@ func applyEnvOverrides(config *Config) {
 			config.Remote.Enabled = true
 		}
 	}
-	if natsURL := getEnvWithPrefix("AMUX_REMOTE_NATS_URL"); natsURL != "" {
-		config.Remote.NATSURL = natsURL
+	if transport := getEnvWithPrefix("AMUX_REMOTE_TRANSPORT"); transport != "" {
+		config.Remote.Transport = transport
 	}
-	if credsPath := getEnvWithPrefix("AMUX_REMOTE_CREDS_PATH"); credsPath != "" {
-		config.Remote.CredsPath = credsPath
+	if requestTimeoutStr := getEnvWithPrefix("AMUX_REMOTE_REQUEST_TIMEOUT"); requestTimeoutStr != "" {
+		if dur, err := time.ParseDuration(requestTimeoutStr); err == nil {
+			config.Remote.RequestTimeout = dur
+		}
+	}
+	if bufferSizeStr := getEnvWithPrefix("AMUX_REMOTE_BUFFER_SIZE"); bufferSizeStr != "" {
+		if size, err := parseBytes(bufferSizeStr); err == nil {
+			config.Remote.BufferSize = size
+		}
+	}
+
+	// Remote.NATS settings
+	if natsURL := getEnvWithPrefix("AMUX_REMOTE_NATS_URL"); natsURL != "" {
+		config.Remote.NATS.URL = natsURL
+	}
+	if credsPath := getEnvWithPrefix("AMUX_REMOTE_NATS_CREDS_PATH"); credsPath != "" {
+		config.Remote.NATS.CredsPath = credsPath
+	}
+	if subjectPrefix := getEnvWithPrefix("AMUX_REMOTE_NATS_SUBJECT_PREFIX"); subjectPrefix != "" {
+		config.Remote.NATS.SubjectPrefix = subjectPrefix
+	}
+	if kvBucket := getEnvWithPrefix("AMUX_REMOTE_NATS_KV_BUCKET"); kvBucket != "" {
+		config.Remote.NATS.KVBucket = kvBucket
+	}
+	if streamEvents := getEnvWithPrefix("AMUX_REMOTE_NATS_STREAM_EVENTS"); streamEvents != "" {
+		config.Remote.NATS.StreamEvents = streamEvents
+	}
+	if streamPTY := getEnvWithPrefix("AMUX_REMOTE_NATS_STREAM_PTY"); streamPTY != "" {
+		config.Remote.NATS.StreamPTY = streamPTY
+	}
+
+	// Remote.Manager settings
+	if managerEnabledStr := getEnvWithPrefix("AMUX_REMOTE_MANAGER_ENABLED"); managerEnabledStr != "" {
+		if strings.ToLower(managerEnabledStr) == "true" {
+			config.Remote.Manager.Enabled = true
+		}
 	}
 }
 
@@ -195,6 +266,40 @@ func applyEnvOverrides(config *Config) {
 // The key should already include the full variable name (e.g., "AMUX_CORE_REPO_ROOT")
 func getEnvWithPrefix(key string) string {
 	return os.Getenv(key)
+}
+
+// parseBytes parses a string representation of bytes (e.g., "10MB", "1GB") into an int64
+func parseBytes(s string) (int64, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0, fmt.Errorf("empty byte string")
+	}
+
+	// Handle common suffixes
+	var multiplier int64 = 1
+	switch {
+	case strings.HasSuffix(s, "KB"):
+		multiplier = 1024
+		s = strings.TrimSuffix(s, "KB")
+	case strings.HasSuffix(s, "MB"):
+		multiplier = 1024 * 1024
+		s = strings.TrimSuffix(s, "MB")
+	case strings.HasSuffix(s, "GB"):
+		multiplier = 1024 * 1024 * 1024
+		s = strings.TrimSuffix(s, "GB")
+	case strings.HasSuffix(s, "TB"):
+		multiplier = 1024 * 1024 * 1024 * 1024
+		s = strings.TrimSuffix(s, "TB")
+	case strings.HasSuffix(s, "B"):
+		s = strings.TrimSuffix(s, "B")
+	}
+
+	value, err := strconv.ParseInt(strings.TrimSpace(s), 10, 64)
+	if err != nil {
+		return 0, err
+	}
+
+	return value * multiplier, nil
 }
 
 // mergeConfig merges source config into destination config
@@ -235,12 +340,38 @@ func mergeConfig(dst *Config, src *Config) {
 
 	// Remote
 	dst.Remote.Enabled = dst.Remote.Enabled || src.Remote.Enabled
-	if src.Remote.NATSURL != "" {
-		dst.Remote.NATSURL = src.Remote.NATSURL
+	if src.Remote.Transport != "" {
+		dst.Remote.Transport = src.Remote.Transport
 	}
-	if src.Remote.CredsPath != "" {
-		dst.Remote.CredsPath = src.Remote.CredsPath
+	if src.Remote.RequestTimeout != 0 {
+		dst.Remote.RequestTimeout = src.Remote.RequestTimeout
 	}
+	if src.Remote.BufferSize != 0 {
+		dst.Remote.BufferSize = src.Remote.BufferSize
+	}
+
+	// Remote.NATS
+	if src.Remote.NATS.URL != "" {
+		dst.Remote.NATS.URL = src.Remote.NATS.URL
+	}
+	if src.Remote.NATS.CredsPath != "" {
+		dst.Remote.NATS.CredsPath = src.Remote.NATS.CredsPath
+	}
+	if src.Remote.NATS.SubjectPrefix != "" {
+		dst.Remote.NATS.SubjectPrefix = src.Remote.NATS.SubjectPrefix
+	}
+	if src.Remote.NATS.KVBucket != "" {
+		dst.Remote.NATS.KVBucket = src.Remote.NATS.KVBucket
+	}
+	if src.Remote.NATS.StreamEvents != "" {
+		dst.Remote.NATS.StreamEvents = src.Remote.NATS.StreamEvents
+	}
+	if src.Remote.NATS.StreamPTY != "" {
+		dst.Remote.NATS.StreamPTY = src.Remote.NATS.StreamPTY
+	}
+
+	// Remote.Manager
+	dst.Remote.Manager.Enabled = dst.Remote.Manager.Enabled || src.Remote.Manager.Enabled
 
 	// Merge adapter configs
 	for adapter, adapterCfg := range src.Adapters {

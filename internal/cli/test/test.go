@@ -79,11 +79,12 @@ func Run(ctx context.Context, args []string) error {
 		fmt.Fprintf(output, "Running: %s\n", step.name)
 
 		var result *StepResult
+		var stdoutData []byte
 		if step.key == "coverage" {
 			// Handle coverage specially
 			coverFile := filepath.Join(os.TempDir(), fmt.Sprintf("amux-coverage-%d.out", os.Getpid()))
 			defer os.Remove(coverFile)
-			result = runCommand(ctx, moduleRoot, []string{"go", "test", "./...", "-coverprofile=" + coverFile})
+			result, _ = runCommand(ctx, moduleRoot, []string{"go", "test", "./...", "-coverprofile=" + coverFile})
 
 			// Parse coverage if successful
 			if result.ExitCode == 0 {
@@ -92,10 +93,15 @@ func Run(ctx context.Context, args []string) error {
 				}
 			}
 		} else {
-			result = runCommand(ctx, moduleRoot, step.args)
+			result, stdoutData = runCommand(ctx, moduleRoot, step.args)
 		}
 
 		snapshot.SetStep(step.key, result)
+
+		// Parse benchmark output into [[benchmarks]] entries
+		if step.key == "benchmarks" && len(stdoutData) > 0 {
+			snapshot.Benchmarks = ParseBenchmarksMultiPkg(string(stdoutData))
+		}
 
 		if result.ExitCode != 0 {
 			fmt.Fprintf(output, "  FAILED (exit %d)\n", result.ExitCode)
@@ -103,10 +109,6 @@ func Run(ctx context.Context, args []string) error {
 			fmt.Fprintf(output, "  OK\n")
 		}
 	}
-
-	// Parse benchmarks from the benchmarks step
-	// Note: A full implementation would capture and parse benchmark output here
-	_ = snapshot.Steps.Benchmarks // Mark as used
 
 	// Handle regression checking
 	if regression {
@@ -239,9 +241,9 @@ func (s *Snapshot) HasFailures() bool {
 	return false
 }
 
-func runCommand(ctx context.Context, dir string, args []string) *StepResult {
+func runCommand(ctx context.Context, dir string, args []string) (*StepResult, []byte) {
 	if len(args) == 0 {
-		return &StepResult{ExitCode: 1}
+		return &StepResult{ExitCode: 1}, nil
 	}
 
 	start := time.Now()
@@ -256,7 +258,7 @@ func runCommand(ctx context.Context, dir string, args []string) *StepResult {
 		return &StepResult{
 			Argv:     args,
 			ExitCode: 1,
-		}
+		}, nil
 	}
 
 	// Read stdout
@@ -282,7 +284,7 @@ func runCommand(ctx context.Context, dir string, args []string) *StepResult {
 		StderrSha256: sha256Hex(stderrData),
 		StdoutBytes:  len(stdoutData),
 		StderrBytes:  len(stderrData),
-	}
+	}, stdoutData
 }
 
 func sha256Hex(data []byte) string {
@@ -568,6 +570,56 @@ func ParseBenchmarkOutput(output string, pkg string) []Benchmark {
 		}
 
 		benchmarks = append(benchmarks, b)
+	}
+
+	return benchmarks
+}
+
+// pkgLineRegex matches "pkg: <package>" lines in go test -bench output.
+var pkgLineRegex = regexp.MustCompile(`^pkg:\s+(\S+)`)
+
+// ParseBenchmarksMultiPkg parses go test -bench output that may contain
+// results from multiple packages (as produced by "go test -bench=. ./...").
+// Package context is tracked via "pkg:" lines emitted by the test runner.
+func ParseBenchmarksMultiPkg(output string) []Benchmark {
+	var benchmarks []Benchmark
+	var currentPkg string
+
+	scanner := bufio.NewScanner(strings.NewReader(output))
+	for scanner.Scan() {
+		line := scanner.Text()
+
+		// Track current package from "pkg: ..." lines
+		if matches := pkgLineRegex.FindStringSubmatch(line); matches != nil {
+			currentPkg = matches[1]
+			continue
+		}
+
+		// Try to match benchmark line
+		if matches := BenchmarkRegex.FindStringSubmatch(line); matches != nil {
+			name := matches[1]
+			iterations, _ := strconv.ParseInt(matches[2], 10, 64)
+			nsPerOp, _ := strconv.ParseFloat(matches[3], 64)
+
+			b := Benchmark{
+				Name:       name,
+				Pkg:        currentPkg,
+				NsPerOp:    nsPerOp,
+				Iterations: iterations,
+			}
+
+			if matches[4] != "" {
+				bytesPerOp, _ := strconv.ParseInt(matches[4], 10, 64)
+				b.BytesPerOp = &bytesPerOp
+			}
+
+			if matches[5] != "" {
+				allocsPerOp, _ := strconv.ParseInt(matches[5], 10, 64)
+				b.AllocsPerOp = &allocsPerOp
+			}
+
+			benchmarks = append(benchmarks, b)
+		}
 	}
 
 	return benchmarks

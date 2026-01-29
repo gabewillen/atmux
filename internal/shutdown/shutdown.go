@@ -15,6 +15,8 @@ import (
 	"sync"
 	"time"
 
+	hsm "github.com/stateforward/hsm-go"
+
 	"github.com/agentflare-ai/amux/internal/event"
 	"github.com/agentflare-ai/amux/internal/session"
 )
@@ -36,23 +38,77 @@ const (
 	StateStopped State = "stopped"
 )
 
-// Controller manages the shutdown process for the amux system.
-type Controller struct {
-	mu sync.Mutex
+// HSM event names for shutdown transitions per spec §5.6.1-§5.6.2.
+const (
+	EventShutdownRequest  = "shutdown.request"
+	EventShutdownForce    = "shutdown.force"
+	EventDrainComplete    = "drain.complete"
+	EventDrainTimeout     = "drain.timeout"
+	EventTerminateComplete = "terminate.complete"
+)
 
+// ShutdownModel defines the HSM model for system shutdown per spec §5.6.1.
+var ShutdownModel = hsm.Define(
+	"system.shutdown",
+
+	// States
+	hsm.State("running"),
+	hsm.State("draining",
+		hsm.Entry(func(ctx context.Context, c *Controller, e hsm.Event) {
+			c.onEnterDraining(ctx)
+		}),
+	),
+	hsm.State("terminating",
+		hsm.Entry(func(ctx context.Context, c *Controller, e hsm.Event) {
+			c.onEnterTerminating(ctx)
+		}),
+	),
+	hsm.State("stopped",
+		hsm.Entry(func(ctx context.Context, c *Controller, e hsm.Event) {
+			c.onEnterStopped(ctx)
+		}),
+	),
+
+	// Transitions per spec §5.6.1
+	hsm.Transition(hsm.On(hsm.Event{Name: EventShutdownRequest}),
+		hsm.Source("running"), hsm.Target("draining")),
+	hsm.Transition(hsm.On(hsm.Event{Name: EventShutdownForce}),
+		hsm.Source("running"), hsm.Target("terminating")),
+	hsm.Transition(hsm.On(hsm.Event{Name: EventShutdownForce}),
+		hsm.Source("draining"), hsm.Target("terminating")),
+	hsm.Transition(hsm.On(hsm.Event{Name: EventDrainComplete}),
+		hsm.Source("draining"), hsm.Target("stopped")),
+	hsm.Transition(hsm.On(hsm.Event{Name: EventDrainTimeout}),
+		hsm.Source("draining"), hsm.Target("terminating")),
+	hsm.Transition(hsm.On(hsm.Event{Name: EventTerminateComplete}),
+		hsm.Source("terminating"), hsm.Target("stopped")),
+
+	hsm.Initial(hsm.Target("running")),
+)
+
+// Controller manages the shutdown process for the amux system using
+// an HSM-driven state machine per spec §5.6.1.
+type Controller struct {
+	hsm.HSM
+
+	mu           sync.Mutex
 	state        State
 	drainTimeout time.Duration
 	sessions     *session.Manager
 	dispatcher   event.Dispatcher
+	requested    bool
 
 	// done is closed when the system reaches StateStopped.
 	done chan struct{}
+	// doneOnce prevents double-close of the done channel.
+	doneOnce sync.Once
 
 	// drainTimer fires when the drain timeout expires.
 	drainTimer *time.Timer
 }
 
-// NewController creates a new shutdown controller.
+// NewController creates a new shutdown controller. The HSM is initialized
+// in the Running state per spec §5.6.1.
 func NewController(sessions *session.Manager, dispatcher event.Dispatcher, drainTimeout time.Duration) *Controller {
 	if dispatcher == nil {
 		dispatcher = event.NewNoopDispatcher()
@@ -61,54 +117,50 @@ func NewController(sessions *session.Manager, dispatcher event.Dispatcher, drain
 		drainTimeout = 30 * time.Second
 	}
 
-	return &Controller{
+	c := &Controller{
 		state:        StateRunning,
 		drainTimeout: drainTimeout,
 		sessions:     sessions,
 		dispatcher:   dispatcher,
 		done:         make(chan struct{}),
 	}
+
+	hsm.Started(context.Background(), c, &ShutdownModel)
+	return c
 }
 
 // RequestShutdown initiates a graceful shutdown (SIGTERM/SIGINT handler).
 //
-// This transitions the system from Running to Draining. All agents receive
-// a shutdown.initiated event and have drainTimeout to terminate gracefully.
-// If already draining, this escalates to forced termination.
+// First call dispatches shutdown.request (Running → Draining).
+// Second call dispatches shutdown.force (Draining → Terminating).
 //
 // See spec §5.6.2 for signal mapping.
 func (c *Controller) RequestShutdown(ctx context.Context) {
 	c.mu.Lock()
-	defer c.mu.Unlock()
+	alreadyRequested := c.requested
+	c.requested = true
+	c.mu.Unlock()
 
-	switch c.state {
-	case StateRunning:
-		c.transitionToDraining(ctx)
-	case StateDraining:
-		// Second signal: escalate to forced termination
-		c.transitionToTerminating(ctx)
-	case StateTerminating, StateStopped:
-		// Already shutting down or stopped
+	if alreadyRequested {
+		// Second signal: escalate to forced termination (spec §5.6.2)
+		hsm.Dispatch(ctx, c, hsm.Event{Name: EventShutdownForce})
+	} else {
+		hsm.Dispatch(ctx, c, hsm.Event{Name: EventShutdownRequest})
 	}
 }
 
 // ForceShutdown forces immediate termination.
 //
-// This transitions directly to Terminating state, killing all sessions.
+// This dispatches shutdown.force, transitioning to Terminating from
+// either Running or Draining state.
 func (c *Controller) ForceShutdown(ctx context.Context) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	switch c.state {
-	case StateRunning, StateDraining:
-		c.transitionToTerminating(ctx)
-	case StateTerminating, StateStopped:
-		// Already shutting down or stopped
-	}
+	hsm.Dispatch(ctx, c, hsm.Event{Name: EventShutdownForce})
 }
 
-// State returns the current shutdown state.
-func (c *Controller) State() State {
+// ShutdownState returns the current shutdown state.
+// Named ShutdownState (not State) to avoid shadowing hsm.HSM.State()
+// which is required by the hsm.Instance interface.
+func (c *Controller) ShutdownState() State {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.state
@@ -119,54 +171,58 @@ func (c *Controller) Done() <-chan struct{} {
 	return c.done
 }
 
-// transitionToDraining moves to draining state. Caller must hold mu.
-func (c *Controller) transitionToDraining(ctx context.Context) {
+// onEnterDraining is the entry action for the draining state.
+// It dispatches shutdown.initiated, stops all sessions gracefully,
+// and starts the drain timeout timer per spec §5.6.3-§5.6.4.
+func (c *Controller) onEnterDraining(ctx context.Context) {
+	c.mu.Lock()
 	c.state = StateDraining
+	c.mu.Unlock()
 
 	// Dispatch shutdown.initiated to all agents
 	_ = c.dispatcher.Dispatch(ctx, event.NewEvent(event.TypeShutdownInitiated, 0, nil))
 
-	// Stop all sessions gracefully
+	// Stop all sessions gracefully in background
 	go func() {
 		c.sessions.StopAll()
-		c.onDrainComplete(ctx)
+		hsm.Dispatch(ctx, c, hsm.Event{Name: EventDrainComplete})
 	}()
 
-	// Start drain timeout
+	// Start drain timeout per spec §5.6.4
+	c.mu.Lock()
 	c.drainTimer = time.AfterFunc(c.drainTimeout, func() {
-		c.onDrainTimeout(ctx)
+		hsm.Dispatch(ctx, c, hsm.Event{Name: EventDrainTimeout})
 	})
+	c.mu.Unlock()
 }
 
-// transitionToTerminating moves to terminating state. Caller must hold mu.
-func (c *Controller) transitionToTerminating(ctx context.Context) {
+// onEnterTerminating is the entry action for the terminating state.
+// It cancels the drain timer, dispatches shutdown.force, and kills
+// all sessions per spec §5.6.4.
+func (c *Controller) onEnterTerminating(ctx context.Context) {
+	c.mu.Lock()
 	c.state = StateTerminating
-
-	// Cancel drain timer if active
 	if c.drainTimer != nil {
 		c.drainTimer.Stop()
 		c.drainTimer = nil
 	}
+	c.mu.Unlock()
 
 	// Dispatch shutdown.force to all agents
 	_ = c.dispatcher.Dispatch(ctx, event.NewEvent(event.TypeShutdownForce, 0, nil))
 
-	// Kill all sessions
+	// Kill all sessions in background
 	go func() {
 		c.sessions.KillAll()
-		c.transitionToStopped(ctx)
+		hsm.Dispatch(ctx, c, hsm.Event{Name: EventTerminateComplete})
 	}()
 }
 
-// transitionToStopped moves to stopped state.
-func (c *Controller) transitionToStopped(ctx context.Context) {
+// onEnterStopped is the entry action for the stopped state.
+// It closes the done channel to signal shutdown completion.
+func (c *Controller) onEnterStopped(ctx context.Context) {
 	c.mu.Lock()
-	if c.state == StateStopped {
-		c.mu.Unlock()
-		return
-	}
 	c.state = StateStopped
-
 	if c.drainTimer != nil {
 		c.drainTimer.Stop()
 		c.drainTimer = nil
@@ -174,39 +230,7 @@ func (c *Controller) transitionToStopped(ctx context.Context) {
 	c.mu.Unlock()
 
 	_ = c.dispatcher.Dispatch(ctx, event.NewEvent(event.TypeTerminateComplete, 0, nil))
-	close(c.done)
-}
-
-// onDrainComplete is called when all sessions have stopped during drain.
-func (c *Controller) onDrainComplete(ctx context.Context) {
-	c.mu.Lock()
-	if c.state != StateDraining {
-		c.mu.Unlock()
-		return
-	}
-
-	if c.drainTimer != nil {
-		c.drainTimer.Stop()
-		c.drainTimer = nil
-	}
-	c.mu.Unlock()
-
-	_ = c.dispatcher.Dispatch(ctx, event.NewEvent(event.TypeDrainComplete, 0, nil))
-	c.transitionToStopped(ctx)
-}
-
-// onDrainTimeout is called when the drain timeout expires.
-func (c *Controller) onDrainTimeout(ctx context.Context) {
-	c.mu.Lock()
-	if c.state != StateDraining {
-		c.mu.Unlock()
-		return
-	}
-	c.mu.Unlock()
-
-	_ = c.dispatcher.Dispatch(ctx, event.NewEvent(event.TypeDrainTimeout, 0, nil))
-
-	c.mu.Lock()
-	c.transitionToTerminating(ctx)
-	c.mu.Unlock()
+	c.doneOnce.Do(func() {
+		close(c.done)
+	})
 }

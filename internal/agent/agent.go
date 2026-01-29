@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"sync"
 
+	hsm "github.com/stateforward/hsm-go"
 	"github.com/stateforward/hsm-go/muid"
 
 	amuxerrors "github.com/agentflare-ai/amux/internal/errors"
@@ -31,6 +32,8 @@ type Manager struct {
 	mu         sync.RWMutex
 	agents     map[muid.MUID]*Agent
 	slugs      map[string]muid.MUID // slug -> agent ID for collision detection
+	hsms       map[muid.MUID]*agentHSMs
+	sessions   SessionSpawner
 	dispatcher event.Dispatcher
 	resolver   *paths.Resolver
 	worktrees  *worktree.Manager
@@ -38,6 +41,11 @@ type Manager struct {
 	// baseBranches tracks the base_branch per repo_root, recorded at the time
 	// the first agent for that repository is added (spec §5.7.1).
 	baseBranches map[string]string
+
+	// mergeTargetBranch is the configured git.merge.target_branch fallback.
+	// Per spec §5.7.1, when git symbolic-ref fails (detached HEAD), base_branch
+	// MUST be set to this value. If this is also empty, the add operation MUST fail.
+	mergeTargetBranch string
 }
 
 // Agent represents a managed agent instance.
@@ -69,6 +77,7 @@ func NewManagerWithResolver(dispatcher event.Dispatcher, resolver *paths.Resolve
 	return &Manager{
 		agents:       make(map[muid.MUID]*Agent),
 		slugs:        make(map[string]muid.MUID),
+		hsms:         make(map[muid.MUID]*agentHSMs),
 		dispatcher:   dispatcher,
 		resolver:     resolver,
 		worktrees:    worktree.NewManager(),
@@ -128,14 +137,19 @@ func (m *Manager) Add(ctx context.Context, cfg api.Agent) (*Agent, error) {
 		}
 		cfg.Worktree = wtPath
 
-		// Record base_branch for this repo if not yet recorded (spec §5.7.1)
+		// Record base_branch for this repo if not yet recorded (spec §5.7.1).
+		// Per spec: if git symbolic-ref fails (detached HEAD), base_branch MUST
+		// be set to git.merge.target_branch if configured; otherwise the director
+		// MUST fail the add operation.
 		if _, recorded := m.baseBranches[cfg.RepoRoot]; !recorded {
 			baseBranch, err := m.worktrees.BaseBranch(cfg.RepoRoot)
 			if err == nil {
 				m.baseBranches[cfg.RepoRoot] = baseBranch
+			} else if m.mergeTargetBranch != "" {
+				m.baseBranches[cfg.RepoRoot] = m.mergeTargetBranch
+			} else {
+				return nil, fmt.Errorf("agent add: cannot determine base branch (detached HEAD or unborn branch): set git.merge.target_branch in config")
 			}
-			// If BaseBranch fails (detached HEAD), we don't block add;
-			// the merge flow will require explicit target_branch config.
 		}
 	}
 
@@ -147,11 +161,25 @@ func (m *Manager) Add(ctx context.Context, cfg api.Agent) (*Agent, error) {
 	agent := &Agent{
 		Agent:     cfg,
 		lifecycle: api.LifecyclePending,
-		presence:  api.PresenceOffline,
+		presence:  api.PresenceOnline,
 	}
 
 	m.agents[cfg.ID] = agent
 	m.slugs[cfg.Slug] = cfg.ID
+
+	// Create and start lifecycle + presence HSMs
+	lhsm := NewLifecycleHSM(agent, m.dispatcher)
+	lInstance := lhsm.Start(ctx)
+
+	phsm := NewPresenceHSM(agent, m.dispatcher)
+	pInstance := phsm.Start(ctx)
+
+	m.hsms[cfg.ID] = &agentHSMs{
+		lifecycle:         lhsm,
+		presence:          phsm,
+		lifecycleInstance: lInstance,
+		presenceInstance:  pInstance,
+	}
 
 	// Emit agent.added event
 	_ = m.dispatcher.Dispatch(ctx, event.NewEvent(event.TypeAgentAdded, cfg.ID, cfg))
@@ -161,6 +189,7 @@ func (m *Manager) Add(ctx context.Context, cfg api.Agent) (*Agent, error) {
 
 // Remove removes an agent, cleaning up its worktree if configured.
 // The deleteBranch parameter controls whether the agent's git branch is deleted.
+// If the agent has a running session, it is stopped first.
 func (m *Manager) Remove(ctx context.Context, id muid.MUID, deleteBranch bool) error {
 	m.mu.Lock()
 	agent, ok := m.agents[id]
@@ -169,9 +198,26 @@ func (m *Manager) Remove(ctx context.Context, id muid.MUID, deleteBranch bool) e
 		return fmt.Errorf("agent remove: %w", amuxerrors.ErrAgentNotFound)
 	}
 	agentCfg := agent.Agent
+	agentHSMs := m.hsms[id]
+	spawner := m.sessions
 	delete(m.agents, id)
 	delete(m.slugs, agent.Slug)
+	delete(m.hsms, id)
 	m.mu.Unlock()
+
+	// Stop running session if any
+	if agentHSMs != nil && spawner != nil &&
+		agentHSMs.lifecycle.LifecycleState() == api.LifecycleRunning {
+		agentHSMs.setStopping(true)
+		_ = spawner.StopAgent(ctx, id)
+		spawner.RemoveSession(id)
+	}
+
+	// Stop HSMs
+	if agentHSMs != nil {
+		<-hsm.Stop(ctx, agentHSMs.lifecycleInstance)
+		<-hsm.Stop(ctx, agentHSMs.presenceInstance)
+	}
 
 	// Clean up worktree for local agents
 	if agentCfg.Location.Type == api.LocationLocal && agentCfg.RepoRoot != "" {
@@ -195,6 +241,15 @@ func (m *Manager) BaseBranch(repoRoot string) (string, bool) {
 	defer m.mu.RUnlock()
 	branch, ok := m.baseBranches[repoRoot]
 	return branch, ok
+}
+
+// SetMergeTargetBranch sets the configured git.merge.target_branch fallback.
+// Per spec §5.7.1, this value is used as base_branch when the repository is
+// in detached HEAD state (git symbolic-ref fails).
+func (m *Manager) SetMergeTargetBranch(branch string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.mergeTargetBranch = branch
 }
 
 // resolveLocalRepoRoot resolves the repo_root for a local agent.

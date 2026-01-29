@@ -13,8 +13,8 @@ func TestNewController(t *testing.T) {
 	sessions := session.NewManager(event.NewNoopDispatcher())
 	ctrl := NewController(sessions, event.NewNoopDispatcher(), 5*time.Second)
 
-	if ctrl.State() != StateRunning {
-		t.Errorf("initial state = %q, want %q", ctrl.State(), StateRunning)
+	if ctrl.ShutdownState() != StateRunning {
+		t.Errorf("initial state = %q, want %q", ctrl.ShutdownState(), StateRunning)
 	}
 }
 
@@ -33,8 +33,8 @@ func TestRequestShutdown(t *testing.T) {
 		t.Fatal("controller did not reach stopped state")
 	}
 
-	if ctrl.State() != StateStopped {
-		t.Errorf("final state = %q, want %q", ctrl.State(), StateStopped)
+	if ctrl.ShutdownState() != StateStopped {
+		t.Errorf("final state = %q, want %q", ctrl.ShutdownState(), StateStopped)
 	}
 }
 
@@ -52,8 +52,8 @@ func TestForceShutdown(t *testing.T) {
 		t.Fatal("controller did not reach stopped state after force shutdown")
 	}
 
-	if ctrl.State() != StateStopped {
-		t.Errorf("final state = %q, want %q", ctrl.State(), StateStopped)
+	if ctrl.ShutdownState() != StateStopped {
+		t.Errorf("final state = %q, want %q", ctrl.ShutdownState(), StateStopped)
 	}
 }
 
@@ -69,8 +69,8 @@ func TestDoubleSignalEscalation(t *testing.T) {
 	select {
 	case <-ctrl.Done():
 		// Fast drain completed because no sessions
-		if ctrl.State() != StateStopped {
-			t.Errorf("state = %q, want %q", ctrl.State(), StateStopped)
+		if ctrl.ShutdownState() != StateStopped {
+			t.Errorf("state = %q, want %q", ctrl.ShutdownState(), StateStopped)
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("controller did not reach stopped state")
@@ -112,12 +112,32 @@ func TestShutdownEventsEmitted(t *testing.T) {
 
 	// Check that shutdown events were emitted
 	hasShutdownInitiated := false
-	for _, t := range receivedTypes {
-		if t == event.TypeShutdownInitiated {
+	for _, evtType := range receivedTypes {
+		if evtType == event.TypeShutdownInitiated {
 			hasShutdownInitiated = true
 		}
 	}
 	if !hasShutdownInitiated {
 		t.Error("shutdown.initiated event should have been emitted")
+	}
+}
+
+func TestShutdownHSMModel(t *testing.T) {
+	// Verify that the ShutdownModel is defined with the expected event names
+	// that match the spec §5.6.1 transition table.
+	if EventShutdownRequest != "shutdown.request" {
+		t.Errorf("EventShutdownRequest = %q, want %q", EventShutdownRequest, "shutdown.request")
+	}
+	if EventShutdownForce != "shutdown.force" {
+		t.Errorf("EventShutdownForce = %q, want %q", EventShutdownForce, "shutdown.force")
+	}
+	if EventDrainComplete != "drain.complete" {
+		t.Errorf("EventDrainComplete = %q, want %q", EventDrainComplete, "drain.complete")
+	}
+	if EventDrainTimeout != "drain.timeout" {
+		t.Errorf("EventDrainTimeout = %q, want %q", EventDrainTimeout, "drain.timeout")
+	}
+	if EventTerminateComplete != "terminate.complete" {
+		t.Errorf("EventTerminateComplete = %q, want %q", EventTerminateComplete, "terminate.complete")
 	}
 }

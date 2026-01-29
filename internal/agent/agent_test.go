@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stateforward/hsm-go/muid"
@@ -79,8 +80,8 @@ func TestManagerAdd(t *testing.T) {
 	if agent.Lifecycle() != api.LifecyclePending {
 		t.Errorf("Agent Lifecycle = %q, want %q", agent.Lifecycle(), api.LifecyclePending)
 	}
-	if agent.Presence() != api.PresenceOffline {
-		t.Errorf("Agent Presence = %q, want %q", agent.Presence(), api.PresenceOffline)
+	if agent.Presence() != api.PresenceOnline {
+		t.Errorf("Agent Presence = %q, want %q", agent.Presence(), api.PresenceOnline)
 	}
 }
 
@@ -293,8 +294,8 @@ func TestManagerRoster(t *testing.T) {
 		if entry.Lifecycle != api.LifecyclePending {
 			t.Errorf("Roster entry Lifecycle = %q, want %q", entry.Lifecycle, api.LifecyclePending)
 		}
-		if entry.Presence != api.PresenceOffline {
-			t.Errorf("Roster entry Presence = %q, want %q", entry.Presence, api.PresenceOffline)
+		if entry.Presence != api.PresenceOnline {
+			t.Errorf("Roster entry Presence = %q, want %q", entry.Presence, api.PresenceOnline)
 		}
 	}
 }
@@ -403,15 +404,80 @@ func TestAgentLifecycle(t *testing.T) {
 
 func TestAgentPresence(t *testing.T) {
 	agent := &Agent{
-		presence: api.PresenceOffline,
+		presence: api.PresenceOnline,
 	}
 
-	if agent.Presence() != api.PresenceOffline {
-		t.Errorf("Presence() = %q, want %q", agent.Presence(), api.PresenceOffline)
-	}
-
-	agent.SetPresence(api.PresenceOnline)
 	if agent.Presence() != api.PresenceOnline {
-		t.Errorf("After SetPresence(Online), Presence() = %q, want %q", agent.Presence(), api.PresenceOnline)
+		t.Errorf("Presence() = %q, want %q", agent.Presence(), api.PresenceOnline)
+	}
+
+	agent.SetPresence(api.PresenceBusy)
+	if agent.Presence() != api.PresenceBusy {
+		t.Errorf("After SetPresence(Busy), Presence() = %q, want %q", agent.Presence(), api.PresenceBusy)
+	}
+}
+
+func TestManagerAddDetachedHeadFails(t *testing.T) {
+	repoRoot := initTestRepo(t)
+
+	// Detach HEAD
+	cmd := exec.Command("git", "checkout", "--detach")
+	cmd.Dir = repoRoot
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git checkout --detach failed: %v\n%s", err, output)
+	}
+
+	mgr := NewManager(event.NewNoopDispatcher())
+	ctx := context.Background()
+
+	// Should fail because HEAD is detached and no merge target branch is configured
+	_, err := mgr.Add(ctx, api.Agent{
+		Name:     "test-agent",
+		Adapter:  "claude-code",
+		RepoRoot: repoRoot,
+	})
+	if err == nil {
+		t.Fatal("Add() should fail on detached HEAD without git.merge.target_branch config")
+	}
+	if !strings.Contains(err.Error(), "detached HEAD") {
+		t.Errorf("error should mention detached HEAD, got: %v", err)
+	}
+}
+
+func TestManagerAddDetachedHeadWithTargetBranch(t *testing.T) {
+	repoRoot := initTestRepo(t)
+
+	// Detach HEAD
+	cmd := exec.Command("git", "checkout", "--detach")
+	cmd.Dir = repoRoot
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git checkout --detach failed: %v\n%s", err, output)
+	}
+
+	mgr := NewManager(event.NewNoopDispatcher())
+	mgr.SetMergeTargetBranch("main")
+	ctx := context.Background()
+
+	// Should succeed because merge target branch is configured
+	agent, err := mgr.Add(ctx, api.Agent{
+		Name:     "test-agent",
+		Adapter:  "claude-code",
+		RepoRoot: repoRoot,
+	})
+	if err != nil {
+		t.Fatalf("Add() should succeed with merge target branch configured: %v", err)
+	}
+
+	// Base branch should be set to the configured target branch
+	branch, ok := mgr.BaseBranch(repoRoot)
+	if !ok {
+		t.Fatal("BaseBranch should be recorded after add with target branch fallback")
+	}
+	if branch != "main" {
+		t.Errorf("BaseBranch = %q, want %q (from config fallback)", branch, "main")
+	}
+
+	if agent.Worktree == "" {
+		t.Error("Agent Worktree should be set")
 	}
 }

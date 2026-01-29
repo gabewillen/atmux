@@ -8,10 +8,11 @@ It is the single source of truth for repo-scoped, user-scoped, and runtime
 paths derived from config and environment variables.
 
 - `ErrRepoRootNotFound` — ErrRepoRootNotFound is returned when a git repository root cannot be located.
+- `func CanonicalizeRepoRoot(path string, homeDir string) (string, error)` — CanonicalizeRepoRoot applies repo_root canonicalization rules.
 - `func FindRepoRoot(start string) (string, error)` — FindRepoRoot searches upward from start for a git repository root.
 - `func SlugifyAgent(name string) string` — SlugifyAgent derives the agent slug per the spec rules.
-- `func canonicalizePath(path string) (string, error)`
-- `func expandHomePath(path string) (string, error)`
+- `func UniqueAgentSlug(name string, used map[string]struct{}) string` — UniqueAgentSlug ensures the agent slug is unique within the provided set.
+- `func expandHomePath(path string, homeOverride string) (string, error)`
 - `type Resolver` — Resolver resolves filesystem paths based on repo root and user home.
 
 ### Variables
@@ -26,6 +27,14 @@ ErrRepoRootNotFound is returned when a git repository root cannot be located.
 
 
 ### Functions
+
+#### CanonicalizeRepoRoot
+
+```go
+func CanonicalizeRepoRoot(path string, homeDir string) (string, error)
+```
+
+CanonicalizeRepoRoot applies repo_root canonicalization rules.
 
 #### FindRepoRoot
 
@@ -43,16 +52,18 @@ func SlugifyAgent(name string) string
 
 SlugifyAgent derives the agent slug per the spec rules.
 
-#### canonicalizePath
+#### UniqueAgentSlug
 
 ```go
-func canonicalizePath(path string) (string, error)
+func UniqueAgentSlug(name string, used map[string]struct{}) string
 ```
+
+UniqueAgentSlug ensures the agent slug is unique within the provided set.
 
 #### expandHomePath
 
 ```go
-func expandHomePath(path string) (string, error)
+func expandHomePath(path string, homeOverride string) (string, error)
 ```
 
 
@@ -87,6 +98,14 @@ func () AmuxRoot() string
 ```
 
 AmuxRoot returns the repo-scoped .amux directory path.
+
+#### Resolver.CanonicalizeRepoRoot
+
+```go
+func () CanonicalizeRepoRoot(path string) (string, error)
+```
+
+CanonicalizeRepoRoot normalizes a repo_root path using the resolver's home.
 
 #### Resolver.ExpandHome
 

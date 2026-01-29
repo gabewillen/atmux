@@ -39,7 +39,7 @@ func (r *Runner) Run(ctx context.Context) (Results, error) {
 		clock = time.Now
 	}
 	results := Results{
-		RunID:       api.NewID().String(),
+		RunID:       api.NewRuntimeID().String(),
 		SpecVersion: r.SpecVersion,
 		StartedAt:   clock().UTC(),
 	}

@@ -1,23 +1,15 @@
-# package agent
+package agent
 
-`import "github.com/agentflare-ai/amux/internal/agent"`
+import (
+	"context"
+	"fmt"
+	"time"
 
-Package agent manages agent lifecycle and presence state machines.
+	"github.com/agentflare-ai/amux/internal/protocol"
+	"github.com/agentflare-ai/amux/pkg/api"
+	"github.com/stateforward/hsm-go"
+)
 
-- `LifecycleModel` — LifecycleModel defines the agent lifecycle state machine.
-- `LifecyclePending, LifecycleStarting, LifecycleRunning, LifecycleTerminated, LifecycleErrored, EventStart, EventReady, EventStop, EventError, PresenceOnline, PresenceBusy, PresenceOffline, PresenceAway, EventTaskAssigned, EventTaskCompleted, EventPromptDetected, EventRateLimit, EventRateCleared, EventStuckDetected, EventActivity, EventAgentStarted, EventAgentStopped, EventPresenceChanged`
-- `PresenceModel` — PresenceModel defines the agent presence state machine.
-- `type Agent` — Agent represents a runtime agent instance with lifecycle and presence state machines.
-- `type LifecycleEvent` — LifecycleEvent describes lifecycle state changes.
-- `type Lifecycle` — Lifecycle drives the agent lifecycle state machine.
-- `type PresenceEvent` — PresenceEvent describes presence state changes.
-- `type Presence` — Presence drives the agent presence state machine.
-
-### Constants
-
-#### LifecyclePending, LifecycleStarting, LifecycleRunning, LifecycleTerminated, LifecycleErrored, EventStart, EventReady, EventStop, EventError, PresenceOnline, PresenceBusy, PresenceOffline, PresenceAway, EventTaskAssigned, EventTaskCompleted, EventPromptDetected, EventRateLimit, EventRateCleared, EventStuckDetected, EventActivity, EventAgentStarted, EventAgentStopped, EventPresenceChanged
-
-```go
 const (
 	// LifecyclePending is the initial lifecycle state.
 	LifecyclePending = "pending"
@@ -70,14 +62,8 @@ const (
 	// EventPresenceChanged is emitted when presence changes.
 	EventPresenceChanged = "presence.changed"
 )
-```
 
-
-### Variables
-
-#### LifecycleModel
-
-```go
+// LifecycleModel defines the agent lifecycle state machine.
 var LifecycleModel = hsm.Define(
 	"agent.lifecycle",
 	hsm.State(LifecyclePending),
@@ -133,13 +119,8 @@ var LifecycleModel = hsm.Define(
 
 	hsm.Initial(hsm.Target(LifecyclePending)),
 )
-```
 
-LifecycleModel defines the agent lifecycle state machine.
-
-#### PresenceModel
-
-```go
+// PresenceModel defines the agent presence state machine.
 var PresenceModel = hsm.Define(
 	"agent.presence",
 	hsm.State(
@@ -167,14 +148,17 @@ var PresenceModel = hsm.Define(
 		}),
 	),
 
+	// Online ↔ Busy
 	hsm.Transition(hsm.On(hsm.Event{Name: EventTaskAssigned}), hsm.Source(PresenceOnline), hsm.Target(PresenceBusy)),
 	hsm.Transition(hsm.On(hsm.Event{Name: EventTaskCompleted}), hsm.Source(PresenceBusy), hsm.Target(PresenceOnline)),
 	hsm.Transition(hsm.On(hsm.Event{Name: EventPromptDetected}), hsm.Source(PresenceBusy), hsm.Target(PresenceOnline)),
 
+	// → Offline
 	hsm.Transition(hsm.On(hsm.Event{Name: EventRateLimit}), hsm.Source(PresenceBusy), hsm.Target(PresenceOffline)),
 	hsm.Transition(hsm.On(hsm.Event{Name: EventRateLimit}), hsm.Source(PresenceOnline), hsm.Target(PresenceOffline)),
 	hsm.Transition(hsm.On(hsm.Event{Name: EventRateCleared}), hsm.Source(PresenceOffline), hsm.Target(PresenceOnline)),
 
+	// → Away
 	hsm.Transition(hsm.On(hsm.Event{Name: EventStuckDetected}), hsm.Source(PresenceOnline), hsm.Target(PresenceAway)),
 	hsm.Transition(hsm.On(hsm.Event{Name: EventStuckDetected}), hsm.Source(PresenceBusy), hsm.Target(PresenceAway)),
 	hsm.Transition(hsm.On(hsm.Event{Name: EventStuckDetected}), hsm.Source(PresenceOffline), hsm.Target(PresenceAway)),
@@ -183,186 +167,92 @@ var PresenceModel = hsm.Define(
 
 	hsm.Initial(hsm.Target(PresenceOnline)),
 )
-```
 
-PresenceModel defines the agent presence state machine.
-
-
-## type Agent
-
-```go
-type Agent struct {
-	api.Agent
-	Lifecycle  *Lifecycle
-	Presence   *Presence
-	dispatcher protocol.Dispatcher
-	mu         sync.RWMutex
-	lastErr    error
-}
-```
-
-Agent represents a runtime agent instance with lifecycle and presence state machines.
-
-### Functions returning Agent
-
-#### NewAgent
-
-```go
-func NewAgent(meta api.Agent, dispatcher protocol.Dispatcher) (*Agent, error)
-```
-
-NewAgent constructs a new agent with lifecycle and presence state machines.
-
-
-### Methods
-
-#### Agent.LastError
-
-```go
-func () LastError() error
-```
-
-LastError returns the last error observed by the agent state machines.
-
-#### Agent.Start
-
-```go
-func () Start(ctx context.Context)
-```
-
-Start starts the lifecycle and presence state machines.
-
-#### Agent.recordError
-
-```go
-func () recordError(err error)
-```
-
-
-## type Lifecycle
-
-```go
+// Lifecycle drives the agent lifecycle state machine.
 type Lifecycle struct {
 	hsm.HSM
 	agent      *Agent
 	dispatcher protocol.Dispatcher
 }
-```
 
-Lifecycle drives the agent lifecycle state machine.
-
-### Functions returning Lifecycle
-
-#### NewLifecycle
-
-```go
-func NewLifecycle(agent *Agent, dispatcher protocol.Dispatcher) *Lifecycle
-```
-
-NewLifecycle constructs a lifecycle state machine bound to an agent.
-
-
-### Methods
-
-#### Lifecycle.Start
-
-```go
-func () Start(ctx context.Context)
-```
-
-Start starts the lifecycle state machine.
-
-#### Lifecycle.emit
-
-```go
-func () emit(ctx context.Context, name string, payload any)
-```
-
-#### Lifecycle.onErrored
-
-```go
-func () onErrored(ctx context.Context, event hsm.Event)
-```
-
-#### Lifecycle.onRunning
-
-```go
-func () onRunning(ctx context.Context)
-```
-
-#### Lifecycle.onStarting
-
-```go
-func () onStarting(ctx context.Context)
-```
-
-#### Lifecycle.onTerminated
-
-```go
-func () onTerminated(ctx context.Context)
-```
-
-
-## type LifecycleEvent
-
-```go
-type LifecycleEvent struct {
-	AgentID api.AgentID `json:"agent_id"`
-	State   string      `json:"state"`
-	Error   string      `json:"error,omitempty"`
-}
-```
-
-LifecycleEvent describes lifecycle state changes.
-
-## type Presence
-
-```go
+// Presence drives the agent presence state machine.
 type Presence struct {
 	hsm.HSM
 	agent      *Agent
 	dispatcher protocol.Dispatcher
 }
-```
 
-Presence drives the agent presence state machine.
+// NewLifecycle constructs a lifecycle state machine bound to an agent.
+func NewLifecycle(agent *Agent, dispatcher protocol.Dispatcher) *Lifecycle {
+	if dispatcher == nil {
+		dispatcher = &protocol.NoopDispatcher{}
+	}
+	return &Lifecycle{agent: agent, dispatcher: dispatcher}
+}
 
-### Functions returning Presence
+// NewPresence constructs a presence state machine bound to an agent.
+func NewPresence(agent *Agent, dispatcher protocol.Dispatcher) *Presence {
+	if dispatcher == nil {
+		dispatcher = &protocol.NoopDispatcher{}
+	}
+	return &Presence{agent: agent, dispatcher: dispatcher}
+}
 
-#### NewPresence
+// Start starts the lifecycle state machine.
+func (l *Lifecycle) Start(ctx context.Context) {
+	hsm.Started(ctx, l, &LifecycleModel)
+}
 
-```go
-func NewPresence(agent *Agent, dispatcher protocol.Dispatcher) *Presence
-```
+// Start starts the presence state machine.
+func (p *Presence) Start(ctx context.Context) {
+	hsm.Started(ctx, p, &PresenceModel)
+}
 
-NewPresence constructs a presence state machine bound to an agent.
+func (l *Lifecycle) onStarting(ctx context.Context) {
+	// Placeholder for startup hooks.
+	_ = ctx
+}
 
+func (l *Lifecycle) onRunning(ctx context.Context) {
+	l.emit(ctx, EventAgentStarted, LifecycleEvent{AgentID: l.agent.ID, State: LifecycleRunning})
+}
 
-### Methods
+func (l *Lifecycle) onTerminated(ctx context.Context) {
+	l.emit(ctx, EventAgentStopped, LifecycleEvent{AgentID: l.agent.ID, State: LifecycleTerminated})
+}
 
-#### Presence.Start
+func (l *Lifecycle) onErrored(ctx context.Context, event hsm.Event) {
+	payload := LifecycleEvent{AgentID: l.agent.ID, State: LifecycleErrored}
+	if event.Data != nil {
+		payload.Error = fmt.Sprintf("%v", event.Data)
+	}
+	l.emit(ctx, EventAgentStopped, payload)
+}
 
-```go
-func () Start(ctx context.Context)
-```
+func (l *Lifecycle) emit(ctx context.Context, name string, payload any) {
+	event := protocol.Event{Name: name, Payload: payload, OccurredAt: time.Now().UTC()}
+	if err := l.dispatcher.Publish(ctx, protocol.Subject("events", "agent"), event); err != nil {
+		l.agent.recordError(fmt.Errorf("emit lifecycle event: %w", err))
+	}
+}
 
-Start starts the presence state machine.
+func (p *Presence) emitChanged(ctx context.Context, state string) {
+	payload := PresenceEvent{AgentID: p.agent.ID, Presence: state}
+	event := protocol.Event{Name: EventPresenceChanged, Payload: payload, OccurredAt: time.Now().UTC()}
+	if err := p.dispatcher.Publish(ctx, protocol.Subject("events", "presence"), event); err != nil {
+		p.agent.recordError(fmt.Errorf("emit presence event: %w", err))
+	}
+}
 
-#### Presence.emitChanged
+// LifecycleEvent describes lifecycle state changes.
+type LifecycleEvent struct {
+	AgentID api.AgentID `json:"agent_id"`
+	State   string      `json:"state"`
+	Error   string      `json:"error,omitempty"`
+}
 
-```go
-func () emitChanged(ctx context.Context, state string)
-```
-
-
-## type PresenceEvent
-
-```go
+// PresenceEvent describes presence state changes.
 type PresenceEvent struct {
 	AgentID  api.AgentID `json:"agent_id"`
 	Presence string      `json:"presence"`
 }
-```
-
-PresenceEvent describes presence state changes.
-

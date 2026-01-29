@@ -40,6 +40,11 @@ func (r *Resolver) HomeDir() string {
 	return r.homeDir
 }
 
+// CanonicalizeRepoRoot normalizes a repo_root path using the resolver's home.
+func (r *Resolver) CanonicalizeRepoRoot(path string) (string, error) {
+	return CanonicalizeRepoRoot(path, r.homeDir)
+}
+
 // AmuxRoot returns the repo-scoped .amux directory path.
 func (r *Resolver) AmuxRoot() string {
 	return filepath.Join(r.repoRoot, ".amux")
@@ -93,7 +98,7 @@ func FindRepoRoot(start string) (string, error) {
 	if start == "" {
 		return "", fmt.Errorf("find repo root: %w", ErrRepoRootNotFound)
 	}
-	expanded, err := expandHomePath(start)
+	expanded, err := expandHomePath(start, "")
 	if err != nil {
 		return "", fmt.Errorf("find repo root: %w", err)
 	}
@@ -107,18 +112,18 @@ func FindRepoRoot(start string) (string, error) {
 		info, err := os.Stat(gitPath)
 		if err == nil {
 			if info.IsDir() {
-					return canonicalizePath(current)
+				return CanonicalizeRepoRoot(current, "")
+			}
+			if info.Mode().IsRegular() {
+				data, readErr := os.ReadFile(gitPath)
+				if readErr != nil {
+					return "", fmt.Errorf("find repo root: %w", readErr)
 				}
-				if info.Mode().IsRegular() {
-					data, readErr := os.ReadFile(gitPath)
-					if readErr != nil {
-						return "", fmt.Errorf("find repo root: %w", readErr)
-					}
-					if strings.Contains(string(data), "gitdir:") {
-						return canonicalizePath(current)
-					}
+				if strings.Contains(string(data), "gitdir:") {
+					return CanonicalizeRepoRoot(current, "")
 				}
 			}
+		}
 		if !errors.Is(err, os.ErrNotExist) && err != nil {
 			return "", fmt.Errorf("find repo root: %w", err)
 		}
@@ -131,24 +136,18 @@ func FindRepoRoot(start string) (string, error) {
 	return "", fmt.Errorf("find repo root: %w", ErrRepoRootNotFound)
 }
 
-func expandHomePath(path string) (string, error) {
-	if path == "~" || strings.HasPrefix(path, "~/") {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return "", err
-		}
-		if path == "~" {
-			return home, nil
-		}
-		return filepath.Join(home, strings.TrimPrefix(path, "~/")), nil
+// CanonicalizeRepoRoot applies repo_root canonicalization rules.
+func CanonicalizeRepoRoot(path string, homeDir string) (string, error) {
+	if path == "" {
+		return "", fmt.Errorf("canonicalize repo root: %w", ErrRepoRootNotFound)
 	}
-	return path, nil
-}
-
-func canonicalizePath(path string) (string, error) {
-	abs, err := filepath.Abs(path)
+	expanded, err := expandHomePath(path, homeDir)
 	if err != nil {
-		return "", fmt.Errorf("canonicalize path: %w", err)
+		return "", fmt.Errorf("canonicalize repo root: %w", err)
+	}
+	abs, err := filepath.Abs(expanded)
+	if err != nil {
+		return "", fmt.Errorf("canonicalize repo root: %w", err)
 	}
 	abs = filepath.Clean(abs)
 	resolved, err := filepath.EvalSymlinks(abs)
@@ -158,10 +157,28 @@ func canonicalizePath(path string) (string, error) {
 	return resolved, nil
 }
 
+func expandHomePath(path string, homeOverride string) (string, error) {
+	if path == "~" || strings.HasPrefix(path, "~/") {
+		home := homeOverride
+		if home == "" {
+			var err error
+			home, err = os.UserHomeDir()
+			if err != nil {
+				return "", err
+			}
+		}
+		if path == "~" {
+			return home, nil
+		}
+		return filepath.Join(home, strings.TrimPrefix(path, "~/")), nil
+	}
+	return path, nil
+}
+
 // SlugifyAgent derives the agent slug per the spec rules.
 func SlugifyAgent(name string) string {
 	if name == "" {
-		return ""
+		return "agent"
 	}
 	var b strings.Builder
 	b.Grow(len(name))
@@ -186,5 +203,36 @@ func SlugifyAgent(name string) string {
 		slug = slug[:63]
 		slug = strings.TrimRight(slug, "-")
 	}
+	if slug == "" {
+		return "agent"
+	}
 	return slug
+}
+
+// UniqueAgentSlug ensures the agent slug is unique within the provided set.
+func UniqueAgentSlug(name string, used map[string]struct{}) string {
+	base := SlugifyAgent(name)
+	if used == nil {
+		return base
+	}
+	if _, ok := used[base]; !ok {
+		return base
+	}
+	for i := 2; ; i++ {
+		suffix := fmt.Sprintf("-%d", i)
+		maxBase := 63 - len(suffix)
+		candidateBase := base
+		if maxBase < 1 {
+			candidateBase = "agent"
+		} else if len(candidateBase) > maxBase {
+			candidateBase = strings.TrimRight(candidateBase[:maxBase], "-")
+			if candidateBase == "" {
+				candidateBase = "agent"
+			}
+		}
+		candidate := candidateBase + suffix
+		if _, ok := used[candidate]; !ok {
+			return candidate
+		}
+	}
 }

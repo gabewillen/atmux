@@ -2,30 +2,87 @@ package agent
 
 import (
 	"context"
+	"sync"
 	"testing"
 
+	"github.com/agentflare-ai/amux/internal/protocol"
+	"github.com/agentflare-ai/amux/pkg/api"
 	"github.com/stateforward/hsm-go"
 )
 
-type testActor struct {
-	hsm.HSM
+type recordDispatcher struct {
+	mu       sync.Mutex
+	subjects []string
+	events   []protocol.Event
 }
 
-func TestHSMDispatch(t *testing.T) {
-	model := hsm.Define(
-		"test",
-		hsm.State("pending"),
-		hsm.State("running"),
-		hsm.Transition(hsm.On(hsm.Event{Name: "start"}), hsm.Source("pending"), hsm.Target("running")),
-		hsm.Initial(hsm.Target("pending")),
-	)
-	actor := &testActor{}
-	started := hsm.Started(context.Background(), actor, &model)
-	<-hsm.Dispatch(started.Context(), started, hsm.Event{Name: "start"})
-	if started.State() == "" {
-		t.Fatalf("state missing")
-	}
-	if started.State() != "/test/running" {
+func (r *recordDispatcher) Publish(ctx context.Context, subject string, event protocol.Event) error {
+	_ = ctx
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.subjects = append(r.subjects, subject)
+	r.events = append(r.events, event)
+	return nil
+}
+
+func (r *recordDispatcher) Subscribe(ctx context.Context, subject string, handler func(protocol.Event)) (protocol.Subscription, error) {
+	_ = ctx
+	_ = subject
+	_ = handler
+	return nil, nil
+}
+
+func TestLifecycleTransitions(t *testing.T) {
+	dispatcher := &recordDispatcher{}
+	agent := &Agent{Agent: api.Agent{ID: api.NewAgentID()}, dispatcher: dispatcher}
+	lifecycle := NewLifecycle(agent, dispatcher)
+	started := hsm.Started(context.Background(), lifecycle, &LifecycleModel)
+	<-hsm.Dispatch(started.Context(), started, hsm.Event{Name: EventStart})
+	if started.State() != "/agent.lifecycle/starting" {
 		t.Fatalf("unexpected state: %s", started.State())
+	}
+	<-hsm.Dispatch(started.Context(), started, hsm.Event{Name: EventReady})
+	if started.State() != "/agent.lifecycle/running" {
+		t.Fatalf("unexpected state: %s", started.State())
+	}
+	<-hsm.Dispatch(started.Context(), started, hsm.Event{Name: EventStop})
+	if started.State() != "/agent.lifecycle/terminated" {
+		t.Fatalf("unexpected state: %s", started.State())
+	}
+	if len(dispatcher.events) == 0 {
+		t.Fatalf("expected lifecycle events")
+	}
+}
+
+func TestPresenceTransitions(t *testing.T) {
+	dispatcher := &recordDispatcher{}
+	agent := &Agent{Agent: api.Agent{ID: api.NewAgentID()}, dispatcher: dispatcher}
+	presence := NewPresence(agent, dispatcher)
+	started := hsm.Started(context.Background(), presence, &PresenceModel)
+	if started.State() != "/agent.presence/online" {
+		t.Fatalf("unexpected state: %s", started.State())
+	}
+	<-hsm.Dispatch(started.Context(), started, hsm.Event{Name: EventTaskAssigned})
+	if started.State() != "/agent.presence/busy" {
+		t.Fatalf("unexpected state: %s", started.State())
+	}
+	<-hsm.Dispatch(started.Context(), started, hsm.Event{Name: EventRateLimit})
+	if started.State() != "/agent.presence/offline" {
+		t.Fatalf("unexpected state: %s", started.State())
+	}
+	<-hsm.Dispatch(started.Context(), started, hsm.Event{Name: EventRateCleared})
+	if started.State() != "/agent.presence/online" {
+		t.Fatalf("unexpected state: %s", started.State())
+	}
+	<-hsm.Dispatch(started.Context(), started, hsm.Event{Name: EventStuckDetected})
+	if started.State() != "/agent.presence/away" {
+		t.Fatalf("unexpected state: %s", started.State())
+	}
+	<-hsm.Dispatch(started.Context(), started, hsm.Event{Name: EventActivity})
+	if started.State() != "/agent.presence/online" {
+		t.Fatalf("unexpected state: %s", started.State())
+	}
+	if len(dispatcher.events) == 0 {
+		t.Fatalf("expected presence events")
 	}
 }

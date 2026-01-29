@@ -13,6 +13,13 @@ func TestSlugifyAgent(t *testing.T) {
 	}
 }
 
+func TestSlugifyAgentEmptyFallsBack(t *testing.T) {
+	slug := SlugifyAgent("$$$")
+	if slug != "agent" {
+		t.Fatalf("unexpected slug: %s", slug)
+	}
+}
+
 func TestFindRepoRootCanonicalizesSymlink(t *testing.T) {
 	tmp := t.TempDir()
 	repo := filepath.Join(tmp, "repo")
@@ -23,7 +30,7 @@ func TestFindRepoRootCanonicalizesSymlink(t *testing.T) {
 	if err := os.Symlink(repo, link); err != nil {
 		t.Skipf("symlink not supported: %v", err)
 	}
-	want, err := canonicalizePath(repo)
+	want, err := CanonicalizeRepoRoot(repo, "")
 	if err != nil {
 		t.Fatalf("canonicalize: %v", err)
 	}
@@ -33,6 +40,38 @@ func TestFindRepoRootCanonicalizesSymlink(t *testing.T) {
 	}
 	if root != want {
 		t.Fatalf("expected %s, got %s", want, root)
+	}
+}
+
+func TestCanonicalizeRepoRootExpandsHome(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatalf("home dir: %v", err)
+	}
+	path, err := CanonicalizeRepoRoot("~/", home)
+	if err != nil {
+		t.Fatalf("canonicalize: %v", err)
+	}
+	if path != home {
+		t.Fatalf("expected %s, got %s", home, path)
+	}
+}
+
+func TestUniqueAgentSlugCollision(t *testing.T) {
+	used := map[string]struct{}{
+		"agent":      {},
+		"agent-2":    {},
+		"agent-3":    {},
+		"frontend":   {},
+		"frontend-2": {},
+	}
+	slug := UniqueAgentSlug("Agent", used)
+	if slug != "agent-4" {
+		t.Fatalf("unexpected slug: %s", slug)
+	}
+	slug = UniqueAgentSlug("Frontend", used)
+	if slug != "frontend-3" {
+		t.Fatalf("unexpected slug: %s", slug)
 	}
 }
 

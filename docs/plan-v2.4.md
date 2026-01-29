@@ -264,10 +264,10 @@ Implement authoritative types, identifiers, and HSM-driven lifecycle and presenc
   - Acceptance criteria: `amux test --regression` exits 0; any regressions are fixed before Phase 1 is considered complete; the new snapshot is written to `<module_root>/snapshots/`.
   - Status: Complete — regression run passed.
 
-- [ ] Update this plan’s TODOs for Phase 1, remove unused code/scripts, and commit Phase 1 to git
+- [x] Update this plan’s TODOs for Phase 1, remove unused code/scripts, and commit Phase 1 to git
   - Spec reference(s): N/A (plan process requirement)
   - Acceptance criteria: Phase 1 TODOs are updated; `git status` is clean; the Phase 1 baseline + latest snapshots are retained; a Phase 1 commit exists in git history.
-  - Status: Plan TODOs updated; commit left to user.
+  - Status: Complete — Phase 1 committed.
 ---
 
 ## Phase 2: Local agent management (repo/worktree), lifecycle operations, and merge strategies

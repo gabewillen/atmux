@@ -17,7 +17,7 @@ func TestSpawnAndStopAgent(t *testing.T) {
 	initGitRepo(t, tmpDir)
 	repoRoot := api.RepoRoot(tmpDir)
 	
-	cfg := config.AgentConfig{Name: "SpawnTest"}
+	cfg := config.AgentConfig{Name: "SpawnTest", Adapter: "sh"}
 	bus := NewEventBus()
 	a, err := NewAgent(cfg, repoRoot, bus)
 	if err != nil {

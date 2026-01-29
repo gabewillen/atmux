@@ -35,6 +35,8 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
+	case "daemon":
+		fmt.Println("Use 'amux-node' to run the daemon.")
 	default:
 		usage()
 		os.Exit(1)
@@ -44,5 +46,6 @@ func main() {
 func usage() {
 	fmt.Println("Usage: amux <command> [args]")
 	fmt.Println("Commands:")
-	fmt.Println("  test   Run verification snapshot")
+	fmt.Println("  test       Run verification snapshot")
+	fmt.Println("  daemon     (Hint: use amux-node binary)")
 }

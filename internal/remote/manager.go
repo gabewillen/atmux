@@ -120,7 +120,7 @@ func (m *Manager) performHandshake(ctx context.Context) error {
 func (m *Manager) handleControl(msg *nats.Msg) {
 	var req protocol.ControlRequest
 	if err := json.Unmarshal(msg.Data, &req); err != nil {
-		m.replyError(msg, "invalid_request", err.Error())
+		m.replyError(msg, "unknown", "invalid_request", err.Error())
 		return
 	}
 
@@ -148,7 +148,7 @@ func (m *Manager) handleControl(msg *nats.Msg) {
 	}
 
 	if err != nil {
-		m.replyError(msg, "execution_failed", err.Error())
+		m.replyError(msg, req.Type, "execution_failed", err.Error())
 		return
 	}
 
@@ -246,11 +246,12 @@ func (m *Manager) handlePTYInput(msg *nats.Msg) {
 	// TODO: Input implementation
 }
 
-func (m *Manager) replyError(msg *nats.Msg, code, message string) {
+func (m *Manager) replyError(msg *nats.Msg, reqType, code, message string) {
 	resp := protocol.ControlResponse{
 		Error: &protocol.Error{
-			Code:    code,
-			Message: message,
+			RequestType: reqType,
+			Code:        code,
+			Message:     message,
 		},
 	}
 	data, _ := json.Marshal(resp)

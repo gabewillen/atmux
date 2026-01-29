@@ -64,6 +64,12 @@ func Load(path string) (*Snapshot, error) {
 	if err := toml.Unmarshal(data, &snap); err != nil {
 		return nil, err
 	}
+	
+	// Normalize maps
+	if snap.Config.Adapters == nil {
+		snap.Config.Adapters = make(map[string]map[string]any)
+	}
+	
 	return &snap, nil
 }
 
@@ -82,7 +88,7 @@ func Compare(old, new *Snapshot) error {
 	}
 	
 	if string(oldData) != string(newData) {
-		return fmt.Errorf("snapshot mismatch")
+		return fmt.Errorf("snapshot mismatch: \nOLD:\n%s\nNEW:\n%s", string(oldData), string(newData))
 	}
 	return nil
 }

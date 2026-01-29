@@ -63,8 +63,9 @@ type SpawnResponsePayload struct {
 
 // Error represents a protocol error.
 type Error struct {
-	Code    string `json:"code"`
-	Message string `json:"message"`
+	RequestType string `json:"request_type,omitempty"`
+	Code        string `json:"code"`
+	Message     string `json:"message"`
 }
 
 // EventMessage represents an event envelope over NATS.

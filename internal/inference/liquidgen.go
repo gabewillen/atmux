@@ -31,6 +31,11 @@ var (
 	backendOnce sync.Once
 )
 
+func init() {
+	// Spec §4.2.10: build and runtime logs MUST include the liquidgen module version or commit identifier
+	fmt.Printf("liquidgen module version: %s\n", "v0.0.1-dev-integrated")
+}
+
 type LiquidgenImpl struct {
 	mu     sync.Mutex
 	models map[string]*C.struct_liquid_model

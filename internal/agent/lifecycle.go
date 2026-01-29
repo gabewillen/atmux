@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 	"syscall"
 	"time"
 
@@ -17,16 +18,17 @@ import (
 // SpawnAgent starts the agent process in a new PTY session.
 func SpawnAgent(ctx context.Context, a *Agent) error {
 	// Dispatch Spawn event to lifecycle HSM
-	// Note: hsm.Dispatch returns a channel that closes when processing is done.
 	<-hsm.Dispatch(ctx, a.Lifecycle, hsm.Event{Name: EventSpawn})
 
 	// Check if state transitioned to Starting (or verify logic via HSM state check if possible)
 	// For now we assume if no error, we proceed.
 
 	// Determine target branch
-	// Ideally this comes from config or default logic.
-	// For now, let's use the repo's HEAD as base, which EnsureWorktree defaults to if empty.
-	targetBranch, _ := GetAgentTargetBranch(a) 
+	targetBranch, err := GetAgentTargetBranch(a)
+	if err != nil {
+		hsm.Dispatch(ctx, a.Lifecycle, hsm.Event{Name: EventError})
+		return fmt.Errorf("failed to resolve target branch: %w", err)
+	}
 
 	// Ensure Worktree
 	worktreePath, err := EnsureWorktree(a.RepoRoot, a.Slug, targetBranch)
@@ -37,10 +39,13 @@ func SpawnAgent(ctx context.Context, a *Agent) error {
 	a.Worktree = worktreePath
 
 	// Prepare command
-	cmdName := "/bin/sh" 
-	// In real implementation, we'd query the adapter for the command.
+	cmdArgs := getAgentCommand(a)
+	if len(cmdArgs) == 0 {
+		hsm.Dispatch(ctx, a.Lifecycle, hsm.Event{Name: EventError})
+		return fmt.Errorf("agent command not resolved for adapter %s", a.Adapter)
+	}
 	
-	cmd := exec.Command(cmdName)
+	cmd := exec.Command(cmdArgs[0], cmdArgs[1:]...)
 	cmd.Dir = worktreePath
 	// Inherit or set env
 	cmd.Env = append(os.Environ(), "TERM=xterm-256color")
@@ -112,11 +117,23 @@ func StopAgent(ctx context.Context, a *Agent) error {
 }
 
 // GetAgentTargetBranch helps resolve the branch to use for the worktree.
-// This duplicates logic from SelectMergeStrategy a bit but for worktree creation.
 func GetAgentTargetBranch(a *Agent) (string, error) {
-	// Assuming GitConfig is available globally or we can peek at project config?
-	// But 'a.Config' is AgentConfig.
-	// We might need to look at repo root.
-	// For now return empty to let EnsureWorktree use HEAD.
-	return "", nil
+	// Spec §5.7.1: determine base_branch by running git symbolic-ref --quiet --short HEAD in repo_root
+	// We run this in the RepoRoot.
+	cmd := exec.Command("git", "symbolic-ref", "--quiet", "--short", "HEAD")
+	cmd.Dir = string(a.RepoRoot)
+	out, err := cmd.Output()
+	if err != nil {
+		// Spec says: "If this command fails... base_branch MUST be set to the configured git.merge.target_branch... otherwise fail"
+		// We assume `a.Config` might have this info if we mapped it, but `AgentConfig` doesn't strictly have `MergeConfig`.
+		// If we can't determine it, we fail.
+		return "", fmt.Errorf("failed to determine base branch (HEAD detached?): %w", err)
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+func getAgentCommand(a *Agent) []string {
+	// In a real implementation, this would come from the adapter manifest (CLIConfig)
+	// or configuration. For now, we default to the adapter name as the binary.
+	return []string{a.Adapter}
 }

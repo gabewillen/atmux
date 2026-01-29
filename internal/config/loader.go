@@ -13,8 +13,9 @@ import (
 // Load loads the configuration from all sources.
 func Load(repoRoot string) (*Config, error) {
 	cfg := DefaultConfig()
+	cfg.Adapters = make(map[string]map[string]any)
 
-	// Load User Config (~/.config/amux/config.toml)
+	// 3. Load User Config (~/.config/amux/config.toml)
 	configDir, err := paths.DefaultConfigDir()
 	if err == nil {
 		userConfigPath := filepath.Join(configDir, "config.toml")
@@ -24,9 +25,14 @@ func Load(repoRoot string) (*Config, error) {
 				return nil, fmt.Errorf("failed to load user config: %w", err)
 			}
 		}
+		
+		// 4. Load User Adapter Configs (~/.config/amux/adapters/*/config.toml)
+		if err := loadAdapterConfigs(configDir, &cfg); err != nil {
+			return nil, fmt.Errorf("failed to load user adapter configs: %w", err)
+		}
 	}
 
-	// Load Project Config (.amux/config.toml)
+	// 5. Load Project Config (.amux/config.toml)
 	if repoRoot != "" {
 		projectConfigPath := filepath.Join(repoRoot, ".amux", "config.toml")
 		if err := loadFile(projectConfigPath, &cfg); err != nil {
@@ -34,9 +40,15 @@ func Load(repoRoot string) (*Config, error) {
 				return nil, fmt.Errorf("failed to load project config: %w", err)
 			}
 		}
+
+		// 6. Load Project Adapter Configs (.amux/adapters/*/config.toml)
+		projectAmuxDir := filepath.Join(repoRoot, ".amux")
+		if err := loadAdapterConfigs(projectAmuxDir, &cfg); err != nil {
+			return nil, fmt.Errorf("failed to load project adapter configs: %w", err)
+		}
 	}
 
-	// Apply Environment Variables
+	// 7. Apply Environment Variables
 	if err := applyEnvOverrides(&cfg); err != nil {
 		return nil, fmt.Errorf("failed to apply env overrides: %w", err)
 	}
@@ -50,6 +62,52 @@ func loadFile(path string, cfg *Config) error {
 		return err
 	}
 	return toml.Unmarshal(data, cfg)
+}
+
+func loadAdapterConfigs(baseDir string, cfg *Config) error {
+	adaptersDir := filepath.Join(baseDir, "adapters")
+	entries, err := os.ReadDir(adaptersDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		adapterName := entry.Name()
+		configPath := filepath.Join(adaptersDir, adapterName, "config.toml")
+		
+		data, err := os.ReadFile(configPath)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return err
+		}
+
+		var adapterCfg map[string]any
+		if err := toml.Unmarshal(data, &adapterCfg); err != nil {
+			return fmt.Errorf("failed to parse config for adapter %s: %w", adapterName, err)
+		}
+
+		if cfg.Adapters == nil {
+			cfg.Adapters = make(map[string]map[string]any)
+		}
+		
+		// Merge into existing adapter config if present
+		if existing, ok := cfg.Adapters[adapterName]; ok {
+			for k, v := range adapterCfg {
+				existing[k] = v
+			}
+		} else {
+			cfg.Adapters[adapterName] = adapterCfg
+		}
+	}
+	return nil
 }
 
 func applyEnvOverrides(cfg *Config) error {

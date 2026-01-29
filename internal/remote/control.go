@@ -12,8 +12,8 @@ import (
 
 // SendControlRequest sends a control request to a remote host and waits for a response.
 // It enforces the timeout and error handling specified in the plan.
-func SendControlRequest(ctx context.Context, nc *nats.Conn, hostID api.HostID, req protocol.ControlRequest) (*protocol.ControlResponse, error) {
-	subject := protocol.SubjectForCtl("amux", hostID) // TODO: prefix from config
+func SendControlRequest(ctx context.Context, nc *nats.Conn, prefix string, hostID api.HostID, req protocol.ControlRequest) (*protocol.ControlResponse, error) {
+	subject := protocol.SubjectForCtl(prefix, hostID)
 
 	payload, err := json.Marshal(req)
 	if err != nil {
@@ -24,6 +24,10 @@ func SendControlRequest(ctx context.Context, nc *nats.Conn, hostID api.HostID, r
 	// "director uses remote.request_timeout"
 	// We assume ctx has the timeout set by caller.
 	
+	if !nc.IsConnected() {
+		return nil, fmt.Errorf("remote connection lost (fail-fast)")
+	}
+
 	// nats.RequestWithContext requires a context.
 	msg, err := nc.RequestWithContext(ctx, subject, payload)
 	if err != nil {

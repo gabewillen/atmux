@@ -11,6 +11,7 @@
 - [internal/daemon](internal/daemon/README.md) — Package daemon implements the amux daemon (amuxd) and manager (amux-manager).
 - [internal/errors](internal/errors/README.md) — Package errors provides sentinel errors and error handling conventions for amux.
 - [internal/event](internal/event/README.md) — Package event provides event types and dispatch interfaces for amux.
+- [internal/ids](internal/ids/README.md) — Package ids provides identifier utilities for amux.
 - [internal/inference](internal/inference/README.md) — Package inference provides the local inference engine interface for amux.
 - [internal/monitor](internal/monitor/README.md) — Package monitor provides PTY output monitoring for amux.
 - [internal/paths](internal/paths/README.md) — Package paths provides centralized filesystem path resolution for amux.

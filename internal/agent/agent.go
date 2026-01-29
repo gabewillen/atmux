@@ -9,11 +9,13 @@ package agent
 
 import (
 	"context"
+	"fmt"
 	"sync"
 
 	"github.com/stateforward/hsm-go/muid"
 
 	"github.com/agentflare-ai/amux/internal/event"
+	"github.com/agentflare-ai/amux/internal/ids"
 	"github.com/agentflare-ai/amux/pkg/api"
 )
 
@@ -21,6 +23,7 @@ import (
 type Manager struct {
 	mu         sync.RWMutex
 	agents     map[muid.MUID]*Agent
+	slugs      map[string]muid.MUID // slug -> agent ID for collision detection
 	dispatcher event.Dispatcher
 }
 
@@ -44,18 +47,38 @@ func NewManager(dispatcher event.Dispatcher) *Manager {
 
 	return &Manager{
 		agents:     make(map[muid.MUID]*Agent),
+		slugs:      make(map[string]muid.MUID),
 		dispatcher: dispatcher,
 	}
 }
 
-// Add adds an agent.
+// Add adds an agent. The agent's Slug will be computed from Name if not already set.
+// Returns an error if the agent fails validation.
 func (m *Manager) Add(ctx context.Context, cfg api.Agent) (*Agent, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	// Generate ID if not set
 	if cfg.ID == 0 {
-		cfg.ID = muid.Make()
+		cfg.ID = ids.NewID()
+	}
+
+	// Compute slug if not set
+	if cfg.Slug == "" {
+		cfg.Slug = ids.UniqueAgentSlug(cfg.Name, func(slug string) bool {
+			_, exists := m.slugs[slug]
+			return exists
+		})
+	} else {
+		// Validate the provided slug doesn't collide
+		if existingID, exists := m.slugs[cfg.Slug]; exists && existingID != cfg.ID {
+			return nil, fmt.Errorf("agent slug collision: %q already in use", cfg.Slug)
+		}
+	}
+
+	// Validate the agent
+	if err := cfg.Validate(); err != nil {
+		return nil, fmt.Errorf("agent validation failed: %w", err)
 	}
 
 	agent := &Agent{
@@ -65,6 +88,7 @@ func (m *Manager) Add(ctx context.Context, cfg api.Agent) (*Agent, error) {
 	}
 
 	m.agents[cfg.ID] = agent
+	m.slugs[cfg.Slug] = cfg.ID
 
 	// Emit event
 	_ = m.dispatcher.Dispatch(ctx, event.NewEvent(event.TypeAgentAdded, cfg.ID, cfg))
@@ -78,6 +102,7 @@ func (m *Manager) Remove(ctx context.Context, id muid.MUID) error {
 	agent, ok := m.agents[id]
 	if ok {
 		delete(m.agents, id)
+		delete(m.slugs, agent.Slug)
 	}
 	m.mu.Unlock()
 
@@ -86,6 +111,24 @@ func (m *Manager) Remove(ctx context.Context, id muid.MUID) error {
 	}
 
 	return nil
+}
+
+// GetBySlug returns an agent by its slug.
+func (m *Manager) GetBySlug(slug string) *Agent {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if id, ok := m.slugs[slug]; ok {
+		return m.agents[id]
+	}
+	return nil
+}
+
+// SlugExists returns true if an agent with the given slug exists.
+func (m *Manager) SlugExists(slug string) bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	_, ok := m.slugs[slug]
+	return ok
 }
 
 // Get returns an agent by ID.

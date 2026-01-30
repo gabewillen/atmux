@@ -130,84 +130,84 @@ Establish repository structure, build/toolchain, configuration, observability sc
 - Conformance harness scaffolding
 
 ### TODO list
-- [ ] Create repository layout and packages exactly per spec project structure
+- [x] Create repository layout and packages exactly per spec project structure
   - Spec reference(s): §4.2.6, §1.5.1
   - Acceptance criteria: `cmd/amux` and `cmd/amux-node` exist; `internal/*` packages compile; `internal/*` has no imports from `adapters/*` (enforced by lint or test).
 
-- [ ] Pin core language/runtime dependencies (Go 1.25.6 (`go1.25.6`), wazero, hsm-go/muid, creack/pty)
+- [x] Pin core language/runtime dependencies (Go 1.25.6 (`go1.25.6`), wazero, hsm-go/muid, creack/pty)
   - Spec reference(s): §4.2.1–§4.2.4
   - Acceptance criteria: `go.mod` pins compatible versions; minimal “smoke” programs demonstrate wazero instantiation, hsm-go event dispatch, and PTY allocation on supported OS targets.
 
-- [ ] Implement error handling conventions and sentinel error strategy
+- [x] Implement error handling conventions and sentinel error strategy
   - Spec reference(s): §4.2.5
   - Acceptance criteria: package templates use `fmt.Errorf("context: %w", err)`; sentinel errors defined; no ignored errors in core paths (enforced by staticcheck configuration).
 
-- [ ] Implement configuration subsystem: format, hierarchy, env mapping, parsing conventions
+- [x] Implement configuration subsystem: format, hierarchy, env mapping, parsing conventions
   - Spec reference(s): §4.2.8.1–§4.2.8.4, §4.2.8.10
   - Acceptance criteria: config loads from default paths and supports overrides; env var mapping verified in unit tests; duration/bytes/bool parsing matches spec conventions.
 
-- [ ] Implement adapter configuration handling and sensitive configuration support (opaque adapter config blocks)
+- [x] Implement adapter configuration handling and sensitive configuration support (opaque adapter config blocks)
   - Spec reference(s): §4.2.8.5–§4.2.8.6
   - Acceptance criteria: adapters receive only their scoped config; sensitive fields are redacted in logs and debug outputs per spec requirements.
 
-- [ ] Implement configuration actor, live updates, and subscriptions
+- [x] Implement configuration actor, live updates, and subscriptions
   - Spec reference(s): §4.2.8.7–§4.2.8.9
   - Acceptance criteria: components can subscribe to config changes; hot reload updates dependent subsystems without restart in an integration test.
 
-- [ ] Implement OpenTelemetry scaffolding (traces/metrics/logs (OTel))
+- [x] Implement OpenTelemetry scaffolding (traces/metrics/logs (OTel))
   - Spec reference(s): §4.2.9.1–§4.2.9.5
   - Acceptance criteria: OTel can be enabled by env vars or config; spans follow naming convention; required baseline metrics are emitted in a test exporter.
 
-- [ ] Scaffold `liquidgen` local inference integration interface and configuration
+- [x] Scaffold `liquidgen` local inference integration interface and configuration
   - Spec reference(s): §4.2.10
   - Acceptance criteria: interface types compile; unknown model IDs return error; mapping of logical IDs to artifacts is observable via telemetry fields/events.
 
-- [ ] The implementation MUST integrate the pre-existing `liquidgen` inference engine from `third_party/liquidgen` (private) as a dependency and MUST wire it to the local inference interface
+- [x] The implementation MUST integrate the pre-existing `liquidgen` inference engine from `third_party/liquidgen` (private) as a dependency and MUST wire it to the local inference interface
   - Spec reference(s): §4.2.10
   - Acceptance criteria: `go test ./...` succeeds on a development machine with access to `third_party/liquidgen`; the default build uses `liquidgen` behind the Phase 0 interface (no new inference engine implementation is introduced); build and runtime logs MUST include the `liquidgen` module version or commit identifier for traceability.
 
-- [ ] Create conformance harness skeleton and test runner wiring
+- [x] Create conformance harness skeleton and test runner wiring
   - Spec reference(s): §4.3.1
   - Acceptance criteria: `go test` can run a placeholder conformance suite that boots a daemon + CLI client fixture and records structured JSON results per the “Conformance harness output contract (minimum)” section above.
 
 ---
-- [ ] Ensure `spec-v1.22.md` is present and version-locked for this plan
+- [x] Ensure `spec-v1.22.md` is present and version-locked for this plan
   - Spec reference(s): §4.3.1, §4.2.6
   - Acceptance criteria: `spec-v1.22.md` exists in-repo; a guard test or startup check fails fast with a clear error if the file is missing or the expected version marker does not match.
 
-- [ ] Implement shared path resolver (`internal/paths`) and repo-scoped `.amux/` invariants
+- [x] Implement shared path resolver (`internal/paths`) and repo-scoped `.amux/` invariants
   - Spec reference(s): §4.2.6, §4.2.8
   - Acceptance criteria: a single package resolves all filesystem paths from config/env and `repo_root`; worktree paths use the resolver and still satisfy `.amux/worktrees/{agent_slug}/`; unit tests lock the invariants.
 
-- [ ] Create reproducible verification entrypoints (Makefile or `scripts/*`) and CI-friendly “one command” verification
+- [x] Create reproducible verification entrypoints (Makefile or `scripts/*`) and CI-friendly “one command” verification
   - Spec reference(s): §4.3.1–§4.3.2, §4.2.5
   - Acceptance criteria: documented commands exist for unit, lint, integration (docker + testcontainers), and conformance runs; commands return non-zero on failure; they are suitable for CI automation.
 
-- [ ] Implement docker + testcontainers integration test harness (including network fault injection and node dropout/reconnect utilities)
+- [x] Implement docker + testcontainers integration test harness (including network fault injection and node dropout/reconnect utilities)
   - Spec reference(s): N/A (integration testing requirement)
   - Acceptance criteria: integration tests are runnable via a documented entrypoint and use testcontainers to provision any required external dependencies; the harness can inject latency/loss/partition (for example via Toxiproxy or `tc netem`) and can stop/start daemon processes or containers to simulate node dropout and reconnect; tests clean up all containers and temporary state on success or failure.
 
-- [ ] Implement `amux test` CLI subcommand (snapshot + `--regression`) and wire it into verification entrypoints
+- [x] Implement `amux test` CLI subcommand (snapshot + `--regression`) and wire it into verification entrypoints
   - Spec reference(s): §12.6–§12.6.5
   - Acceptance criteria: `amux test` runs the required command sequence and writes a TOML snapshot to `<module_root>/snapshots/`; `amux test --regression` compares to the previous snapshot and exits non-zero on regressions; `--no-snapshot` writes the snapshot to stdout and writes all human-readable logs/regression reports to stderr.
 
-- [ ] Run `amux test` to capture the baseline snapshot for Phase 0
+- [x] Run `amux test` to capture the baseline snapshot for Phase 0
   - Spec reference(s): §12.6.1–§12.6.3
   - Acceptance criteria: a new `snapshots/amux-test-*.toml` exists under `<module_root>/snapshots/` and is retained as the baseline for Phase 0 regression checking.
 
-- [ ] Introduce stable interfaces + noop implementations to unblock phased work (event dispatch + adapter hooks)
+- [x] Introduce stable interfaces + noop implementations to unblock phased work (event dispatch + adapter hooks)
   - Spec reference(s): §1.5.1, §4.2.6, §9.1, §10.4
   - Acceptance criteria: Phase 4–6 code can emit/subscribe to events via the interface in local/noop mode; Phase 5 can call a pattern/action interface that returns no matches by default; the repo compiles/tests without implementing Phase 7/Phase 8 yet.
 
-- [ ] The implementation MUST maintain inline Go documentation and MUST generate per-package `README.md` files via `go-docmd`, enforced by automated docs-check
+- [x] The implementation MUST maintain inline Go documentation and MUST generate per-package `README.md` files via `go-docmd`, enforced by automated docs-check
   - Spec reference(s): §4.2.6.1
   - Acceptance criteria: all packages and exported identifiers implemented in Phase 0 MUST have `go doc`-suitable comments; `go run github.com/agentflare-ai/go-docmd@latest -cmd -all -inplace ./...` MUST run successfully at the module root and MUST update per-package `README.md` files in place; generated `README.md` files MUST be committed; a CI job or verification entrypoint MUST run the canonical command and MUST fail if it produces any uncommitted changes.
 
-- [ ] Run `amux test --regression` at the end of Phase 0 to verify no regressions relative to the Phase 0 baseline snapshot
+- [x] Run `amux test --regression` at the end of Phase 0 to verify no regressions relative to the Phase 0 baseline snapshot
   - Spec reference(s): §12.6.5
   - Acceptance criteria: `amux test --regression` exits 0; any regressions are fixed before Phase 0 is considered complete; the new snapshot is written to `<module_root>/snapshots/`.
 
-- [ ] Update this plan’s TODOs for Phase 0, remove unused code/scripts, and commit Phase 0 to git
+- [x] Update this plan’s TODOs for Phase 0, remove unused code/scripts, and commit Phase 0 to git
   - Spec reference(s): N/A (plan process requirement)
   - Acceptance criteria: Phase 0 TODOs are updated; `git status` is clean; the Phase 0 baseline + latest snapshots are retained; a Phase 0 commit exists in git history.
 

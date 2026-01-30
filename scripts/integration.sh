@@ -1,4 +1,4 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-go test ./... -run Integration
+go test ./... -tags=integration -run Integration

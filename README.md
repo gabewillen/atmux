@@ -10,6 +10,7 @@
 - [internal/daemon](internal/daemon/README.md) — Package daemon hosts the JSON-RPC control plane.
 - [internal/git](internal/git/README.md) — Package git provides worktree and merge helpers for local repositories.
 - [internal/inference](internal/inference/README.md) — Package inference provides local inference engine integration.
+- [internal/integrationtest](internal/integrationtest/README.md) — Package integrationtest provides docker/testcontainers helpers for integration tests.
 - [internal/manager](internal/manager/README.md) — Package manager manages local agents, worktrees, and sessions.
 - [internal/monitor](internal/monitor/README.md) — Package monitor observes PTY output and detects adapter patterns.
 - [internal/paths](internal/paths/README.md) — Package paths centralizes filesystem path resolution for amux.

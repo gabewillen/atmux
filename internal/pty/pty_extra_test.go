@@ -44,3 +44,16 @@ func TestCloseNilPair(t *testing.T) {
 	}
 }
 
+func TestResize(t *testing.T) {
+	pair, err := Open()
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer func() { _ = pair.Close() }()
+	if err := Resize(pair.Master, 24, 80); err != nil {
+		t.Fatalf("resize: %v", err)
+	}
+	if err := Resize(pair.Master, 0, 80); err == nil {
+		t.Fatalf("expected invalid size error")
+	}
+}

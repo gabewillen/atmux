@@ -603,7 +603,12 @@ func (m *Manager) startSession(ctx context.Context, id api.AgentID) (*session.Lo
 	if err != nil {
 		return nil, fmt.Errorf("start session: %w", err)
 	}
-	sess, err := session.NewLocalSession(sessionMeta, state.runtime, session.Command{Argv: manifest.Commands.Start}, state.worktree, adapterInstance.Matcher(), m.dispatcher, session.Config{DrainTimeout: m.cfg.Shutdown.DrainTimeout})
+	sess, err := session.NewLocalSession(sessionMeta, state.runtime, session.Command{Argv: manifest.Commands.Start}, state.worktree, adapterInstance.Matcher(), m.dispatcher, session.Config{
+		DrainTimeout: m.cfg.Shutdown.DrainTimeout,
+		IdleTimeout:  m.cfg.Timeouts.Idle,
+		StuckTimeout: m.cfg.Timeouts.Stuck,
+		TUIEnabled:   true,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("start session: %w", err)
 	}

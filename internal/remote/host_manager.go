@@ -650,7 +650,12 @@ func (m *HostManager) handleSpawn(reply string, control ControlMessage) {
 	}
 	matcher := adapterInstance.Matcher()
 	formatter := adapterInstance.Formatter()
-	sess, err := session.NewLocalSession(sessionMeta, runtime, cmd, worktree, matcher, m.dispatcher, session.Config{DrainTimeout: m.cfg.Shutdown.DrainTimeout})
+	sess, err := session.NewLocalSession(sessionMeta, runtime, cmd, worktree, matcher, m.dispatcher, session.Config{
+		DrainTimeout: m.cfg.Shutdown.DrainTimeout,
+		IdleTimeout:  m.cfg.Timeouts.Idle,
+		StuckTimeout: m.cfg.Timeouts.Stuck,
+		TUIEnabled:   true,
+	})
 	if err != nil {
 		_ = m.replyError(reply, "spawn", "invalid_request", "failed to start session")
 		return

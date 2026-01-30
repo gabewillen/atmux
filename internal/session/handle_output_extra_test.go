@@ -97,7 +97,7 @@ func TestHandleOutputPatterns(t *testing.T) {
 		{Pattern: "completion"},
 		{Pattern: "message", Text: string(encoded)},
 	}}
-	mon, err := monitor.NewMonitor(matcher)
+	mon, err := monitor.NewMonitor(matcher, monitor.Options{})
 	if err != nil {
 		t.Fatalf("monitor: %v", err)
 	}

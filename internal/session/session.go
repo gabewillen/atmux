@@ -1,7 +1,6 @@
 package session
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -45,6 +44,20 @@ type Command struct {
 type Config struct {
 	// DrainTimeout controls graceful shutdown duration.
 	DrainTimeout time.Duration
+	// IdleTimeout controls inactivity detection.
+	IdleTimeout time.Duration
+	// StuckTimeout controls stuck detection.
+	StuckTimeout time.Duration
+	// TUIEnabled enables terminal decoding.
+	TUIEnabled bool
+	// TUIRows sets the TUI decoder row count.
+	TUIRows int
+	// TUICols sets the TUI decoder column count.
+	TUICols int
+	// PTYRows sets the initial PTY row count.
+	PTYRows uint16
+	// PTYCols sets the initial PTY column count.
+	PTYCols uint16
 }
 
 // LocalSession owns a PTY and process for a local agent.
@@ -69,6 +82,8 @@ type LocalSession struct {
 	writeMu       sync.Mutex
 	observerMu    sync.Mutex
 	observers     []func([]byte)
+	rateLimited   bool
+	monitorCancel context.CancelFunc
 }
 
 // NewLocalSession constructs a LocalSession for an agent.
@@ -85,10 +100,22 @@ func NewLocalSession(meta api.Session, runtime *agent.Agent, command Command, wo
 	if cfg.DrainTimeout <= 0 {
 		cfg.DrainTimeout = 30 * time.Second
 	}
+	if cfg.IdleTimeout <= 0 {
+		cfg.IdleTimeout = 30 * time.Second
+	}
+	if cfg.StuckTimeout <= 0 {
+		cfg.StuckTimeout = 5 * time.Minute
+	}
 	if matcher == nil {
 		return nil, fmt.Errorf("new session: %w", monitor.ErrMatcherRequired)
 	}
-	mon, err := monitor.NewMonitor(matcher)
+	mon, err := monitor.NewMonitor(matcher, monitor.Options{
+		IdleTimeout:  cfg.IdleTimeout,
+		StuckTimeout: cfg.StuckTimeout,
+		TUIEnabled:   cfg.TUIEnabled,
+		TUIRows:      cfg.TUIRows,
+		TUICols:      cfg.TUICols,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("new session: %w", err)
 	}
@@ -138,12 +165,24 @@ func (s *LocalSession) Start(ctx context.Context) error {
 		return fmt.Errorf("session start: %w", err)
 	}
 	s.ptyPair = &pty.Pair{Master: master}
+	if s.config.PTYRows > 0 && s.config.PTYCols > 0 {
+		if err := pty.Resize(master, s.config.PTYRows, s.config.PTYCols); err != nil {
+			_ = s.agent.EmitLifecycle(ctx, agent.EventError, err)
+			s.mu.Unlock()
+			return fmt.Errorf("session start: %w", err)
+		}
+	}
 	s.cmd = cmd
 	s.done = make(chan error, 1)
 	s.stopRequested = false
 	s.forcedKill = false
 	go s.wait(ctx)
 	go s.readOutput(ctx, master)
+	if s.monitor != nil {
+		monitorCtx, cancel := context.WithCancel(context.Background())
+		s.monitorCancel = cancel
+		go s.observeMonitor(monitorCtx)
+	}
 	s.mu.Unlock()
 	if s.agent != nil {
 		_ = s.agent.EmitLifecycle(ctx, agent.EventReady, nil)
@@ -243,11 +282,19 @@ func (s *LocalSession) wait(ctx context.Context) {
 	forcedKill := s.forcedKill
 	s.stopRequested = false
 	s.forcedKill = false
+	monitorCancel := s.monitorCancel
+	s.monitorCancel = nil
 	s.mu.Unlock()
 	if pair != nil {
 		if closeErr := pair.Close(); closeErr != nil && err == nil {
 			err = closeErr
 		}
+	}
+	if monitorCancel != nil {
+		monitorCancel()
+	}
+	if s.monitor != nil {
+		_ = s.monitor.Close()
 	}
 	if err != nil && !stopRequested || forcedKill {
 		if s.agent != nil {
@@ -413,28 +460,34 @@ func (s *LocalSession) handleOutput(ctx context.Context, chunk []byte) {
 	if s.monitor == nil || len(chunk) == 0 {
 		return
 	}
-	if s.agent != nil {
-		_ = s.agent.EmitPresence(ctx, agent.EventActivity, nil)
-	}
-	matches, err := s.monitor.Scan(ctx, bytes.NewReader(chunk))
+	matches, err := s.monitor.Observe(ctx, chunk)
 	if err != nil {
 		return
 	}
 	for _, match := range matches {
 		pattern := strings.ToLower(strings.TrimSpace(match.Pattern))
+		matchCopy := match
 		switch pattern {
 		case "prompt":
+			s.publishPTYEvent(ctx, agent.EventPromptDetected, &matchCopy, 0, time.Now().UTC())
 			if s.agent != nil {
 				_ = s.agent.EmitPresence(ctx, agent.EventPromptDetected, match)
 			}
+			s.clearRateLimit(ctx)
 		case "rate_limit":
+			s.publishPTYEvent(ctx, agent.EventRateLimit, &matchCopy, 0, time.Now().UTC())
 			if s.agent != nil {
 				_ = s.agent.EmitPresence(ctx, agent.EventRateLimit, match)
 			}
+			s.setRateLimited()
 		case "completion":
+			s.publishPTYEvent(ctx, agent.EventTaskCompleted, &matchCopy, 0, time.Now().UTC())
 			if s.agent != nil {
 				_ = s.agent.EmitPresence(ctx, agent.EventTaskCompleted, match)
 			}
+			s.clearRateLimit(ctx)
+		case "error":
+			s.publishPTYEvent(ctx, agent.EventErrorDetected, &matchCopy, 0, time.Now().UTC())
 		case "message":
 			if s.agent == nil {
 				continue
@@ -455,4 +508,132 @@ func (s *LocalSession) handleOutput(ctx context.Context, chunk []byte) {
 			})
 		}
 	}
+}
+
+// Resize updates the PTY window size and decoder geometry.
+func (s *LocalSession) Resize(rows, cols uint16) error {
+	if s == nil {
+		return fmt.Errorf("session resize: %w", ErrSessionNotRunning)
+	}
+	s.mu.Lock()
+	master := (*os.File)(nil)
+	if s.ptyPair != nil {
+		master = s.ptyPair.Master
+	}
+	s.mu.Unlock()
+	if master == nil {
+		return fmt.Errorf("session resize: %w", ErrSessionNotRunning)
+	}
+	if err := pty.Resize(master, rows, cols); err != nil {
+		return fmt.Errorf("session resize: %w", err)
+	}
+	if s.monitor != nil {
+		s.monitor.Resize(int(rows), int(cols))
+	}
+	return nil
+}
+
+// TUIXML returns the latest TUI XML snapshot, if enabled.
+func (s *LocalSession) TUIXML() string {
+	if s == nil || s.monitor == nil {
+		return ""
+	}
+	return s.monitor.TUIXML()
+}
+
+func (s *LocalSession) observeMonitor(ctx context.Context) {
+	events := s.monitor.Events()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case event, ok := <-events:
+			if !ok {
+				return
+			}
+			s.handleMonitorEvent(ctx, event)
+		}
+	}
+}
+
+func (s *LocalSession) handleMonitorEvent(ctx context.Context, event monitor.Event) {
+	switch event.Type {
+	case monitor.EventActivity:
+		s.publishPTYEvent(ctx, agent.EventActivity, nil, event.Since, event.At)
+		if s.agent != nil {
+			_ = s.agent.EmitPresence(ctx, agent.EventActivity, nil)
+		}
+		s.clearRateLimit(ctx)
+	case monitor.EventInactivity:
+		s.publishPTYEvent(ctx, agent.EventInactivityDetected, nil, event.Since, event.At)
+		if s.agent != nil {
+			_ = s.agent.EmitPresence(ctx, agent.EventInactivityDetected, nil)
+		}
+	case monitor.EventStuck:
+		s.publishPTYEvent(ctx, agent.EventStuckDetected, nil, event.Since, event.At)
+		if s.agent != nil {
+			_ = s.agent.EmitPresence(ctx, agent.EventStuckDetected, nil)
+		}
+	}
+}
+
+func (s *LocalSession) setRateLimited() {
+	s.mu.Lock()
+	s.rateLimited = true
+	s.mu.Unlock()
+}
+
+func (s *LocalSession) clearRateLimit(ctx context.Context) {
+	s.mu.Lock()
+	limited := s.rateLimited
+	s.rateLimited = false
+	s.mu.Unlock()
+	if !limited {
+		return
+	}
+	s.publishPTYEvent(ctx, agent.EventRateCleared, nil, 0, time.Now().UTC())
+	if s.agent != nil {
+		_ = s.agent.EmitPresence(ctx, agent.EventRateCleared, nil)
+	}
+}
+
+func (s *LocalSession) publishPTYEvent(ctx context.Context, name string, match *adapter.PatternMatch, since time.Duration, at time.Time) {
+	if s == nil || s.dispatcher == nil {
+		return
+	}
+	if at.IsZero() {
+		at = time.Now().UTC()
+	}
+	eventPayload := s.buildPTYEventPayload(at, since, match)
+	_ = s.dispatcher.Publish(ctx, protocol.Subject("events", "pty"), protocol.Event{
+		Name:       name,
+		Payload:    eventPayload,
+		OccurredAt: time.Now().UTC(),
+	})
+}
+
+func (s *LocalSession) buildPTYEventPayload(at time.Time, since time.Duration, match *adapter.PatternMatch) PTYEventPayload {
+	return PTYEventPayload{
+		AgentID:   s.meta.AgentID,
+		SessionID: s.meta.ID,
+		Timestamp: at.UTC().Format(time.RFC3339),
+		Since:     formatDuration(since),
+		Match:     match,
+	}
+}
+
+func formatDuration(d time.Duration) string {
+	if d <= 0 {
+		return ""
+	}
+	return d.String()
+}
+
+// PTYEventPayload is the payload emitted for PTY monitor events.
+type PTYEventPayload struct {
+	AgentID   api.AgentID             `json:"agent_id"`
+	SessionID api.SessionID           `json:"session_id"`
+	Timestamp string                  `json:"timestamp"`
+	Since     string                  `json:"since,omitempty"`
+	Match     *adapter.PatternMatch   `json:"match,omitempty"`
 }

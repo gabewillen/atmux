@@ -60,6 +60,10 @@ const (
 	EventStuckDetected = "stuck.detected"
 	// EventActivity marks agent activity.
 	EventActivity = "activity.detected"
+	// EventInactivityDetected marks inactivity detection.
+	EventInactivityDetected = "inactivity.detected"
+	// EventErrorDetected marks error detection in PTY output.
+	EventErrorDetected = "error.detected"
 
 	// EventAgentStarted is emitted when the agent starts running.
 	EventAgentStarted = "agent.started"

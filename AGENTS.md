@@ -9,8 +9,10 @@
 - NEVER generate new code when suitable existing solutions exist
 - ALWAYS explain why existing solutions weren't suitable when creating new code
 - ALWAYS follow existing code patterns and conventions found in the codebase
+- NEVER use time.Sleep; always use hsm.After methods or ErrorGroup or channels
 - NEVER use any external dependencies without explicit user approval that aren't in the docs/plan-v2.4.md file or docs/spec-v1.22.md file
 - NEVER use any external testing library only use the built-in testing library
+- ALWAYS try to write real integration tests over mocking
 
 # Project Layout
 
@@ -92,3 +94,5 @@
 
 - ALWAYS run: tidy → vet → lint → test -race → test → coverage → bench (continue on failure)
 - ALWAYS write TOML snapshot to `snapshots/`; `--no-snapshot` → stdout; `--regression` compares to previous
+- ALWAYS require minimum total coverage of 80% for `amux test`
+- ALWAYS require > 80% coverage for any new files

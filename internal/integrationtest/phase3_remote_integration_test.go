@@ -139,7 +139,15 @@ func TestIntegrationPhase3RemoteOrchestration(t *testing.T) {
 		startErr <- hostMgr.Start(ctx)
 	}()
 	waitForHostReady(t, director, hostID, startErr, 10*time.Second)
-	time.Sleep(250 * time.Millisecond)
+	{
+		timer := time.NewTimer(250 * time.Millisecond)
+		select {
+		case <-timer.C:
+		case <-ctx.Done():
+			timer.Stop()
+			t.Fatalf("wait before spawn: %v", ctx.Err())
+		}
+	}
 	spawnReq := remote.SpawnRequest{
 		AgentID:   api.NewAgentID().String(),
 		AgentSlug: "phase3-agent",
@@ -178,7 +186,15 @@ func TestIntegrationPhase3RemoteOrchestration(t *testing.T) {
 	if err := client.SetProxyEnabled(ctx, leafProxyName, false); err != nil {
 		t.Fatalf("disable leaf proxy: %v", err)
 	}
-	time.Sleep(750 * time.Millisecond)
+	{
+		timer := time.NewTimer(750 * time.Millisecond)
+		select {
+		case <-timer.C:
+		case <-ctx.Done():
+			timer.Stop()
+			t.Fatalf("wait after disconnect: %v", ctx.Err())
+		}
+	}
 	if err := client.SetProxyEnabled(ctx, hubProxyName, true); err != nil {
 		t.Fatalf("enable hub proxy: %v", err)
 	}
@@ -186,7 +202,15 @@ func TestIntegrationPhase3RemoteOrchestration(t *testing.T) {
 		t.Fatalf("enable leaf proxy: %v", err)
 	}
 	waitForHostReady(t, director, hostID, startErr, 15*time.Second)
-	time.Sleep(250 * time.Millisecond)
+	{
+		timer := time.NewTimer(250 * time.Millisecond)
+		select {
+		case <-timer.C:
+		case <-ctx.Done():
+			timer.Stop()
+			t.Fatalf("wait before replay: %v", ctx.Err())
+		}
+	}
 	drainOutput(outputCh)
 	replayResp, err := retryReplay(ctx, director, hostID, sessionID, 10*time.Second)
 	if err != nil {
@@ -419,7 +443,11 @@ func retrySpawn(ctx context.Context, director *remote.Director, hostID api.HostI
 		if !isTransientControlErr(err) || time.Now().After(deadline) {
 			return remote.SpawnResponse{}, lastErr
 		}
-		time.Sleep(200 * time.Millisecond)
+		select {
+		case <-time.After(200 * time.Millisecond):
+		case <-ctx.Done():
+			return remote.SpawnResponse{}, fmt.Errorf("spawn retry: %w", ctx.Err())
+		}
 	}
 }
 
@@ -435,7 +463,11 @@ func retryReplay(ctx context.Context, director *remote.Director, hostID api.Host
 		if !isTransientControlErr(err) || time.Now().After(deadline) {
 			return remote.ReplayResponse{}, lastErr
 		}
-		time.Sleep(200 * time.Millisecond)
+		select {
+		case <-time.After(200 * time.Millisecond):
+		case <-ctx.Done():
+			return remote.ReplayResponse{}, fmt.Errorf("replay retry: %w", ctx.Err())
+		}
 	}
 }
 

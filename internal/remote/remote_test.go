@@ -3,6 +3,7 @@ package remote
 import (
 	"bufio"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,6 +16,7 @@ import (
 	"github.com/agentflare-ai/amux/internal/paths"
 	"github.com/agentflare-ai/amux/internal/protocol"
 	"github.com/agentflare-ai/amux/pkg/api"
+	"github.com/nats-io/nats.go"
 )
 
 func TestRemoteHandshakeAndSpawn(t *testing.T) {
@@ -107,18 +109,19 @@ func TestRemoteHandshakeAndSpawn(t *testing.T) {
 		t.Fatalf("handshake not observed")
 	}
 	deadline := time.Now().Add(5 * time.Second)
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
 	for !director.HostReady(hostID) {
 		select {
 		case err := <-startErr:
 			if err != nil {
 				t.Fatalf("host manager: %v", err)
 			}
-		default:
+		case <-ticker.C:
 		}
 		if time.Now().After(deadline) {
 			t.Fatalf("host not ready")
 		}
-		time.Sleep(50 * time.Millisecond)
 	}
 	spawnReq := SpawnRequest{
 		AgentID:   api.NewAgentID().String(),
@@ -130,8 +133,24 @@ func TestRemoteHandshakeAndSpawn(t *testing.T) {
 			"AMUX_HELPER": "1",
 		},
 	}
-	resp, err := director.Spawn(ctx, hostID, spawnReq)
-	if err != nil {
+	var resp SpawnResponse
+	spawnDeadline := time.Now().Add(5 * time.Second)
+	for {
+		resp, err = director.Spawn(ctx, hostID, spawnReq)
+		if err == nil {
+			break
+		}
+		if errors.Is(err, ErrNotReady) || errors.Is(err, ErrHostDisconnected) || errors.Is(err, nats.ErrNoResponders) {
+			if time.Now().After(spawnDeadline) {
+				t.Fatalf("spawn: %v", err)
+			}
+			select {
+			case <-time.After(100 * time.Millisecond):
+			case <-ctx.Done():
+				t.Fatalf("spawn: %v", ctx.Err())
+			}
+			continue
+		}
 		t.Fatalf("spawn: %v", err)
 	}
 	sessionID, err := api.ParseSessionID(resp.SessionID)
@@ -173,7 +192,7 @@ func TestRemoteHelperProcess(t *testing.T) {
 	writer := bufio.NewWriter(os.Stdout)
 	_, _ = writer.WriteString("hello\n")
 	_ = writer.Flush()
-	time.Sleep(200 * time.Millisecond)
+	<-time.After(200 * time.Millisecond)
 }
 
 func initRepo(t *testing.T) string {

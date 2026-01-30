@@ -20,6 +20,11 @@ import (
 
 const specVersion = "v1.22"
 
+const minCoveragePercent = 80.0
+
+// ErrCoverageBelowThreshold reports insufficient coverage.
+var ErrCoverageBelowThreshold = errors.New("coverage below threshold")
+
 func runTest(args []string) error {
 	flags := flag.NewFlagSet("amux test", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
@@ -49,6 +54,9 @@ func runTest(args []string) error {
 		percent, err := parseCoverageTotal(coverageStep.coverageProfile)
 		if err != nil {
 			return fmt.Errorf("coverage parse: %w", err)
+		}
+		if percent < minCoveragePercent {
+			return fmt.Errorf("coverage check: %w: got %.2f%% want >= %.2f%%", ErrCoverageBelowThreshold, percent, minCoveragePercent)
 		}
 		step := snapshot.Steps["coverage"]
 		step.TotalPercent = &percent
@@ -107,8 +115,8 @@ type snapshot struct {
 }
 
 type snapshotMeta struct {
-	CreatedAt  time.Time
-	ModuleRoot string
+	CreatedAt   time.Time
+	ModuleRoot  string
 	SpecVersion string
 }
 
@@ -213,8 +221,8 @@ func runStep(moduleRoot string, argv []string) stepResult {
 
 func buildSnapshot(moduleRoot string, steps map[string]stepResult) snapshot {
 	meta := snapshotMeta{
-		CreatedAt:  time.Now().UTC(),
-		ModuleRoot: moduleRoot,
+		CreatedAt:   time.Now().UTC(),
+		ModuleRoot:  moduleRoot,
 		SpecVersion: specVersion,
 	}
 	stepSnapshots := make(map[string]snapshotStep)
@@ -487,15 +495,22 @@ func decodeSnapshot(raw map[string]any) (snapshot, error) {
 		step.StderrSHA256, _ = stepMap["stderr_sha256"].(string)
 		step.StdoutBytes = toInt(stepMap["stdout_bytes"])
 		step.StderrBytes = toInt(stepMap["stderr_bytes"])
-		if total, ok := stepMap["total_percent"].(float64); ok {
+		switch total := stepMap["total_percent"].(type) {
+		case float64:
 			step.TotalPercent = &total
+		case int64:
+			value := float64(total)
+			step.TotalPercent = &value
+		case int:
+			value := float64(total)
+			step.TotalPercent = &value
 		}
 		steps[name] = step
 	}
 	benchmarks := decodeBenchmarks(raw["benchmarks"])
 	return snapshot{
-		Meta: snapshotMeta{CreatedAt: createdAt, ModuleRoot: moduleRoot, SpecVersion: specVer},
-		Steps: steps,
+		Meta:       snapshotMeta{CreatedAt: createdAt, ModuleRoot: moduleRoot, SpecVersion: specVer},
+		Steps:      steps,
 		Benchmarks: benchmarks,
 	}, nil
 }

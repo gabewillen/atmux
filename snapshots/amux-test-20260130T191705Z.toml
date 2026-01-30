@@ -1,0 +1,69 @@
+[meta]
+created_at = "2026-01-30T19:17:05Z"
+module_root = "/shared/codex-gpt-5.2-codex-high"
+spec_version = "v1.22"
+
+[steps.benchmarks]
+argv = ["go", "test", "-run=^$", "-bench=.", "-benchmem", "./..."]
+exit_code = 0
+duration_ms = 822
+stdout_sha256 = "124a543789e5557a7400aa195f1c5fe2a307872ee3d8c0ee71a647924574f278"
+stderr_sha256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+stdout_bytes = 1439
+stderr_bytes = 0
+
+[steps.coverage]
+argv = ["go", "test", "./...", "-coverprofile=/shared/codex-gpt-5.2-codex-high/.amux/coverage/coverage.out"]
+exit_code = 0
+duration_ms = 844
+stdout_sha256 = "7676b32de1ac8fc391888f9eb46bbd2d68d6f3814f03d8bee1ad8e26818a7692"
+stderr_sha256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+stdout_bytes = 2033
+stderr_bytes = 0
+total_percent = 80
+
+[steps.go_mod_tidy]
+argv = ["go", "mod", "tidy"]
+exit_code = 0
+duration_ms = 45
+stdout_sha256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+stderr_sha256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+stdout_bytes = 0
+stderr_bytes = 0
+
+[steps.go_vet]
+argv = ["go", "vet", "./..."]
+exit_code = 0
+duration_ms = 265
+stdout_sha256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+stderr_sha256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+stdout_bytes = 0
+stderr_bytes = 0
+
+[steps.golangci_lint]
+argv = ["golangci-lint", "run", "./..."]
+exit_code = 0
+duration_ms = 571
+stdout_sha256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+stderr_sha256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+stdout_bytes = 0
+stderr_bytes = 0
+
+[steps.tests]
+argv = ["go", "test", "./..."]
+exit_code = 0
+duration_ms = 796
+stdout_sha256 = "5a37d3638124ccfc039b06b03d8b04d03704d785ca5cb9a27ec2428678580f6c"
+stderr_sha256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+stdout_bytes = 1371
+stderr_bytes = 0
+
+[steps.tests_race]
+argv = ["go", "test", "-race", "./..."]
+exit_code = 0
+duration_ms = 28138
+stdout_sha256 = "a2041c9a94e172793fc2a455d2d31b4a12f6ba1892c2a124b1d3334386c38d98"
+stderr_sha256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+stdout_bytes = 1370
+stderr_bytes = 0
+

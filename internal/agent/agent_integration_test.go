@@ -87,14 +87,20 @@ func TestIntegrationAgentLifecyclePresence(t *testing.T) {
 
 func waitForState(t *testing.T, timeout time.Duration, state func() string, want string) {
 	t.Helper()
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
+	deadline := time.NewTimer(timeout)
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer deadline.Stop()
+	defer ticker.Stop()
+	for {
 		if state() == want {
 			return
 		}
-		time.Sleep(10 * time.Millisecond)
+		select {
+		case <-ticker.C:
+		case <-deadline.C:
+			t.Fatalf("timeout waiting for %s (last=%s)", want, state())
+		}
 	}
-	t.Fatalf("timeout waiting for %s (last=%s)", want, state())
 }
 
 func waitForEvent(ch <-chan protocol.Event, name string, timeout time.Duration) error {

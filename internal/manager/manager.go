@@ -720,7 +720,13 @@ func (m *Manager) spawnRemote(ctx context.Context, hostID api.HostID, req remote
 		if time.Now().After(deadline) {
 			return remote.SpawnResponse{}, err
 		}
-		time.Sleep(200 * time.Millisecond)
+		timer := time.NewTimer(200 * time.Millisecond)
+		select {
+		case <-timer.C:
+		case <-ctx.Done():
+			timer.Stop()
+			return remote.SpawnResponse{}, fmt.Errorf("spawn remote: %w", ctx.Err())
+		}
 	}
 }
 

@@ -205,7 +205,7 @@ Establish repository structure, build/toolchain, configuration, observability sc
 
 - [x] Run `amux test --regression` at the end of Phase 0 to verify no regressions relative to the Phase 0 baseline snapshot
   - Spec reference(s): §12.6.5
-  - Acceptance criteria: `amux test --regression` exits 0; any regressions are fixed before Phase 0 is considered complete; the new snapshot is written to `<module_root>/snapshots/`.
+  - Acceptance criteria: `amux test --regression` exits 0; any regressions are fixed before Phase 0 is considered complete; coverage total is at least 80%; the new snapshot is written to `<module_root>/snapshots/`.
 
 - [x] Update this plan’s TODOs for Phase 0, remove unused code/scripts, and commit Phase 0 to git
   - Spec reference(s): N/A (plan process requirement)
@@ -259,7 +259,7 @@ Implement authoritative types, identifiers, and HSM-driven lifecycle and presenc
 
 - [x] Run `amux test --regression` at the end of Phase 1 to verify no regressions relative to the Phase 1 baseline snapshot
   - Spec reference(s): §12.6.5
-  - Acceptance criteria: `amux test --regression` exits 0; any regressions are fixed before Phase 1 is considered complete; the new snapshot is written to `<module_root>/snapshots/`.
+  - Acceptance criteria: `amux test --regression` exits 0; any regressions are fixed before Phase 1 is considered complete; coverage total is at least 80%; the new snapshot is written to `<module_root>/snapshots/`.
 
 - [x] Update this plan’s TODOs for Phase 1, remove unused code/scripts, and commit Phase 1 to git
   - Spec reference(s): N/A (plan process requirement)
@@ -316,7 +316,7 @@ Support adding/removing local agents, worktree isolation, local spawn/attach, gr
 
 - [x] Run `amux test --regression` at the end of Phase 2 to verify no regressions relative to the Phase 2 baseline snapshot
   - Spec reference(s): §12.6.5
-  - Acceptance criteria: `amux test --regression` exits 0; any regressions are fixed before Phase 2 is considered complete; the new snapshot is written to `<module_root>/snapshots/`.
+  - Acceptance criteria: `amux test --regression` exits 0; any regressions are fixed before Phase 2 is considered complete; coverage total is at least 80%; the new snapshot is written to `<module_root>/snapshots/`.
 
 - [x] Update this plan’s TODOs for Phase 2, remove unused code/scripts, and commit Phase 2 to git
   - Spec reference(s): N/A (plan process requirement)
@@ -402,7 +402,7 @@ Implement remote host manager/director roles, NATS subjects, handshake, request-
 
 - [x] Run `amux test --regression` at the end of Phase 3 to verify no regressions relative to the Phase 3 baseline snapshot
   - Spec reference(s): §12.6.5
-  - Acceptance criteria: `amux test --regression` exits 0; any regressions are fixed before Phase 3 is considered complete; the new snapshot is written to `<module_root>/snapshots/`.
+  - Acceptance criteria: `amux test --regression` exits 0; any regressions are fixed before Phase 3 is considered complete; coverage total is at least 80%; the new snapshot is written to `<module_root>/snapshots/`.
 
 - [x] Update this plan’s TODOs for Phase 3, remove unused code/scripts, and commit Phase 3 to git
   - Spec reference(s): N/A (plan process requirement)
@@ -454,7 +454,7 @@ Provide presence state model, roster listing, presence awareness, and inter-agen
 
 - [x] Run `amux test --regression` at the end of Phase 4 to verify no regressions relative to the Phase 4 baseline snapshot
   - Spec reference(s): §12.6.5
-  - Acceptance criteria: `amux test --regression` exits 0; any regressions are fixed before Phase 4 is considered complete; the new snapshot is written to `<module_root>/snapshots/`.
+  - Acceptance criteria: `amux test --regression` exits 0; any regressions are fixed before Phase 4 is considered complete; coverage total is at least 80%; the new snapshot is written to `<module_root>/snapshots/`.
 
 - [x] Update this plan’s TODOs for Phase 4, remove unused code/scripts, and commit Phase 4 to git
   - Spec reference(s): N/A (plan process requirement)
@@ -511,7 +511,7 @@ Own PTYs for agents, monitor output for activity and patterns, and decode TUI sc
 
 - [ ] Run `amux test --regression` at the end of Phase 5 to verify no regressions relative to the Phase 5 baseline snapshot
   - Spec reference(s): §12.6.5
-  - Acceptance criteria: `amux test --regression` exits 0; any regressions are fixed before Phase 5 is considered complete; the new snapshot is written to `<module_root>/snapshots/`.
+  - Acceptance criteria: `amux test --regression` exits 0; any regressions are fixed before Phase 5 is considered complete; coverage total is at least 80%; the new snapshot is written to `<module_root>/snapshots/`.
 
 - [ ] Update this plan’s TODOs for Phase 5, remove unused code/scripts, and commit Phase 5 to git
   - Spec reference(s): N/A (plan process requirement)
@@ -597,7 +597,7 @@ Track spawned processes, intercept exec where required, emit process and I/O eve
 
 - [ ] Run `amux test --regression` at the end of Phase 6 to verify no regressions relative to the Phase 6 baseline snapshot
   - Spec reference(s): §12.6.5
-  - Acceptance criteria: `amux test --regression` exits 0; any regressions are fixed before Phase 6 is considered complete; the new snapshot is written to `<module_root>/snapshots/`.
+  - Acceptance criteria: `amux test --regression` exits 0; any regressions are fixed before Phase 6 is considered complete; coverage total is at least 80%; the new snapshot is written to `<module_root>/snapshots/`.
 
 - [ ] Update this plan’s TODOs for Phase 6, remove unused code/scripts, and commit Phase 6 to git
   - Spec reference(s): N/A (plan process requirement)
@@ -653,7 +653,7 @@ Implement event types, dispatch, handlers, deferral, and network-aware routing a
 
 - [ ] Run `amux test --regression` at the end of Phase 7 to verify no regressions relative to the Phase 7 baseline snapshot
   - Spec reference(s): §12.6.5
-  - Acceptance criteria: `amux test --regression` exits 0; any regressions are fixed before Phase 7 is considered complete; the new snapshot is written to `<module_root>/snapshots/`.
+  - Acceptance criteria: `amux test --regression` exits 0; any regressions are fixed before Phase 7 is considered complete; coverage total is at least 80%; the new snapshot is written to `<module_root>/snapshots/`.
 
 - [ ] Update this plan’s TODOs for Phase 7, remove unused code/scripts, and commit Phase 7 to git
   - Spec reference(s): N/A (plan process requirement)
@@ -719,7 +719,7 @@ Load adapters as WASM modules, expose host functions, and integrate adapters for
 
 - [ ] Run `amux test --regression` at the end of Phase 8 to verify no regressions relative to the Phase 8 baseline snapshot
   - Spec reference(s): §12.6.5
-  - Acceptance criteria: `amux test --regression` exits 0; any regressions are fixed before Phase 8 is considered complete; the new snapshot is written to `<module_root>/snapshots/`.
+  - Acceptance criteria: `amux test --regression` exits 0; any regressions are fixed before Phase 8 is considered complete; coverage total is at least 80%; the new snapshot is written to `<module_root>/snapshots/`.
 
 - [ ] Update this plan’s TODOs for Phase 8, remove unused code/scripts, and commit Phase 8 to git
   - Spec reference(s): N/A (plan process requirement)
@@ -773,7 +773,7 @@ Run the observation loop, produce snapshots, and perform coordination actions us
 
 - [ ] Run `amux test --regression` at the end of Phase 9 to verify no regressions relative to the Phase 9 baseline snapshot
   - Spec reference(s): §12.6.5
-  - Acceptance criteria: `amux test --regression` exits 0; any regressions are fixed before Phase 9 is considered complete; the new snapshot is written to `<module_root>/snapshots/`.
+  - Acceptance criteria: `amux test --regression` exits 0; any regressions are fixed before Phase 9 is considered complete; coverage total is at least 80%; the new snapshot is written to `<module_root>/snapshots/`.
 
 - [ ] Update this plan’s TODOs for Phase 9, remove unused code/scripts, and commit Phase 9 to git
   - Spec reference(s): N/A (plan process requirement)
@@ -826,7 +826,7 @@ Expose a JSON-RPC control plane for CLI clients and plugins, including required 
 
 - [ ] Run `amux test --regression` at the end of Phase 10 to verify no regressions relative to the Phase 10 baseline snapshot
   - Spec reference(s): §12.6.5
-  - Acceptance criteria: `amux test --regression` exits 0; any regressions are fixed before Phase 10 is considered complete; the new snapshot is written to `<module_root>/snapshots/`.
+  - Acceptance criteria: `amux test --regression` exits 0; any regressions are fixed before Phase 10 is considered complete; coverage total is at least 80%; the new snapshot is written to `<module_root>/snapshots/`.
 
 - [ ] Update this plan’s TODOs for Phase 10, remove unused code/scripts, and commit Phase 10 to git
   - Spec reference(s): N/A (plan process requirement)
@@ -887,7 +887,7 @@ Implement plugin management commands, plugin registry and installation sources, 
 
 - [ ] Run `amux test --regression` at the end of Phase 11 to verify no regressions relative to the Phase 11 baseline snapshot
   - Spec reference(s): §12.6.5
-  - Acceptance criteria: `amux test --regression` exits 0; any regressions are fixed before Phase 11 is considered complete; the new snapshot is written to `<module_root>/snapshots/`.
+  - Acceptance criteria: `amux test --regression` exits 0; any regressions are fixed before Phase 11 is considered complete; coverage total is at least 80%; the new snapshot is written to `<module_root>/snapshots/`.
 
 - [ ] Update this plan’s TODOs for Phase 11, remove unused code/scripts, and commit Phase 11 to git
   - Spec reference(s): N/A (plan process requirement)
@@ -946,7 +946,7 @@ Complete the conformance suite, validate required E2E flows, and ensure cross-pl
 
 - [ ] Run `amux test --regression` at the end of Phase 12 to verify no regressions relative to the Phase 12 baseline snapshot
   - Spec reference(s): §12.6.5
-  - Acceptance criteria: `amux test --regression` exits 0; any regressions are fixed before Phase 12 is considered complete; the new snapshot is written to `<module_root>/snapshots/`.
+  - Acceptance criteria: `amux test --regression` exits 0; any regressions are fixed before Phase 12 is considered complete; coverage total is at least 80%; the new snapshot is written to `<module_root>/snapshots/`.
 
 - [ ] Update this plan’s TODOs for Phase 12, remove unused code/scripts, and commit Phase 12 to git
   - Spec reference(s): N/A (plan process requirement)

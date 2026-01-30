@@ -240,7 +240,13 @@ func (n *NATSContainer) WaitReady(ctx context.Context, timeout time.Duration) er
 		if time.Now().After(deadline) {
 			return fmt.Errorf("integration harness: wait nats ready: timeout")
 		}
-		time.Sleep(200 * time.Millisecond)
+		timer := time.NewTimer(200 * time.Millisecond)
+		select {
+		case <-timer.C:
+		case <-ctx.Done():
+			timer.Stop()
+			return fmt.Errorf("integration harness: wait nats ready: %w", ctx.Err())
+		}
 	}
 }
 

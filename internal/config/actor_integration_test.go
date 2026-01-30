@@ -40,15 +40,19 @@ func TestIntegrationConfigActorReload(t *testing.T) {
 	if err != nil {
 		t.Fatalf("start actor: %v", err)
 	}
-	waitStart := time.Now()
+	deadline := time.NewTimer(time.Second)
+	ticker := time.NewTicker(5 * time.Millisecond)
+	defer deadline.Stop()
+	defer ticker.Stop()
 	for {
 		if actor.Current().Timeouts.Idle == 30*time.Second {
 			break
 		}
-		if time.Since(waitStart) > time.Second {
+		select {
+		case <-ticker.C:
+		case <-deadline.C:
 			t.Fatalf("initial config not loaded")
 		}
-		time.Sleep(5 * time.Millisecond)
 	}
 	changes := make(chan ConfigChange, 1)
 	actor.Subscribe(func(change ConfigChange) {

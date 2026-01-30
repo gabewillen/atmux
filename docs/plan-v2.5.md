@@ -423,40 +423,40 @@ Provide presence state model, roster listing, presence awareness, and inter-agen
 - Presence transitions and derived status
 
 ### TODO list
-- [ ] Run `amux test` to capture the baseline snapshot for Phase 4
+- [x] Run `amux test` to capture the baseline snapshot for Phase 4
   - Spec reference(s): §12.6.1–§12.6.3
   - Acceptance criteria: a new `snapshots/amux-test-*.toml` exists under `<module_root>/snapshots/` and is retained as the baseline for Phase 4 regression checking.
 
-- [ ] Implement presence states and transitions, including Away semantics for remote disconnection
+- [x] Implement presence states and transitions, including Away semantics for remote disconnection
   - Spec reference(s): §6.1, §6.5, §5.5.8
   - Acceptance criteria: state machine matches allowed transitions; remote disconnect moves to Away; reconnect and replay moves Away → Running and presence updates accordingly.
 
-- [ ] Implement roster data model and listing outputs
+- [x] Implement roster data model and listing outputs
   - Spec reference(s): §6.2
   - Acceptance criteria: roster includes all required fields; ordering and filtering match spec; CLI and JSON-RPC surfaces expose roster entries.
 
-- [ ] Implement presence awareness and subscriptions
+- [x] Implement presence awareness and subscriptions
   - Spec reference(s): §6.3
   - Acceptance criteria: components can subscribe to roster/presence changes; updates delivered reliably in tests.
 
-- [ ] Implement inter-agent messaging routes
+- [x] Implement inter-agent messaging routes
   - Spec reference(s): §6.4
   - Acceptance criteria: messages are addressed and delivered per spec; notification gating and batching integrate with process notification pipelines where applicable.
 
 
-- [ ] Add/extend docker + testcontainers-based integration tests for Phase 4
+- [x] Add/extend docker + testcontainers-based integration tests for Phase 4
   - Spec reference(s): N/A (integration testing requirement)
   - Acceptance criteria: the integration test suite exercises the primary Phase 4 flows end-to-end and is runnable via the repository’s integration test entrypoint; tests MUST use docker + testcontainers to provision any required external dependencies.
 
-- [ ] The implementation MUST maintain inline Go documentation and MUST regenerate per-package `README.md` files via `go-docmd`
+- [x] The implementation MUST maintain inline Go documentation and MUST regenerate per-package `README.md` files via `go-docmd`
   - Spec reference(s): §4.2.6.1
   - Acceptance criteria: every package and exported identifier added or modified in this phase MUST include `go doc`-suitable comments; running `go run github.com/agentflare-ai/go-docmd@latest -cmd -all -inplace ./...` at the module root MUST produce no uncommitted changes; generated per-package `README.md` files MUST be committed.
 
-- [ ] Run `amux test --regression` at the end of Phase 4 to verify no regressions relative to the Phase 4 baseline snapshot
+- [x] Run `amux test --regression` at the end of Phase 4 to verify no regressions relative to the Phase 4 baseline snapshot
   - Spec reference(s): §12.6.5
   - Acceptance criteria: `amux test --regression` exits 0; any regressions are fixed before Phase 4 is considered complete; the new snapshot is written to `<module_root>/snapshots/`.
 
-- [ ] Update this plan’s TODOs for Phase 4, remove unused code/scripts, and commit Phase 4 to git
+- [x] Update this plan’s TODOs for Phase 4, remove unused code/scripts, and commit Phase 4 to git
   - Spec reference(s): N/A (plan process requirement)
   - Acceptance criteria: Phase 4 TODOs are updated; `git status` is clean; the Phase 4 baseline + latest snapshots are retained; a Phase 4 commit exists in git history.
 ---

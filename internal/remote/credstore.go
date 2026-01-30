@@ -14,6 +14,7 @@ import (
 // HubAuth contains JWT material for hub server configuration.
 type HubAuth struct {
 	OperatorPublicKey string
+	OperatorJWT       string
 	SystemAccountKey  string
 	SystemAccountJWT  string
 	AccountPublicKey  string
@@ -94,6 +95,7 @@ func (c *CredentialStore) HubAuth() (HubAuth, error) {
 	}
 	return HubAuth{
 		OperatorPublicKey: operatorPub,
+		OperatorJWT:       c.operatorJWT,
 		SystemAccountKey:  systemPub,
 		SystemAccountJWT:  c.systemJWT,
 		AccountPublicKey:  accountPub,

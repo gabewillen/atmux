@@ -21,7 +21,7 @@ func TestIntegrationAgentLifecyclePresence(t *testing.T) {
 		t.Fatalf("harness: %v", err)
 	}
 	ctx := harness.Context()
-	natsContainer, err := harness.StartNATS(ctx)
+	natsContainer, err := harness.StartNATS(ctx, integrationtest.NATSContainerOptions{})
 	if err != nil {
 		t.Fatalf("nats: %v", err)
 	}

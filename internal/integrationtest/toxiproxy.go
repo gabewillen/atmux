@@ -107,6 +107,15 @@ func (c *ToxiproxyClient) AddTimeout(ctx context.Context, name string, timeout t
 	return nil
 }
 
+// RemoveToxic removes a toxic from a proxy.
+func (c *ToxiproxyClient) RemoveToxic(ctx context.Context, proxyName string, toxicName string) error {
+	_, err := c.doJSON(ctx, http.MethodDelete, fmt.Sprintf("/proxies/%s/toxics/%s", proxyName, toxicName), nil)
+	if err != nil {
+		return fmt.Errorf("toxiproxy remove toxic: %w", err)
+	}
+	return nil
+}
+
 func (c *ToxiproxyClient) doJSON(ctx context.Context, method string, path string, payload any) ([]byte, error) {
 	if c == nil {
 		return nil, fmt.Errorf("toxiproxy client is nil")
@@ -114,16 +123,22 @@ func (c *ToxiproxyClient) doJSON(ctx context.Context, method string, path string
 	if c.Client == nil {
 		c.Client = &http.Client{Timeout: 5 * time.Second}
 	}
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return nil, fmt.Errorf("toxiproxy encode payload: %w", err)
+	var body io.Reader
+	if payload != nil {
+		encoded, err := json.Marshal(payload)
+		if err != nil {
+			return nil, fmt.Errorf("toxiproxy encode payload: %w", err)
+		}
+		body = bytes.NewReader(encoded)
 	}
 	url := c.BaseURL + path
-	request, err := http.NewRequestWithContext(ctx, method, url, bytes.NewReader(body))
+	request, err := http.NewRequestWithContext(ctx, method, url, body)
 	if err != nil {
 		return nil, fmt.Errorf("toxiproxy request: %w", err)
 	}
-	request.Header.Set("Content-Type", "application/json")
+	if payload != nil {
+		request.Header.Set("Content-Type", "application/json")
+	}
 	response, err := c.Client.Do(request)
 	if err != nil {
 		return nil, fmt.Errorf("toxiproxy request: %w", err)

@@ -24,6 +24,16 @@ const (
 	defaultHarnessGrace = 30 * time.Second
 )
 
+// NATSContainerOptions controls how the NATS container is started.
+type NATSContainerOptions struct {
+	// ExposedPorts overrides the default exposed ports.
+	ExposedPorts []string
+	// Cmd overrides the default NATS server arguments.
+	Cmd []string
+	// Files copies host files into the container before startup.
+	Files []testcontainers.ContainerFile
+}
+
 // ErrDockerUnavailable indicates docker is not reachable for integration tests.
 var ErrDockerUnavailable = errors.New("docker unavailable")
 
@@ -126,17 +136,26 @@ type NATSContainer struct {
 }
 
 // StartNATS launches a NATS container with JetStream enabled.
-func (h *Harness) StartNATS(ctx context.Context) (*NATSContainer, error) {
+func (h *Harness) StartNATS(ctx context.Context, opts NATSContainerOptions) (*NATSContainer, error) {
 	if h == nil {
 		return nil, fmt.Errorf("integration harness: nil")
 	}
 	ctx = h.contextOrDefault(ctx)
 	alias := "nats"
+	exposedPorts := opts.ExposedPorts
+	if len(exposedPorts) == 0 {
+		exposedPorts = []string{natsPort}
+	}
+	cmd := opts.Cmd
+	if len(cmd) == 0 {
+		cmd = []string{"-js", "--store_dir", "/data/jetstream"}
+	}
 	req := testcontainers.ContainerRequest{
 		Image:        natsImage,
-		ExposedPorts: []string{natsPort},
-		Cmd:          []string{"-js", "--store_dir", "/data/jetstream"},
+		ExposedPorts: exposedPorts,
+		Cmd:          cmd,
 		WaitingFor:   wait.ForListeningPort(natsPort).WithStartupTimeout(60 * time.Second),
+		Files:        opts.Files,
 	}
 	if h.network != nil {
 		req.Networks = []string{h.network.Name}
@@ -257,7 +276,7 @@ func (h *Harness) StartToxiproxy(ctx context.Context) (*ToxiproxyContainer, erro
 	alias := "toxiproxy"
 	req := testcontainers.ContainerRequest{
 		Image:        toxiproxyImage,
-		ExposedPorts: []string{toxiproxyAPIPort, toxiproxyProxyPort},
+		ExposedPorts: []string{toxiproxyAPIPort, toxiproxyProxyPort, "8667/tcp"},
 		WaitingFor:   wait.ForListeningPort(toxiproxyAPIPort).WithStartupTimeout(60 * time.Second),
 	}
 	if h.network != nil {

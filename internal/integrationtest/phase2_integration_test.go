@@ -85,7 +85,7 @@ func TestIntegrationPhase2LocalLifecycle(t *testing.T) {
 		t.Fatalf("harness: %v", err)
 	}
 	ctx := harness.Context()
-	natsContainer, err := harness.StartNATS(ctx)
+	natsContainer, err := harness.StartNATS(ctx, NATSContainerOptions{})
 	if err != nil {
 		t.Fatalf("nats: %v", err)
 	}

@@ -1463,6 +1463,7 @@ HostSnapshot captures the director's view of a host manager.
 ```go
 type HubAuth struct {
 	OperatorPublicKey string
+	OperatorJWT       string
 	SystemAccountKey  string
 	SystemAccountJWT  string
 	AccountPublicKey  string

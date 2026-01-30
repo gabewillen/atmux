@@ -8,6 +8,7 @@ Package integrationtest provides docker/testcontainers helpers for integration t
 - `func safeNetworkNew(ctx context.Context) (dockernet *testcontainers.DockerNetwork, err error)`
 - `natsImage, toxiproxyImage, natsPort, toxiproxyAPIPort, toxiproxyProxyPort, defaultHarnessGrace`
 - `type Harness` — Harness manages docker/testcontainers infrastructure for integration tests.
+- `type NATSContainerOptions` — NATSContainerOptions controls how the NATS container is started.
 - `type NATSContainer` — NATSContainer tracks a NATS container instance.
 - `type ToxiproxyClient` — ToxiproxyClient configures network faults via the toxiproxy API.
 - `type ToxiproxyContainer` — ToxiproxyContainer tracks a toxiproxy container instance.
@@ -93,7 +94,7 @@ Context returns the harness context.
 #### Harness.StartNATS
 
 ```go
-func () StartNATS(ctx context.Context) (*NATSContainer, error)
+func () StartNATS(ctx context.Context, opts NATSContainerOptions) (*NATSContainer, error)
 ```
 
 StartNATS launches a NATS container with JetStream enabled.
@@ -160,6 +161,21 @@ func () refreshEndpoint(ctx context.Context) error
 ```
 
 
+## type NATSContainerOptions
+
+```go
+type NATSContainerOptions struct {
+	// ExposedPorts overrides the default exposed ports.
+	ExposedPorts []string
+	// Cmd overrides the default NATS server arguments.
+	Cmd []string
+	// Files copies host files into the container before startup.
+	Files []testcontainers.ContainerFile
+}
+```
+
+NATSContainerOptions controls how the NATS container is started.
+
 ## type ToxiproxyClient
 
 ```go
@@ -207,6 +223,14 @@ func () CreateProxy(ctx context.Context, name string, listen string, upstream st
 ```
 
 CreateProxy registers a new proxy.
+
+#### ToxiproxyClient.RemoveToxic
+
+```go
+func () RemoveToxic(ctx context.Context, proxyName string, toxicName string) error
+```
+
+RemoveToxic removes a toxic from a proxy.
 
 #### ToxiproxyClient.SetProxyEnabled
 

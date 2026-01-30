@@ -5,7 +5,6 @@
 - ALWAYS reference adapters by string name and load via WASM registry
 - ALWAYS use hsm-go for state machines, muid for IDs, wazero for WASM, creack/pty for PTYs
 - ALWAYS use NATS as event transport even in local-only deployments
-- ALWAYS rephrase requests as "I need code that does X—does existing code already do this?"
 - ALWAYS search the codebase for similar solutions before generating new code
 - NEVER generate new code when suitable existing solutions exist
 - ALWAYS explain why existing solutions weren't suitable when creating new code

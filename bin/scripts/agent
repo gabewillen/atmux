@@ -40,8 +40,14 @@ repo_context() {
 }
 
 resolve_amux_runner() {
-  if command -v amux >/dev/null 2>&1; then
-    printf '%s\n' amux
+  if [[ -z "${AMUX_SOURCE_ROOT:-}" && -n "${TMUX:-}" ]]; then
+    tmux_source_root="$(tmux show-environment AMUX_SOURCE_ROOT 2>/dev/null | sed -n 's/^AMUX_SOURCE_ROOT=//p' || true)"
+    if [[ -n "$tmux_source_root" ]]; then
+      AMUX_SOURCE_ROOT="$tmux_source_root"
+    fi
+  fi
+  if [[ -n "${AMUX_SOURCE_ROOT:-}" && -x "${AMUX_SOURCE_ROOT}/bin/amux" ]]; then
+    printf '%s\n' "${AMUX_SOURCE_ROOT}/bin/amux"
     return
   fi
 
@@ -51,6 +57,11 @@ resolve_amux_runner() {
       printf '%s\n' "$repo_root/bin/amux"
       return
     fi
+  fi
+
+  if command -v amux >/dev/null 2>&1; then
+    printf '%s\n' amux
+    return
   fi
 
   echo "amux command not found" >&2
@@ -155,7 +166,7 @@ case "$sub" in
       if [[ "$manager" == "$current_agent" ]]; then
         printf '%s\n' "$session"
       fi
-    done < <(tmux list-sessions -F '#{session_name}' 2>/dev/null | awk '/^amux-[^-]+-[^-]+$/ { print }')
+    done < <(tmux list-sessions -F '#{session_name}' 2>/dev/null | awk '/^amux-/ { print }')
     ;;
   send)
     to=""

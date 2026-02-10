@@ -33,7 +33,7 @@ case "$sub" in
       if [[ -n "$manager" ]]; then
         printf '%s\n' "$session"
       fi
-    done < <(tmux list-sessions -F '#{session_name}' 2>/dev/null | awk '/^amux-[^-]+-[^-]+$/ { print }')
+    done < <(tmux list-sessions -F '#{session_name}' 2>/dev/null | awk '/^amux-/ { print }')
     ;;
   send)
     shift || true

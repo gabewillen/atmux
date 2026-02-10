@@ -3,14 +3,11 @@
 An agent can be a directory.
 
 For now, an agent directory can contain:
-- `scripts/start`
+- `bin/scripts/session` (`session start` handles adapter launch)
 
 Current example:
-- `bin/scripts/start`
+- `bin/scripts/session`
 
 ## Worktree Convention
 - When an agent starts in a repo, it uses a git worktree at:
   `~/.amux/agents/{{repo}}-{{name}}`
-- For the manager session, `{{name}}` is always `manager`.
-- Manager worktree path is therefore:
-  `~/.amux/agents/{{repo}}-manager`

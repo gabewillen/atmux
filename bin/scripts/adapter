@@ -1,0 +1,120 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+AMUX_HOME="${AMUX_HOME:-$HOME/.amux}"
+
+usage() {
+  cat <<'USAGE'
+Usage:
+  amux adapter install <owner/repo|github-url>
+  amux adapter <name> <command> [args...]
+
+Description:
+  Install adapters and run adapter contract commands.
+
+Examples:
+  amux adapter install org/my-adapter
+  amux adapter codex status
+  amux adapter codex model list
+USAGE
+}
+
+normalize_github_repo() {
+  local input="$1"
+  local repo_path=""
+
+  case "$input" in
+    https://github.com/*)
+      repo_path="${input#https://github.com/}"
+      ;;
+    github.com/*)
+      repo_path="${input#github.com/}"
+      ;;
+    */*)
+      repo_path="$input"
+      ;;
+    *)
+      echo "invalid github repo: $input" >&2
+      exit 2
+      ;;
+  esac
+
+  repo_path="${repo_path%.git}"
+  repo_path="${repo_path%/}"
+  printf '%s\n' "$repo_path"
+}
+
+cmd_install() {
+  local input="${1:-}"
+  if [[ -z "$input" ]]; then
+    echo "missing repo argument" >&2
+    exit 2
+  fi
+
+  local repo_path
+  repo_path="$(normalize_github_repo "$input")"
+  local adapter_name
+  adapter_name="$(basename "$repo_path")"
+
+  local adapters_root="$AMUX_HOME/adapters"
+  local adapter_dir="$adapters_root/$adapter_name"
+  local repo_url="https://github.com/${repo_path}.git"
+
+  mkdir -p "$adapters_root"
+
+  if [[ -d "$adapter_dir/.git" ]]; then
+    git -C "$adapter_dir" pull --ff-only >/dev/null
+    echo "updated adapter at $adapter_dir"
+    return
+  fi
+
+  if [[ -e "$adapter_dir" ]]; then
+    echo "path exists and is not a git repo: $adapter_dir" >&2
+    exit 1
+  fi
+
+  git clone "$repo_url" "$adapter_dir" >/dev/null
+  echo "installed adapter at $adapter_dir"
+}
+
+resolve_adapter_cmd() {
+  local adapter_name="$1"
+  local repo_root=""
+
+  if repo_root="$(git rev-parse --show-toplevel 2>/dev/null)"; then
+    if [[ -x "$repo_root/adapter/$adapter_name/cmd" ]]; then
+      printf '%s\n' "$repo_root/adapter/$adapter_name/cmd"
+      return
+    fi
+  fi
+
+  if [[ -x "$AMUX_HOME/adapters/$adapter_name/cmd" ]]; then
+    printf '%s\n' "$AMUX_HOME/adapters/$adapter_name/cmd"
+    return
+  fi
+
+  echo "adapter not found: $adapter_name" >&2
+  exit 1
+}
+
+main() {
+  local sub="${1:-}"
+  case "$sub" in
+    install)
+      shift
+      cmd_install "${1:-}"
+      ;;
+    ""|-h|--help|help)
+      usage
+      ;;
+    *)
+      local adapter_name="$sub"
+      shift
+      local adapter_cmd
+      adapter_cmd="$(resolve_adapter_cmd "$adapter_name")"
+      exec "$adapter_cmd" "$@"
+      ;;
+  esac
+}
+
+main "$@"

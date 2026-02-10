@@ -6,7 +6,6 @@
 When `amux` runs, it ensures this home layout exists:
 - `~/.amux/`
 - `~/.amux/bin/`
-- `~/.amux/roles/`
 - `~/.amux/agents/`
 - `~/.amux/adapters/`
 
@@ -16,24 +15,27 @@ When `amux` runs, it ensures this home layout exists:
 
 ## Commands
 
-### `./bin/amux start`
+### `./bin/amux session start`
 - Must run inside a git repo.
-- Reuses existing session `amux-{{repo}}-{{name}}` if present.
-- Otherwise creates a new agent session and runs `scripts/start` in the repo root.
-- `scripts/start` creates `~/.amux/agents/{{repo}}-{{name}}` on branch `amux-{{repo}}-{{name}}`, then runs `bin/scripts/start` inside that worktree.
+- Reuses an existing repo session if one already exists (`amux-{{repo}}-*`).
+- Otherwise creates `amux-{{repo}}-{{name}}` (default `name=manager`).
+- Creates a git worktree at `~/.amux/agents/{{repo}}-{{name}}` on branch `amux-{{repo}}-{{name}}`.
+- Starts the selected adapter in that session (`--adapter`, default `codex`).
 
-### `./bin/amux ls`
+### `./bin/amux session list`
 - Lists amux sessions (`amux-*`), one per line.
 
-### `./bin/amux agents list`
+### `./bin/amux agent list`
 - Lists agents owned by this agent (`AMUX_AGENT_NAME`) via `AMUX_MANAGER`.
 
-### `./bin/amux agents list -a`
+### `./bin/amux agent list -a`
 - Lists all agents in the org (`amux-{{repo}}-{{name}}` sessions).
 
-### `./bin/amux route --agent <name> --cmd "..."`
-### `./bin/amux route --target <session:window.pane> --cmd "..."`
-- Sends a command to a tmux pane.
+### `./bin/amux manager send "message"`
+- Sends a message to your manager session.
+
+### `./bin/amux agent send --to <agent> "message"`
+- Sends a message to a specific agent session.
 
 ### `./bin/amux adapter install <owner/repo|github-url>`
 - Installs (or updates) adapter repos under `~/.amux/adapters/<adapter>`.
@@ -43,11 +45,12 @@ When `amux` runs, it ensures this home layout exists:
   `amux <name>`
 - Examples:
   - `amux env`
-  - `amux send-message`
+  - `amux agent`
+  - `amux manager`
 - `install` is reserved as a core `amux` command, not a script subcommand.
 
 ## Environment
-When `amux start` creates a session, it sets:
+When `amux session start` creates a session, it sets:
 - `AMUX_REPO`
 - `AMUX_SESSION_ID`
 - `AMUX_WORKTREE`

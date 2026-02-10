@@ -1,6 +1,56 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+usage() {
+  cat <<'USAGE'
+Usage:
+  amux agent list
+  amux agent ls
+  amux agent list -a
+  amux agent send --to <agent> "message"
+  amux agent rm <session-pattern> [session-pattern...]
+
+Description:
+  List agents, send messages, or remove agent sessions/worktrees/branches.
+
+Notes:
+  Non-org list requires AMUX_AGENT_NAME.
+  Target session format: amux-<repo>-<agent>
+
+Examples:
+  amux agent list
+  amux agent list -a
+  amux agent send --to planner "please run tests"
+  amux agent rm 'amux-myrepo-agent-*'
+USAGE
+}
+
+repo_context() {
+  local repo_root repo_name
+  if ! repo_root="$(git rev-parse --show-toplevel 2>/dev/null)"; then
+    echo "must be run from a git repository" >&2
+    exit 1
+  fi
+  repo_name="$(basename "$repo_root")"
+  printf '%s\n%s\n' "$repo_root" "$repo_name"
+}
+
+matches_any_pattern() {
+  local value="$1"
+  shift || true
+  local pattern
+  for pattern in "$@"; do
+    case "$value" in
+      $pattern) return 0 ;;
+    esac
+  done
+  return 1
+}
+
+xml_escape() {
+  printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g' -e "s/'/\&apos;/g"
+}
+
 sub="${1:-}"
 shift || true
 
@@ -39,13 +89,117 @@ case "$sub" in
       fi
     done < <(tmux list-sessions -F '#{session_name}' 2>/dev/null | awk '/^amux-[^-]+-[^-]+$/ { print }')
     ;;
+  send)
+    to=""
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --to)
+          to="${2:-}"
+          shift 2
+          ;;
+        *)
+          break
+          ;;
+      esac
+    done
+
+    msg="$*"
+    if [[ -z "$to" || -z "$msg" ]]; then
+      echo "usage: amux agent send --to <agent> \"message\"" >&2
+      exit 2
+    fi
+
+    repo="${AMUX_REPO:-}"
+    if [[ -z "$repo" ]]; then
+      echo "AMUX_REPO is required" >&2
+      exit 1
+    fi
+
+    target_session="amux-${repo}-${to}"
+    if ! tmux has-session -t "$target_session" 2>/dev/null; then
+      echo "agent session not found: $target_session" >&2
+      exit 1
+    fi
+
+    from_session="${AMUX_SESSION_NAME:-amux-${repo}-${AMUX_AGENT_NAME:-unknown}}"
+    msg_escaped="$(xml_escape "$msg")"
+    from_escaped="$(xml_escape "$from_session")"
+    xml="<amux><message from=\"${from_escaped}\">${msg_escaped}</message></amux>"
+    tmux send-keys -t "$target_session" "echo '$xml'" C-m
+    ;;
+  rm)
+    if [[ $# -lt 1 ]]; then
+      echo "usage: amux agent rm <session-pattern> [session-pattern...]" >&2
+      exit 2
+    fi
+
+    repo_root=""
+    repo_name=""
+    {
+      IFS= read -r repo_root
+      IFS= read -r repo_name
+    } < <(repo_context)
+
+    amux_home="${AMUX_HOME:-$HOME/.amux}"
+    worktree_root="$amux_home/agents"
+    prefix="amux-${repo_name}-"
+
+    candidates="$(
+      {
+        tmux list-sessions -F '#{session_name}' 2>/dev/null | awk -v p="$prefix" 'index($0,p)==1 { print }'
+        if [[ -d "$worktree_root" ]]; then
+          find "$worktree_root" -maxdepth 1 -mindepth 1 -type d -name "${repo_name}-*" -exec basename {} \; | sed 's/^/amux-/'
+        fi
+        git -C "$repo_root" for-each-ref --format='%(refname:short)' "refs/heads/${prefix}*" 2>/dev/null
+      } | awk -v p="$prefix" 'index($0,p)==1 { print }' | sort -u
+    )"
+
+    removed_any=0
+    while IFS= read -r session; do
+      [[ -z "$session" ]] && continue
+      if ! matches_any_pattern "$session" "$@"; then
+        continue
+      fi
+
+      removed_any=1
+
+      if tmux has-session -t "$session" 2>/dev/null; then
+        tmux kill-session -t "$session"
+        echo "killed session: $session"
+      fi
+
+      suffix="${session#amux-}"
+      worktree="$worktree_root/$suffix"
+      if [[ -d "$worktree" ]]; then
+        if git -C "$repo_root" worktree list --porcelain 2>/dev/null | grep -Fqx "worktree $worktree"; then
+          git -C "$repo_root" worktree remove -f "$worktree" >/dev/null 2>&1 || true
+          if [[ -d "$worktree" ]]; then
+            echo "failed to remove worktree: $worktree" >&2
+          else
+            echo "removed worktree: $worktree"
+          fi
+        else
+          echo "skipping unregistered worktree path: $worktree" >&2
+        fi
+      fi
+
+      if git -C "$repo_root" show-ref --verify --quiet "refs/heads/$session"; then
+        git -C "$repo_root" branch -D "$session" >/dev/null 2>&1 || true
+        if git -C "$repo_root" show-ref --verify --quiet "refs/heads/$session"; then
+          echo "failed to delete branch: $session" >&2
+        else
+          echo "deleted branch: $session"
+        fi
+      fi
+    done <<< "$candidates"
+
+    if [[ "$removed_any" -eq 0 ]]; then
+      echo "no agents matched patterns: $*" >&2
+      exit 1
+    fi
+    ;;
   -h|--help|help|"")
-    cat <<'USAGE'
-Usage:
-  amux agent list
-  amux agent ls
-  amux agent list -a
-USAGE
+    usage
     ;;
   *)
     echo "unknown agent command: $sub" >&2

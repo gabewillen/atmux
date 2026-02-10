@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<'USAGE'
+Usage:
+  amux manager list
+  amux manager ls
+  amux manager send "message"
+
+Description:
+  List manager-owned agents and send a message to your manager.
+
+Notes:
+  manager send requires AMUX_REPO and AMUX_MANAGER.
+
+Examples:
+  amux manager list
+  amux manager send "status update"
+USAGE
+}
+
+xml_escape() {
+  printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g' -e "s/'/\&apos;/g"
+}
+
+sub="${1:-}"
+case "$sub" in
+  list|ls)
+    while IFS= read -r session; do
+      [[ -z "$session" ]] && continue
+      manager="$(tmux show-environment -t "$session" AMUX_MANAGER 2>/dev/null | sed -n 's/^AMUX_MANAGER=//p' || true)"
+      if [[ -n "$manager" ]]; then
+        printf '%s\n' "$session"
+      fi
+    done < <(tmux list-sessions -F '#{session_name}' 2>/dev/null | awk '/^amux-[^-]+-[^-]+$/ { print }')
+    ;;
+  send)
+    shift || true
+    msg="$*"
+    if [[ -z "$msg" ]]; then
+      echo "missing message" >&2
+      exit 2
+    fi
+
+    repo="${AMUX_REPO:-}"
+    manager="${AMUX_MANAGER:-}"
+    if [[ -z "$repo" || -z "$manager" ]]; then
+      echo "AMUX_REPO and AMUX_MANAGER are required" >&2
+      exit 2
+    fi
+
+    target_session="amux-${repo}-${manager}"
+    if ! tmux has-session -t "$target_session" 2>/dev/null; then
+      echo "manager session not found: $target_session" >&2
+      exit 1
+    fi
+
+    from_session="${AMUX_SESSION_NAME:-amux-${repo}-${AMUX_AGENT_NAME:-unknown}}"
+    msg_escaped="$(xml_escape "$msg")"
+    from_escaped="$(xml_escape "$from_session")"
+    xml="<amux><message from=\"${from_escaped}\">${msg_escaped}</message></amux>"
+    tmux send-keys -t "$target_session" "echo '$xml'" C-m
+    ;;
+  -h|--help|help|"")
+    usage
+    ;;
+  *)
+    echo "unknown manager command: $sub" >&2
+    exit 2
+    ;;
+esac

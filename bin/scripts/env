@@ -4,13 +4,16 @@ set -euo pipefail
 usage() {
   cat <<'USAGE'
 Usage:
-  ./bin/scripts/env
-  ./bin/scripts/env get <key>
+  amux env
+  amux env get <key>
+
+Description:
+  Inspect AMUX_* environment variables in the current process.
 
 Examples:
-  ./bin/scripts/env get repo
-  ./bin/scripts/env get REPO
-  ./bin/scripts/env get AMUX_REPO
+  amux env
+  amux env get repo
+  amux env get AMUX_WORKTREE
 USAGE
 }
 

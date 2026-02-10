@@ -6,26 +6,26 @@ AMUX_BIN_ORIGIN="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 usage() {
   local -a cmds=()
-  cmds+=(ls start agents route adapter install)
+  cmds+=(start route adapter install)
 
-  local scripts_dir=""
+  local -a script_dirs=()
   if [[ -d "$AMUX_HOME/bin/scripts" ]]; then
-    scripts_dir="$AMUX_HOME/bin/scripts"
-  else
-    local repo_root=""
-    if repo_root="$(git rev-parse --show-toplevel 2>/dev/null)"; then
-      if [[ -d "$repo_root/bin/scripts" ]]; then
-        scripts_dir="$repo_root/bin/scripts"
-      fi
+    script_dirs+=("$AMUX_HOME/bin/scripts")
+  fi
+  local repo_root=""
+  if repo_root="$(git rev-parse --show-toplevel 2>/dev/null)"; then
+    if [[ -d "$repo_root/bin/scripts" ]]; then
+      script_dirs+=("$repo_root/bin/scripts")
     fi
   fi
 
-  if [[ -n "$scripts_dir" ]]; then
+  local dir
+  for dir in "${script_dirs[@]}"; do
     while IFS= read -r name; do
       [[ -z "$name" ]] && continue
       cmds+=("$name")
-    done < <(find "$scripts_dir" -maxdepth 1 -type f -perm -u+x -exec basename {} \; | sort)
-  fi
+    done < <(find "$dir" -maxdepth 1 -type f -perm -u+x -exec basename {} \; | sort)
+  done
 
   local -a uniq_cmds=()
   while IFS= read -r c; do
@@ -62,10 +62,6 @@ resolve_target() {
       exit 30
       ;;
   esac
-}
-
-cmd_ls() {
-  tmux list-sessions -F '#{session_name}' 2>/dev/null | awk '/^amux-/ { print }'
 }
 
 attach_or_switch() {
@@ -132,6 +128,10 @@ cmd_start() {
       start_cmd+=" $(printf '%q' "$arg")"
     done
   fi
+  local -a tmux_env_args=()
+  if [[ -n "${AMUX_MANAGER:-}" ]]; then
+    tmux_env_args=(-e AMUX_MANAGER="$AMUX_MANAGER")
+  fi
 
   tmux new-session -d -s "$session" -n "$window_name" -c "$repo_root" \
     -e AMUX_REPO="$repo_name" \
@@ -140,57 +140,9 @@ cmd_start() {
     -e AMUX_AGENT_NAME="$agent_name" \
     -e AMUX_BIN_ORIGIN="$AMUX_BIN_ORIGIN" \
     -e PATH="$AMUX_BIN_ORIGIN:$PATH" \
+    "${tmux_env_args[@]}" \
     "$start_cmd"
   attach_or_switch "$session"
-}
-
-cmd_agents_list() {
-  local all=0
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-      -a|--all)
-        all=1
-        shift
-        ;;
-      *)
-        echo "unknown flag: $1" >&2
-        exit 2
-        ;;
-    esac
-  done
-
-  local current_agent="${AMUX_AGENT_NAME:-}"
-  if [[ "$all" -eq 0 && -z "$current_agent" ]]; then
-    echo "AMUX_AGENT_NAME is required for non-org listing" >&2
-    exit 2
-  fi
-
-  while IFS= read -r session; do
-    [[ -z "$session" ]] && continue
-    if [[ "$all" -eq 1 ]]; then
-      printf '%s\n' "$session"
-      continue
-    fi
-
-    manager="$(tmux show-environment -t "$session" AMUX_MANAGER 2>/dev/null | sed -n 's/^AMUX_MANAGER=//p')"
-    if [[ "$manager" == "$current_agent" ]]; then
-      printf '%s\n' "$session"
-    fi
-  done < <(tmux list-sessions -F '#{session_name}' 2>/dev/null | awk '/^amux-[^-]+-[^-]+$/ { print }')
-}
-
-cmd_agents() {
-  local sub="${1:-}"
-  case "$sub" in
-    list)
-      shift
-      cmd_agents_list "$@"
-      ;;
-    *)
-      echo "unknown agents command: ${sub:-}" >&2
-      exit 2
-      ;;
-  esac
 }
 
 cmd_route() {
@@ -365,14 +317,6 @@ main() {
   fi
 
   case "$1" in
-    ls)
-      shift
-      cmd_ls "$@"
-      ;;
-    sessions)
-      shift
-      cmd_ls "$@"
-      ;;
     start)
       shift
       cmd_start "$@"
@@ -384,10 +328,6 @@ main() {
     adapter)
       shift
       cmd_adapter "$@"
-      ;;
-    agents|agens)
-      shift
-      cmd_agents "$@"
       ;;
     install)
       shift

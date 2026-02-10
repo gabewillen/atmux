@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+sub="${1:-}"
+case "$sub" in
+  list|ls)
+    tmux list-sessions -F '#{session_name}' 2>/dev/null | awk '/^amux-/ { print }'
+    ;;
+  -h|--help|help|"")
+    cat <<'USAGE'
+Usage:
+  amux session list
+  amux session ls
+USAGE
+    ;;
+  *)
+    echo "unknown session command: $sub" >&2
+    exit 2
+    ;;
+esac

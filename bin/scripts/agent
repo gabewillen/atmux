@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+sub="${1:-}"
+shift || true
+
+case "$sub" in
+  list|ls)
+    all=0
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        -a|--all)
+          all=1
+          shift
+          ;;
+        *)
+          echo "unknown flag: $1" >&2
+          exit 2
+          ;;
+      esac
+    done
+
+    current_agent="${AMUX_AGENT_NAME:-}"
+    if [[ "$all" -eq 0 && -z "$current_agent" ]]; then
+      echo "AMUX_AGENT_NAME is required for non-org listing" >&2
+      exit 2
+    fi
+
+    while IFS= read -r session; do
+      [[ -z "$session" ]] && continue
+      if [[ "$all" -eq 1 ]]; then
+        printf '%s\n' "$session"
+        continue
+      fi
+
+      manager="$(tmux show-environment -t "$session" AMUX_MANAGER 2>/dev/null | sed -n 's/^AMUX_MANAGER=//p' || true)"
+      if [[ "$manager" == "$current_agent" ]]; then
+        printf '%s\n' "$session"
+      fi
+    done < <(tmux list-sessions -F '#{session_name}' 2>/dev/null | awk '/^amux-[^-]+-[^-]+$/ { print }')
+    ;;
+  -h|--help|help|"")
+    cat <<'USAGE'
+Usage:
+  amux agent list
+  amux agent ls
+  amux agent list -a
+USAGE
+    ;;
+  *)
+    echo "unknown agent command: $sub" >&2
+    exit 2
+    ;;
+esac

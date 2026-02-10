@@ -52,11 +52,6 @@ session="amux-${repo}"
 ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 case "$to" in
-  manager)
-    name="${AMUX_AGENT_NAME:-agent}"
-    target_window="amux-${repo}-agent-${name}"
-    target="${session}:${target_window}"
-    ;;
   agent:*)
     name="${to#agent:}"
     target_window="amux-${repo}-agent-${name}"

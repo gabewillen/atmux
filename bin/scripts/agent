@@ -4,6 +4,7 @@ set -euo pipefail
 usage() {
   cat <<'USAGE'
 Usage:
+  amux agent create [--name <name>] [--adapter <adapter>] [-- <adapter-args...>]
   amux agent list
   amux agent ls
   amux agent list -a
@@ -11,13 +12,16 @@ Usage:
   amux agent rm <session-pattern> [session-pattern...]
 
 Description:
-  List agents, send messages, or remove agent sessions/worktrees/branches.
+  Create/list agents, send messages, or remove agent sessions/worktrees/branches.
 
 Notes:
+  create requires AMUX_AGENT_NAME (used as AMUX_MANAGER for child agents).
   Non-org list requires AMUX_AGENT_NAME.
   Target session format: amux-<repo>-<agent>
 
 Examples:
+  amux agent create --name reviewer
+  amux agent create --name worker-1 --adapter claude-code -- --dangerously-skip-permissions
   amux agent list
   amux agent list -a
   amux agent send --to planner "please run tests"
@@ -33,6 +37,24 @@ repo_context() {
   fi
   repo_name="$(basename "$repo_root")"
   printf '%s\n%s\n' "$repo_root" "$repo_name"
+}
+
+resolve_amux_runner() {
+  if command -v amux >/dev/null 2>&1; then
+    printf '%s\n' amux
+    return
+  fi
+
+  local repo_root=""
+  if repo_root="$(git rev-parse --show-toplevel 2>/dev/null)"; then
+    if [[ -x "$repo_root/bin/amux" ]]; then
+      printf '%s\n' "$repo_root/bin/amux"
+      return
+    fi
+  fi
+
+  echo "amux command not found" >&2
+  exit 127
 }
 
 matches_any_pattern() {
@@ -55,6 +77,52 @@ sub="${1:-}"
 shift || true
 
 case "$sub" in
+  create)
+    manager="${AMUX_AGENT_NAME:-}"
+    if [[ -z "$manager" ]]; then
+      echo "AMUX_AGENT_NAME is required for agent create" >&2
+      exit 2
+    fi
+
+    name=""
+    adapter=""
+    forward=()
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --name)
+          name="${2:-}"
+          shift 2
+          ;;
+        --adapter)
+          adapter="${2:-}"
+          shift 2
+          ;;
+        --)
+          shift
+          forward=("$@")
+          break
+          ;;
+        *)
+          echo "unknown flag: $1" >&2
+          exit 2
+          ;;
+      esac
+    done
+
+    amux_runner="$(resolve_amux_runner)"
+    cmd=("$amux_runner" session start)
+    if [[ -n "$name" ]]; then
+      cmd+=(--name "$name")
+    fi
+    if [[ -n "$adapter" ]]; then
+      cmd+=(--adapter "$adapter")
+    fi
+    if [[ ${#forward[@]} -gt 0 ]]; then
+      cmd+=(-- "${forward[@]}")
+    fi
+
+    AMUX_MANAGER="$manager" "${cmd[@]}"
+    ;;
   list|ls)
     all=0
     while [[ $# -gt 0 ]]; do

@@ -82,13 +82,14 @@ collect_agent_help() {
   local out=""
   local cmd
   for cmd in agent manager env; do
-    out+=$'## '"$cmd"$'\n'
+    local cmd_out=""
     if [[ -n "$runner_cwd" ]]; then
       cmd_out="$(cd "$runner_cwd" && "$runner" "$cmd" --help 2>/dev/null || true)"
     else
       cmd_out="$("$runner" "$cmd" --help 2>/dev/null || true)"
     fi
-    if [[ -n "$cmd_out" ]]; then
+    if [[ -n "$cmd_out" ]] && printf '%s\n' "$cmd_out" | grep -Eq "^  amux ${cmd}( |$)"; then
+      out+=$'## '"$cmd"$'\n'
       out+="$cmd_out"$'\n\n'
     fi
   done
@@ -210,7 +211,31 @@ run_adapter() {
   done
 
   export AMUX_ADAPTER="$adapter"
-  export PATH="$(pwd)/bin:$PATH"
+
+  # Ensure source-root amux commands win over stale worktree copies.
+  if [[ -z "${AMUX_SOURCE_ROOT:-}" ]]; then
+    AMUX_SOURCE_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
+    export AMUX_SOURCE_ROOT
+  fi
+  if [[ -d "$AMUX_SOURCE_ROOT/bin" ]]; then
+    export PATH="$AMUX_SOURCE_ROOT/bin:$(pwd)/bin:$PATH"
+  else
+    export PATH="$(pwd)/bin:$PATH"
+  fi
+
+  # tmux session env is authoritative; current shell env may be stale/missing.
+  local current_session=""
+  if [[ -n "${TMUX:-}" ]]; then
+    current_session="$(tmux display-message -p '#S' 2>/dev/null || true)"
+  fi
+  if [[ -n "$current_session" ]]; then
+    while IFS= read -r line; do
+      [[ "$line" == AMUX_*=* ]] || continue
+      key="${line%%=*}"
+      value="${line#*=}"
+      export "$key=$value"
+    done < <(tmux show-environment -t "$current_session" 2>/dev/null || true)
+  fi
 
   local adapter_cmd="$(pwd)/adapter/$adapter/cmd"
   if [[ ! -x "$adapter_cmd" ]]; then
@@ -228,6 +253,9 @@ run_adapter() {
   fi
 
   local session_name="${AMUX_SESSION_NAME:-}"
+  if [[ -z "$session_name" && -n "${TMUX:-}" ]]; then
+    session_name="$(tmux display-message -p '#S' 2>/dev/null || true)"
+  fi
   if [[ -n "$session_name" ]] && tmux has-session -t "$session_name" 2>/dev/null; then
     tmux kill-session -t "$session_name" >/dev/null 2>&1 || true
   fi

@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+adapter="codex"
+description="${AMUX_ROLE_DESCRIPTION:-}"
+adapter_args=()
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --adapter)
+      adapter="${2:-}"
+      shift 2
+      ;;
+    --description)
+      description="${2:-}"
+      shift 2
+      ;;
+    --)
+      shift
+      adapter_args=("$@")
+      break
+      ;;
+    *)
+      echo "unknown flag: $1" >&2
+      exit 2
+      ;;
+  esac
+done
+
+case "$adapter" in
+  codex|claude-code) ;;
+  *)
+    echo "invalid adapter: $adapter (expected codex or claude-code)" >&2
+    exit 2
+    ;;
+esac
+
+export AMUX_ADAPTER="$adapter"
+export PATH="$(pwd)/bin:$PATH"
+
+role_setup="$(pwd)/role/setup"
+if [[ ! -f "$role_setup" ]]; then
+  echo "role setup not found: $role_setup" >&2
+  exit 1
+fi
+
+adapter_start="$(pwd)/adapter/${adapter}/cmd"
+if [[ ! -f "$adapter_start" ]]; then
+  echo "adapter start not found: $adapter_start" >&2
+  exit 1
+fi
+
+if [[ -n "$description" ]]; then
+  if [[ -n "${AMUX_MANAGER:-}" ]]; then
+    bash "$role_setup" --adapter "$adapter" --role agent --description "$description" --manager "$AMUX_MANAGER"
+  else
+    bash "$role_setup" --adapter "$adapter" --role agent --description "$description"
+  fi
+else
+  if [[ -n "${AMUX_MANAGER:-}" ]]; then
+    bash "$role_setup" --adapter "$adapter" --role agent --manager "$AMUX_MANAGER"
+  else
+    bash "$role_setup" --adapter "$adapter" --role agent
+  fi
+fi
+if ((${#adapter_args[@]})); then
+  exec "$adapter_start" start "${adapter_args[@]}"
+fi
+exec "$adapter_start" start

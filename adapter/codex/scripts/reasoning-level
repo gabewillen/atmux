@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+set -euo pipefail
+state_dir="${AMUX_HOME:-$HOME/.amux}/adapters/codex"
+state_file="$state_dir/state.env"
+mkdir -p "$state_dir"
+[[ -f "$state_file" ]] || printf 'MODEL=%s\nREASONING_LEVEL=%s\n' 'gpt-5' 'medium' > "$state_file"
+# shellcheck disable=SC1090
+source "$state_file"
+case "${1:-}" in
+  list) printf '%s\n' low medium high ;;
+  get) printf '%s\n' "$REASONING_LEVEL" ;;
+  set)
+    REASONING_LEVEL="${2:-}"; [[ -n "$REASONING_LEVEL" ]] || { echo "missing reasoning level value" >&2; exit 2; }
+    printf 'MODEL=%s\nREASONING_LEVEL=%s\n' "$MODEL" "$REASONING_LEVEL" > "$state_file"
+    printf '%s\n' "$REASONING_LEVEL"
+    ;;
+  *) echo "usage: reasoning-level list|get|set <value>" >&2; exit 2 ;;
+esac

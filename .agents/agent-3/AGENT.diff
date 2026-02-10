@@ -1,0 +1,44 @@
+--- AGENT.md
++++ AGENT.md
+@@ -1,3 +1,41 @@
++# AGENT 3: Reliability Worker
++
++## Identity
++- Session: `agent-3`
++- Worktree: `../machine-agent-3`
++- Coordinator: `agent-0`
++
++## Communication Rule
++- Communicate only with `agent-0` for decisions, blockers, and merge requests.
++- Do not request changes directly from other workers.
++- MUST use `./agents/tmux/send_to_agent0.sh` for messages to coordinator.
++- Do not use direct `tmux send-keys` for coordination messages.
++
++## Send to Coordinator
++```bash
++./agents/tmux/send_to_agent0.sh agent-3 question "Need owner decision for cross-path test helper"
++./agents/tmux/send_to_agent0.sh agent-3 blocker "Blocked on status contract interpretation"
++./agents/tmux/send_to_agent0.sh agent-3 ready-to-merge "STATE-IO-RECOVERY-V1 frozen and checks passed"
++```
++
++## Required Events
++1. Send `status` at work start.
++2. Send `blocker` when blocked.
++3. Send `handoff` when publishing contracts.
++4. Send `ready-to-merge` only after validation.
++
++## Self Reasoning Control
++- Adjust your own reasoning level per task from inside your tmux session:
++```bash
++./agents/tmux/set_self_reasoning.sh low
++./agents/tmux/set_self_reasoning.sh medium
++./agents/tmux/set_self_reasoning.sh high
++./agents/tmux/set_self_reasoning.sh extra-high
++```
++
++## Inherited Global Rules
++The section below is copied verbatim from `AGENTS.md` and is mandatory for this agent.
++
+ # engine.cpp Development Rules
+ 
+ ## Mission

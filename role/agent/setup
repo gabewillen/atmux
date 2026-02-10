@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+adapter=""
+description="${AMUX_ROLE_DESCRIPTION:-}"
+manager="${AMUX_MANAGER:-}"
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --adapter)
+      adapter="${2:-}"
+      shift 2
+      ;;
+    --description)
+      description="${2:-}"
+      shift 2
+      ;;
+    --manager)
+      manager="${2:-}"
+      shift 2
+      ;;
+    *)
+      echo "unknown flag: $1" >&2
+      exit 2
+      ;;
+  esac
+done
+
+[[ -n "$adapter" ]] || { echo "missing --adapter" >&2; exit 2; }
+
+roles_dir="${AMUX_HOME:-$HOME/.amux}/roles"
+mkdir -p "$roles_dir"
+
+if [[ -n "$description" ]]; then
+  printf '%s\n' "$description" > "$roles_dir/agent.description"
+fi
+
+printf '%s\n' "$adapter" > "$roles_dir/agent.adapter"
+
+if [[ -n "$manager" ]]; then
+  printf '%s\n' "$manager" > "$roles_dir/agent.manager"
+else
+  rm -f "$roles_dir/agent.manager"
+fi

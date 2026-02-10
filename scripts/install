@@ -1,0 +1,134 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+AMUX_HOME="${AMUX_HOME:-$HOME/.amux}"
+AMUX_BIN_DIR="$AMUX_HOME/bin"
+AMUX_ROLES_DIR="$AMUX_HOME/roles"
+AMUX_AGENTS_DIR="$AMUX_HOME/agents"
+AMUX_ADAPTERS_DIR="$AMUX_HOME/adapters"
+AMUX_SCRIPTS_DIR="$AMUX_BIN_DIR/scripts"
+AMUX_CMD_PATH="$AMUX_BIN_DIR/amux"
+
+# Optional remote install base for curl-style installs when local files are not present.
+# Example:
+#   AMUX_INSTALL_BASE_URL="https://raw.githubusercontent.com/<owner>/<repo>/<ref>" bash scripts/install
+AMUX_INSTALL_BASE_URL="${AMUX_INSTALL_BASE_URL:-}"
+
+pick_rc_file() {
+  local shell_name
+  shell_name="$(basename "${SHELL:-}")"
+
+  case "$shell_name" in
+    zsh) printf '%s\n' "$HOME/.zshrc" ;;
+    bash)
+      if [[ -f "$HOME/.bash_profile" ]]; then
+        printf '%s\n' "$HOME/.bash_profile"
+      else
+        printf '%s\n' "$HOME/.bashrc"
+      fi
+      ;;
+    fish) printf '%s\n' "$HOME/.config/fish/config.fish" ;;
+    *) printf '%s\n' "$HOME/.profile" ;;
+  esac
+}
+
+ensure_layout() {
+  mkdir -p "$AMUX_BIN_DIR" "$AMUX_SCRIPTS_DIR" "$AMUX_ROLES_DIR" "$AMUX_AGENTS_DIR" "$AMUX_ADAPTERS_DIR"
+}
+
+install_amux_binary() {
+  local script_dir repo_root local_amux
+
+  script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+  repo_root="$(cd -- "$script_dir/.." && pwd)"
+  local_amux="$repo_root/bin/amux"
+
+  if [[ -f "$local_amux" ]]; then
+    cp "$local_amux" "$AMUX_CMD_PATH"
+    chmod +x "$AMUX_CMD_PATH"
+    return
+  fi
+
+  if [[ -z "$AMUX_INSTALL_BASE_URL" ]]; then
+    echo "could not find local bin/amux and AMUX_INSTALL_BASE_URL is not set" >&2
+    exit 1
+  fi
+
+  curl -fsSL "$AMUX_INSTALL_BASE_URL/bin/amux" -o "$AMUX_CMD_PATH"
+  chmod +x "$AMUX_CMD_PATH"
+}
+
+install_subcommand_scripts() {
+  local script_dir repo_root local_scripts_dir
+  script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+  repo_root="$(cd -- "$script_dir/.." && pwd)"
+  local_scripts_dir="$repo_root/bin/scripts"
+
+  if [[ -d "$local_scripts_dir" ]]; then
+    for script in "$local_scripts_dir"/*; do
+      [[ -f "$script" ]] || continue
+      name="$(basename "$script")"
+      # start is amux-internal bootstrap, not an amux subcommand.
+      [[ "$name" == "start" ]] && continue
+      cp "$script" "$AMUX_SCRIPTS_DIR/$name"
+      chmod +x "$AMUX_SCRIPTS_DIR/$name"
+    done
+    return
+  fi
+
+  if [[ -z "$AMUX_INSTALL_BASE_URL" ]]; then
+    return
+  fi
+
+  for name in env send-message; do
+    if curl -fsSL "$AMUX_INSTALL_BASE_URL/bin/scripts/$name" -o "$AMUX_SCRIPTS_DIR/$name"; then
+      chmod +x "$AMUX_SCRIPTS_DIR/$name"
+    fi
+  done
+}
+
+ensure_path() {
+  if [[ "${AMUX_SKIP_PATH_UPDATE:-0}" == "1" ]]; then
+    printf '%s\n' "SKIPPED"
+    return
+  fi
+
+  local rc_file path_line
+  rc_file="$(pick_rc_file)"
+
+  if [[ "$rc_file" == *"fish/config.fish" ]]; then
+    path_line='fish_add_path -m "$HOME/.amux/bin"'
+  else
+    path_line='export PATH="$HOME/.amux/bin:$PATH"'
+  fi
+
+  mkdir -p "$(dirname "$rc_file")"
+  touch "$rc_file"
+
+  if ! grep -Fq "$HOME/.amux/bin" "$rc_file"; then
+    {
+      echo
+      echo "# amux"
+      echo "$path_line"
+    } >> "$rc_file"
+  fi
+
+  printf '%s\n' "$rc_file"
+}
+
+main() {
+  ensure_layout
+  install_amux_binary
+  install_subcommand_scripts
+  rc_file="$(ensure_path)"
+
+  echo "installed: $AMUX_CMD_PATH"
+  if [[ "$rc_file" == "SKIPPED" ]]; then
+    echo "PATH update: skipped (AMUX_SKIP_PATH_UPDATE=1)"
+  else
+    echo "updated PATH in: $rc_file"
+  fi
+  echo "run now: $AMUX_CMD_PATH --help"
+}
+
+main "$@"

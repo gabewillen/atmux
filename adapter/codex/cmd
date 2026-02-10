@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+root_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+scripts_dir="$root_dir/scripts"
+
+sub="${1:-}"
+shift || true
+
+case "$sub" in
+  status|model|reasoning-level|control-file|start)
+    exec "$scripts_dir/$sub" "$@"
+    ;;
+  *)
+    echo "usage: codex/cmd status|model|reasoning-level|control-file|start" >&2
+    exit 2
+    ;;
+esac

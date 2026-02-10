@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+set -euo pipefail
+state_dir="${AMUX_HOME:-$HOME/.amux}/adapters/claude-code"
+state_file="$state_dir/state.env"
+mkdir -p "$state_dir"
+[[ -f "$state_file" ]] || printf 'MODEL=%s\nREASONING_LEVEL=%s\n' 'sonnet' 'medium' > "$state_file"
+# shellcheck disable=SC1090
+source "$state_file"
+case "${1:-}" in
+  list) printf '%s\n' sonnet opus ;;
+  get) printf '%s\n' "$MODEL" ;;
+  set)
+    MODEL="${2:-}"; [[ -n "$MODEL" ]] || { echo "missing model value" >&2; exit 2; }
+    printf 'MODEL=%s\nREASONING_LEVEL=%s\n' "$MODEL" "$REASONING_LEVEL" > "$state_file"
+    printf '%s\n' "$MODEL"
+    ;;
+  *) echo "usage: model list|get|set <value>" >&2; exit 2 ;;
+esac

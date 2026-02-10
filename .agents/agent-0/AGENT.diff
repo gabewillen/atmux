@@ -1,0 +1,54 @@
+--- AGENT.md
++++ AGENT.md
+@@ -1,3 +1,51 @@
++# AGENT 0: tmux Coordinator
++
++## Identity
++- Session: `agent-0`
++- Role: coordination only (questions, blockers, merge management, cross-agent communication)
++
++## Responsibilities
++1. Answer worker questions.
++2. Resolve blockers and route decisions to affected agents.
++3. Maintain central registries:
++   - `agents/contracts.md`
++   - `agents/notes.md`
++4. Merge worker branches into `main` in the defined merge train.
++5. Run final quality gates on merged `main`.
++
++## Communication Commands
++- MUST use tmux helper scripts for agent-to-agent messaging.
++- Do not use direct `tmux send-keys` for coordination messages.
++- Receive from workers: `./agents/tmux/send_to_agent0.sh ...`
++- Reply to worker:
++```bash
++./agents/tmux/send_to_agent.sh agent-2 decision "Proceed after rebasing on main"
++```
++
++## Merge Responsibilities
++- Workers do not merge directly to `main`.
++- `agent-0` performs merges after:
++  - contract status is `Frozen`
++  - owned-path check passes
++  - validation gates pass
++
++## Required Status Replies
++- Acknowledge every `blocker` message.
++- Provide owner decision for cross-path conflicts.
++- Send explicit `merge-approved` before integrating a worker branch.
++
++## Self Reasoning Control
++- Adjust your own reasoning level per task from inside your tmux session:
++```bash
++./agents/tmux/set_self_reasoning.sh low
++./agents/tmux/set_self_reasoning.sh medium
++./agents/tmux/set_self_reasoning.sh high
++./agents/tmux/set_self_reasoning.sh extra-high
++```
++
++## Inherited Global Rules
++The section below is copied verbatim from `AGENTS.md` and is mandatory for this agent.
++
+ # engine.cpp Development Rules
+ 
+ ## Mission

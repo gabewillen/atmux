@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if ! command -v codex >/dev/null 2>&1; then
+  echo "codex command not found in PATH" >&2
+  exit 127
+fi
+
+echo "starting codex in $(pwd)"
+exec codex "$@"

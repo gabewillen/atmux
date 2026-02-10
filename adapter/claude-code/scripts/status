@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+set -euo pipefail
+state_dir="${AMUX_HOME:-$HOME/.amux}/adapters/claude-code"
+state_file="$state_dir/state.env"
+roles_dir="${AMUX_HOME:-$HOME/.amux}/roles"
+mkdir -p "$state_dir"
+[[ -f "$state_file" ]] || printf 'MODEL=%s\nREASONING_LEVEL=%s\n' 'sonnet' 'medium' > "$state_file"
+# shellcheck disable=SC1090
+source "$state_file"
+state="${AMUX_STATE:-idle}"
+case "$state" in
+  idle|busy|errored|usage-limit) ;;
+  *) state="errored" ;;
+esac
+owner="agent"
+if [[ -n "${AMUX_MANAGER:-}" || -f "$roles_dir/agent.manager" ]]; then
+  owner="manager"
+fi
+printf 'adapter=claude-code\nowner=%s\nstate=%s\nmodel=%s\nreasoning_level=%s\ncontrol_file=CLAUDE.md\n' "$owner" "$state" "$MODEL" "$REASONING_LEVEL"

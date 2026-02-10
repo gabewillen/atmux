@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+set -euo pipefail
+echo "amux claude-code adapter started in $(pwd)"
+exec "${SHELL:-/bin/bash}" -l

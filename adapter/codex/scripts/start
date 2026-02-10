@@ -7,4 +7,4 @@ if ! command -v codex >/dev/null 2>&1; then
 fi
 
 echo "starting codex in $(pwd)"
-exec codex "$@"
+exec codex --dangerously-bypass-approvals-and-sandbox --search "$@"

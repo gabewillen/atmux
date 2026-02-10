@@ -347,7 +347,17 @@ start_session() {
       exit 1
     fi
   else
-    git -C "$repo_root" worktree add -B "$branch" "$worktree" HEAD >/dev/null
+    worktree_err="$(
+      git -C "$repo_root" worktree add -B "$branch" "$worktree" HEAD 2>&1
+    )" || {
+      if printf '%s\n' "$worktree_err" | grep -Eq 'cannot lock ref|Operation not permitted|Permission denied'; then
+        echo "branch creation failed; retrying detached worktree for $worktree" >&2
+        git -C "$repo_root" worktree add "$worktree" HEAD >/dev/null
+      else
+        printf '%s\n' "$worktree_err" >&2
+        exit 1
+      fi
+    }
   fi
 
   local session_id

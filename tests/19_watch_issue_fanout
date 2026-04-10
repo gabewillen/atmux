@@ -68,7 +68,23 @@ issue_id="$(printf '%s\n' "$create_out" | sed -n 's/.*id="\([^"]*\)".*/\1/p' | h
 
 tmux send-keys -t "$pane_b" "ATMUX_HOME=\"$atmux_home\" ATMUX_REPO=\"$repo_name\" ATMUX_AGENT_NAME=\"watcher\" ATMUX_SESSION_NAME=\"$session_b\" \"$ATMUX_BIN\" watch --issue \"$issue_id\"" C-m
 
-sleep 0.3
+# Wait for the watcher file to appear before assigning, to avoid a race where
+# issue assign fans out before the watcher has registered itself.
+watcher_dir="$issues_root/$issue_id/watchers"
+watcher_deadline=$(( $(date +%s) + 10 ))
+while true; do
+  wcount=0
+  if [[ -d "$watcher_dir" ]]; then
+    wcount="$(find "$watcher_dir" -maxdepth 1 -type f 2>/dev/null | wc -l | tr -d ' ')"
+  fi
+  [[ "${wcount:-0}" -gt 0 ]] && break
+  now="$(date +%s)"
+  if (( now >= watcher_deadline )); then
+    echo "watcher file never appeared in $watcher_dir" >&2
+    exit 1
+  fi
+  sleep 0.05
+done
 
 tmux send-keys -t "$pane_a" "ATMUX_HOME=\"$atmux_home\" ATMUX_REPO=\"$repo_name\" ATMUX_AGENT_NAME=\"boss\" ATMUX_SESSION_NAME=\"$session_a\" \"$ATMUX_BIN\" issue assign \"$issue_id\" --to watcher" C-m
 

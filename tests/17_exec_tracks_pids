@@ -3,7 +3,7 @@ set -euo pipefail
 
 TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
-AMUX_BIN="$REPO_ROOT/bin/amux.sh"
+AMUX_BIN="$REPO_ROOT/bin/amux"
 
 tmp_home="$(mktemp -d "${TMPDIR:-/tmp}/amux-exec-home.XXXXXX")"
 cleanup() {

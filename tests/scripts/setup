@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 TESTS_DIR="$(cd -- "$SCRIPTS_DIR/.." && pwd)"
 REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
-AMUX_BIN="${AMUX_TEST_AMUX_BIN:-$REPO_ROOT/bin/amux.sh}"
+AMUX_BIN="${AMUX_TEST_AMUX_BIN:-$REPO_ROOT/bin/amux}"
 
 normalize_name() {
   local raw="${1:-}"

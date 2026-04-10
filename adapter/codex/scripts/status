@@ -47,7 +47,7 @@ resolve_target() {
 
 capture_status_snapshot() {
   local target="$1"
-  local watch_cmd="${AMUX_SOURCE_ROOT:-${AMUX_HOME:-$HOME/.amux}/src/amux}/bin/amux/watch"
+  local watch_cmd="${AMUX_SOURCE_ROOT:-${AMUX_HOME:-$HOME/.amux}/src/amux}/bin/(amux)/watch"
 
   tmux send-keys -t "$target" C-u
   sleep 0.2

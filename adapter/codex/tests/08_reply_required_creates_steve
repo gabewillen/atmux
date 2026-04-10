@@ -49,28 +49,28 @@ dump_debug() {
 }
 
 cleanup() {
-  AMUX_REPO="$repo" "$REPO_ROOT/bin/amux/agent" rm "$steve_session" >/dev/null 2>&1 || true
+  AMUX_REPO="$repo" "$REPO_ROOT/bin/(amux)/agent" rm "$steve_session" >/dev/null 2>&1 || true
   "$SCRIPTS_DIR/teardown" --session "$manager_session" >/dev/null 2>&1 || true
   "$SCRIPTS_DIR/teardown" --session "$worker_session" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 
-cmd_create="AMUX_NO_WRAP=1 AMUX_REPO=${repo} AMUX_AGENT_NAME=worker AMUX_SOURCE_ROOT=${REPO_ROOT} ${REPO_ROOT}/bin/amux.sh agent create --name Steve --role principal --intelligence 100"
-cmd_reply="AMUX_NO_WRAP=1 AMUX_REPO=${repo} AMUX_MANAGER=manager AMUX_AGENT_NAME=worker AMUX_SESSION_NAME=${worker_session} ${REPO_ROOT}/bin/amux.sh manager send \"${reply_token} Steve created\""
+cmd_create="AMUX_NO_WRAP=1 AMUX_REPO=${repo} AMUX_AGENT_NAME=worker AMUX_SOURCE_ROOT=${REPO_ROOT} ${REPO_ROOT}/bin/amux agent create --name Steve --role principal --intelligence 100"
+cmd_reply="AMUX_NO_WRAP=1 AMUX_REPO=${repo} AMUX_MANAGER=manager AMUX_AGENT_NAME=worker AMUX_SESSION_NAME=${worker_session} ${REPO_ROOT}/bin/amux manager send \"${reply_token} Steve created\""
 instruction="${task_token}: Create the most intelligent agent named Steve. REQUIRED: run this exact command: ${cmd_create} . Then run this exact command: ${cmd_reply} . Do not ask questions."
 
 AMUX_REPO="$repo" \
 AMUX_AGENT_NAME="manager" \
 AMUX_SESSION_NAME="$manager_session" \
-"$REPO_ROOT/bin/amux/agent" send --to worker --reply-required "$instruction"
+"$REPO_ROOT/bin/(amux)/agent" send --to worker --reply-required "$instruction"
 
-if ! "$REPO_ROOT/bin/amux/watch" --target "$worker_pane" --scope pane --text "reply_required=\"true\"" --timeout 30 --interval 0.2 --lines 600; then
+if ! "$REPO_ROOT/bin/(amux)/watch" --target "$worker_pane" --scope pane --text "reply_required=\"true\"" --timeout 30 --interval 0.2 --lines 600; then
   dump_debug
   echo "worker did not receive reply_required=true message" >&2
   exit 1
 fi
 
-if ! "$REPO_ROOT/bin/amux/watch" --target "$manager_pane" --scope pane --text "$reply_token" --timeout 240 --interval 0.5 --lines 1500; then
+if ! "$REPO_ROOT/bin/(amux)/watch" --target "$manager_pane" --scope pane --text "$reply_token" --timeout 240 --interval 0.5 --lines 1500; then
   dump_debug
   echo "manager did not receive required reply from worker" >&2
   exit 1

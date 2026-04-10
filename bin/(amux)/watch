@@ -1,107 +1,61 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+WATCH_ROOT="$(cd -- "$HERE/[watch]" && pwd)"
+
 usage() {
   cat <<'USAGE'
 Usage:
   amux watch --target <tmux-target> --text <needle> [--scope pane|window|session] [--timeout <seconds>] [--interval <seconds>] [--lines <n>]
+  amux watch --pid <pid> [--timeout <seconds>] [--interval <seconds>]
+  amux watch --issue <id> [--repo <repo>] [--timeout <seconds>] [--interval <seconds>]
 
 Description:
-  Poll tmux output and exit 0 when text appears, non-zero on timeout.
+  Pane mode: poll tmux output until text appears, non-zero on timeout.
+  PID mode: wait for an Amux exec process (see ~/.amux/exec/<repo>/<pid>/) and
+  receive the same exit notification XML as the executor when it finishes.
+  Issue mode: wait for the next filesystem issue update and receive the same
+  notification XML as issue assign/claim fan-out.
 
-Examples:
-  amux watch --target %12 --scope pane --text "Select Model and Effort"
-  amux watch --target @3 --scope window --text "running tests" --timeout 20
+  Implementations: bin/(amux)/[watch]/text, [watch]/pid, [watch]/issue.
 USAGE
 }
 
-capture_scope() {
-  local scope="$1"
-  local target="$2"
-  local lines="$3"
+case "${1:-}" in
+  -h|--help|help)
+    usage
+    exit 0
+    ;;
+esac
 
-  case "$scope" in
-    pane)
-      tmux capture-pane -p -t "$target" -S "-$lines" 2>/dev/null || true
-      ;;
-    window|session)
-      tmux list-panes -t "$target" -F '#{pane_id}' 2>/dev/null \
-        | while IFS= read -r pane; do
-            [[ -z "$pane" ]] && continue
-            tmux capture-pane -p -t "$pane" -S "-$lines" 2>/dev/null || true
-            printf '\n'
-          done
-      ;;
-    *)
-      echo "invalid scope: $scope" >&2
-      exit 2
-      ;;
-  esac
-}
+if [[ $# -eq 0 ]]; then
+  usage
+  exit 2
+fi
 
-main() {
-  local target=""
-  local needle=""
-  local scope="pane"
-  local timeout="10"
-  local interval="0.2"
-  local lines="200"
+has_pid=0
+has_issue=0
+for a in "$@"; do
+  if [[ "$a" == "--pid" ]]; then
+    has_pid=1
+  fi
+  if [[ "$a" == "--issue" ]]; then
+    has_issue=1
+  fi
+done
 
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-      --target)
-        target="${2:-}"
-        shift 2
-        ;;
-      --text)
-        needle="${2:-}"
-        shift 2
-        ;;
-      --scope)
-        scope="${2:-}"
-        shift 2
-        ;;
-      --timeout)
-        timeout="${2:-}"
-        shift 2
-        ;;
-      --interval)
-        interval="${2:-}"
-        shift 2
-        ;;
-      --lines)
-        lines="${2:-}"
-        shift 2
-        ;;
-      -h|--help|help)
-        usage
-        exit 0
-        ;;
-      *)
-        echo "unknown flag: $1" >&2
-        usage >&2
-        exit 2
-        ;;
-    esac
-  done
+if [[ "$has_pid" -eq 1 && "$has_issue" -eq 1 ]]; then
+  echo "amux watch: cannot combine --pid and --issue" >&2
+  exit 2
+fi
 
-  [[ -n "$target" ]] || { echo "missing --target" >&2; exit 2; }
-  [[ -n "$needle" ]] || { echo "missing --text" >&2; exit 2; }
+if [[ "$has_pid" -eq 1 ]]; then
+  exec "$WATCH_ROOT/pid" "$@"
+fi
 
-  local deadline now
-  deadline=$(( $(date +%s) + timeout ))
+if [[ "$has_issue" -eq 1 ]]; then
+  exec "$WATCH_ROOT/issue" "$@"
+fi
 
-  while true; do
-    if capture_scope "$scope" "$target" "$lines" | grep -Fq "$needle"; then
-      exit 0
-    fi
-
-    now="$(date +%s)"
-    if (( now >= deadline )); then
-      exit 1
-    fi
-    sleep "$interval"
-  done
-}
-
-main "$@"
+exec "$WATCH_ROOT/text" "$@"

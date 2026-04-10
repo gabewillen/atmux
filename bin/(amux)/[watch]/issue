@@ -1,0 +1,147 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+AMUX_HOME="${AMUX_HOME:-$HOME/.amux}"
+
+HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=bin/(amux)/notify
+source "$HERE/../notify"
+
+usage() {
+  cat <<'USAGE'
+Usage:
+  amux watch --issue <id> [--repo <repo>] [--timeout <seconds>] [--interval <seconds>]
+
+Description:
+  Wait for the next update to an Amux filesystem issue (~/.amux/issues/<repo>/<id>/).
+  Registers this pane to receive the same notification XML as issue assign/claim fan-out.
+
+Examples:
+  amux watch --issue 123e4567-e89b-12d3-a456-426614174000
+  amux watch --issue "$id" --repo myrepo --timeout 120
+USAGE
+}
+
+read_field_trim() {
+  local file="$1"
+  if [[ ! -f "$file" ]]; then
+    printf ''
+    return 0
+  fi
+  tr -d '\r\n' <"$file" 2>/dev/null || printf ''
+}
+
+resolve_issue_repo() {
+  local explicit_repo="${1:-}"
+  local repo=""
+
+  if [[ -n "$explicit_repo" ]]; then
+    repo="$explicit_repo"
+  elif [[ -n "${AMUX_REPO:-}" ]]; then
+    repo="${AMUX_REPO}"
+  elif [[ -n "${TMUX:-}" ]]; then
+    repo="$(tmux show-environment AMUX_REPO 2>/dev/null | sed -n 's/^AMUX_REPO=//p' || true)"
+  fi
+
+  if [[ -z "$repo" ]]; then
+    local repo_root=""
+    repo_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+    if [[ -n "$repo_root" ]]; then
+      repo="$(basename "$repo_root")"
+    fi
+  fi
+
+  if [[ -z "$repo" ]]; then
+    echo "amux watch --issue: unable to resolve repo; pass --repo <repo>" >&2
+    exit 2
+  fi
+
+  normalize_name "$repo"
+}
+
+main() {
+  local issue_id=""
+  local explicit_repo=""
+  local timeout_sec="0"
+  local interval="0.2"
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --issue)
+        issue_id="${2:-}"
+        shift 2
+        ;;
+      --repo)
+        explicit_repo="${2:-}"
+        shift 2
+        ;;
+      --timeout)
+        timeout_sec="${2:-}"
+        shift 2
+        ;;
+      --interval)
+        interval="${2:-}"
+        shift 2
+        ;;
+      -h|--help|help)
+        usage
+        exit 0
+        ;;
+      *)
+        echo "unknown flag: $1" >&2
+        usage >&2
+        exit 2
+        ;;
+    esac
+  done
+
+  [[ -n "$issue_id" ]] || { echo "missing --issue" >&2; exit 2; }
+
+  local repo root issue_dir snapshot_updated
+  repo="$(resolve_issue_repo "$explicit_repo")"
+  root="$(issue_root_for_repo "$repo")"
+  issue_dir="$(issue_dir_for_id "$root" "$issue_id")"
+
+  if [[ ! -d "$issue_dir" ]]; then
+    echo "amux watch --issue: issue not found: $issue_id" >&2
+    exit 2
+  fi
+
+  snapshot_updated="$(read_field_trim "$issue_dir/updated_at")"
+
+  mkdir -p "$issue_dir/watchers"
+  watcher_file="$(mktemp "$issue_dir/watchers/watcher.XXXXXX")"
+  write_field "$watcher_file" "$(current_pane)"
+
+  cleanup_watcher() {
+    [[ -n "${watcher_file:-}" ]] && rm -f "$watcher_file"
+  }
+  trap cleanup_watcher EXIT INT TERM HUP
+
+  local deadline=0
+  if [[ -n "$timeout_sec" && "$timeout_sec" != "0" ]]; then
+    deadline=$(( $(date +%s) + timeout_sec ))
+  fi
+
+  local cur_updated
+  while true; do
+    cur_updated="$(read_field_trim "$issue_dir/updated_at")"
+    if [[ -n "$cur_updated" && "$cur_updated" != "$snapshot_updated" ]]; then
+      break
+    fi
+
+    if [[ "$deadline" -gt 0 ]]; then
+      local now
+      now="$(date +%s)"
+      if (( now >= deadline )); then
+        exit 124
+      fi
+    fi
+
+    sleep "$interval"
+  done
+
+  exit 0
+}
+
+main "$@"

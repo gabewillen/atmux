@@ -40,8 +40,8 @@ resolve_amux_bin() {
   local script_dir repo_root=""
   script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
   repo_root="$(cd -- "$script_dir/../.." && pwd)"
-  if [[ -x "$repo_root/bin/amux.sh" ]]; then
-    printf '%s\n' "$repo_root/bin/amux.sh"
+  if [[ -x "$repo_root/bin/amux" ]]; then
+    printf '%s\n' "$repo_root/bin/amux"
     return 0
   fi
   if [[ -x "$AMUX_HOME/bin/amux" ]]; then

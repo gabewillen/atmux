@@ -78,7 +78,7 @@ schedule_intelligence_profile() {
   fi
 
   adapter_cmd="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)/cmd"
-  watch_cmd="${AMUX_SOURCE_ROOT:-${AMUX_HOME:-$HOME/.amux}/src/amux}/bin/amux/watch"
+  watch_cmd="${AMUX_SOURCE_ROOT:-${AMUX_HOME:-$HOME/.amux}/src/amux}/bin/(amux)/watch"
   set_bootstrap_state pending
 
   (

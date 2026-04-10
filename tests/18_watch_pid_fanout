@@ -1,0 +1,99 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+AMUX_BIN="$REPO_ROOT/bin/amux"
+
+wait_for_text() {
+  local target="$1"
+  local needle="$2"
+  local timeout="${3:-15}"
+  local deadline now snap compact
+  deadline=$(( $(date +%s) + timeout ))
+  while true; do
+    snap="$(tmux capture-pane -p -t "$target" -S -400 2>/dev/null || true)"
+    compact="$(printf '%s' "$snap" | tr -d '\r\n')"
+    if printf '%s' "$compact" | grep -Fq "$needle"; then
+      return 0
+    fi
+    now="$(date +%s)"
+    if (( now >= deadline )); then
+      return 1
+    fi
+    sleep 0.1
+  done
+}
+
+tmp_home="$(mktemp -d "${TMPDIR:-/tmp}/amux-watch-pid.XXXXXX")"
+repo_name="w${RANDOM}"
+session_a="amux-${repo_name}-a"
+session_b="amux-${repo_name}-b"
+amux_home="$tmp_home/.amux"
+exec_root="$amux_home/exec/$repo_name"
+
+cleanup() {
+  tmux kill-session -t "$session_a" >/dev/null 2>&1 || true
+  tmux kill-session -t "$session_b" >/dev/null 2>&1 || true
+  rm -rf "$tmp_home"
+}
+trap cleanup EXIT
+
+tmux kill-session -t "$session_a" >/dev/null 2>&1 || true
+tmux kill-session -t "$session_b" >/dev/null 2>&1 || true
+
+tmux new-session -d -s "$session_a" -n "$session_a" -x 160 -y 40 -c "$REPO_ROOT" "/bin/bash" -l
+tmux new-session -d -s "$session_b" -n "$session_b" -x 160 -y 40 -c "$REPO_ROOT" "/bin/bash" -l
+
+pane_a="$(tmux list-panes -t "$session_a" -F '#{pane_id}' 2>/dev/null | head -n1)"
+pane_b="$(tmux list-panes -t "$session_b" -F '#{pane_id}' 2>/dev/null | head -n1)"
+[[ -n "$pane_a" && -n "$pane_b" ]] || { echo "missing panes" >&2; exit 1; }
+
+# Reject unknown PID
+set +e
+out_rej="$(AMUX_HOME="$amux_home" AMUX_REPO="$repo_name" "$AMUX_BIN" watch --pid 999999999 2>&1)"
+rc_rej=$?
+set -e
+[[ "$rc_rej" -eq 2 ]] || { echo "expected reject exit 2, got $rc_rej: $out_rej" >&2; exit 1; }
+
+tmux send-keys -t "$pane_a" "AMUX_HOME=\"$amux_home\" AMUX_REPO=\"$repo_name\" AMUX_AGENT_NAME=\"a\" AMUX_SESSION_NAME=\"$session_a\" \"$AMUX_BIN\" exec sleep 8" C-m
+
+deadline=$(( $(date +%s) + 12 ))
+pid=""
+while [[ -z "$pid" ]]; do
+  now="$(date +%s)"
+  if (( now >= deadline )); then
+    echo "timeout waiting for exec metadata" >&2
+    tmux capture-pane -p -t "$pane_a" -S -80 >&2 || true
+    exit 1
+  fi
+  if [[ -d "$exec_root" ]]; then
+    ep_dir="$(find "$exec_root" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | head -n1)"
+    if [[ -n "$ep_dir" && -f "$ep_dir/pid" ]]; then
+      pid="$(tr -d '\r\n' <"$ep_dir/pid")"
+    fi
+  fi
+  sleep 0.05
+done
+
+[[ -n "$pid" ]] || { echo "pid empty" >&2; exit 1; }
+
+tmux send-keys -t "$pane_b" "AMUX_HOME=\"$amux_home\" AMUX_REPO=\"$repo_name\" AMUX_AGENT_NAME=\"b\" AMUX_SESSION_NAME=\"$session_b\" \"$AMUX_BIN\" watch --pid \"$pid\"" C-m
+
+if ! wait_for_text "$pane_a" "<notification from=\"exec" 20; then
+  echo "executor pane missing notification" >&2
+  tmux capture-pane -p -t "$pane_a" -S -200 >&2 || true
+  exit 1
+fi
+if ! wait_for_text "$pane_b" "<notification from=\"exec" 20; then
+  echo "watcher pane missing notification" >&2
+  tmux capture-pane -p -t "$pane_b" -S -200 >&2 || true
+  exit 1
+fi
+
+# Watcher unregisters after exit; watchers dir empty or absent files
+sleep 0.5
+wcount="$(find "$exec_root/$pid/watchers" -mindepth 1 -maxdepth 1 -type f 2>/dev/null | wc -l | tr -d ' ')"
+[[ "${wcount:-0}" -eq 0 ]] || { echo "expected no watcher files left, found $wcount" >&2; exit 1; }
+
+echo "ok: watch --pid validates, exec fans out to watcher, watchers cleaned up"

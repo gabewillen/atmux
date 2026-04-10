@@ -18,21 +18,21 @@ USAGE
 
 resolve_script() {
   local name="$1"
-  if [[ -n "${AMUX_SOURCE_ROOT:-}" && -x "${AMUX_SOURCE_ROOT}/bin/amux/${name}" ]]; then
-    printf '%s\n' "${AMUX_SOURCE_ROOT}/bin/amux/${name}"
+  if [[ -n "${AMUX_SOURCE_ROOT:-}" && -x "${AMUX_SOURCE_ROOT}/bin/(amux)/${name}" ]]; then
+    printf '%s\n' "${AMUX_SOURCE_ROOT}/bin/(amux)/${name}"
     return 0
   fi
 
   local repo_root=""
   if repo_root="$(git rev-parse --show-toplevel 2>/dev/null)"; then
-    if [[ -x "${repo_root}/bin/amux/${name}" ]]; then
-      printf '%s\n' "${repo_root}/bin/amux/${name}"
+    if [[ -x "${repo_root}/bin/(amux)/${name}" ]]; then
+      printf '%s\n' "${repo_root}/bin/(amux)/${name}"
       return 0
     fi
   fi
 
-  if [[ -x "${AMUX_HOME}/src/amux/bin/amux/${name}" ]]; then
-    printf '%s\n' "${AMUX_HOME}/src/amux/bin/amux/${name}"
+  if [[ -x "${AMUX_HOME}/src/amux/bin/(amux)/${name}" ]]; then
+    printf '%s\n' "${AMUX_HOME}/src/amux/bin/(amux)/${name}"
     return 0
   fi
 

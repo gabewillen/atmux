@@ -10,7 +10,7 @@ if [[ "$AMUX_BIN_ORIGIN" == "$AMUX_HOME/bin" && -d "$AMUX_HOME/src/amux" ]]; the
   export AMUX_SOURCE_ROOT
 elif [[ -z "${AMUX_SOURCE_ROOT:-}" ]]; then
   local_checkout_root="$(cd -- "$AMUX_BIN_ORIGIN/.." && pwd)"
-  if [[ -x "$local_checkout_root/bin/amux.sh" && -d "$local_checkout_root/bin/amux" ]]; then
+  if [[ -x "$local_checkout_root/bin/amux" && -d "$local_checkout_root/bin/(amux)" ]]; then
     AMUX_SOURCE_ROOT="$local_checkout_root"
   elif [[ -d "$AMUX_HOME/src/amux" ]]; then
     AMUX_SOURCE_ROOT="$AMUX_HOME/src/amux"
@@ -22,9 +22,9 @@ fi
 
 # In agent sessions, always route to the source repo's amux so help/behavior
 # stays current even if the worktree copy is stale.
-if [[ -n "${AMUX_SOURCE_ROOT:-}" && -x "${AMUX_SOURCE_ROOT}/bin/amux.sh" ]]; then
+if [[ -n "${AMUX_SOURCE_ROOT:-}" && -x "${AMUX_SOURCE_ROOT}/bin/amux" ]]; then
   if [[ "$AMUX_BIN_ORIGIN" != "$(cd -- "${AMUX_SOURCE_ROOT}/bin" && pwd)" ]]; then
-    exec "${AMUX_SOURCE_ROOT}/bin/amux.sh" "$@"
+    exec "${AMUX_SOURCE_ROOT}/bin/amux" "$@"
   fi
 fi
 
@@ -37,8 +37,8 @@ usage() {
   fi
   local repo_root=""
   if repo_root="$(git rev-parse --show-toplevel 2>/dev/null)"; then
-    if [[ -d "$repo_root/bin/amux" ]]; then
-      script_dirs+=("$repo_root/bin/amux")
+    if [[ -d "$repo_root/bin/(amux)" ]]; then
+      script_dirs+=("$repo_root/bin/(amux)")
     fi
   fi
 
@@ -47,11 +47,7 @@ usage() {
     while IFS= read -r name; do
       [[ -z "$name" ]] && continue
       cmds+=("$name")
-    done < <(find "$dir" -maxdepth 1 -type f -perm -u+x -exec basename {} \; | sed 's/\.sh$//' | sort)
-    while IFS= read -r pagefile; do
-      [[ -z "$pagefile" ]] && continue
-      cmds+=("$(basename "$(dirname "$pagefile")")")
-    done < <(find "$dir" -mindepth 2 -maxdepth 2 -type f -name 'page.sh' -perm -u+x 2>/dev/null | sort)
+    done < <(find "$dir" -maxdepth 1 -type f -perm -u+x -exec basename {} \; | sort)
   done
 
   local -a uniq_cmds=()
@@ -156,33 +152,11 @@ resolve_script_subcommand() {
   local p=""
 
   if repo_root="$(git rev-parse --show-toplevel 2>/dev/null)"; then
-    p="$repo_root/bin/amux/${cmd}/page.sh"
+    p="$repo_root/bin/(amux)/${cmd}"
     if [[ -f "$p" && -x "$p" ]]; then
       printf '%s\n' "$p"
       return 0
     fi
-    p="$repo_root/bin/amux/${cmd}.sh"
-    if [[ -f "$p" && -x "$p" ]]; then
-      printf '%s\n' "$p"
-      return 0
-    fi
-    p="$repo_root/bin/amux/${cmd}"
-    if [[ -f "$p" && -x "$p" ]]; then
-      printf '%s\n' "$p"
-      return 0
-    fi
-  fi
-
-  p="$AMUX_HOME/bin/scripts/${cmd}/page.sh"
-  if [[ -f "$p" && -x "$p" ]]; then
-    printf '%s\n' "$p"
-    return 0
-  fi
-
-  p="$AMUX_HOME/bin/scripts/${cmd}.sh"
-  if [[ -f "$p" && -x "$p" ]]; then
-    printf '%s\n' "$p"
-    return 0
   fi
 
   p="$AMUX_HOME/bin/scripts/${cmd}"
@@ -203,7 +177,7 @@ should_wrap_command() {
   fi
 
   case "$cmd" in
-    exec)
+    exec|watch|notify)
       return 1
       ;;
     session)

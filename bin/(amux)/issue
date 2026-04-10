@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+AMUX_HOME="${AMUX_HOME:-$HOME/.amux}"
+HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=bin/(amux)/notify
+source "$HERE/notify"
+
 usage() {
   cat <<'USAGE'
 Usage:
@@ -16,20 +21,6 @@ Description:
   Repo-scoped issue tickets on filesystem.
   Issues are stored at: ~/.amux/issues/<repo>/<id>/
 USAGE
-}
-
-normalize_repo_name() {
-  local raw="${1:-}"
-  local normalized=""
-  normalized="$(printf '%s' "$raw" | sed -E 's/[^A-Za-z0-9_-]+/_/g; s/_+/_/g; s/^_+//; s/_+$//')"
-  if [[ -z "$normalized" ]]; then
-    normalized="repo"
-  fi
-  printf '%s\n' "$normalized"
-}
-
-xml_escape() {
-  printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g' -e "s/'/\&apos;/g"
 }
 
 resolve_repo_name() {
@@ -57,7 +48,7 @@ resolve_repo_name() {
     exit 2
   fi
 
-  normalize_repo_name "$repo"
+  normalize_name "$repo"
 }
 
 now_utc() {
@@ -67,12 +58,6 @@ now_utc() {
 read_field() {
   local file="$1"
   cat "$file" 2>/dev/null || true
-}
-
-write_field() {
-  local file="$1"
-  local value="${2:-}"
-  printf '%s\n' "$value" > "$file"
 }
 
 tmux_env_value() {
@@ -155,18 +140,6 @@ ensure_can_assign() {
     echo "managed agents cannot assign issues; use 'amux issue claim' instead" >&2
     exit 1
   fi
-}
-
-issue_root_for_repo() {
-  local repo="$1"
-  local amux_home="${AMUX_HOME:-$HOME/.amux}"
-  printf '%s/issues/%s\n' "$amux_home" "$repo"
-}
-
-issue_dir_for_id() {
-  local root="$1"
-  local id="$2"
-  printf '%s/%s\n' "$root" "$id"
 }
 
 create_issue() {
@@ -396,6 +369,12 @@ assign_issue() {
     "$(xml_escape "$to")" \
     "$(xml_escape "$assigned_by")" \
     "$(xml_escape "$now")"
+
+  local actor_pane notification_xml
+  actor_pane="$(current_pane)"
+  notification_xml="$(build_issue_notification_xml "assign" "$id" "assigned" "$now")"
+  queue_self_notification "$actor_pane" "$notification_xml"
+  notify_issue_watchers "$dir" "$actor_pane" "$notification_xml"
 }
 
 claim_issue() {
@@ -475,6 +454,12 @@ claim_issue() {
     "$(xml_escape "$assigned_to")" \
     "$(xml_escape "$by")" \
     "$(xml_escape "$now")"
+
+  local actor_pane notification_xml
+  actor_pane="$(current_pane)"
+  notification_xml="$(build_issue_notification_xml "claim" "$id" "in_progress" "$now")"
+  queue_self_notification "$actor_pane" "$notification_xml"
+  notify_issue_watchers "$dir" "$actor_pane" "$notification_xml"
 }
 
 sub="${1:-}"

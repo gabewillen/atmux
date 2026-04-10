@@ -1,0 +1,141 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+AMUX_HOME="${AMUX_HOME:-$HOME/.amux}"
+
+HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=bin/(amux)/notify
+source "$HERE/../notify"
+
+usage() {
+  cat <<'USAGE'
+Usage:
+  amux watch --pid <pid> [--timeout <seconds>] [--interval <seconds>]
+
+Description:
+  Wait for an Amux exec process (metadata under ~/.amux/exec/<repo>/<pid>/).
+  Registers this pane to receive the same exit notification XML as the executor.
+  Only PIDs tracked by amux exec are accepted.
+
+Examples:
+  amux watch --pid 12345
+  amux watch --pid 12345 --timeout 60 --interval 0.5
+USAGE
+}
+
+read_state_field() {
+  local file="$1"
+  if [[ ! -f "$file" ]]; then
+    printf ''
+    return 0
+  fi
+  tr -d '\r\n' <"$file" 2>/dev/null || printf ''
+}
+
+validate_exec_ownership() {
+  local exec_dir="$1"
+  local expect_pid="$2"
+  local expect_repo="$3"
+  local got_pid got_repo
+
+  [[ -d "$exec_dir" ]] || return 1
+  got_pid="$(read_state_field "$exec_dir/pid")"
+  got_repo="$(read_state_field "$exec_dir/repo")"
+  [[ -n "$got_pid" && "$got_pid" == "$expect_pid" ]] || return 1
+  [[ -n "$got_repo" && "$got_repo" == "$expect_repo" ]] || return 1
+  return 0
+}
+
+main() {
+  local pid=""
+  local timeout_sec="0"
+  local interval="0.2"
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --pid)
+        pid="${2:-}"
+        shift 2
+        ;;
+      --timeout)
+        timeout_sec="${2:-}"
+        shift 2
+        ;;
+      --interval)
+        interval="${2:-}"
+        shift 2
+        ;;
+      -h|--help|help)
+        usage
+        exit 0
+        ;;
+      *)
+        echo "unknown flag: $1" >&2
+        usage >&2
+        exit 2
+        ;;
+    esac
+  done
+
+  [[ -n "$pid" ]] || { echo "missing --pid" >&2; exit 2; }
+
+  local repo_name
+  repo_name="$(repo_name_from_context)"
+  local exec_dir
+  exec_dir="$(exec_dir_for_repo_pid "$repo_name" "$pid")"
+
+  if ! validate_exec_ownership "$exec_dir" "$pid" "$repo_name"; then
+    echo "amux watch --pid: not an amux-owned exec PID for this repo: $pid" >&2
+    exit 2
+  fi
+
+  local st
+  st="$(read_state_field "$exec_dir/state" || true)"
+  if [[ "$st" == "exited" ]]; then
+    exit 0
+  fi
+
+  mkdir -p "$exec_dir/watchers"
+  watcher_file="$(mktemp "$exec_dir/watchers/watcher.XXXXXX")"
+  local pane
+  pane="$(current_pane)"
+  write_field "$watcher_file" "$pane"
+
+  cleanup_watcher() {
+    [[ -n "${watcher_file:-}" ]] && rm -f "$watcher_file"
+  }
+  trap cleanup_watcher EXIT INT TERM HUP
+
+  local deadline=0
+  if [[ -n "$timeout_sec" && "$timeout_sec" != "0" ]]; then
+    deadline=$(( $(date +%s) + timeout_sec ))
+  fi
+
+  while true; do
+    st="$(read_state_field "$exec_dir/state" || true)"
+    if [[ "$st" == "exited" ]]; then
+      break
+    fi
+    if ! kill -0 "$pid" 2>/dev/null; then
+      sleep 0.05
+      st="$(read_state_field "$exec_dir/state" || true)"
+      if [[ "$st" == "exited" ]]; then
+        break
+      fi
+    fi
+
+    if [[ "$deadline" -gt 0 ]]; then
+      local now
+      now="$(date +%s)"
+      if (( now >= deadline )); then
+        exit 124
+      fi
+    fi
+
+    sleep "$interval"
+  done
+
+  exit 0
+}
+
+main "$@"

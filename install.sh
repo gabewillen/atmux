@@ -74,13 +74,13 @@ write_launcher() {
 #!/usr/bin/env bash
 set -euo pipefail
 AMUX_HOME="${AMUX_HOME:-$HOME/.amux}"
-exec "$AMUX_HOME/src/amux/bin/amux.sh" "$@"
+exec "$AMUX_HOME/src/amux/bin/amux" "$@"
 LAUNCHER
   chmod +x "$AMUX_BIN_DIR/amux"
 }
 
 install_subcommands() {
-  local src_scripts="$AMUX_SRC_DIR/bin/amux"
+  local src_scripts="$AMUX_SRC_DIR/bin/(amux)"
   local dst_scripts="$AMUX_BIN_DIR/scripts"
 
   mkdir -p "$dst_scripts"
@@ -148,7 +148,7 @@ USAGE
   script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
   src_root="$script_dir"
 
-  if [[ -x "$src_root/bin/amux.sh" && -d "$src_root/bin/amux" ]]; then
+  if [[ -x "$src_root/bin/amux" && -d "$src_root/bin/(amux)" ]]; then
     say "Installing amux from local checkout: $src_root"
     install_from_local "$src_root"
   else

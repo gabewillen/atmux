@@ -26,7 +26,7 @@ fi
 tmux send-keys -t "$pane_id" C-u
 tmux send-keys -t "$pane_id" -l 'Give a very short one-line response: READY'
 tmux send-keys -t "$pane_id" Enter
-"$REPO_ROOT/bin/amux/watch" --target "$pane_id" --scope pane --text "READY" --timeout 40 --interval 0.2 --lines 700 >/dev/null || true
+"$REPO_ROOT/bin/(amux)/watch" --target "$pane_id" --scope pane --text "READY" --timeout 40 --interval 0.2 --lines 700 >/dev/null || true
 
 status_out="$({
   AMUX_HOME="$amux_home" \

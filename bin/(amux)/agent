@@ -296,15 +296,15 @@ resolve_amux_runner() {
       AMUX_SOURCE_ROOT="$tmux_source_root"
     fi
   fi
-  if [[ -n "${AMUX_SOURCE_ROOT:-}" && -x "${AMUX_SOURCE_ROOT}/bin/amux.sh" ]]; then
-    printf '%s\n' "${AMUX_SOURCE_ROOT}/bin/amux.sh"
+  if [[ -n "${AMUX_SOURCE_ROOT:-}" && -x "${AMUX_SOURCE_ROOT}/bin/amux" ]]; then
+    printf '%s\n' "${AMUX_SOURCE_ROOT}/bin/amux"
     return
   fi
 
   local repo_root=""
   if repo_root="$(git rev-parse --show-toplevel 2>/dev/null)"; then
-    if [[ -x "$repo_root/bin/amux.sh" ]]; then
-      printf '%s\n' "$repo_root/bin/amux.sh"
+    if [[ -x "$repo_root/bin/amux" ]]; then
+      printf '%s\n' "$repo_root/bin/amux"
       return
     fi
   fi
@@ -319,29 +319,29 @@ resolve_amux_runner() {
 }
 
 resolve_session_runner() {
-  if [[ -n "${AMUX_SOURCE_ROOT:-}" && -x "${AMUX_SOURCE_ROOT}/bin/amux/session" ]]; then
-    printf '%s\n' "${AMUX_SOURCE_ROOT}/bin/amux/session"
+  if [[ -n "${AMUX_SOURCE_ROOT:-}" && -x "${AMUX_SOURCE_ROOT}/bin/(amux)/session" ]]; then
+    printf '%s\n' "${AMUX_SOURCE_ROOT}/bin/(amux)/session"
     return
   fi
 
   if [[ -n "${TMUX:-}" ]]; then
     tmux_source_root="$(tmux show-environment AMUX_SOURCE_ROOT 2>/dev/null | sed -n 's/^AMUX_SOURCE_ROOT=//p' || true)"
-    if [[ -n "$tmux_source_root" && -x "$tmux_source_root/bin/amux/session" ]]; then
-      printf '%s\n' "$tmux_source_root/bin/amux/session"
+    if [[ -n "$tmux_source_root" && -x "$tmux_source_root/bin/(amux)/session" ]]; then
+      printf '%s\n' "$tmux_source_root/bin/(amux)/session"
       return
     fi
   fi
 
   local amux_home="${AMUX_HOME:-$HOME/.amux}"
-  if [[ -x "$amux_home/src/amux/bin/amux/session" ]]; then
-    printf '%s\n' "$amux_home/src/amux/bin/amux/session"
+  if [[ -x "$amux_home/src/amux/bin/(amux)/session" ]]; then
+    printf '%s\n' "$amux_home/src/amux/bin/(amux)/session"
     return
   fi
 
   local repo_root=""
   if repo_root="$(git rev-parse --show-toplevel 2>/dev/null)"; then
-    if [[ -x "$repo_root/bin/amux/session" ]]; then
-      printf '%s\n' "$repo_root/bin/amux/session"
+    if [[ -x "$repo_root/bin/(amux)/session" ]]; then
+      printf '%s\n' "$repo_root/bin/(amux)/session"
       return
     fi
   fi
@@ -536,7 +536,7 @@ monitor_pid_matches_session() {
   kill -0 "$pid" >/dev/null 2>&1 || return 1
   cmd="$(ps -p "$pid" -o command= 2>/dev/null || true)"
   [[ -n "$cmd" ]] || return 1
-  [[ "$cmd" == *"bin/amux/session"*"_monitor-supervisor ${session}"* ]] || return 1
+  [[ "$cmd" == *"bin/(amux)/session"*"_monitor-supervisor ${session}"* ]] || return 1
   return 0
 }
 
@@ -651,13 +651,13 @@ start_monitor_for_session_if_needed() {
   tmux set-environment -t "$session" -u AMUX_MONITOR_HEARTBEAT_TS >/dev/null 2>&1 || true
 
   source_root="$(get_session_env "$session" AMUX_SOURCE_ROOT)"
-  if [[ -z "$source_root" || ! -x "$source_root/bin/amux/session" ]]; then
+  if [[ -z "$source_root" || ! -x "$source_root/bin/(amux)/session" ]]; then
     source_root="${AMUX_SOURCE_ROOT:-}"
   fi
-  if [[ -z "$source_root" || ! -x "$source_root/bin/amux/session" ]]; then
+  if [[ -z "$source_root" || ! -x "$source_root/bin/(amux)/session" ]]; then
     source_root="${AMUX_HOME:-$HOME/.amux}/src/amux"
   fi
-  runner="$source_root/bin/amux/session"
+  runner="$source_root/bin/(amux)/session"
   [[ -x "$runner" ]] || return 0
 
   log_file="${TMPDIR:-/tmp}/amux-monitor-${session}.log"

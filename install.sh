@@ -88,8 +88,8 @@ install_subcommands() {
   local src_scripts="$ATMUX_SRC_DIR/bin/(atmux)"
   local dst_scripts="$ATMUX_BIN_DIR/scripts"
 
+  rm -rf "$dst_scripts"
   mkdir -p "$dst_scripts"
-  rm -f "$dst_scripts"/*
 
   if [[ -d "$src_scripts" ]]; then
     cp -R "$src_scripts"/. "$dst_scripts"/

@@ -40,7 +40,8 @@ deadline=$((SECONDS + 12))
 found=0
 while (( SECONDS < deadline )); do
   snap="$(tmux capture-pane -p -t "$manager_pane" -S -300 | tr -d '\r' || true)"
-  if printf '%s\n' "$snap" | grep -q '<idle '; then
+  # Pane display may wrap the XML so "<idle" and " agent=..." are on different lines.
+  if printf '%s\n' "$snap" | tr -d '\n' | grep -qF '<idle'; then
     found=1
     break
   fi

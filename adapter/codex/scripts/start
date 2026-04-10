@@ -101,16 +101,47 @@ schedule_intelligence_profile() {
 
 _on_stop_script="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)/scripts/on-stop"
 
-# Codex has no session-end hook (the Stop hook is per-turn and experimental).
-# Trap EXIT is the only reliable mechanism.
-_on_stop() {
-  local rc="${1:-}"
-  [[ "$rc" == "127" ]] && return 0
-  [[ -x "$_on_stop_script" ]] && "$_on_stop_script" || true
+# Install a Stop hook (fires at end of every turn) for Codex.
+# Requires the codex_hooks feature flag and a hooks.json file.
+# Both are written into the worktree's .codex/ directory.
+# Only written when the files do not yet exist.
+install_codex_stop_hook() {
+  [[ -x "$_on_stop_script" ]] || return 0
+  local codex_dir="${ATMUX_WORKTREE:-$(pwd)}/.codex"
+  mkdir -p "$codex_dir"
+
+  local config_file="$codex_dir/config.toml"
+  if [[ ! -f "$config_file" ]]; then
+    cat > "$config_file" <<'EOF'
+[features]
+codex_hooks = true
+EOF
+  fi
+
+  local hooks_file="$codex_dir/hooks.json"
+  if [[ ! -f "$hooks_file" ]]; then
+    cat > "$hooks_file" <<EOF
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${_on_stop_script}",
+            "timeout": 60
+          }
+        ]
+      }
+    ]
+  }
 }
-trap '_on_stop $?' EXIT
+EOF
+  fi
+}
+install_codex_stop_hook
 
 schedule_intelligence_profile
 
 echo "starting codex in $(pwd)"
-codex --dangerously-bypass-approvals-and-sandbox --search "$@"
+exec codex --dangerously-bypass-approvals-and-sandbox --search "$@"

@@ -106,22 +106,20 @@ fi
 
 _on_stop_script="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)/scripts/on-stop"
 
-# Install a native SessionEnd hook into the worktree's .gemini/settings.json.
-# Gemini's SessionEnd is advisory-only (can't block exit) but fires reliably.
-# Requires "enabled": true since Gemini CLI v0.24.0.
-install_gemini_session_end_hook() {
+# Install an AfterAgent hook (fires at end of every turn) into the worktree's
+# .gemini/settings.json. "enabled": true is required since Gemini CLI v0.24.0.
+# Only written when the file does not yet exist.
+install_gemini_after_agent_hook() {
   [[ -x "$_on_stop_script" ]] || return 0
-  local worktree="${ATMUX_WORKTREE:-$(pwd)}"
-  local settings_dir="$worktree/.gemini"
+  local settings_dir="${ATMUX_WORKTREE:-$(pwd)}/.gemini"
   local settings_file="$settings_dir/settings.json"
   mkdir -p "$settings_dir"
-  # Only write when the file does not yet exist to avoid clobbering user config.
   [[ -f "$settings_file" ]] && return 0
   cat > "$settings_file" <<EOF
 {
   "hooks": {
     "enabled": true,
-    "SessionEnd": [
+    "AfterAgent": [
       {
         "hooks": [
           {
@@ -137,15 +135,8 @@ install_gemini_session_end_hook() {
 }
 EOF
 }
-install_gemini_session_end_hook
-
-_on_stop() {
-  local rc="${1:-}"
-  [[ "$rc" == "127" ]] && return 0
-  [[ -x "$_on_stop_script" ]] && "$_on_stop_script" || true
-}
-trap '_on_stop $?' EXIT
+install_gemini_after_agent_hook
 
 set_bootstrap_state ready
 echo "starting gemini in $(pwd)"
-gemini "${args[@]-}"
+exec gemini "${args[@]-}"

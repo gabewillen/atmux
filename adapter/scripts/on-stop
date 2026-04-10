@@ -1,24 +1,13 @@
 #!/usr/bin/env bash
-# Invoked when an adapter CLI session ends. Notifies the manager and team.
-# Safe to call from both native hooks (SessionEnd) and trap EXIT wrappers —
-# a per-session lock file ensures only the first caller sends the notification.
+# Invoked by adapter Stop/AfterAgent hooks at the end of each agent turn.
+# Notifies the manager and/or team that the agent has finished a turn.
 set -euo pipefail
 
 [[ -n "${ATMUX_SESSION_NAME:-}" ]] || exit 0
 
 ATMUX_HOME="${ATMUX_HOME:-$HOME/.atmux}"
 
-# --- de-duplicate across native hook + trap EXIT ---
-# Use noclobber + O_EXCL to atomically acquire the notification right.
-_lock="$ATMUX_HOME/.stopped-$(printf '%s' "${ATMUX_SESSION_NAME}" | tr '/' '-' | tr ':' '-')"
-if ! ( set -o noclobber; : > "$_lock" ) 2>/dev/null; then
-  exit 0
-fi
-# Auto-expire the lock after 60 s so a future re-start of the same session name works.
-( sleep 60 && rm -f "$_lock" ) >/dev/null 2>&1 &
-disown $! 2>/dev/null || true
-
-# --- locate the send subcommand ---
+# Locate the send subcommand.
 _send=""
 if [[ -n "${ATMUX_SOURCE_ROOT:-}" && -x "${ATMUX_SOURCE_ROOT}/bin/(atmux)/send" ]]; then
   _send="${ATMUX_SOURCE_ROOT}/bin/(atmux)/send"
@@ -28,12 +17,11 @@ else
   exit 0
 fi
 
-# --- build the <stopped> XML element ---
+# Build <stopped> XML — mirrors the hook name used by Claude Code and Codex.
 _xe() { printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g'; }
 _ts="$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date -u)"
 _xml="<stopped agent=\"$(_xe "${ATMUX_AGENT_NAME:-unknown}")\" session=\"$(_xe "${ATMUX_SESSION_NAME}")\" adapter=\"$(_xe "${ATMUX_ADAPTER:-unknown}")\" timestamp=\"$(_xe "$_ts")\" />"
 
-# --- notify manager and/or team ---
 _do_send() {
   ATMUX_ALLOW_OUTSIDE_TMUX=1 "$_send" --to "$1" "$_xml" >/dev/null 2>&1 || true
 }
@@ -41,5 +29,5 @@ _do_send() {
 [[ -n "${ATMUX_MANAGER:-}" ]] && _do_send "${ATMUX_MANAGER}"
 [[ -n "${ATMUX_TEAM:-}" ]]    && _do_send "${ATMUX_TEAM}"
 
-# Output valid JSON so Gemini's SessionEnd hook parser doesn't warn.
+# Output valid JSON so Gemini's AfterAgent hook parser doesn't warn on stdout.
 printf '{}\n'

@@ -1,6 +1,6 @@
 # Agent TMUX (**atmux**)
 
-**atmux** is a tmux-first toolkit for running and coordinating multiple AI coding agents in parallel. It handles session lifecycle, inter-agent messaging, work assignment, output capture, and scheduling — across different AI CLIs (Claude Code, Gemini, Codex, Cursor) and git repos.
+**atmux** is a tmux-first toolkit for running and coordinating multiple AI coding agents in parallel. It handles session lifecycle, inter-agent messaging, work assignment, output capture, and notifications — across different AI CLIs (Claude Code, Gemini, Codex, Cursor) and git repos.
 
 ## Install
 
@@ -133,13 +133,14 @@ atmux capture --team <name>   [--lines <n>]
 atmux capture --all           [--lines <n>]
 ```
 
-### `schedule`
+### `notify`
 
-Send a message after a delay or on a repeating interval.
+Send a notification immediately, after a delay, or on a repeating interval.
 
 ```sh
-atmux schedule --to <name> --once <duration>     "message"
-atmux schedule --to <name> --interval <duration> "message"
+atmux notify "message"
+atmux notify --agent <name> --once <duration>     "message"
+atmux notify --agent <name> --interval <duration> "message"
 ```
 
 Duration suffixes: `ms`, `s`, `m`, `h`, `d`.

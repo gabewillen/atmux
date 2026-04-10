@@ -327,8 +327,11 @@ main() {
       emit_atmux_wrapper "help" "$out_file" "$err_file" 0
       ;;
     *)
-      require_tmux
       cmd="$1"
+      case "$cmd" in
+        session) ;;
+        *) require_tmux ;;
+      esac
       shift
       if ! script_path="$(resolve_script_subcommand "$cmd")"; then
         out_file="$(mktemp "${TMPDIR:-/tmp}/atmux-out.XXXXXX")"

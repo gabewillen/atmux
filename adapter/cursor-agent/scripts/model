@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+set -euo pipefail
+state_dir="${AMUX_HOME:-$HOME/.amux}/adapters/cursor-agent"
+state_file="$state_dir/state.env"
+mkdir -p "$state_dir"
+[[ -f "$state_file" ]] || printf 'MODEL=%s\nREASONING_LEVEL=%s\n' 'composer-2' 'medium' > "$state_file"
+# shellcheck disable=SC1090
+source "$state_file"
+
+normalize_model() {
+  local m="${1:-}"
+  if [[ "$m" =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]*$ ]]; then
+    printf '%s\n' "$m"
+    return 0
+  fi
+  return 1
+}
+
+normalize_reasoning() {
+  case "${1:-}" in
+    low|medium|high) printf '%s\n' "$1" ;;
+    extra_high|extra-high|extra\ high|extrahigh) printf '%s\n' 'extra-high' ;;
+    *) return 1 ;;
+  esac
+}
+
+case "${1:-}" in
+  list)
+    printf '%s\n' \
+      composer-2-fast \
+      composer-2 \
+      gpt-5.3-codex \
+      gpt-5.3-codex-high \
+      gpt-5.3-codex-xhigh \
+      auto
+    ;;
+  get) printf '%s\n' "$MODEL" ;;
+  set)
+    MODEL="$(normalize_model "${2:-}" || true)"
+    [[ -n "$MODEL" ]] || { echo "missing/invalid model value" >&2; exit 2; }
+    if [[ -n "${3:-}" ]]; then
+      REASONING_LEVEL="$(normalize_reasoning "$3" || true)"
+      [[ -n "$REASONING_LEVEL" ]] || { echo "invalid reasoning level value: $3" >&2; exit 2; }
+    fi
+    printf 'MODEL=%s\nREASONING_LEVEL=%s\n' "$MODEL" "$REASONING_LEVEL" > "$state_file"
+    printf '%s\n' "$MODEL"
+    ;;
+  *) echo "usage: model list|get|set <value> [reasoning-level]" >&2; exit 2 ;;
+esac

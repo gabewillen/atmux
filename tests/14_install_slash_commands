@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+AMUX_BIN="$REPO_ROOT/bin/amux.sh"
+
+tmp_home="$(mktemp -d "${TMPDIR:-/tmp}/amux-install-test-home.XXXXXX")"
+tmp_home_no_slash="$(mktemp -d "${TMPDIR:-/tmp}/amux-install-test-home-noslash.XXXXXX")"
+
+cleanup() {
+  rm -rf "$tmp_home" "$tmp_home_no_slash"
+}
+trap cleanup EXIT
+
+HOME="$tmp_home" "$AMUX_BIN" install >/dev/null
+
+[[ -x "$tmp_home/.amux/bin/amux" ]] || { echo "launcher missing after amux install" >&2; exit 1; }
+[[ -f "$tmp_home/.claude/skills/amux-send/SKILL.md" ]] || { echo "claude amux-send skill missing" >&2; exit 1; }
+[[ -f "$tmp_home/.gemini/commands/amux-send.toml" ]] || { echo "gemini amux-send command missing" >&2; exit 1; }
+[[ -f "$tmp_home/.codex/prompts/amux-send.md" ]] || { echo "codex amux-send prompt missing" >&2; exit 1; }
+
+HOME="$tmp_home_no_slash" "$AMUX_BIN" install --no-slash-commands >/dev/null
+
+[[ -x "$tmp_home_no_slash/.amux/bin/amux" ]] || { echo "launcher missing after amux install --no-slash-commands" >&2; exit 1; }
+[[ ! -e "$tmp_home_no_slash/.claude/skills/amux-send/SKILL.md" ]] || { echo "claude slash commands should be skipped" >&2; exit 1; }
+[[ ! -e "$tmp_home_no_slash/.gemini/commands/amux-send.toml" ]] || { echo "gemini slash commands should be skipped" >&2; exit 1; }
+[[ ! -e "$tmp_home_no_slash/.codex/prompts/amux-send.md" ]] || { echo "codex slash commands should be skipped" >&2; exit 1; }
+
+echo "ok: install manages harness-specific slash commands"

@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+ADAPTER_DIR="$(cd -- "$TESTS_DIR/.." && pwd)"
+
+amux_home="$(mktemp -d "${TMPDIR:-/tmp}/amux-cursor-agent-test-home.XXXXXX")"
+cleanup() {
+  rm -rf "$amux_home"
+}
+trap cleanup EXIT
+
+expected_list=$'composer-2-fast\ncomposer-2\ngpt-5.3-codex\ngpt-5.3-codex-high\ngpt-5.3-codex-xhigh\nauto'
+model_list="$(AMUX_HOME="$amux_home" "$ADAPTER_DIR/scripts/model" list)"
+[[ "$model_list" == "$expected_list" ]] || { echo "unexpected model list: $model_list" >&2; exit 1; }
+
+AMUX_HOME="$amux_home" "$ADAPTER_DIR/scripts/model" set gpt-5.3-codex-high high >/dev/null
+[[ "$(AMUX_HOME="$amux_home" "$ADAPTER_DIR/scripts/model" get)" == "gpt-5.3-codex-high" ]] || { echo "unexpected model get" >&2; exit 1; }
+[[ "$(AMUX_HOME="$amux_home" "$ADAPTER_DIR/scripts/reasoning-level" get)" == "high" ]] || { echo "unexpected reasoning get after model set" >&2; exit 1; }
+
+AMUX_HOME="$amux_home" "$ADAPTER_DIR/scripts/reasoning-level" set medium >/dev/null
+[[ "$(AMUX_HOME="$amux_home" "$ADAPTER_DIR/scripts/reasoning-level" get)" == "medium" ]] || { echo "unexpected reasoning-level get" >&2; exit 1; }
+
+AMUX_HOME="$amux_home" "$ADAPTER_DIR/scripts/reasoning-level" set extra-high >/dev/null
+[[ "$(AMUX_HOME="$amux_home" "$ADAPTER_DIR/scripts/reasoning-level" get)" == "extra-high" ]] || { echo "unexpected extra-high reasoning get" >&2; exit 1; }
+
+if AMUX_HOME="$amux_home" "$ADAPTER_DIR/scripts/model" set 'bad id' >/dev/null 2>&1; then
+  echo "invalid model unexpectedly succeeded" >&2
+  exit 1
+fi
+if AMUX_HOME="$amux_home" "$ADAPTER_DIR/scripts/reasoning-level" set invalid >/dev/null 2>&1; then
+  echo "invalid reasoning-level unexpectedly succeeded" >&2
+  exit 1
+fi
+
+echo "PASS 03_model_reasoning_contract"

@@ -1,4 +1,111 @@
 #!/usr/bin/env bash
 set -euo pipefail
-echo "amux claude-code adapter started in $(pwd)"
-exec "${SHELL:-/bin/bash}" -l
+
+if ! command -v claude >/dev/null 2>&1; then
+  echo "claude command not found in PATH" >&2
+  exit 127
+fi
+
+set_bootstrap_state() {
+  local state="$1"
+  local session=""
+  if [[ -n "${TMUX:-}" ]]; then
+    session="$(tmux display-message -p '#S' 2>/dev/null || true)"
+  fi
+  [[ -n "$session" ]] || return 0
+  tmux set-environment -t "$session" AMUX_BOOTSTRAP_STATE "$state" >/dev/null 2>&1 || true
+}
+
+state_dir="${AMUX_HOME:-$HOME/.amux}/adapters/claude-code"
+state_file="$state_dir/state.env"
+mkdir -p "$state_dir"
+[[ -f "$state_file" ]] || printf 'MODEL=%s\nREASONING_LEVEL=%s\n' 'sonnet' 'medium' > "$state_file"
+# shellcheck disable=SC1090
+source "$state_file"
+
+resolve_profile_from_manifest() {
+  local intelligence="$1"
+  local manifest_path="$2"
+  local map item min max model reasoning compact
+
+  [[ -f "$manifest_path" ]] || return 1
+  compact="$(tr -d '\n\r\t ' < "$manifest_path")"
+  map="$(printf '%s\n' "$compact" | sed -n 's/.*"intelligence_map":\[\(.*\)\]}.*/\1/p')"
+  [[ -n "$map" ]] || return 1
+
+  while IFS= read -r item; do
+    min="$(printf '%s\n' "$item" | sed -n 's/.*"min":\([0-9][0-9]*\).*/\1/p')"
+    max="$(printf '%s\n' "$item" | sed -n 's/.*"max":\([0-9][0-9]*\).*/\1/p')"
+    model="$(printf '%s\n' "$item" | sed -n 's/.*"model":"\([^"]*\)".*/\1/p')"
+    reasoning="$(printf '%s\n' "$item" | sed -n 's/.*"reasoning_level":"\([^"]*\)".*/\1/p')"
+
+    if [[ -z "$min" || -z "$max" || -z "$model" || -z "$reasoning" ]]; then
+      continue
+    fi
+    if (( intelligence >= min && intelligence <= max )); then
+      printf '%s %s\n' "$model" "$reasoning"
+      return 0
+    fi
+  done < <(printf '%s\n' "$map" | sed 's/},{/}\n{/g')
+
+  return 1
+}
+
+arg_present() {
+  local needle="$1"
+  shift || true
+  local arg
+  for arg in "$@"; do
+    [[ "$arg" == "$needle" ]] && return 0
+  done
+  return 1
+}
+
+normalize_model() {
+  case "${1:-}" in
+    sonnet|opus) printf '%s\n' "$1" ;;
+    *) return 1 ;;
+  esac
+}
+
+normalize_effort() {
+  case "${1:-}" in
+    low|medium|high) printf '%s\n' "$1" ;;
+    *) return 1 ;;
+  esac
+}
+
+if [[ -n "${AMUX_INTELLIGENCE:-}" && "${AMUX_INTELLIGENCE}" =~ ^[0-9]+$ ]] \
+  && (( AMUX_INTELLIGENCE >= 0 && AMUX_INTELLIGENCE <= 100 )); then
+  manifest_path="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)/manifest.json"
+  profile="$(resolve_profile_from_manifest "$AMUX_INTELLIGENCE" "$manifest_path" || true)"
+  if [[ -n "$profile" ]]; then
+    prof_model="${profile%% *}"
+    prof_reasoning="${profile#* }"
+    MODEL="$(normalize_model "$prof_model" || printf '%s\n' "$MODEL")"
+    REASONING_LEVEL="$(normalize_effort "$prof_reasoning" || printf '%s\n' "$REASONING_LEVEL")"
+  fi
+fi
+
+if [[ -n "${AMUX_CLAUDE_MODEL:-}" ]]; then
+  MODEL="$(normalize_model "$AMUX_CLAUDE_MODEL" || { echo "invalid AMUX_CLAUDE_MODEL: $AMUX_CLAUDE_MODEL" >&2; exit 2; })"
+fi
+if [[ -n "${AMUX_CLAUDE_EFFORT:-}" ]]; then
+  REASONING_LEVEL="$(normalize_effort "$AMUX_CLAUDE_EFFORT" || { echo "invalid AMUX_CLAUDE_EFFORT: $AMUX_CLAUDE_EFFORT" >&2; exit 2; })"
+fi
+
+printf 'MODEL=%s\nREASONING_LEVEL=%s\n' "$MODEL" "$REASONING_LEVEL" > "$state_file"
+
+if ! arg_present --model "$@"; then
+  set -- --model "$MODEL" "$@"
+fi
+if ! arg_present --effort "$@"; then
+  set -- --effort "$REASONING_LEVEL" "$@"
+fi
+if ! arg_present --dangerously-skip-permissions "$@"; then
+  set -- --dangerously-skip-permissions "$@"
+fi
+
+set_bootstrap_state ready
+echo "starting claude in $(pwd)"
+exec claude "$@"

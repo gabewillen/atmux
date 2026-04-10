@@ -1,0 +1,30 @@
+{
+  "name": "claude-code",
+  "version": 1,
+  "intelligence_map": [
+    {
+      "min": 0,
+      "max": 39,
+      "model": "sonnet",
+      "reasoning_level": "low"
+    },
+    {
+      "min": 40,
+      "max": 74,
+      "model": "sonnet",
+      "reasoning_level": "medium"
+    },
+    {
+      "min": 75,
+      "max": 89,
+      "model": "sonnet",
+      "reasoning_level": "high"
+    },
+    {
+      "min": 90,
+      "max": 100,
+      "model": "opus",
+      "reasoning_level": "high"
+    }
+  ]
+}

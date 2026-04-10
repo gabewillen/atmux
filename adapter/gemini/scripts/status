@@ -1,0 +1,135 @@
+#!/usr/bin/env bash
+set -euo pipefail
+state_dir="${AMUX_HOME:-$HOME/.amux}/adapters/gemini"
+state_file="$state_dir/state.env"
+roles_dir="${AMUX_HOME:-$HOME/.amux}/roles"
+mkdir -p "$state_dir"
+[[ -f "$state_file" ]] || printf 'MODEL=%s\nREASONING_LEVEL=%s\n' 'gemini-2.5-flash' 'medium' > "$state_file"
+# shellcheck disable=SC1090
+source "$state_file"
+
+xml_escape() {
+  local s="${1:-}"
+  s="${s//&/&amp;}"
+  s="${s//</&lt;}"
+  s="${s//>/&gt;}"
+  s="${s//\"/&quot;}"
+  s="${s//\'/&apos;}"
+  printf '%s\n' "$s"
+}
+
+resolve_target() {
+  if [[ -n "${AMUX_TARGET_PANE:-}" ]]; then
+    printf '%s\n' "$AMUX_TARGET_PANE"
+    return
+  fi
+  if [[ -n "${TMUX:-}" ]]; then
+    tmux display-message -p '#{pane_id}' 2>/dev/null || true
+    return
+  fi
+  if [[ -n "${AMUX_SESSION_NAME:-}" ]]; then
+    tmux list-panes -t "$AMUX_SESSION_NAME" -F '#{pane_id}' 2>/dev/null | head -n 1
+    return
+  fi
+  if [[ -n "${AMUX_REPO:-}" && -n "${AMUX_AGENT_NAME:-}" ]]; then
+    sess="amux-${AMUX_REPO}-${AMUX_AGENT_NAME}"
+    tmux list-panes -t "$sess" -F '#{pane_id}' 2>/dev/null | head -n 1
+    return
+  fi
+}
+
+parse_model_and_reasoning() {
+  local snapshot="$1"
+  local line parsed_model parsed_reasoning compact
+
+  compact="$(printf '%s' "$snapshot" | tr -d '\n')"
+
+  # Gemini stream-json/headless output includes model on an init event.
+  parsed_model="$(printf '%s\n' "$compact" | sed -n 's/.*"type":"init".*"model":"\([^"]*\)".*/\1/p')"
+  if [[ -z "$parsed_model" ]]; then
+    parsed_model="$(printf '%s\n' "$compact" | sed -n 's/.*"model":"\([^"]*\)".*/\1/p')"
+  fi
+  if [[ -n "$parsed_model" ]]; then
+    case "$parsed_model" in
+      gemini-2.5-flash|gemini-2.5-pro) MODEL="$parsed_model" ;;
+    esac
+  fi
+
+  # Interactive snapshots may include a "Model: ..." line.
+  line="$(printf '%s\n' "$snapshot" | awk '/[Mm]odel:/ { l=$0 } END { print l }')"
+  if [[ -n "$line" ]]; then
+    parsed_model="$(printf '%s\n' "$line" | sed -nE 's/.*[Mm]odel:[[:space:]]*([^[:space:]]+).*/\1/p')"
+    case "$parsed_model" in
+      gemini-2.5-flash|gemini-2.5-pro) MODEL="$parsed_model" ;;
+    esac
+  fi
+
+  # Interactive footer format: "... gemini-2.5-pro /model"
+  line="$(printf '%s\n' "$snapshot" | awk '/\/model/ { l=$0 } END { print l }')"
+  if [[ -n "$line" ]]; then
+    parsed_model="$(printf '%s\n' "$line" | sed -nE 's/.*(gemini-[0-9][^[:space:]]*)[[:space:]]+\/model.*/\1/p')"
+    case "$parsed_model" in
+      gemini-2.5-flash|gemini-2.5-pro) MODEL="$parsed_model" ;;
+    esac
+  fi
+
+  line="$(printf '%s\n' "$snapshot" | awk '/[Rr]easoning:|[Tt]hinking:|[Ee]ffort:/ { l=$0 } END { print l }')"
+  if [[ -n "$line" ]]; then
+    parsed_reasoning="$(printf '%s\n' "$line" | sed -nE 's/.*([Rr]easoning|[Tt]hinking|[Ee]ffort):[[:space:]]*(low|medium|high).*/\2/p')"
+    case "$parsed_reasoning" in
+      low|medium|high) REASONING_LEVEL="$parsed_reasoning" ;;
+    esac
+  fi
+}
+
+infer_state() {
+  local snapshot="$1"
+
+  if printf '%s\n' "$snapshot" | grep -Eqi 'usage.?limit|rate.?limit|quota.*(exceeded|reached)|credits?.*0'; then
+    printf '%s\n' 'usage-limit'
+    return
+  fi
+
+  if printf '%s\n' "$snapshot" | grep -Eqi '"status":"success"|"type":"result".*"status":"success"'; then
+    printf '%s\n' 'idle'
+    return
+  fi
+
+  if printf '%s\n' "$snapshot" | grep -Eqi '"status":"error"|"type":"result".*"status":"error"|error:'; then
+    printf '%s\n' 'errored'
+    return
+  fi
+
+  if printf '%s\n' "$snapshot" | grep -Eqi 'working|thinking|running|processing|generating'; then
+    printf '%s\n' 'busy'
+    return
+  fi
+
+  if [[ -n "$snapshot" ]]; then
+    printf '%s\n' 'idle'
+    return
+  fi
+
+  case "${AMUX_STATE:-idle}" in
+    idle|busy|errored|usage-limit) printf '%s\n' "${AMUX_STATE:-idle}" ;;
+    *) printf '%s\n' 'errored' ;;
+  esac
+}
+
+owner="agent"
+if [[ -n "${AMUX_MANAGER:-}" || -f "$roles_dir/agent.manager" ]]; then
+  owner="manager"
+fi
+
+snapshot=""
+target="$(resolve_target)"
+if [[ -n "$target" ]]; then
+  snapshot="$(tmux capture-pane -p -t "$target" -S -300 2>/dev/null | tr -d '\r' || true)"
+  parse_model_and_reasoning "$snapshot" || true
+fi
+
+state="$(infer_state "$snapshot")"
+printf 'MODEL=%s\nREASONING_LEVEL=%s\n' "$MODEL" "$REASONING_LEVEL" > "$state_file"
+
+printf '<status adapter="%s" owner="%s" state="%s" model="%s" reasoning_level="%s" control_file="GEMINI.md" />\n' \
+  "gemini" "$(xml_escape "$owner")" "$(xml_escape "$state")" "$(xml_escape "$MODEL")" "$(xml_escape "$REASONING_LEVEL")"

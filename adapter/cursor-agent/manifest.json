@@ -1,0 +1,30 @@
+{
+  "name": "cursor-agent",
+  "version": 1,
+  "intelligence_map": [
+    {
+      "min": 0,
+      "max": 39,
+      "model": "composer-2-fast",
+      "reasoning_level": "low"
+    },
+    {
+      "min": 40,
+      "max": 74,
+      "model": "composer-2",
+      "reasoning_level": "medium"
+    },
+    {
+      "min": 75,
+      "max": 89,
+      "model": "gpt-5.3-codex-high",
+      "reasoning_level": "high"
+    },
+    {
+      "min": 90,
+      "max": 100,
+      "model": "gpt-5.3-codex-xhigh",
+      "reasoning_level": "extra-high"
+    }
+  ]
+}

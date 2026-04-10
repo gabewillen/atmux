@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+
+log() {
+  printf '[amux-tests] %s\n' "$*"
+}
+
+main() {
+  local test_script
+  for test_script in "$TESTS_DIR"/[0-9][0-9]_*; do
+    [[ -f "$test_script" ]] || continue
+    [[ -x "$test_script" ]] || chmod +x "$test_script"
+    log "running $(basename "$test_script")"
+    "$test_script"
+  done
+  log "suite complete"
+}
+
+main "$@"
+

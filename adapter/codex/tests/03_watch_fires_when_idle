@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPTS_DIR="$TESTS_DIR/scripts"
+ADAPTER_DIR="$(cd -- "$TESTS_DIR/.." && pwd)"
+REPO_ROOT="$(cd -- "$ADAPTER_DIR/../.." && pwd)"
+
+setup_out="$("$SCRIPTS_DIR/setup")"
+session_name="$(printf '%s\n' "$setup_out" | sed -n 's/^SESSION_NAME=//p' | tail -n 1)"
+pane_id="$(printf '%s\n' "$setup_out" | sed -n 's/^PANE_ID=//p' | tail -n 1)"
+if [[ -z "$session_name" || -z "$pane_id" ]]; then
+  echo "missing setup output (SESSION_NAME or PANE_ID)" >&2
+  exit 1
+fi
+
+cleanup() {
+  "$SCRIPTS_DIR/teardown" --session "$session_name" >/dev/null 2>&1 || true
+}
+trap cleanup EXIT
+
+# Stay idle, then ensure watch can still match existing pane content.
+sleep 1
+if ! "$REPO_ROOT/bin/amux/watch" --target "$pane_id" --scope pane --text "OpenAI Codex" --timeout 5 --interval 0.2 --lines 400; then
+  tmux capture-pane -p -t "$pane_id" -S -200 >&2 || true
+  echo "watch did not fire on idle pane content" >&2
+  exit 1
+fi
+
+echo "PASS 03_watch_fires_when_idle"

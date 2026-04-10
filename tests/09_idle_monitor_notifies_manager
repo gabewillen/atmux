@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+SESSION_SCRIPT="$REPO_ROOT/bin/amux/session"
+
+manager="amux-idle-test-manager-$RANDOM"
+child="amux-idle-test-worker-$RANDOM"
+log_file="${TMPDIR:-/tmp}/amux-idle-monitor-test-$$.log"
+
+cleanup() {
+  if [[ -n "${monitor_pid:-}" ]]; then
+    kill "$monitor_pid" >/dev/null 2>&1 || true
+    wait "$monitor_pid" 2>/dev/null || true
+  fi
+  tmux kill-session -t "$child" >/dev/null 2>&1 || true
+  tmux kill-session -t "$manager" >/dev/null 2>&1 || true
+  rm -f "$log_file" >/dev/null 2>&1 || true
+}
+trap cleanup EXIT
+
+tmux new-session -d -s "$manager" -n "$manager" -c "$REPO_ROOT" "cat"
+tmux set-environment -t "$manager" AMUX_REPO idle_test
+tmux set-environment -t "$manager" AMUX_AGENT_NAME manager
+
+tmux new-session -d -s "$child" -n "$child" -c "$REPO_ROOT" "cat"
+tmux set-environment -t "$child" AMUX_REPO idle_test
+tmux set-environment -t "$child" AMUX_AGENT_NAME worker
+tmux set-environment -t "$child" AMUX_MANAGER "$manager"
+tmux set-environment -t "$child" AMUX_SOURCE_ROOT "$REPO_ROOT"
+
+AMUX_MONITOR_INTERVAL_SECONDS=1 \
+AMUX_MONITOR_IDLE_SECONDS=3 \
+"$SESSION_SCRIPT" _monitor-supervisor "$child" >"$log_file" 2>&1 &
+monitor_pid=$!
+
+manager_pane="$(tmux list-panes -t "$manager" -F '#{pane_id}' | head -n 1)"
+deadline=$((SECONDS + 12))
+found=0
+while (( SECONDS < deadline )); do
+  snap="$(tmux capture-pane -p -t "$manager_pane" -S -300 | tr -d '\r' || true)"
+  if printf '%s\n' "$snap" | grep -q '<idle '; then
+    found=1
+    break
+  fi
+  sleep 1
+done
+
+if (( found == 0 )); then
+  echo "expected idle notification was not delivered" >&2
+  echo "--- manager pane tail ---" >&2
+  printf '%s\n' "$snap" | tail -n 80 >&2 || true
+  echo "--- monitor log tail ---" >&2
+  tail -n 80 "$log_file" >&2 || true
+  exit 1
+fi
+
+echo "ok: idle monitor sends manager notification on pane inactivity"

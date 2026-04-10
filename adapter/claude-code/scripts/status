@@ -7,13 +7,96 @@ mkdir -p "$state_dir"
 [[ -f "$state_file" ]] || printf 'MODEL=%s\nREASONING_LEVEL=%s\n' 'sonnet' 'medium' > "$state_file"
 # shellcheck disable=SC1090
 source "$state_file"
-state="${AMUX_STATE:-idle}"
-case "$state" in
-  idle|busy|errored|usage-limit) ;;
-  *) state="errored" ;;
-esac
+
+xml_escape() {
+  local s="${1:-}"
+  s="${s//&/&amp;}"
+  s="${s//</&lt;}"
+  s="${s//>/&gt;}"
+  s="${s//\"/&quot;}"
+  s="${s//\'/&apos;}"
+  printf '%s\n' "$s"
+}
+
+resolve_target() {
+  if [[ -n "${AMUX_TARGET_PANE:-}" ]]; then
+    printf '%s\n' "$AMUX_TARGET_PANE"
+    return
+  fi
+  if [[ -n "${TMUX:-}" ]]; then
+    tmux display-message -p '#{pane_id}' 2>/dev/null || true
+    return
+  fi
+  if [[ -n "${AMUX_SESSION_NAME:-}" ]]; then
+    tmux list-panes -t "$AMUX_SESSION_NAME" -F '#{pane_id}' 2>/dev/null | head -n 1
+    return
+  fi
+  if [[ -n "${AMUX_REPO:-}" && -n "${AMUX_AGENT_NAME:-}" ]]; then
+    sess="amux-${AMUX_REPO}-${AMUX_AGENT_NAME}"
+    tmux list-panes -t "$sess" -F '#{pane_id}' 2>/dev/null | head -n 1
+    return
+  fi
+}
+
+parse_model_and_reasoning() {
+  local snapshot="$1"
+  local line parsed_model parsed_effort
+
+  line="$(printf '%s\n' "$snapshot" | awk '/[Mm]odel:/ { l=$0 } END { print l }')"
+  if [[ -n "$line" ]]; then
+    parsed_model="$(printf '%s\n' "$line" | sed -nE 's/.*[Mm]odel:[[:space:]]*([^[:space:]]+).*/\1/p')"
+    case "$parsed_model" in
+      sonnet|opus) MODEL="$parsed_model" ;;
+    esac
+  fi
+
+  line="$(printf '%s\n' "$snapshot" | awk '/[Ee]ffort:/ { l=$0 } END { print l }')"
+  if [[ -n "$line" ]]; then
+    parsed_effort="$(printf '%s\n' "$line" | sed -nE 's/.*[Ee]ffort:[[:space:]]*(low|medium|high).*/\1/p')"
+    case "$parsed_effort" in
+      low|medium|high) REASONING_LEVEL="$parsed_effort" ;;
+    esac
+  fi
+}
+
+infer_state() {
+  local snapshot="$1"
+
+  if printf '%s\n' "$snapshot" | grep -Eqi 'usage.?limit|rate.?limit|quota.*(exceeded|reached)'; then
+    printf '%s\n' 'usage-limit'
+    return
+  fi
+
+  if printf '%s\n' "$snapshot" | grep -Eqi 'working|thinking|running|processing'; then
+    printf '%s\n' 'busy'
+    return
+  fi
+
+  if [[ -n "$snapshot" ]]; then
+    printf '%s\n' 'idle'
+    return
+  fi
+
+  case "${AMUX_STATE:-idle}" in
+    idle|busy|errored|usage-limit) printf '%s\n' "${AMUX_STATE:-idle}" ;;
+    *) printf '%s\n' 'errored' ;;
+  esac
+}
+
 owner="agent"
 if [[ -n "${AMUX_MANAGER:-}" || -f "$roles_dir/agent.manager" ]]; then
   owner="manager"
 fi
-printf 'adapter=claude-code\nowner=%s\nstate=%s\nmodel=%s\nreasoning_level=%s\ncontrol_file=CLAUDE.md\n' "$owner" "$state" "$MODEL" "$REASONING_LEVEL"
+
+snapshot=""
+target="$(resolve_target)"
+if [[ -n "$target" ]]; then
+  snapshot="$(tmux capture-pane -p -t "$target" -S -300 2>/dev/null | tr -d '\r' || true)"
+  parse_model_and_reasoning "$snapshot" || true
+fi
+
+state="$(infer_state "$snapshot")"
+printf 'MODEL=%s\nREASONING_LEVEL=%s\n' "$MODEL" "$REASONING_LEVEL" > "$state_file"
+
+printf '<status adapter="%s" owner="%s" state="%s" model="%s" reasoning_level="%s" control_file="CLAUDE.md" />\n' \
+  "claude-code" "$(xml_escape "$owner")" "$(xml_escape "$state")" "$(xml_escape "$MODEL")" "$(xml_escape "$REASONING_LEVEL")"

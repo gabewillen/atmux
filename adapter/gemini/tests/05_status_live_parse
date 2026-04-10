@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPTS_DIR="$TESTS_DIR/scripts"
+ADAPTER_DIR="$(cd -- "$TESTS_DIR/.." && pwd)"
+
+amux_home="$(mktemp -d "${TMPDIR:-/tmp}/amux-gemini-test-home.XXXXXX")"
+
+cleanup() {
+  [[ -n "${session_name:-}" ]] && "$SCRIPTS_DIR/teardown" --session "$session_name" >/dev/null 2>&1 || true
+  rm -rf "$amux_home"
+}
+trap cleanup EXIT
+
+if ! command -v gemini >/dev/null 2>&1; then
+  echo "gemini command not found in PATH" >&2
+  exit 1
+fi
+
+setup_out="$(
+  "$SCRIPTS_DIR/setup" \
+    --command "gemini -m gemini-2.5-flash -p 'reply with ok only' --output-format stream-json" \
+    --wait-text '"type":"init"'
+)"
+session_name="$(printf '%s\n' "$setup_out" | sed -n 's/^SESSION_NAME=//p' | tail -n 1)"
+pane_id="$(printf '%s\n' "$setup_out" | sed -n 's/^PANE_ID=//p' | tail -n 1)"
+if [[ -z "$session_name" || -z "$pane_id" ]]; then
+  echo "missing setup output (SESSION_NAME or PANE_ID)" >&2
+  exit 1
+fi
+
+status_out="$({
+  AMUX_HOME="$amux_home" \
+  AMUX_TARGET_PANE="$pane_id" \
+  "$ADAPTER_DIR/scripts/status"
+})"
+
+echo "$status_out" | grep -F '<status ' >/dev/null
+echo "$status_out" | grep -F 'adapter="gemini"' >/dev/null
+echo "$status_out" | grep -F 'owner="agent"' >/dev/null
+echo "$status_out" | grep -F 'state="idle"' >/dev/null
+echo "$status_out" | grep -F 'model="gemini-2.5-flash"' >/dev/null
+echo "$status_out" | grep -F 'reasoning_level="medium"' >/dev/null
+echo "$status_out" | grep -F 'control_file="GEMINI.md"' >/dev/null
+
+echo "PASS 05_status_live_parse"

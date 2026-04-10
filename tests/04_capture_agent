@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPTS_DIR="$TESTS_DIR/scripts"
+
+eval "$("$SCRIPTS_DIR/setup")"
+trap "$SCRIPTS_DIR/teardown --team-session \"$TEAM_SESSION\" --agent1-session \"$AGENT1_SESSION\" --agent2-session \"$AGENT2_SESSION\"" EXIT
+
+marker="agent-capture-$RANDOM"
+tmux send-keys -t "${AGENT2_SESSION}:0.0" "$marker" C-m
+sleep 0.2
+
+out="$(AMUX_REPO="$REPO_NAME" "$AMUX_BIN" capture --agent receiver --lines 120)"
+
+printf '%s\n' "$out" | grep -Fq "<captures scope=\"agent\" agent=\"receiver\" session=\"$AGENT2_SESSION\">"
+printf '%s\n' "$out" | grep -Fq "$marker"
+printf '%s\n' "$out" | grep -Fq "<capture session=\"$AGENT2_SESSION\""
+
+capture_count="$(printf '%s\n' "$out" | grep -c "<capture ")"
+if ! [[ "$capture_count" =~ ^[0-9]+$ ]] || (( capture_count < 1 )); then
+  echo "expected at least 1 capture node for agent, got: ${capture_count:-0}" >&2
+  printf '%s\n' "$out" >&2
+  exit 1
+fi
+
+echo "ok: agent capture targets receiver session/pane"
+

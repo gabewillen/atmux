@@ -1,0 +1,30 @@
+{
+  "name": "codex",
+  "version": 1,
+  "intelligence_map": [
+    {
+      "min": 0,
+      "max": 29,
+      "model": "gpt-5.3-codex",
+      "reasoning_level": "low"
+    },
+    {
+      "min": 30,
+      "max": 59,
+      "model": "gpt-5.3-codex",
+      "reasoning_level": "medium"
+    },
+    {
+      "min": 60,
+      "max": 84,
+      "model": "gpt-5.3-codex",
+      "reasoning_level": "high"
+    },
+    {
+      "min": 85,
+      "max": 100,
+      "model": "gpt-5.3-codex",
+      "reasoning_level": "extra-high"
+    }
+  ]
+}

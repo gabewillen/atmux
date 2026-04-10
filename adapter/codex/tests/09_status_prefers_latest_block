@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPTS_DIR="$TESTS_DIR/scripts"
+ADAPTER_DIR="$(cd -- "$TESTS_DIR/.." && pwd)"
+REPO_ROOT="$(cd -- "$ADAPTER_DIR/../.." && pwd)"
+
+setup_out="$("$SCRIPTS_DIR/setup")"
+session_name="$(printf '%s\n' "$setup_out" | sed -n 's/^SESSION_NAME=//p' | tail -n 1)"
+pane_id="$(printf '%s\n' "$setup_out" | sed -n 's/^PANE_ID=//p' | tail -n 1)"
+if [[ -z "$session_name" || -z "$pane_id" ]]; then
+  echo "missing setup output (SESSION_NAME or PANE_ID)" >&2
+  exit 1
+fi
+
+amux_home="$(mktemp -d "${TMPDIR:-/tmp}/amux-codex-test-home.XXXXXX")"
+
+cleanup() {
+  "$SCRIPTS_DIR/teardown" --session "$session_name" >/dev/null 2>&1 || true
+  rm -rf "$amux_home"
+}
+trap cleanup EXIT
+
+AMUX_HOME="$amux_home" \
+AMUX_TARGET_PANE="$pane_id" \
+"$ADAPTER_DIR/scripts/model" set gpt-5.3-codex high >/dev/null
+
+status_high=""
+for _ in $(seq 1 15); do
+  status_high="$(
+    AMUX_HOME="$amux_home" \
+    AMUX_TARGET_PANE="$pane_id" \
+    AMUX_SOURCE_ROOT="$REPO_ROOT" \
+    "$ADAPTER_DIR/scripts/status"
+  )"
+  if printf '%s\n' "$status_high" | grep -Eq 'reasoning_level="(high|xhigh|extra-high)"' >/dev/null 2>&1; then
+    break
+  fi
+  sleep 0.3
+done
+
+echo "$status_high" | grep -F '<status ' >/dev/null
+echo "$status_high" | grep -F 'adapter="codex"' >/dev/null
+echo "$status_high" | grep -F 'model="gpt-5.3-codex"' >/dev/null
+echo "$status_high" | grep -Eq 'reasoning_level="(high|xhigh|extra-high)"' >/dev/null
+
+AMUX_HOME="$amux_home" \
+AMUX_TARGET_PANE="$pane_id" \
+"$ADAPTER_DIR/scripts/model" set gpt-5.3-codex medium >/dev/null
+
+status_medium=""
+for _ in $(seq 1 15); do
+  status_medium="$(
+    AMUX_HOME="$amux_home" \
+    AMUX_TARGET_PANE="$pane_id" \
+    AMUX_SOURCE_ROOT="$REPO_ROOT" \
+    "$ADAPTER_DIR/scripts/status"
+  )"
+  if printf '%s\n' "$status_medium" | grep -F 'reasoning_level="medium"' >/dev/null 2>&1; then
+    break
+  fi
+  sleep 0.3
+done
+
+echo "$status_medium" | grep -F '<status ' >/dev/null
+echo "$status_medium" | grep -F 'adapter="codex"' >/dev/null
+echo "$status_medium" | grep -F 'model="gpt-5.3-codex"' >/dev/null
+echo "$status_medium" | grep -F 'reasoning_level="medium"' >/dev/null
+
+echo "PASS 09_status_prefers_latest_block"

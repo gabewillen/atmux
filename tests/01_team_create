@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPTS_DIR="$TESTS_DIR/scripts"
+
+eval "$("$SCRIPTS_DIR/setup")"
+trap "$SCRIPTS_DIR/teardown --team-session \"$TEAM_SESSION\" --agent1-session \"$AGENT1_SESSION\" --agent2-session \"$AGENT2_SESSION\"" EXIT
+
+if ! tmux has-session -t "$TEAM_SESSION" 2>/dev/null; then
+  echo "team session missing: $TEAM_SESSION" >&2
+  exit 1
+fi
+
+kind="$(tmux show-environment -t "$TEAM_SESSION" AMUX_SESSION_KIND 2>/dev/null | sed -n 's/^AMUX_SESSION_KIND=//p')"
+repo="$(tmux show-environment -t "$TEAM_SESSION" AMUX_REPO 2>/dev/null | sed -n 's/^AMUX_REPO=//p')"
+team="$(tmux show-environment -t "$TEAM_SESSION" AMUX_TEAM 2>/dev/null | sed -n 's/^AMUX_TEAM=//p')"
+
+[[ "$kind" == "team" ]] || { echo "expected AMUX_SESSION_KIND=team, got: ${kind:-<empty>}" >&2; exit 1; }
+[[ "$repo" == "$REPO_NAME" ]] || { echo "expected AMUX_REPO=$REPO_NAME, got: ${repo:-<empty>}" >&2; exit 1; }
+[[ "$team" == "$TEAM_NAME" ]] || { echo "expected AMUX_TEAM=$TEAM_NAME, got: ${team:-<empty>}" >&2; exit 1; }
+
+echo "ok: team created and tagged ($TEAM_SESSION)"
+

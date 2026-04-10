@@ -6,5 +6,100 @@ if ! command -v codex >/dev/null 2>&1; then
   exit 127
 fi
 
+current_session_name() {
+  if [[ -n "${TMUX:-}" ]]; then
+    tmux display-message -p '#S' 2>/dev/null || true
+  fi
+}
+
+set_bootstrap_state() {
+  local state="$1"
+  local session=""
+  session="$(current_session_name)"
+  [[ -n "$session" ]] || return 0
+  tmux set-environment -t "$session" AMUX_BOOTSTRAP_STATE "$state" >/dev/null 2>&1 || true
+}
+
+resolve_profile_from_manifest() {
+  local intelligence="$1"
+  local manifest_path="$2"
+  local map item min max model reasoning compact
+
+  [[ -f "$manifest_path" ]] || return 1
+  compact="$(tr -d '\n\r\t ' < "$manifest_path")"
+  map="$(printf '%s\n' "$compact" | sed -n 's/.*"intelligence_map":\[\(.*\)\]}.*/\1/p')"
+  [[ -n "$map" ]] || return 1
+
+  while IFS= read -r item; do
+    min="$(printf '%s\n' "$item" | sed -n 's/.*"min":\([0-9][0-9]*\).*/\1/p')"
+    max="$(printf '%s\n' "$item" | sed -n 's/.*"max":\([0-9][0-9]*\).*/\1/p')"
+    model="$(printf '%s\n' "$item" | sed -n 's/.*"model":"\([^"]*\)".*/\1/p')"
+    reasoning="$(printf '%s\n' "$item" | sed -n 's/.*"reasoning_level":"\([^"]*\)".*/\1/p')"
+
+    if [[ -z "$min" || -z "$max" || -z "$model" || -z "$reasoning" ]]; then
+      continue
+    fi
+    if (( intelligence >= min && intelligence <= max )); then
+      printf '%s %s\n' "$model" "$reasoning"
+      return 0
+    fi
+  done < <(printf '%s\n' "$map" | sed 's/},{/}\n{/g')
+
+  return 1
+}
+
+schedule_intelligence_profile() {
+  local intelligence="${AMUX_INTELLIGENCE:-}"
+  if [[ -z "$intelligence" || ! "$intelligence" =~ ^[0-9]+$ ]] || (( intelligence < 0 || intelligence > 100 )); then
+    set_bootstrap_state ready
+    return 0
+  fi
+
+  local manifest_path profile model reasoning
+  manifest_path="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)/manifest.json"
+  profile="$(resolve_profile_from_manifest "$intelligence" "$manifest_path" || true)"
+  if [[ -z "$profile" ]]; then
+    set_bootstrap_state ready
+    return 0
+  fi
+
+  model="${profile%% *}"
+  reasoning="${profile#* }"
+  if [[ -z "$model" || -z "$reasoning" ]]; then
+    set_bootstrap_state ready
+    return 0
+  fi
+
+  local pane_id adapter_cmd watch_cmd
+  pane_id="$(tmux display-message -p '#{pane_id}' 2>/dev/null || true)"
+  if [[ -z "$pane_id" ]]; then
+    set_bootstrap_state ready
+    return 0
+  fi
+
+  adapter_cmd="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)/cmd"
+  watch_cmd="${AMUX_SOURCE_ROOT:-${AMUX_HOME:-$HOME/.amux}/src/amux}/bin/amux/watch"
+  set_bootstrap_state pending
+
+  (
+    success=0
+    if [[ -x "$watch_cmd" ]]; then
+      "$watch_cmd" --target "$pane_id" --scope pane --text "OpenAI Codex" --timeout 30 --interval 0.2 --lines 300 || true
+    else
+      sleep 2
+    fi
+    if AMUX_TARGET_PANE="$pane_id" "$adapter_cmd" model set "$model" "$reasoning" >/dev/null 2>&1; then
+      success=1
+    fi
+    if [[ "$success" -eq 1 ]]; then
+      set_bootstrap_state ready
+    else
+      set_bootstrap_state failed
+    fi
+  ) >/dev/null 2>&1 &
+}
+
+schedule_intelligence_profile
+
 echo "starting codex in $(pwd)"
 exec codex --dangerously-bypass-approvals-and-sandbox --search "$@"

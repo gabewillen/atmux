@@ -1,0 +1,114 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+ADAPTER_DIR="$(cd -- "$TESTS_DIR/.." && pwd)"
+REPO_ROOT="$(cd -- "$ADAPTER_DIR/../.." && pwd)"
+STATE_FILE="${AMUX_CODEX_TEST_STATE_FILE:-${TMPDIR:-/tmp}/amux-codex-tests.state}"
+SESSION_PREFIX="${AMUX_CODEX_TEST_SESSION_PREFIX:-amux-codex-test}"
+WORKDIR="${AMUX_CODEX_TEST_WORKDIR:-$REPO_ROOT}"
+
+log() {
+  printf '[codex-tests] %s\n' "$*"
+}
+
+fail() {
+  printf '[codex-tests][error] %s\n' "$*" >&2
+  exit 1
+}
+
+require_cmd() {
+  local cmd="$1"
+  command -v "$cmd" >/dev/null 2>&1 || fail "missing required command: $cmd"
+}
+
+suite_setup() {
+  require_cmd tmux
+  require_cmd codex
+  touch "$STATE_FILE"
+}
+
+reset_state() {
+  : > "$STATE_FILE"
+}
+
+state_set() {
+  local key="$1"
+  local value="$2"
+  local tmp
+  tmp="${STATE_FILE}.tmp.$$"
+  awk -F= -v k="$key" '$1!=k { print $0 }' "$STATE_FILE" > "$tmp" || true
+  printf '%s=%s\n' "$key" "$value" >> "$tmp"
+  mv "$tmp" "$STATE_FILE"
+}
+
+new_session_name() {
+  printf '%s-%s\n' "$SESSION_PREFIX" "$(date +%s)"
+}
+
+wait_for_text() {
+  local target="$1"
+  local needle="$2"
+  local timeout="${3:-40}"
+  local interval="${4:-0.5}"
+  local lines="${5:-400}"
+
+  local deadline now snapshot
+  deadline=$(( $(date +%s) + timeout ))
+
+  while true; do
+    snapshot="$(tmux capture-pane -p -t "$target" -S "-$lines" 2>/dev/null || true)"
+    if printf '%s\n' "$snapshot" | grep -Fq "$needle"; then
+      return 0
+    fi
+
+    now="$(date +%s)"
+    if (( now >= deadline )); then
+      return 1
+    fi
+    sleep "$interval"
+  done
+}
+
+start_codex_session() {
+  local session="$1"
+  local codex_cmd="codex --dangerously-bypass-approvals-and-sandbox --search"
+
+  if ! tmux has-session -t "$session" 2>/dev/null; then
+    log "starting tmux session: $session"
+    tmux new-session -d -s "$session" -n "$session" -c "$WORKDIR" "$codex_cmd"
+  else
+    log "reusing existing session: $session"
+  fi
+
+  local pane_id
+  pane_id="$(tmux list-panes -t "$session" -F '#{pane_id}' 2>/dev/null | head -n 1)"
+  [[ -n "$pane_id" ]] || fail "unable to resolve pane for session: $session"
+
+  state_set SESSION_NAME "$session"
+  state_set PANE_ID "$pane_id"
+}
+
+main() {
+  suite_setup
+  if [[ "${1:-}" == "--fresh" ]]; then
+    reset_state
+    log "state reset"
+  fi
+
+  local test_script
+  for test_script in "$TESTS_DIR"/[0-9][0-9]_*; do
+    [[ "$test_script" == "$TESTS_DIR/runner" ]] && continue
+    [[ "$test_script" == "$TESTS_DIR/setup" ]] && continue
+    [[ -f "$test_script" ]] || continue
+    [[ -x "$test_script" ]] || chmod +x "$test_script"
+    log "running $(basename "$test_script")"
+    "$test_script"
+  done
+
+  log "suite complete"
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi

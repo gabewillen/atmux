@@ -1,0 +1,30 @@
+{
+  "name": "gemini",
+  "version": 1,
+  "intelligence_map": [
+    {
+      "min": 0,
+      "max": 39,
+      "model": "gemini-2.5-flash",
+      "reasoning_level": "low"
+    },
+    {
+      "min": 40,
+      "max": 74,
+      "model": "gemini-2.5-flash",
+      "reasoning_level": "medium"
+    },
+    {
+      "min": 75,
+      "max": 89,
+      "model": "gemini-2.5-pro",
+      "reasoning_level": "medium"
+    },
+    {
+      "min": 90,
+      "max": 100,
+      "model": "gemini-2.5-pro",
+      "reasoning_level": "high"
+    }
+  ]
+}

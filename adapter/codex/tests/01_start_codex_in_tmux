@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPTS_DIR="$TESTS_DIR/scripts"
+
+setup_out="$("$SCRIPTS_DIR/setup")"
+session_name="$(printf '%s\n' "$setup_out" | sed -n 's/^SESSION_NAME=//p' | tail -n 1)"
+if [[ -z "$session_name" ]]; then
+  echo "missing SESSION_NAME from setup output" >&2
+  exit 1
+fi
+
+cleanup() {
+  "$SCRIPTS_DIR/teardown" --session "$session_name" >/dev/null 2>&1 || true
+}
+trap cleanup EXIT
+
+echo "PASS 01_start_codex_in_tmux"

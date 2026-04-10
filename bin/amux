@@ -4,17 +4,32 @@ set -euo pipefail
 AMUX_HOME="${AMUX_HOME:-$HOME/.amux}"
 AMUX_BIN_ORIGIN="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
+# If running from installed launcher, pin source root to installed source tree.
+if [[ "$AMUX_BIN_ORIGIN" == "$AMUX_HOME/bin" && -d "$AMUX_HOME/src/amux" ]]; then
+  AMUX_SOURCE_ROOT="$AMUX_HOME/src/amux"
+  export AMUX_SOURCE_ROOT
+elif [[ -z "${AMUX_SOURCE_ROOT:-}" ]]; then
+  local_checkout_root="$(cd -- "$AMUX_BIN_ORIGIN/.." && pwd)"
+  if [[ -x "$local_checkout_root/bin/amux.sh" && -d "$local_checkout_root/bin/amux" ]]; then
+    AMUX_SOURCE_ROOT="$local_checkout_root"
+  elif [[ -d "$AMUX_HOME/src/amux" ]]; then
+    AMUX_SOURCE_ROOT="$AMUX_HOME/src/amux"
+  else
+    AMUX_SOURCE_ROOT="$local_checkout_root"
+  fi
+  export AMUX_SOURCE_ROOT
+fi
+
 # In agent sessions, always route to the source repo's amux so help/behavior
 # stays current even if the worktree copy is stale.
-if [[ -n "${AMUX_SOURCE_ROOT:-}" && -x "${AMUX_SOURCE_ROOT}/bin/amux" ]]; then
+if [[ -n "${AMUX_SOURCE_ROOT:-}" && -x "${AMUX_SOURCE_ROOT}/bin/amux.sh" ]]; then
   if [[ "$AMUX_BIN_ORIGIN" != "$(cd -- "${AMUX_SOURCE_ROOT}/bin" && pwd)" ]]; then
-    exec "${AMUX_SOURCE_ROOT}/bin/amux" "$@"
+    exec "${AMUX_SOURCE_ROOT}/bin/amux.sh" "$@"
   fi
 fi
 
 usage() {
   local -a cmds=()
-  cmds+=(install)
 
   local -a script_dirs=()
   if [[ -d "$AMUX_HOME/bin/scripts" ]]; then
@@ -22,8 +37,8 @@ usage() {
   fi
   local repo_root=""
   if repo_root="$(git rev-parse --show-toplevel 2>/dev/null)"; then
-    if [[ -d "$repo_root/bin/scripts" ]]; then
-      script_dirs+=("$repo_root/bin/scripts")
+    if [[ -d "$repo_root/bin/amux" ]]; then
+      script_dirs+=("$repo_root/bin/amux")
     fi
   fi
 
@@ -32,7 +47,11 @@ usage() {
     while IFS= read -r name; do
       [[ -z "$name" ]] && continue
       cmds+=("$name")
-    done < <(find "$dir" -maxdepth 1 -type f -perm -u+x -exec basename {} \; | sort)
+    done < <(find "$dir" -maxdepth 1 -type f -perm -u+x -exec basename {} \; | sed 's/\.sh$//' | sort)
+    while IFS= read -r pagefile; do
+      [[ -z "$pagefile" ]] && continue
+      cmds+=("$(basename "$(dirname "$pagefile")")")
+    done < <(find "$dir" -mindepth 2 -maxdepth 2 -type f -name 'page.sh' -perm -u+x 2>/dev/null | sort)
   done
 
   local -a uniq_cmds=()
@@ -63,16 +82,46 @@ ensure_amux_home() {
   mkdir -p "$AMUX_HOME/bin" "$AMUX_HOME/bin/scripts" "$AMUX_HOME/agents" "$AMUX_HOME/adapters"
 }
 
+xml_escape() {
+  printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g' -e "s/'/\&apos;/g"
+}
+
 attach_or_switch() {
   local session="$1"
+  local readonly="${AMUX_ATTACH_READONLY:-auto}"
   if [[ ! -t 0 || ! -t 1 ]]; then
     printf '%s\n' "$session"
     return
   fi
+
+  case "$readonly" in
+    auto|AUTO|"")
+      local manager=""
+      manager="$(tmux show-environment -t "$session" AMUX_MANAGER 2>/dev/null | sed -n 's/^AMUX_MANAGER=//p' || true)"
+      if [[ -n "$manager" ]]; then
+        readonly="1"
+      else
+        readonly="0"
+      fi
+      ;;
+  esac
+
+  case "$readonly" in
+    0|false|FALSE|no|NO)
+      if [[ -n "${TMUX:-}" ]]; then
+        tmux switch-client -t "$session"
+      else
+        tmux attach-session -t "$session"
+      fi
+      return
+      ;;
+  esac
+
   if [[ -n "${TMUX:-}" ]]; then
-    tmux switch-client -t "$session"
+    tmux refresh-client -f read-only >/dev/null 2>&1 || true
+    tmux switch-client -r -t "$session" 2>/dev/null || tmux switch-client -t "$session"
   else
-    tmux attach-session -t "$session"
+    tmux attach-session -r -t "$session"
   fi
 }
 
@@ -101,64 +150,156 @@ normalize_github_repo() {
   printf '%s\n' "$repo_path"
 }
 
-run_script_subcommand() {
+resolve_script_subcommand() {
   local cmd="$1"
-  shift || true
-
   local repo_root=""
+  local p=""
+
   if repo_root="$(git rev-parse --show-toplevel 2>/dev/null)"; then
-    local local_script="$repo_root/bin/scripts/$cmd"
-    if [[ -x "$local_script" ]]; then
-      exec "$local_script" "$@"
+    p="$repo_root/bin/amux/${cmd}/page.sh"
+    if [[ -f "$p" && -x "$p" ]]; then
+      printf '%s\n' "$p"
+      return 0
+    fi
+    p="$repo_root/bin/amux/${cmd}.sh"
+    if [[ -f "$p" && -x "$p" ]]; then
+      printf '%s\n' "$p"
+      return 0
+    fi
+    p="$repo_root/bin/amux/${cmd}"
+    if [[ -f "$p" && -x "$p" ]]; then
+      printf '%s\n' "$p"
+      return 0
     fi
   fi
 
-  local installed_script="$AMUX_HOME/bin/scripts/$cmd"
-  if [[ -x "$installed_script" ]]; then
-    exec "$installed_script" "$@"
+  p="$AMUX_HOME/bin/scripts/${cmd}/page.sh"
+  if [[ -f "$p" && -x "$p" ]]; then
+    printf '%s\n' "$p"
+    return 0
+  fi
+
+  p="$AMUX_HOME/bin/scripts/${cmd}.sh"
+  if [[ -f "$p" && -x "$p" ]]; then
+    printf '%s\n' "$p"
+    return 0
+  fi
+
+  p="$AMUX_HOME/bin/scripts/${cmd}"
+  if [[ -f "$p" && -x "$p" ]]; then
+    printf '%s\n' "$p"
+    return 0
   fi
 
   return 1
 }
 
-cmd_install() {
-  local repo_root
-  if ! repo_root="$(git rev-parse --show-toplevel 2>/dev/null)"; then
-    echo "not in a git repository" >&2
-    exit 1
+should_wrap_command() {
+  local cmd="${1:-}"
+  shift || true
+
+  if [[ "${AMUX_NO_WRAP:-}" == "1" ]]; then
+    return 1
   fi
-  local installer="$repo_root/scripts/install"
-  if [[ ! -x "$installer" ]]; then
-    echo "installer not found: $installer" >&2
-    exit 1
+
+  case "$cmd" in
+    exec)
+      return 1
+      ;;
+    session)
+      case "${1:-}" in
+        start|attach|_run-adapter)
+          return 1
+          ;;
+      esac
+      ;;
+    adapter)
+      if [[ "${2:-}" == "start" ]]; then
+        return 1
+      fi
+      ;;
+  esac
+
+  return 0
+}
+
+emit_amux_wrapper() {
+  local command_text="$1"
+  local stdout_file="$2"
+  local stderr_file="$3"
+  local rc="$4"
+  local first_nonempty
+  first_nonempty="$(awk 'NF { print; exit }' "$stdout_file" 2>/dev/null || true)"
+
+  printf '<amux command="%s" exit_code="%s">\n' "$(xml_escape "$command_text")" "$(xml_escape "$rc")"
+
+  if [[ -s "$stdout_file" ]]; then
+    if [[ "$first_nonempty" == \<* ]]; then
+      cat "$stdout_file"
+      case "$(tail -c 1 "$stdout_file" 2>/dev/null || true)" in
+        $'\n') ;;
+        *) printf '\n' ;;
+      esac
+    else
+      printf '  <output>%s</output>\n' "$(xml_escape "$(cat "$stdout_file")")"
+    fi
   fi
-  exec "$installer"
+
+  if [[ -s "$stderr_file" ]]; then
+    printf '  <error>%s</error>\n' "$(xml_escape "$(cat "$stderr_file")")"
+  fi
+
+  printf '</amux>\n'
 }
 
 main() {
   ensure_amux_home
 
   if [[ $# -lt 1 ]]; then
-    usage
+    out_file="$(mktemp "${TMPDIR:-/tmp}/amux-out.XXXXXX")"
+    err_file="$(mktemp "${TMPDIR:-/tmp}/amux-err.XXXXXX")"
+    trap 'rm -f "$out_file" "$err_file"' EXIT
+    usage >"$out_file"
+    emit_amux_wrapper "help" "$out_file" "$err_file" 1
     exit 1
   fi
 
   case "$1" in
-    install)
-      shift
-      cmd_install "$@"
-      ;;
     -h|--help|help)
-      usage
+      out_file="$(mktemp "${TMPDIR:-/tmp}/amux-out.XXXXXX")"
+      err_file="$(mktemp "${TMPDIR:-/tmp}/amux-err.XXXXXX")"
+      trap 'rm -f "$out_file" "$err_file"' EXIT
+      usage >"$out_file"
+      emit_amux_wrapper "help" "$out_file" "$err_file" 0
       ;;
     *)
       cmd="$1"
       shift
-      if ! run_script_subcommand "$cmd" "$@"; then
-        echo "unknown command: $cmd" >&2
-        usage
+      if ! script_path="$(resolve_script_subcommand "$cmd")"; then
+        out_file="$(mktemp "${TMPDIR:-/tmp}/amux-out.XXXXXX")"
+        err_file="$(mktemp "${TMPDIR:-/tmp}/amux-err.XXXXXX")"
+        trap 'rm -f "$out_file" "$err_file"' EXIT
+        usage >"$out_file"
+        printf 'unknown command: %s\n' "$cmd" >"$err_file"
+        emit_amux_wrapper "$cmd $*" "$out_file" "$err_file" 1
         exit 1
       fi
+
+      if should_wrap_command "$cmd" "$@"; then
+        out_file="$(mktemp "${TMPDIR:-/tmp}/amux-out.XXXXXX")"
+        err_file="$(mktemp "${TMPDIR:-/tmp}/amux-err.XXXXXX")"
+        trap 'rm -f "$out_file" "$err_file"' EXIT
+        rc=0
+        if "$script_path" "$@" >"$out_file" 2>"$err_file"; then
+          rc=0
+        else
+          rc=$?
+        fi
+        emit_amux_wrapper "$cmd $*" "$out_file" "$err_file" "$rc"
+        exit "$rc"
+      fi
+
+      exec "$script_path" "$@"
       ;;
   esac
 }

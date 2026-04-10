@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+TESTS_DIR="$(cd -- "$SCRIPTS_DIR/.." && pwd)"
+ADAPTER_DIR="$(cd -- "$TESTS_DIR/.." && pwd)"
+REPO_ROOT="$(cd -- "$ADAPTER_DIR/../.." && pwd)"
+
+SESSION_PREFIX="${AMUX_CLAUDE_TEST_SESSION_PREFIX:-amux-claude-test}"
+session_name="${AMUX_CLAUDE_TEST_SESSION_NAME:-${SESSION_PREFIX}-$(date +%s)-$$}"
+command=""
+wait_text=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --command)
+      command="${2:-}"
+      shift 2
+      ;;
+    --wait-text)
+      wait_text="${2:-}"
+      shift 2
+      ;;
+    --session)
+      session_name="${2:-}"
+      shift 2
+      ;;
+    *)
+      echo "unknown flag: $1" >&2
+      exit 2
+      ;;
+  esac
+done
+
+if [[ -z "$command" ]]; then
+  echo "missing required flag: --command" >&2
+  exit 2
+fi
+
+command -v tmux >/dev/null 2>&1 || {
+  echo "missing required command: tmux" >&2
+  exit 1
+}
+command -v claude >/dev/null 2>&1 || {
+  echo "missing required command: claude" >&2
+  exit 1
+}
+
+if tmux has-session -t "$session_name" 2>/dev/null; then
+  tmux kill-session -t "$session_name" >/dev/null 2>&1 || true
+fi
+
+printf -v cmd '(%s); rc=$?; echo __AMUX_CMD_EXIT__:$rc; sleep 120' "$command"
+
+tmux new-session -d -x 240 -y 60 -s "$session_name" -n "$session_name" -c "$REPO_ROOT" bash -lc "$cmd"
+
+pane_id="$(tmux list-panes -t "$session_name" -F '#{pane_id}' 2>/dev/null | head -n 1)"
+[[ -n "$pane_id" ]] || { echo "unable to resolve pane id" >&2; exit 1; }
+
+if [[ -n "$wait_text" ]]; then
+  max_tries=120
+  tries=0
+  while (( tries < max_tries )); do
+    snapshot="$(tmux capture-pane -p -t "$pane_id" -S -200 2>/dev/null | tr -d '\r' || true)"
+    if printf '%s\n' "$snapshot" | grep -F "$wait_text" >/dev/null 2>&1; then
+      break
+    fi
+    tries=$((tries + 1))
+    sleep 0.2
+  done
+fi
+
+printf 'SESSION_NAME=%s\n' "$session_name"
+printf 'PANE_ID=%s\n' "$pane_id"

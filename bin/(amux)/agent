@@ -1,0 +1,1093 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<'USAGE'
+Usage:
+  amux agent destroy <session-pattern> [session-pattern...]
+
+Description:
+  Remove agent sessions/worktrees/branches.
+
+Examples:
+  amux agent destroy 'amux-myrepo-agent-*'
+USAGE
+}
+
+normalize_repo_name() {
+  local raw="${1:-}"
+  local normalized=""
+  normalized="$(printf '%s' "$raw" | sed -E 's/[^A-Za-z0-9_-]+/_/g; s/_+/_/g; s/^_+//; s/_+$//')"
+  if [[ -z "$normalized" ]]; then
+    normalized="repo"
+  fi
+  printf '%s\n' "$normalized"
+}
+
+repo_context() {
+  local repo_root repo_name
+  if ! repo_root="$(git rev-parse --show-toplevel 2>/dev/null)"; then
+    echo "must be run from a git repository" >&2
+    exit 1
+  fi
+  repo_name="${AMUX_REPO:-}"
+  if [[ -z "$repo_name" && -n "${TMUX:-}" ]]; then
+    repo_name="$(tmux show-environment AMUX_REPO 2>/dev/null | sed -n 's/^AMUX_REPO=//p' || true)"
+  fi
+  if [[ -z "$repo_name" ]]; then
+    repo_name="$(basename "$repo_root")"
+  fi
+  repo_name="$(normalize_repo_name "$repo_name")"
+  printf '%s\n%s\n' "$repo_root" "$repo_name"
+}
+
+repo_name_from_context() {
+  local repo_name="${AMUX_REPO:-}"
+  if [[ -z "$repo_name" && -n "${TMUX:-}" ]]; then
+    repo_name="$(tmux show-environment AMUX_REPO 2>/dev/null | sed -n 's/^AMUX_REPO=//p' || true)"
+  fi
+  if [[ -z "$repo_name" ]]; then
+    local repo_root=""
+    repo_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+    if [[ -n "$repo_root" ]]; then
+      repo_name="$(basename "$repo_root")"
+    fi
+  fi
+  if [[ -n "$repo_name" ]]; then
+    repo_name="$(normalize_repo_name "$repo_name")"
+  fi
+  printf '%s\n' "$repo_name"
+}
+
+team_session_name() {
+  local repo_name="$1"
+  local team_name="$2"
+  printf 'amux-%s-team-%s\n' "$repo_name" "$team_name"
+}
+
+team_member_count() {
+  local team_session="$1"
+  if ! tmux has-session -t "$team_session" 2>/dev/null; then
+    printf '0\n'
+    return 0
+  fi
+  tmux list-panes -t "${team_session}:0" -F '#{@amux_agent_session}' 2>/dev/null | awk 'NF { c++ } END { print c+0 }'
+}
+
+team_contains_agent_session() {
+  local team_session="$1"
+  local agent_session="$2"
+  tmux list-panes -t "${team_session}:0" -F '#{@amux_agent_session}' 2>/dev/null | awk -v s="$agent_session" '$0==s { found=1 } END { exit(found?0:1) }'
+}
+
+ensure_team_has_capacity() {
+  local repo_name="$1"
+  local team_name="$2"
+  local team_cap=4
+  local team_session current_count
+
+  [[ -n "$team_name" ]] || return 0
+  team_session="$(team_session_name "$repo_name" "$team_name")"
+  current_count="$(team_member_count "$team_session")"
+  if ! [[ "$current_count" =~ ^[0-9]+$ ]]; then
+    current_count=0
+  fi
+  if (( current_count >= team_cap )); then
+    echo "team '${team_name}' is full (${current_count}/${team_cap}); max team size is 4" >&2
+    return 1
+  fi
+}
+
+resolve_target_session() {
+  local target="$1"
+  local repo_name="${2:-}"
+  local candidate=""
+
+  # If caller passed an existing tmux session, use it verbatim.
+  if tmux has-session -t "$target" 2>/dev/null; then
+    printf '%s\n' "$target"
+    return 0
+  fi
+
+  if [[ "$target" == amux-* ]]; then
+    printf '%s\n' "$target"
+    return 0
+  fi
+
+  if [[ -z "$repo_name" ]]; then
+    return 1
+  fi
+
+  candidate="amux-${repo_name}-${target}"
+  if tmux has-session -t "$candidate" 2>/dev/null; then
+    printf '%s\n' "$candidate"
+    return 0
+  fi
+
+  # Allow "<repo>-<agent>" shorthand as well.
+  if [[ "$target" == "${repo_name}-"* ]]; then
+    candidate="amux-${target}"
+    if tmux has-session -t "$candidate" 2>/dev/null; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  fi
+
+  printf '%s\n' "amux-${repo_name}-${target}"
+  return 0
+}
+
+array_contains() {
+  local needle="$1"
+  shift || true
+  local item
+  for item in "$@"; do
+    if [[ "$item" == "$needle" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+has_wildcard() {
+  local value="$1"
+  case "$value" in
+    *'*'*|*'?'*|*'['*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+manager_matches_parent() {
+  local manager="$1"
+  local parent_agent="$2"
+  local parent_session="$3"
+  local repo_name="$4"
+  local parent_short=""
+
+  [[ -n "$manager" ]] || return 1
+  [[ -n "$parent_agent" || -n "$parent_session" ]] || return 1
+
+  if [[ "$manager" == "$parent_agent" || "$manager" == "$parent_session" ]]; then
+    return 0
+  fi
+
+  if [[ -n "$repo_name" && -n "$parent_agent" && "$manager" == "amux-${repo_name}-${parent_agent}" ]]; then
+    return 0
+  fi
+
+  if [[ -n "$repo_name" && -n "$parent_session" && "$parent_session" == amux-* ]]; then
+    parent_short="${parent_session#amux-${repo_name}-}"
+    if [[ "$manager" == "$parent_short" ]]; then
+      return 0
+    fi
+  fi
+
+  return 1
+}
+
+session_short_name() {
+  local session="$1"
+  local repo_name="$2"
+  local prefix="amux-${repo_name}-"
+  if [[ -n "$repo_name" && "$session" == "$prefix"* ]]; then
+    printf '%s\n' "${session#"$prefix"}"
+  else
+    printf '%s\n' "$session"
+  fi
+}
+
+resolve_hierarchy_targets() {
+  local pattern="$1"
+  local repo_name="$2"
+  local root_agent="$3"
+  local root_session="$4"
+  local -a frontier_agents=()
+  local -a frontier_sessions=()
+  local -a scanned_parents=()
+  local -a hierarchy_sessions=()
+  local parent_agent parent_session idx session manager child_agent short_name agent_name session_repo
+  local candidate_match=0
+
+  [[ -n "$root_agent" ]] || return 1
+
+  frontier_agents+=("$root_agent")
+  frontier_sessions+=("$root_session")
+
+  idx=0
+  while (( idx < ${#frontier_agents[@]} )); do
+    parent_agent="${frontier_agents[$idx]}"
+    parent_session="${frontier_sessions[$idx]}"
+
+    if [[ -n "$parent_session" ]] && array_contains "$parent_session" "${scanned_parents[@]-}"; then
+      idx=$((idx + 1))
+      continue
+    fi
+    scanned_parents+=("$parent_session")
+
+    while IFS= read -r session; do
+      [[ -n "$session" ]] || continue
+      session_repo="$(get_session_env "$session" AMUX_REPO)"
+      if [[ -n "$repo_name" && "$session_repo" != "$repo_name" ]]; then
+        continue
+      fi
+
+      manager="$(get_session_env "$session" AMUX_MANAGER)"
+      if ! manager_matches_parent "$manager" "$parent_agent" "$parent_session" "$repo_name"; then
+        continue
+      fi
+
+      if array_contains "$session" "${hierarchy_sessions[@]-}"; then
+        continue
+      fi
+
+      hierarchy_sessions+=("$session")
+      child_agent="$(get_session_env "$session" AMUX_AGENT_NAME)"
+      if [[ -z "$child_agent" ]]; then
+        child_agent="$(session_short_name "$session" "$repo_name")"
+      fi
+      frontier_agents+=("$child_agent")
+      frontier_sessions+=("$session")
+    done < <(tmux list-sessions -F '#{session_name}' 2>/dev/null | awk '/^amux-/ { print }')
+
+    idx=$((idx + 1))
+  done
+
+  for session in "${hierarchy_sessions[@]}"; do
+    agent_name="$(get_session_env "$session" AMUX_AGENT_NAME)"
+    short_name="$(session_short_name "$session" "$repo_name")"
+    [[ -n "$agent_name" ]] || agent_name="$short_name"
+
+    if matches_any_pattern "$session" "$pattern" || matches_any_pattern "$short_name" "$pattern" || matches_any_pattern "$agent_name" "$pattern"; then
+      printf '%s\n' "$session"
+      candidate_match=1
+    fi
+  done
+
+  [[ "$candidate_match" -eq 1 ]]
+}
+
+resolve_send_targets() {
+  local to="$1"
+  local repo_name="$2"
+  local current_agent="$3"
+  local current_session="$4"
+  local target_session=""
+  local pattern="$to"
+
+  if [[ "$pattern" == "all" ]]; then
+    pattern="*"
+  fi
+
+  if has_wildcard "$pattern"; then
+    resolve_hierarchy_targets "$pattern" "$repo_name" "$current_agent" "$current_session"
+    return $?
+  fi
+
+  target_session="$(resolve_target_session "$pattern" "$repo_name" || true)"
+  [[ -n "$target_session" ]] || return 1
+  printf '%s\n' "$target_session"
+  return 0
+}
+
+resolve_amux_runner() {
+  if [[ -z "${AMUX_SOURCE_ROOT:-}" && -n "${TMUX:-}" ]]; then
+    tmux_source_root="$(tmux show-environment AMUX_SOURCE_ROOT 2>/dev/null | sed -n 's/^AMUX_SOURCE_ROOT=//p' || true)"
+    if [[ -n "$tmux_source_root" ]]; then
+      AMUX_SOURCE_ROOT="$tmux_source_root"
+    fi
+  fi
+  if [[ -n "${AMUX_SOURCE_ROOT:-}" && -x "${AMUX_SOURCE_ROOT}/bin/amux.sh" ]]; then
+    printf '%s\n' "${AMUX_SOURCE_ROOT}/bin/amux.sh"
+    return
+  fi
+
+  local repo_root=""
+  if repo_root="$(git rev-parse --show-toplevel 2>/dev/null)"; then
+    if [[ -x "$repo_root/bin/amux.sh" ]]; then
+      printf '%s\n' "$repo_root/bin/amux.sh"
+      return
+    fi
+  fi
+
+  if command -v amux >/dev/null 2>&1; then
+    printf '%s\n' amux
+    return
+  fi
+
+  echo "amux command not found" >&2
+  exit 127
+}
+
+resolve_session_runner() {
+  if [[ -n "${AMUX_SOURCE_ROOT:-}" && -x "${AMUX_SOURCE_ROOT}/bin/amux/session" ]]; then
+    printf '%s\n' "${AMUX_SOURCE_ROOT}/bin/amux/session"
+    return
+  fi
+
+  if [[ -n "${TMUX:-}" ]]; then
+    tmux_source_root="$(tmux show-environment AMUX_SOURCE_ROOT 2>/dev/null | sed -n 's/^AMUX_SOURCE_ROOT=//p' || true)"
+    if [[ -n "$tmux_source_root" && -x "$tmux_source_root/bin/amux/session" ]]; then
+      printf '%s\n' "$tmux_source_root/bin/amux/session"
+      return
+    fi
+  fi
+
+  local amux_home="${AMUX_HOME:-$HOME/.amux}"
+  if [[ -x "$amux_home/src/amux/bin/amux/session" ]]; then
+    printf '%s\n' "$amux_home/src/amux/bin/amux/session"
+    return
+  fi
+
+  local repo_root=""
+  if repo_root="$(git rev-parse --show-toplevel 2>/dev/null)"; then
+    if [[ -x "$repo_root/bin/amux/session" ]]; then
+      printf '%s\n' "$repo_root/bin/amux/session"
+      return
+    fi
+  fi
+
+  echo "session runner not found" >&2
+  exit 127
+}
+
+ensure_team_dashboard_for_agent() {
+  local repo_root="$1"
+  local repo_name="$2"
+  local team_name="$3"
+  local agent_session="$4"
+  local agent_name="$5"
+  local team_session pane_id reusable_pane current_cmd pane_agent
+  local team_width team_height pane_count width height
+  local hard_min_w hard_min_h
+  local team_cap current_count
+  local team_history_limit team_alternate_screen
+
+  int_or_default() {
+    local value="${1:-}"
+    local default_value="$2"
+    if [[ "$value" =~ ^[0-9]+$ ]] && (( value > 0 )); then
+      printf '%s\n' "$value"
+      return
+    fi
+    printf '%s\n' "$default_value"
+  }
+
+  max_int() {
+    local a="$1"
+    local b="$2"
+    if (( a > b )); then
+      printf '%s\n' "$a"
+    else
+      printf '%s\n' "$b"
+    fi
+  }
+
+  team_dimensions_for_panes() {
+    local panes="$1"
+    local min_w min_h max_cols cols rows out_w out_h
+    min_w="$(int_or_default "${AMUX_TEAM_MIN_PANE_WIDTH:-120}" 120)"
+    min_h="$(int_or_default "${AMUX_TEAM_MIN_PANE_HEIGHT:-24}" 24)"
+    min_w="$(max_int "$min_w" "$hard_min_w")"
+    min_h="$(max_int "$min_h" "$hard_min_h")"
+    max_cols="$(int_or_default "${AMUX_TEAM_MAX_COLUMNS:-2}" 2)"
+    if (( max_cols < 1 )); then
+      max_cols=1
+    fi
+    if (( panes < 1 )); then
+      panes=1
+    fi
+    cols="$panes"
+    if (( cols > max_cols )); then
+      cols="$max_cols"
+    fi
+    rows=$(( (panes + cols - 1) / cols ))
+    out_w=$(( cols * min_w + (cols - 1) ))
+    out_h=$(( rows * min_h + (rows - 1) ))
+    printf '%s %s\n' "$out_w" "$out_h"
+  }
+
+  apply_team_layout() {
+    local panes="$1"
+    read -r width height < <(team_dimensions_for_panes "$panes")
+    tmux set-window-option -t "${team_session}:0" window-size manual >/dev/null 2>&1 || true
+    tmux resize-window -t "${team_session}:0" -x "$width" -y "$height" >/dev/null 2>&1 || true
+    tmux select-layout -t "${team_session}:0" tiled >/dev/null 2>&1 || true
+  }
+
+  apply_team_scroll_settings() {
+    tmux set-option -t "$team_session" mouse on >/dev/null 2>&1 || true
+    tmux set-window-option -t "${team_session}:0" history-limit "$team_history_limit" >/dev/null 2>&1 || true
+    tmux set-window-option -t "${team_session}:0" mode-keys vi >/dev/null 2>&1 || true
+    tmux set-window-option -t "${team_session}:0" alternate-screen "$team_alternate_screen" >/dev/null 2>&1 || true
+  }
+
+  [[ -n "$team_name" ]] || return 0
+  [[ -n "$agent_session" ]] || return 0
+  if ! tmux has-session -t "$agent_session" 2>/dev/null; then
+    return 0
+  fi
+
+  team_session="$(team_session_name "$repo_name" "$team_name")"
+  team_cap=4
+  hard_min_w=100
+  hard_min_h=20
+  team_width="$(int_or_default "${AMUX_TEAM_WIDTH:-240}" 240)"
+  team_height="$(int_or_default "${AMUX_TEAM_HEIGHT:-50}" 50)"
+  team_width="$(max_int "$team_width" "$hard_min_w")"
+  team_height="$(max_int "$team_height" "$hard_min_h")"
+  team_history_limit="$(int_or_default "${AMUX_TEAM_HISTORY_LIMIT:-300000}" 300000)"
+  team_alternate_screen="${AMUX_TEAM_ALTERNATE_SCREEN:-off}"
+
+  if tmux has-session -t "$team_session" 2>/dev/null; then
+    current_count="$(team_member_count "$team_session")"
+    if ! [[ "$current_count" =~ ^[0-9]+$ ]]; then
+      current_count=0
+    fi
+    if ! team_contains_agent_session "$team_session" "$agent_session" && (( current_count >= team_cap )); then
+      echo "team '${team_name}' is full (${current_count}/${team_cap}); max team size is 4" >&2
+      return 1
+    fi
+  fi
+
+  if ! tmux has-session -t "$team_session" 2>/dev/null; then
+    tmux new-session -d -x "$team_width" -y "$team_height" -s "$team_session" -n "$team_session" -c "$repo_root" "TMUX= tmux attach-session -r -t \"$agent_session\""
+    tmux set-environment -t "$team_session" AMUX_REPO "$repo_name" >/dev/null 2>&1 || true
+    tmux set-environment -t "$team_session" AMUX_TEAM "$team_name" >/dev/null 2>&1 || true
+    tmux set-environment -t "$team_session" AMUX_SESSION_NAME "$team_session" >/dev/null 2>&1 || true
+    tmux set-environment -t "$team_session" AMUX_SESSION_KIND "team" >/dev/null 2>&1 || true
+    pane_id="$(tmux list-panes -t "${team_session}:0" -F '#{pane_id}' 2>/dev/null | head -n1 || true)"
+  else
+    reusable_pane=""
+    while IFS='|' read -r pane_id current_cmd pane_agent; do
+      [[ -n "$pane_id" ]] || continue
+      if [[ -n "$pane_agent" ]]; then
+        continue
+      fi
+      case "$current_cmd" in
+        zsh|bash|sh|fish)
+          reusable_pane="$pane_id"
+          break
+          ;;
+      esac
+    done < <(tmux list-panes -t "${team_session}:0" -F '#{pane_id}|#{pane_current_command}|#{@amux_agent_session}' 2>/dev/null || true)
+
+    if [[ -n "$reusable_pane" ]]; then
+      pane_id="$reusable_pane"
+      tmux send-keys -t "$pane_id" C-c >/dev/null 2>&1 || true
+      tmux send-keys -t "$pane_id" C-u >/dev/null 2>&1 || true
+      tmux send-keys -t "$pane_id" "TMUX= tmux attach-session -r -t \"$agent_session\"" C-m >/dev/null 2>&1 || true
+    else
+      pane_count="$(tmux list-panes -t "${team_session}:0" 2>/dev/null | wc -l | tr -d ' ')"
+      if ! [[ "$pane_count" =~ ^[0-9]+$ ]]; then
+        pane_count=1
+      fi
+      apply_team_layout $(( pane_count + 1 ))
+      pane_id="$(tmux split-window -d -t "${team_session}:0" -c "$repo_root" -P -F '#{pane_id}' "TMUX= tmux attach-session -r -t \"$agent_session\"" 2>/dev/null || true)"
+      if [[ -z "$pane_id" ]]; then
+        apply_team_layout $(( pane_count + 2 ))
+        pane_id="$(tmux split-window -d -t "${team_session}:0" -c "$repo_root" -P -F '#{pane_id}' "TMUX= tmux attach-session -r -t \"$agent_session\"" 2>/dev/null || true)"
+      fi
+    fi
+  fi
+
+  apply_team_scroll_settings
+
+  if [[ -n "$pane_id" && -n "$agent_name" ]]; then
+    tmux select-pane -t "$pane_id" -T "$agent_name" >/dev/null 2>&1 || true
+    tmux set-option -p -t "$pane_id" @amux_agent_session "$agent_session" >/dev/null 2>&1 || true
+    tmux set-option -p -t "$pane_id" @amux_agent_name "$agent_name" >/dev/null 2>&1 || true
+  fi
+  pane_count="$(tmux list-panes -t "${team_session}:0" 2>/dev/null | wc -l | tr -d ' ')"
+  if ! [[ "$pane_count" =~ ^[0-9]+$ ]]; then
+    pane_count=1
+  fi
+  apply_team_layout "$pane_count"
+  apply_team_scroll_settings
+}
+
+matches_any_pattern() {
+  local value="$1"
+  shift || true
+  local pattern
+  for pattern in "$@"; do
+    case "$value" in
+      $pattern) return 0 ;;
+    esac
+  done
+  return 1
+}
+
+xml_escape() {
+  printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g' -e "s/'/\&apos;/g"
+}
+
+get_session_env() {
+  local session="$1"
+  local key="$2"
+  tmux show-environment -t "$session" "$key" 2>/dev/null | sed -n "s/^${key}=//p" || true
+}
+
+monitor_pid_matches_session() {
+  local pid="$1"
+  local session="$2"
+  local cmd=""
+
+  [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+  kill -0 "$pid" >/dev/null 2>&1 || return 1
+  cmd="$(ps -p "$pid" -o command= 2>/dev/null || true)"
+  [[ -n "$cmd" ]] || return 1
+  [[ "$cmd" == *"bin/amux/session"*"_monitor-supervisor ${session}"* ]] || return 1
+  return 0
+}
+
+monitor_heartbeat_is_fresh() {
+  local session="$1"
+  local max_age="${2:-30}"
+  local hb now
+
+  hb="$(get_session_env "$session" AMUX_MONITOR_HEARTBEAT_TS)"
+  [[ "$hb" =~ ^[0-9]+$ ]] || return 1
+  now="$(date +%s)"
+  (( now - hb <= max_age ))
+}
+
+primary_pane_for_session() {
+  local session="$1"
+  tmux list-panes -a -F '#{session_name} #{pane_id}' 2>/dev/null | awk -v s="$session" '$1==s { print $2; exit }'
+}
+
+send_payload_to_pane() {
+  local target="$1"
+  local payload="$2"
+  local settle submit_wait extra_enter confirm_polls confirm_interval
+  local attempts retry_wait
+  local before_count after_count confirmed poll attempt snap initial_before_count current_count
+
+  # Use a paced key sequence for interactive TUIs:
+  # clear line -> type payload -> submit.
+  settle="${AMUX_SEND_SETTLE_SECONDS:-0.2}"
+  submit_wait="${AMUX_SEND_SUBMIT_WAIT_SECONDS:-0.15}"
+  extra_enter="${AMUX_SEND_DOUBLE_ENTER:-0}"
+  confirm_polls="${AMUX_SEND_CONFIRM_POLLS:-20}"
+  confirm_interval="${AMUX_SEND_CONFIRM_INTERVAL_SECONDS:-0.05}"
+  attempts="${AMUX_SEND_ATTEMPTS:-8}"
+  retry_wait="${AMUX_SEND_RETRY_WAIT_SECONDS:-0.5}"
+
+  marker_count() {
+    tmux capture-pane -p -t "$target" -S -800 2>/dev/null | tr -d '\r\n' | grep -o '</amux>' | wc -l | tr -d ' '
+  }
+
+  initial_before_count="$(marker_count || true)"
+  [[ -n "$initial_before_count" ]] || initial_before_count=0
+
+  for ((attempt=1; attempt<=attempts; attempt++)); do
+    current_count="$(marker_count || true)"
+    [[ -n "$current_count" ]] || current_count=0
+    if (( current_count > initial_before_count )); then
+      return 0
+    fi
+    before_count="$current_count"
+    [[ -n "$before_count" ]] || before_count=0
+
+    tmux send-keys -t "$target" C-u
+    sleep "$settle"
+    tmux send-keys -t "$target" -l "$payload"
+    sleep "$settle"
+    tmux send-keys -t "$target" Enter
+    sleep "$submit_wait"
+
+    confirmed=0
+    for poll in $(seq 1 "$confirm_polls"); do
+      snap="$(tmux capture-pane -p -t "$target" -S -800 2>/dev/null || true)"
+      after_count="$(printf '%s' "$snap" | tr -d '\r\n' | grep -o '</amux>' | wc -l | tr -d ' ' || true)"
+      [[ -n "$after_count" ]] || after_count=0
+      if (( after_count > before_count )); then
+        confirmed=1
+        break
+      fi
+      sleep "$confirm_interval"
+    done
+
+    # Retry submit when marker did not advance, or when explicitly requested.
+    if [[ "$extra_enter" == "1" || "$confirmed" -eq 0 ]]; then
+      tmux send-keys -t "$target" Enter
+      sleep "$submit_wait"
+      after_count="$(marker_count || true)"
+      [[ -n "$after_count" ]] || after_count=0
+      if (( after_count > before_count )); then
+        confirmed=1
+      fi
+    fi
+
+    if [[ "$confirmed" -eq 1 ]]; then
+      return 0
+    fi
+
+    current_count="$(marker_count || true)"
+    [[ -n "$current_count" ]] || current_count=0
+    if (( current_count > initial_before_count )); then
+      return 0
+    fi
+
+    sleep "$retry_wait"
+  done
+
+  return 1
+}
+
+start_monitor_for_session_if_needed() {
+  local session="$1"
+  local source_root monitor_pid runner log_file new_pid stale_seconds
+  stale_seconds="${AMUX_MONITOR_STALE_SECONDS:-30}"
+
+  monitor_pid="$(get_session_env "$session" AMUX_MONITOR_PID)"
+  if [[ -n "$monitor_pid" ]] && monitor_pid_matches_session "$monitor_pid" "$session" && monitor_heartbeat_is_fresh "$session" "$stale_seconds"; then
+    return 0
+  fi
+  if [[ -n "$monitor_pid" ]] && monitor_pid_matches_session "$monitor_pid" "$session"; then
+    kill "$monitor_pid" >/dev/null 2>&1 || true
+  fi
+  tmux set-environment -t "$session" -u AMUX_MONITOR_PID >/dev/null 2>&1 || true
+  tmux set-environment -t "$session" -u AMUX_MONITOR_HEARTBEAT_TS >/dev/null 2>&1 || true
+
+  source_root="$(get_session_env "$session" AMUX_SOURCE_ROOT)"
+  if [[ -z "$source_root" || ! -x "$source_root/bin/amux/session" ]]; then
+    source_root="${AMUX_SOURCE_ROOT:-}"
+  fi
+  if [[ -z "$source_root" || ! -x "$source_root/bin/amux/session" ]]; then
+    source_root="${AMUX_HOME:-$HOME/.amux}/src/amux"
+  fi
+  runner="$source_root/bin/amux/session"
+  [[ -x "$runner" ]] || return 0
+
+  log_file="${TMPDIR:-/tmp}/amux-monitor-${session}.log"
+  nohup "$runner" _monitor-supervisor "$session" >>"$log_file" 2>&1 </dev/null &
+  new_pid="$!"
+  sleep 0.05
+  if monitor_pid_matches_session "$new_pid" "$session"; then
+    tmux set-environment -t "$session" AMUX_MONITOR_PID "$new_pid"
+  else
+    tmux set-environment -t "$session" -u AMUX_MONITOR_PID >/dev/null 2>&1 || true
+  fi
+}
+
+resolve_adapter_cmd_for_session() {
+  local session="$1"
+  local adapter source_root
+  adapter="$(get_session_env "$session" AMUX_ADAPTER)"
+  source_root="$(get_session_env "$session" AMUX_SOURCE_ROOT)"
+  [[ -n "$adapter" ]] || adapter="codex"
+
+  if [[ -n "$source_root" && -x "$source_root/adapter/$adapter/cmd" ]]; then
+    printf '%s\n' "$source_root/adapter/$adapter/cmd"
+    return 0
+  fi
+  if [[ -n "${AMUX_SOURCE_ROOT:-}" && -x "${AMUX_SOURCE_ROOT}/adapter/$adapter/cmd" ]]; then
+    printf '%s\n' "${AMUX_SOURCE_ROOT}/adapter/$adapter/cmd"
+    return 0
+  fi
+
+  local repo_root=""
+  if repo_root="$(git rev-parse --show-toplevel 2>/dev/null)"; then
+    if [[ -x "$repo_root/adapter/$adapter/cmd" ]]; then
+      printf '%s\n' "$repo_root/adapter/$adapter/cmd"
+      return 0
+    fi
+  fi
+
+  local amux_home="${AMUX_HOME:-$HOME/.amux}"
+  if [[ -x "$amux_home/adapters/$adapter/cmd" ]]; then
+    printf '%s\n' "$amux_home/adapters/$adapter/cmd"
+    return 0
+  fi
+
+  return 1
+}
+
+status_node_for_session() {
+  local session="$1"
+  local passive_status="${2:-0}"
+  local pane adapter adapter_cmd manager source_root status_out node
+
+  adapter="$(get_session_env "$session" AMUX_ADAPTER)"
+  manager="$(get_session_env "$session" AMUX_MANAGER)"
+  source_root="$(get_session_env "$session" AMUX_SOURCE_ROOT)"
+  pane="$(primary_pane_for_session "$session")"
+  [[ -n "$adapter" ]] || adapter="codex"
+
+  if ! adapter_cmd="$(resolve_adapter_cmd_for_session "$session")"; then
+    printf '<status adapter="%s" owner="agent" state="errored" model="" reasoning_level="" control_file="" />\n' "$(xml_escape "$adapter")"
+    return 0
+  fi
+
+  status_out="$(
+    AMUX_SOURCE_ROOT="$source_root" \
+    AMUX_TARGET_PANE="$pane" \
+    AMUX_MANAGER="$manager" \
+    AMUX_STATUS_PASSIVE="$passive_status" \
+    "$adapter_cmd" status 2>/dev/null || true
+  )"
+
+  node="$(printf '%s\n' "$status_out" | awk '/<status[[:space:]].*\/>/ { sub(/^[[:space:]]*/, ""); print; exit }')"
+  if [[ -n "$node" ]]; then
+    printf '%s\n' "$node"
+  else
+    printf '<status adapter="%s" owner="agent" state="errored" model="" reasoning_level="" control_file="" />\n' "$(xml_escape "$adapter")"
+  fi
+}
+
+send_task_to_agent() {
+  local target_session="$1"
+  local description="$2"
+  local todos_blob="$3"
+
+  [[ -n "$target_session" ]] || { echo "target session is required" >&2; return 1; }
+  if ! tmux has-session -t "$target_session" 2>/dev/null; then
+    echo "agent session not found: $target_session" >&2
+    return 1
+  fi
+
+  start_monitor_for_session_if_needed "$target_session"
+  local target_pane=""
+  target_pane="$(primary_pane_for_session "$target_session")"
+  if [[ -z "$target_pane" ]]; then
+    echo "agent pane not found: $target_session" >&2
+    return 1
+  fi
+
+  local from_session from_escaped timestamp description_attr todos_xml todo todo_escaped xml
+  from_session="${AMUX_SESSION_NAME:-}"
+  if [[ -z "$from_session" ]]; then
+    local from_repo
+    from_repo="$(repo_name_from_context)"
+    if [[ -n "$from_repo" ]]; then
+      from_session="amux-${from_repo}-${AMUX_AGENT_NAME:-unknown}"
+    else
+      from_session="amux-unknown-${AMUX_AGENT_NAME:-unknown}"
+    fi
+  fi
+  from_escaped="$(xml_escape "$from_session")"
+  timestamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  description_attr=""
+  if [[ -n "$description" ]]; then
+    description_attr=" description=\"$(xml_escape "$description")\""
+  fi
+
+  todos_xml=""
+  while IFS= read -r todo; do
+    [[ -z "$todo" ]] && continue
+    todo_escaped="$(xml_escape "$todo")"
+    todos_xml="${todos_xml}<todo>${todo_escaped}</todo>"
+  done <<< "$todos_blob"
+
+  xml="<amux><task from=\"${from_escaped}\" timestamp=\"${timestamp}\"${description_attr}>${todos_xml}</task></amux>"
+  send_payload_to_pane "$target_pane" "$xml"
+}
+
+valid_intelligence() {
+  local value="${1:-}"
+  [[ "$value" =~ ^[0-9]+$ ]] || return 1
+  (( value >= 0 && value <= 100 ))
+}
+
+sub="${1:-}"
+shift || true
+
+case "$sub" in
+  _create)
+    manager="${AMUX_AGENT_NAME:-}"
+    if [[ -z "$manager" ]]; then
+      echo "AMUX_AGENT_NAME is required for agent create" >&2
+      exit 2
+    fi
+
+    name=""
+    role=""
+    team="${AMUX_TEAM:-}"
+    if [[ -z "$team" && -n "${TMUX:-}" ]]; then
+      current_session_name="$(tmux display-message -p '#S' 2>/dev/null || true)"
+      if [[ -n "$current_session_name" ]]; then
+        team="$(tmux show-environment -t "$current_session_name" AMUX_TEAM 2>/dev/null | sed -n 's/^AMUX_TEAM=//p' || true)"
+      fi
+    fi
+    adapter="auto"
+    intelligence=""
+    task_mode=0
+    task_description=""
+    task_todos_blob=""
+    forward=()
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --name)
+          name="${2:-}"
+          shift 2
+          ;;
+        --adapter)
+          adapter="${2:-}"
+          shift 2
+          ;;
+        --role)
+          role="${2:-}"
+          shift 2
+          ;;
+        --team|-t)
+          team="${2:-}"
+          shift 2
+          ;;
+        --intelligence)
+          intelligence="${2:-}"
+          shift 2
+          ;;
+        --task)
+          task_mode=1
+          shift
+          ;;
+        --description)
+          task_description="${2:-}"
+          shift 2
+          ;;
+        --todo|--todos)
+          task_todos_blob+="${2:-}"$'\n'
+          shift 2
+          ;;
+        --)
+          shift
+          forward=("$@")
+          break
+          ;;
+        *)
+          echo "unknown flag: $1" >&2
+          exit 2
+          ;;
+      esac
+    done
+
+    if [[ -z "$role" ]]; then
+      echo "missing required flag: --role" >&2
+      exit 2
+    fi
+    if [[ -n "$intelligence" ]] && ! valid_intelligence "$intelligence"; then
+      echo "invalid intelligence: $intelligence" >&2
+      echo "expected integer range: 0-100" >&2
+      exit 2
+    fi
+    if [[ -z "$intelligence" ]]; then
+      echo "missing required flag: --intelligence" >&2
+      exit 2
+    fi
+    if [[ "$task_mode" -eq 0 && ( -n "$task_description" || -n "$task_todos_blob" ) ]]; then
+      echo "--description/--todos require --task for agent create" >&2
+      exit 2
+    fi
+    if [[ "$task_mode" -eq 1 && -z "$task_description" && -z "$task_todos_blob" ]]; then
+      echo "--task requires --description and/or --todos" >&2
+      exit 2
+    fi
+
+    repo_root=""
+    repo_name=""
+    {
+      IFS= read -r repo_root
+      IFS= read -r repo_name
+    } < <(repo_context)
+    if [[ -n "$team" ]]; then
+      ensure_team_has_capacity "$repo_name" "$team"
+    fi
+
+    session_runner="$(resolve_session_runner)"
+    cmd=("$session_runner" start)
+    if [[ -n "$name" ]]; then
+      cmd+=(--name "$name")
+    fi
+    if [[ -n "$adapter" ]]; then
+      cmd+=(--adapter "$adapter")
+    fi
+    if [[ ${#forward[@]} -gt 0 ]]; then
+      cmd+=(-- "${forward[@]}")
+    fi
+
+    create_out="$(
+      AMUX_MANAGER="$manager" AMUX_ROLE="$role" AMUX_TEAM="$team" AMUX_INTELLIGENCE="$intelligence" "${cmd[@]}"
+    )"
+
+    created_session="$(printf '%s\n' "$create_out" | awk 'NF { last=$0 } END { print last }')"
+    if [[ -z "$created_session" ]]; then
+      exit 0
+    fi
+
+    start_monitor_for_session_if_needed "$created_session"
+
+    created_name="$(get_session_env "$created_session" AMUX_AGENT_NAME)"
+    if [[ -z "$created_name" ]]; then
+      created_name="$name"
+    fi
+    if [[ -z "$created_name" ]]; then
+      session_prefix="amux-${repo_name}-"
+      if [[ "$created_session" == "$session_prefix"* ]]; then
+        created_name="${created_session#"$session_prefix"}"
+      else
+        created_name="$created_session"
+      fi
+    fi
+
+    created_repo="$(get_session_env "$created_session" AMUX_REPO)"
+    [[ -n "$created_repo" ]] || created_repo="$repo_name"
+
+    created_manager="$(get_session_env "$created_session" AMUX_MANAGER)"
+    [[ -n "$created_manager" ]] || created_manager="$manager"
+    created_team="$(get_session_env "$created_session" AMUX_TEAM)"
+    [[ -n "$created_team" ]] || created_team="$team"
+
+    created_adapter="$(get_session_env "$created_session" AMUX_ADAPTER)"
+    if [[ "$created_adapter" == "auto" || -z "$created_adapter" ]]; then
+      for _ in $(seq 1 30); do
+        sleep 0.1
+        probe_adapter="$(get_session_env "$created_session" AMUX_ADAPTER)"
+        if [[ -n "$probe_adapter" && "$probe_adapter" != "auto" ]]; then
+          created_adapter="$probe_adapter"
+          break
+        fi
+      done
+    fi
+    if [[ -z "$created_adapter" ]]; then
+      created_adapter="$adapter"
+    fi
+    if [[ -z "$created_adapter" ]]; then
+      created_adapter="auto"
+    fi
+
+    created_adapter_requested="$(get_session_env "$created_session" AMUX_ADAPTER_REQUESTED)"
+    if [[ -z "$created_adapter_requested" ]]; then
+      created_adapter_requested="$adapter"
+    fi
+
+    status_node="$(status_node_for_session "$created_session")"
+    if ! ensure_team_dashboard_for_agent "$repo_root" "$created_repo" "$created_team" "$created_session" "$created_name"; then
+      exit 1
+    fi
+    # Disabled for now: create should not auto-assign tasks.
+    # if [[ "$task_mode" -eq 1 ]]; then
+    #   send_task_to_agent "$created_repo" "$created_name" "$task_description" "$task_todos_blob"
+    # fi
+    printf '<agent name="%s" session="%s" repo="%s" manager="%s" team="%s" adapter="%s" adapter_requested="%s" role="%s" intelligence="%s">\n' \
+      "$(xml_escape "$created_name")" \
+      "$(xml_escape "$created_session")" \
+      "$(xml_escape "$created_repo")" \
+      "$(xml_escape "$created_manager")" \
+      "$(xml_escape "$created_team")" \
+      "$(xml_escape "$created_adapter")" \
+      "$(xml_escape "$created_adapter_requested")" \
+      "$(xml_escape "$role")" \
+      "$(xml_escape "$intelligence")"
+    printf '  %s\n' "$status_node"
+    printf '</agent>\n'
+    ;;
+  destroy)
+    if [[ $# -lt 1 ]]; then
+      echo "usage: amux agent destroy <session-pattern> [session-pattern...]" >&2
+      exit 2
+    fi
+
+    repo_root=""
+    repo_name=""
+    {
+      IFS= read -r repo_root
+      IFS= read -r repo_name
+    } < <(repo_context)
+
+    amux_home="${AMUX_HOME:-$HOME/.amux}"
+    worktree_root="$amux_home/agents"
+    prefix="amux-${repo_name}-"
+
+    candidates="$(
+      {
+        tmux list-sessions -F '#{session_name}' 2>/dev/null | awk -v p="$prefix" 'index($0,p)==1 { print }'
+        if [[ -d "$worktree_root" ]]; then
+          find "$worktree_root" -maxdepth 1 -mindepth 1 -type d -name "${repo_name}-*" -exec basename {} \; | sed 's/^/amux-/'
+        fi
+        git -C "$repo_root" for-each-ref --format='%(refname:short)' "refs/heads/${prefix}*" 2>/dev/null
+      } | awk -v p="$prefix" 'index($0,p)==1 { print }' | sort -u
+    )"
+
+    removed_any=0
+    results_xml=""
+    while IFS= read -r session; do
+      [[ -z "$session" ]] && continue
+      if ! matches_any_pattern "$session" "$@"; then
+        continue
+      fi
+
+      removed_any=1
+      state="removed"
+      removed_session="false"
+      removed_worktree="false"
+      removed_branch="false"
+      note=""
+
+      if tmux has-session -t "$session" 2>/dev/null; then
+        tmux kill-session -t "$session"
+        removed_session="true"
+      fi
+
+      suffix="${session#amux-}"
+      worktree="$worktree_root/$suffix"
+      if [[ -d "$worktree" ]]; then
+        if git -C "$repo_root" worktree list --porcelain 2>/dev/null | grep -Fqx "worktree $worktree"; then
+          git -C "$repo_root" worktree remove -f "$worktree" >/dev/null 2>&1 || true
+          if [[ -d "$worktree" ]]; then
+            state="errored"
+          else
+            removed_worktree="true"
+          fi
+        else
+          # Directory matches an amux agent path but is not registered as a worktree
+          # in this repo. Prune it directly so agent destroy fully cleans matched targets.
+          rm -rf -- "$worktree"
+          if [[ -d "$worktree" ]]; then
+            state="errored"
+            note="worktree-unregistered-remove-failed"
+          else
+            removed_worktree="true"
+            note="worktree-unregistered-pruned"
+          fi
+        fi
+      fi
+
+      if git -C "$repo_root" show-ref --verify --quiet "refs/heads/$session"; then
+        git -C "$repo_root" branch -D "$session" >/dev/null 2>&1 || true
+        if git -C "$repo_root" show-ref --verify --quiet "refs/heads/$session"; then
+          state="errored"
+        else
+          removed_branch="true"
+        fi
+      fi
+
+      agent_name="${session#amux-${repo_name}-}"
+      if [[ "$agent_name" == "$session" ]]; then
+        agent_name="$session"
+      fi
+
+      results_xml+="  <agent name=\"$(xml_escape "$agent_name")\" session=\"$(xml_escape "$session")\">"
+      if [[ -n "$note" ]]; then
+        results_xml+="<status state=\"$(xml_escape "$state")\" removed_session=\"$removed_session\" removed_worktree=\"$removed_worktree\" removed_branch=\"$removed_branch\" note=\"$(xml_escape "$note")\" />"
+      else
+        results_xml+="<status state=\"$(xml_escape "$state")\" removed_session=\"$removed_session\" removed_worktree=\"$removed_worktree\" removed_branch=\"$removed_branch\" />"
+      fi
+      results_xml+="</agent>"$'\n'
+    done <<< "$candidates"
+
+    if [[ "$removed_any" -eq 0 ]]; then
+      echo "no agents matched patterns: $*" >&2
+      exit 1
+    fi
+
+    printf '<agents>\n%s</agents>\n' "$results_xml"
+    ;;
+  -h|--help|help|"")
+    usage
+    ;;
+  *)
+    echo "unknown agent command: $sub" >&2
+    exit 2
+    ;;
+esac

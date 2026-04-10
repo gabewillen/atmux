@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+
+log() {
+  printf '[cursor-agent-tests] %s\n' "$*"
+}
+
+fail() {
+  printf '[cursor-agent-tests][error] %s\n' "$*" >&2
+  exit 1
+}
+
+require_cmd() {
+  local cmd="$1"
+  command -v "$cmd" >/dev/null 2>&1 || fail "missing required command: $cmd"
+}
+
+main() {
+  require_cmd bash
+
+  find "$TESTS_DIR" -maxdepth 1 -type f -name '[0-9][0-9]_*' -exec chmod +x {} \;
+
+  local test_script
+  for test_script in "$TESTS_DIR"/[0-9][0-9]_*; do
+    [[ -f "$test_script" ]] || continue
+    log "running $(basename "$test_script")"
+    "$test_script"
+  done
+
+  log "suite complete"
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi

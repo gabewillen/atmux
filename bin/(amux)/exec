@@ -1,0 +1,194 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+AMUX_HOME="${AMUX_HOME:-$HOME/.amux}"
+
+usage() {
+  cat <<'USAGE'
+Usage:
+  amux exec [--] <command> [args...]
+
+Description:
+  Execute a command with passthrough stdio and unchanged exit behavior.
+  After the command exits or is interrupted, send an AMUX notification back
+  to the current agent pane with the exit code.
+
+Examples:
+  amux exec sleep 30
+  amux exec -- make test
+  amux exec -- bash -lc 'sleep 30'
+USAGE
+}
+
+normalize_name() {
+  local raw="${1:-}"
+  local normalized=""
+  normalized="$(printf '%s' "$raw" | sed -E 's/[^A-Za-z0-9_-]+/_/g; s/_+/_/g; s/^_+//; s/_+$//')"
+  if [[ -z "$normalized" ]]; then
+    normalized="repo"
+  fi
+  printf '%s\n' "$normalized"
+}
+
+xml_escape() {
+  printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g' -e "s/'/\&apos;/g"
+}
+
+primary_pane_for_session() {
+  local session="$1"
+  tmux list-panes -a -F '#{session_name} #{pane_id}' 2>/dev/null | awk -v s="$session" '$1==s { print $2; exit }'
+}
+
+current_pane() {
+  if [[ -n "${TMUX:-}" ]]; then
+    tmux display-message -p '#{pane_id}' 2>/dev/null || true
+    return 0
+  fi
+  if [[ -n "${AMUX_SESSION_NAME:-}" ]]; then
+    primary_pane_for_session "$AMUX_SESSION_NAME"
+    return 0
+  fi
+  return 0
+}
+
+queue_self_notification() {
+  local pane="$1"
+  local payload="$2"
+  [[ -n "$pane" ]] || return 0
+
+  nohup bash -lc '
+    pane="$1"
+    payload="$2"
+    sleep 0.2
+    settle="${AMUX_SEND_SETTLE_SECONDS:-0.2}"
+    submit_wait="${AMUX_SEND_SUBMIT_WAIT_SECONDS:-0.15}"
+    tmux send-keys -t "$pane" C-u >/dev/null 2>&1 || exit 0
+    sleep "$settle"
+    tmux send-keys -t "$pane" -l "$payload" >/dev/null 2>&1 || exit 0
+    sleep "$settle"
+    tmux send-keys -t "$pane" Enter >/dev/null 2>&1 || exit 0
+    sleep "$submit_wait"
+  ' _ "$pane" "$payload" >/dev/null 2>&1 &
+}
+
+build_notification_xml() {
+  local command_text="$1"
+  local timestamp="$2"
+  local exit_code="$3"
+
+  printf '<amux><notification from="exec %s" timestamp="%s" exitcode="%s" /></amux>' \
+    "$(xml_escape "$command_text")" \
+    "$(xml_escape "$timestamp")" \
+    "$(xml_escape "$exit_code")"
+}
+
+timestamp_utc() {
+  date -u +%Y-%m-%dT%H:%M:%SZ
+}
+
+repo_name_from_context() {
+  local repo_name="${AMUX_REPO:-}"
+  if [[ -z "$repo_name" && -n "${TMUX:-}" ]]; then
+    repo_name="$(tmux show-environment AMUX_REPO 2>/dev/null | sed -n 's/^AMUX_REPO=//p' || true)"
+  fi
+  if [[ -z "$repo_name" ]]; then
+    local repo_root=""
+    repo_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+    if [[ -n "$repo_root" ]]; then
+      repo_name="$(basename "$repo_root")"
+    fi
+  fi
+  normalize_name "$repo_name"
+}
+
+write_field() {
+  local file="$1"
+  local value="${2:-}"
+  mkdir -p "$(dirname "$file")"
+  printf '%s\n' "$value" > "$file"
+}
+
+exec_root_for_repo() {
+  local repo_name="$1"
+  printf '%s/exec/%s\n' "$AMUX_HOME" "$repo_name"
+}
+
+record_exec_start() {
+  local pid="$1"
+  local repo_name="$2"
+  local command_text="$3"
+  local started_at="$4"
+  exec_dir="$(exec_root_for_repo "$repo_name")/$pid"
+  mkdir -p "$exec_dir"
+  write_field "$exec_dir/pid" "$pid"
+  write_field "$exec_dir/repo" "$repo_name"
+  write_field "$exec_dir/command" "$command_text"
+  write_field "$exec_dir/started_at" "$started_at"
+  write_field "$exec_dir/session_name" "${AMUX_SESSION_NAME:-}"
+  write_field "$exec_dir/agent_name" "${AMUX_AGENT_NAME:-}"
+  write_field "$exec_dir/state" "running"
+}
+
+record_exec_finish() {
+  local finished_at="$1"
+  local exit_code="$2"
+  [[ -n "${exec_dir:-}" ]] || return 0
+  write_field "$exec_dir/finished_at" "$finished_at"
+  write_field "$exec_dir/exit_code" "$exit_code"
+  write_field "$exec_dir/state" "exited"
+}
+
+terminate_child_with_signal() {
+  local signal="$1"
+  if [[ -n "${child_pid:-}" ]]; then
+    kill "-$signal" "$child_pid" >/dev/null 2>&1 || true
+  fi
+}
+
+if [[ $# -eq 0 ]]; then
+  usage
+  exit 2
+fi
+
+case "${1:-}" in
+  -h|--help|help)
+    usage
+    exit 0
+    ;;
+  --)
+    shift
+    ;;
+esac
+
+if [[ $# -eq 0 ]]; then
+  echo "missing command" >&2
+  exit 2
+fi
+
+cmd=( "$@" )
+command_text="$(printf '%q ' "${cmd[@]}")"
+command_text="${command_text% }"
+notify_pane="$(current_pane)"
+repo_name="$(repo_name_from_context)"
+
+child_pid=""
+trap 'terminate_child_with_signal INT' INT
+trap 'terminate_child_with_signal TERM' TERM
+trap 'terminate_child_with_signal HUP' HUP
+trap 'terminate_child_with_signal QUIT' QUIT
+
+"${cmd[@]}" &
+child_pid=$!
+exec_dir=""
+record_exec_start "$child_pid" "$repo_name" "$command_text" "$(timestamp_utc)"
+
+set +e
+wait "$child_pid"
+exit_code=$?
+set -e
+
+record_exec_finish "$(timestamp_utc)" "$exit_code"
+notification_xml="$(build_notification_xml "$command_text" "$(timestamp_utc)" "$exit_code")"
+queue_self_notification "$notify_pane" "$notification_xml"
+
+exit "$exit_code"

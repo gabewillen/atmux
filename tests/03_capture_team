@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPTS_DIR="$TESTS_DIR/scripts"
+
+eval "$("$SCRIPTS_DIR/setup")"
+trap "$SCRIPTS_DIR/teardown --team-session \"$TEAM_SESSION\" --agent1-session \"$AGENT1_SESSION\" --agent2-session \"$AGENT2_SESSION\"" EXIT
+
+marker1="team-capture-a-$RANDOM"
+marker2="team-capture-b-$RANDOM"
+
+tmux send-keys -t "${AGENT1_SESSION}:0.0" "$marker1" C-m
+tmux send-keys -t "${AGENT2_SESSION}:0.0" "$marker2" C-m
+sleep 0.2
+
+out="$(AMUX_REPO="$REPO_NAME" "$AMUX_BIN" capture --team "$TEAM_NAME" --lines 120)"
+
+printf '%s\n' "$out" | grep -Fq "<captures scope=\"team\" team=\"$TEAM_NAME\" session=\"$TEAM_SESSION\">"
+printf '%s\n' "$out" | grep -Fq "$marker1"
+printf '%s\n' "$out" | grep -Fq "$marker2"
+
+capture_count="$(printf '%s\n' "$out" | grep -c "<capture ")"
+if ! [[ "$capture_count" =~ ^[0-9]+$ ]] || (( capture_count < 2 )); then
+  echo "expected at least 2 capture nodes for team, got: ${capture_count:-0}" >&2
+  printf '%s\n' "$out" >&2
+  exit 1
+fi
+
+echo "ok: team capture includes both team member panes"
+

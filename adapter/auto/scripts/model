@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+AMUX_HOME="${AMUX_HOME:-$HOME/.amux}"
+if [[ -z "${AMUX_SOURCE_ROOT:-}" ]]; then
+  if [[ -d "$AMUX_HOME/src/amux" ]]; then
+    AMUX_SOURCE_ROOT="$AMUX_HOME/src/amux"
+  else
+    AMUX_SOURCE_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../.." && pwd)"
+  fi
+fi
+
+root_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+select_script="$root_dir/scripts/select"
+
+resolve_adapter_cmd_path() {
+  local adapter="$1"
+  local repo_root=""
+
+  if [[ -x "$AMUX_SOURCE_ROOT/adapter/$adapter/cmd" ]]; then
+    printf '%s\n' "$AMUX_SOURCE_ROOT/adapter/$adapter/cmd"
+    return 0
+  fi
+
+  if repo_root="$(git rev-parse --show-toplevel 2>/dev/null)"; then
+    if [[ -x "$repo_root/adapter/$adapter/cmd" ]]; then
+      printf '%s\n' "$repo_root/adapter/$adapter/cmd"
+      return 0
+    fi
+  fi
+
+  if [[ -x "$AMUX_HOME/adapters/$adapter/cmd" ]]; then
+    printf '%s\n' "$AMUX_HOME/adapters/$adapter/cmd"
+    return 0
+  fi
+
+  return 1
+}
+
+selected="${AMUX_ADAPTER_SELECTED:-}"
+if [[ -z "$selected" || "$selected" == "auto" ]]; then
+  selected="$(AMUX_HOME="$AMUX_HOME" AMUX_SOURCE_ROOT="$AMUX_SOURCE_ROOT" "$select_script" --peek 2>/dev/null || true)"
+fi
+[[ -n "$selected" ]] || { echo "no adapter selected" >&2; exit 1; }
+
+adapter_cmd="$(resolve_adapter_cmd_path "$selected" || true)"
+[[ -x "$adapter_cmd" ]] || { echo "adapter not found: $selected" >&2; exit 1; }
+
+exec "$adapter_cmd" model "$@"

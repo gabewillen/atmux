@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+root_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+select_script="$root_dir/scripts/select"
+
+xml_escape() {
+  local s="${1:-}"
+  s="${s//&/&amp;}"
+  s="${s//</&lt;}"
+  s="${s//>/&gt;}"
+  s="${s//\"/&quot;}"
+  s="${s//\'/&apos;}"
+  printf '%s\n' "$s"
+}
+
+owner="agent"
+if [[ -n "${AMUX_MANAGER:-}" ]]; then
+  owner="manager"
+fi
+
+selected="${AMUX_ADAPTER_SELECTED:-}"
+if [[ -z "$selected" || "$selected" == "auto" ]]; then
+  selected="$(AMUX_HOME="${AMUX_HOME:-$HOME/.amux}" AMUX_SOURCE_ROOT="${AMUX_SOURCE_ROOT:-}" "$select_script" --peek 2>/dev/null || true)"
+fi
+state="idle"
+if [[ -z "$selected" ]]; then
+  state="errored"
+fi
+
+printf '<status adapter="%s" owner="%s" state="%s" model="" reasoning_level="" control_file="" selected="%s" strategy="availability-usage-round-robin" />\n' \
+  "auto" "$(xml_escape "$owner")" "$(xml_escape "$state")" "$(xml_escape "$selected")"

@@ -1,0 +1,125 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# tmux / non-login shells often omit ~/.local/bin where `agent` is installed.
+export PATH="${HOME}/.local/bin:${HOME}/.cursor/bin:/opt/homebrew/bin:/usr/local/bin:${PATH}"
+
+resolve_agent_bin() {
+  if command -v agent >/dev/null 2>&1; then
+    printf '%s\n' agent
+    return 0
+  fi
+  if command -v cursor-agent >/dev/null 2>&1; then
+    printf '%s\n' cursor-agent
+    return 0
+  fi
+  return 1
+}
+
+agent_bin=""
+if ! agent_bin="$(resolve_agent_bin)"; then
+  echo "neither 'agent' nor 'cursor-agent' found in PATH (install Cursor CLI: https://cursor.com/docs/cli/using)" >&2
+  exit 127
+fi
+
+set_bootstrap_state() {
+  local state="$1"
+  local session=""
+  if [[ -n "${TMUX:-}" ]]; then
+    session="$(tmux display-message -p '#S' 2>/dev/null || true)"
+  fi
+  [[ -n "$session" ]] || return 0
+  tmux set-environment -t "$session" AMUX_BOOTSTRAP_STATE "$state" >/dev/null 2>&1 || true
+}
+
+state_dir="${AMUX_HOME:-$HOME/.amux}/adapters/cursor-agent"
+state_file="$state_dir/state.env"
+mkdir -p "$state_dir"
+[[ -f "$state_file" ]] || printf 'MODEL=%s\nREASONING_LEVEL=%s\n' 'composer-2' 'medium' > "$state_file"
+# shellcheck disable=SC1090
+source "$state_file"
+
+resolve_profile_from_manifest() {
+  local intelligence="$1"
+  local manifest_path="$2"
+  local map item min max model reasoning compact
+
+  [[ -f "$manifest_path" ]] || return 1
+  compact="$(tr -d '\n\r\t ' < "$manifest_path")"
+  map="$(printf '%s\n' "$compact" | sed -n 's/.*"intelligence_map":\[\(.*\)\]}.*/\1/p')"
+  [[ -n "$map" ]] || return 1
+
+  while IFS= read -r item; do
+    min="$(printf '%s\n' "$item" | sed -n 's/.*"min":\([0-9][0-9]*\).*/\1/p')"
+    max="$(printf '%s\n' "$item" | sed -n 's/.*"max":\([0-9][0-9]*\).*/\1/p')"
+    model="$(printf '%s\n' "$item" | sed -n 's/.*"model":"\([^"]*\)".*/\1/p')"
+    reasoning="$(printf '%s\n' "$item" | sed -n 's/.*"reasoning_level":"\([^"]*\)".*/\1/p')"
+
+    if [[ -z "$min" || -z "$max" || -z "$model" || -z "$reasoning" ]]; then
+      continue
+    fi
+    if (( intelligence >= min && intelligence <= max )); then
+      printf '%s %s\n' "$model" "$reasoning"
+      return 0
+    fi
+  done < <(printf '%s\n' "$map" | sed 's/},{/}\n{/g')
+
+  return 1
+}
+
+arg_present() {
+  local needle="$1"
+  shift || true
+  local arg
+  for arg in "$@"; do
+    [[ "$arg" == "$needle" ]] && return 0
+  done
+  return 1
+}
+
+normalize_model() {
+  local m="${1:-}"
+  if [[ "$m" =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]*$ ]]; then
+    printf '%s\n' "$m"
+    return 0
+  fi
+  return 1
+}
+
+normalize_reasoning() {
+  case "${1:-}" in
+    low|medium|high) printf '%s\n' "$1" ;;
+    extra-high|extra_high|extrahigh) printf '%s\n' 'extra-high' ;;
+    *) return 1 ;;
+  esac
+}
+
+if [[ -n "${AMUX_INTELLIGENCE:-}" && "${AMUX_INTELLIGENCE}" =~ ^[0-9]+$ ]] \
+  && (( AMUX_INTELLIGENCE >= 0 && AMUX_INTELLIGENCE <= 100 )); then
+  manifest_path="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)/manifest.json"
+  profile="$(resolve_profile_from_manifest "$AMUX_INTELLIGENCE" "$manifest_path" || true)"
+  if [[ -n "$profile" ]]; then
+    prof_model="${profile%% *}"
+    prof_reasoning="${profile#* }"
+    MODEL="$(normalize_model "$prof_model" || printf '%s\n' "$MODEL")"
+    REASONING_LEVEL="$(normalize_reasoning "$prof_reasoning" || printf '%s\n' "$REASONING_LEVEL")"
+  fi
+fi
+
+if [[ -n "${AMUX_CURSOR_AGENT_MODEL:-}" ]]; then
+  MODEL="$(normalize_model "$AMUX_CURSOR_AGENT_MODEL" || { echo "invalid AMUX_CURSOR_AGENT_MODEL: $AMUX_CURSOR_AGENT_MODEL" >&2; exit 2; })"
+fi
+if [[ -n "${AMUX_CURSOR_AGENT_REASONING_LEVEL:-}" ]]; then
+  REASONING_LEVEL="$(normalize_reasoning "$AMUX_CURSOR_AGENT_REASONING_LEVEL" || { echo "invalid AMUX_CURSOR_AGENT_REASONING_LEVEL: $AMUX_CURSOR_AGENT_REASONING_LEVEL" >&2; exit 2; })"
+fi
+
+printf 'MODEL=%s\nREASONING_LEVEL=%s\n' "$MODEL" "$REASONING_LEVEL" > "$state_file"
+
+args=("$@")
+if ! arg_present --model "${args[@]-}"; then
+  args=(--model "$MODEL" "${args[@]-}")
+fi
+
+set_bootstrap_state ready
+echo "starting $agent_bin in $(pwd)"
+exec "$agent_bin" "${args[@]-}"

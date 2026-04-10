@@ -1,0 +1,185 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+AMUX_HOME="${AMUX_HOME:-$HOME/.amux}"
+
+usage() {
+  cat <<'USAGE'
+Usage:
+  amux schedule [--to <name|session>] [--reply-required] (--interval <duration> | --once <duration>) "message"
+
+Description:
+  Schedule a future or repeating send using the same target matching as `amux send`.
+  If --to is omitted, the current agent session is targeted.
+  Resolution order for --to:
+    1) Team session/name
+    2) Agent session/name
+
+Durations:
+  Supports integer values with optional unit suffix:
+    ms  milliseconds
+    s   seconds
+    m   minutes
+    h   hours
+    d   days
+  If no suffix is provided, seconds are assumed.
+
+Examples:
+  amux schedule --to planner --once 10m "status check"
+  amux schedule --to platform --interval 30m --reply-required "heartbeat"
+  amux schedule --once 10m "remind myself"
+  amux schedule "follow up" --to amux-myrepo-worker --once 45s
+USAGE
+}
+
+xml_escape() {
+  printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g' -e "s/'/\&apos;/g"
+}
+
+resolve_amux_bin() {
+  local script_dir repo_root=""
+  script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+  repo_root="$(cd -- "$script_dir/../.." && pwd)"
+  if [[ -x "$repo_root/bin/amux.sh" ]]; then
+    printf '%s\n' "$repo_root/bin/amux.sh"
+    return 0
+  fi
+  if [[ -x "$AMUX_HOME/bin/amux" ]]; then
+    printf '%s\n' "$AMUX_HOME/bin/amux"
+    return 0
+  fi
+  echo "amux binary not found" >&2
+  exit 1
+}
+
+parse_duration_seconds() {
+  local raw="${1:-}"
+  local value unit multiplier
+
+  if [[ ! "$raw" =~ ^([0-9]+)(ms|s|m|h|d)?$ ]]; then
+    echo "invalid duration: $raw" >&2
+    exit 2
+  fi
+
+  value="${BASH_REMATCH[1]}"
+  unit="${BASH_REMATCH[2]:-s}"
+
+  case "$unit" in
+    ms) multiplier="0.001" ;;
+    s) multiplier="1" ;;
+    m) multiplier="60" ;;
+    h) multiplier="3600" ;;
+    d) multiplier="86400" ;;
+    *)
+      echo "invalid duration unit: $unit" >&2
+      exit 2
+      ;;
+  esac
+
+  awk -v value="$value" -v multiplier="$multiplier" 'BEGIN { printf "%.3f\n", value * multiplier }'
+}
+
+sleep_for_duration() {
+  local duration_seconds="$1"
+  sleep "$duration_seconds"
+}
+
+default_target_name() {
+  if [[ -n "${AMUX_AGENT_NAME:-}" ]]; then
+    printf '%s\n' "$AMUX_AGENT_NAME"
+    return 0
+  fi
+  if [[ -n "${AMUX_SESSION_NAME:-}" ]]; then
+    printf '%s\n' "$AMUX_SESSION_NAME"
+    return 0
+  fi
+  echo "unable to infer self target; set AMUX_AGENT_NAME or use --to" >&2
+  exit 2
+}
+
+target_name=""
+reply_required=0
+interval_raw=""
+once_raw=""
+message=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --to)
+      target_name="${2:-}"
+      shift 2
+      ;;
+    --reply-required)
+      reply_required=1
+      shift
+      ;;
+    --interval)
+      interval_raw="${2:-}"
+      shift 2
+      ;;
+    --once)
+      once_raw="${2:-}"
+      shift 2
+      ;;
+    -h|--help|help)
+      usage
+      exit 0
+      ;;
+    --)
+      shift
+      message="$*"
+      break
+      ;;
+    *)
+      if [[ -z "$message" ]]; then
+        message="$1"
+      else
+        message+=" $1"
+      fi
+      shift
+      ;;
+  esac
+done
+
+if [[ -z "$message" ]]; then
+  echo "missing message" >&2
+  exit 2
+fi
+if [[ -n "$interval_raw" && -n "$once_raw" ]]; then
+  echo "use exactly one of --interval or --once" >&2
+  exit 2
+fi
+if [[ -z "$interval_raw" && -z "$once_raw" ]]; then
+  echo "missing required flag: --interval <duration> or --once <duration>" >&2
+  exit 2
+fi
+if [[ -z "$target_name" ]]; then
+  target_name="$(default_target_name)"
+fi
+
+amux_bin="$(resolve_amux_bin)"
+
+send_args=(send --to "$target_name")
+if [[ "$reply_required" -eq 1 ]]; then
+  send_args+=(--reply-required)
+fi
+send_args+=("$message")
+
+if [[ -n "$once_raw" ]]; then
+  once_seconds="$(parse_duration_seconds "$once_raw")"
+  sleep_for_duration "$once_seconds"
+  exec "$amux_bin" "${send_args[@]}"
+fi
+
+interval_seconds="$(parse_duration_seconds "$interval_raw")"
+count=0
+
+while true; do
+  sleep_for_duration "$interval_seconds"
+  "$amux_bin" "${send_args[@]}" >/dev/null
+  count=$((count + 1))
+  printf '<schedule to="%s" mode="interval" duration="%s" iteration="%s" />\n' \
+    "$(xml_escape "$target_name")" \
+    "$(xml_escape "$interval_raw")" \
+    "$(xml_escape "$count")"
+done

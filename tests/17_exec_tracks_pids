@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+AMUX_BIN="$REPO_ROOT/bin/amux.sh"
+
+tmp_home="$(mktemp -d "${TMPDIR:-/tmp}/amux-exec-home.XXXXXX")"
+cleanup() {
+  rm -rf "$tmp_home"
+}
+trap cleanup EXIT
+
+repo_name="exec_track_test"
+set +e
+HOME="$tmp_home" AMUX_HOME="$tmp_home/.amux" AMUX_REPO="$repo_name" AMUX_AGENT_NAME="sender" AMUX_SESSION_NAME="amux-${repo_name}-sender" "$AMUX_BIN" exec bash -lc 'exit 7'
+rc=$?
+set -e
+
+[[ "$rc" -eq 7 ]] || { echo "expected wrapped exit code 7, got $rc" >&2; exit 1; }
+
+exec_root="$tmp_home/.amux/exec/$repo_name"
+[[ -d "$exec_root" ]] || { echo "exec root missing: $exec_root" >&2; exit 1; }
+
+entry_dir="$(find "$exec_root" -mindepth 1 -maxdepth 1 -type d | head -n1)"
+[[ -n "$entry_dir" ]] || { echo "exec entry missing under $exec_root" >&2; exit 1; }
+
+[[ "$(cat "$entry_dir/repo")" == "$repo_name" ]] || { echo "repo field mismatch" >&2; exit 1; }
+[[ "$(cat "$entry_dir/agent_name")" == "sender" ]] || { echo "agent_name field mismatch" >&2; exit 1; }
+[[ "$(cat "$entry_dir/session_name")" == "amux-${repo_name}-sender" ]] || { echo "session_name field mismatch" >&2; exit 1; }
+[[ "$(cat "$entry_dir/state")" == "exited" ]] || { echo "state field mismatch" >&2; exit 1; }
+[[ "$(cat "$entry_dir/exit_code")" == "7" ]] || { echo "exit_code field mismatch" >&2; exit 1; }
+[[ -n "$(cat "$entry_dir/pid")" ]] || { echo "pid field missing" >&2; exit 1; }
+[[ -n "$(cat "$entry_dir/started_at")" ]] || { echo "started_at field missing" >&2; exit 1; }
+[[ -n "$(cat "$entry_dir/finished_at")" ]] || { echo "finished_at field missing" >&2; exit 1; }
+
+echo "ok: exec tracks pid metadata under .amux"

@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPTS_DIR="$TESTS_DIR/scripts"
+ADAPTER_DIR="$(cd -- "$TESTS_DIR/.." && pwd)"
+
+amux_home="$(mktemp -d "${TMPDIR:-/tmp}/amux-claude-test-home.XXXXXX")"
+cleanup() {
+  [[ -n "${session_name:-}" ]] && "$SCRIPTS_DIR/teardown" --session "$session_name" >/dev/null 2>&1 || true
+  rm -rf "$amux_home"
+}
+trap cleanup EXIT
+
+start_cmd="AMUX_HOME='$amux_home' '$ADAPTER_DIR/scripts/start'"
+setup_out="$("$SCRIPTS_DIR/setup" --command "$start_cmd" --wait-text 'Claude Code v')"
+session_name="$(printf '%s\n' "$setup_out" | sed -n 's/^SESSION_NAME=//p' | tail -n 1)"
+pane_id="$(printf '%s\n' "$setup_out" | sed -n 's/^PANE_ID=//p' | tail -n 1)"
+if [[ -z "$session_name" || -z "$pane_id" ]]; then
+  echo "missing setup output (SESSION_NAME or PANE_ID)" >&2
+  exit 1
+fi
+
+model_list="$(AMUX_HOME="$amux_home" "$ADAPTER_DIR/scripts/model" list)"
+[[ "$model_list" == $'sonnet\nopus' ]] || { echo "unexpected model list: $model_list" >&2; exit 1; }
+
+AMUX_HOME="$amux_home" "$ADAPTER_DIR/scripts/model" set opus high >/dev/null
+[[ "$(AMUX_HOME="$amux_home" "$ADAPTER_DIR/scripts/model" get)" == "opus" ]] || { echo "unexpected model get" >&2; exit 1; }
+[[ "$(AMUX_HOME="$amux_home" "$ADAPTER_DIR/scripts/reasoning-level" get)" == "high" ]] || { echo "unexpected reasoning get after model set" >&2; exit 1; }
+
+AMUX_HOME="$amux_home" "$ADAPTER_DIR/scripts/reasoning-level" set medium >/dev/null
+[[ "$(AMUX_HOME="$amux_home" "$ADAPTER_DIR/scripts/reasoning-level" get)" == "medium" ]] || { echo "unexpected reasoning-level get" >&2; exit 1; }
+
+if AMUX_HOME="$amux_home" "$ADAPTER_DIR/scripts/model" set invalid >/dev/null 2>&1; then
+  echo "invalid model unexpectedly succeeded" >&2
+  exit 1
+fi
+if AMUX_HOME="$amux_home" "$ADAPTER_DIR/scripts/reasoning-level" set invalid >/dev/null 2>&1; then
+  echo "invalid reasoning-level unexpectedly succeeded" >&2
+  exit 1
+fi
+
+echo "PASS 03_model_reasoning_contract"

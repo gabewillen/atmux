@@ -318,8 +318,6 @@ main() {
 
   maybe_auto_update
 
-  require_tmux
-
   case "$1" in
     -h|--help|help)
       out_file="$(mktemp "${TMPDIR:-/tmp}/atmux-out.XXXXXX")"
@@ -329,6 +327,7 @@ main() {
       emit_atmux_wrapper "help" "$out_file" "$err_file" 0
       ;;
     *)
+      require_tmux
       cmd="$1"
       shift
       if ! script_path="$(resolve_script_subcommand "$cmd")"; then

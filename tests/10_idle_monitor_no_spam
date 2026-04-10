@@ -24,7 +24,8 @@ idle_count() {
   local pane="$1"
   local snap
   snap="$(tmux capture-pane -p -t "$pane" -S -800 | tr -d '\r\n' || true)"
-  printf '%s' "$snap" | { grep -o '<idle ' || true; } | wc -l | tr -d ' '
+  # Count closing tags: wrapped lines merge to "<idleagent=..." so "<idle " is unreliable.
+  printf '%s' "$snap" | { grep -oF '</idle>' || true; } | wc -l | tr -d ' '
 }
 
 wait_for_idle_count() {

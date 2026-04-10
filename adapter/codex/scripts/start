@@ -99,7 +99,18 @@ schedule_intelligence_profile() {
   ) >/dev/null 2>&1 &
 }
 
+_on_stop_script="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)/scripts/on-stop"
+
+# Codex has no session-end hook (the Stop hook is per-turn and experimental).
+# Trap EXIT is the only reliable mechanism.
+_on_stop() {
+  local rc="${1:-}"
+  [[ "$rc" == "127" ]] && return 0
+  [[ -x "$_on_stop_script" ]] && "$_on_stop_script" || true
+}
+trap '_on_stop $?' EXIT
+
 schedule_intelligence_profile
 
 echo "starting codex in $(pwd)"
-exec codex --dangerously-bypass-approvals-and-sandbox --search "$@"
+codex --dangerously-bypass-approvals-and-sandbox --search "$@"

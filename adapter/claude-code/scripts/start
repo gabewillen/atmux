@@ -106,6 +106,48 @@ if ! arg_present --dangerously-skip-permissions "$@"; then
   set -- --dangerously-skip-permissions "$@"
 fi
 
+_on_stop_script="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)/scripts/on-stop"
+
+# Install a native SessionEnd hook into the worktree's settings.local.json so
+# Claude Code fires it on clean exits too (belt-and-suspenders alongside trap EXIT).
+install_claude_session_end_hook() {
+  [[ -x "$_on_stop_script" ]] || return 0
+  local worktree="${ATMUX_WORKTREE:-$(pwd)}"
+  local settings_dir="$worktree/.claude"
+  local settings_file="$settings_dir/settings.local.json"
+  mkdir -p "$settings_dir"
+  # Only write when the file does not yet exist to avoid clobbering user config.
+  [[ -f "$settings_file" ]] && return 0
+  cat > "$settings_file" <<EOF
+{
+  "hooks": {
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${_on_stop_script}"
+          }
+        ]
+      }
+    ]
+  }
+}
+EOF
+}
+install_claude_session_end_hook
+
+# Trap EXIT so the notification fires even when SessionEnd doesn't
+# (known bug: Claude Code's SessionEnd is unreliable on interactive exit).
+# Skip exit code 127 — that means the binary was not found and the session
+# never really started.
+_on_stop() {
+  local rc="${1:-}"
+  [[ "$rc" == "127" ]] && return 0
+  [[ -x "$_on_stop_script" ]] && "$_on_stop_script" || true
+}
+trap '_on_stop $?' EXIT
+
 set_bootstrap_state ready
 echo "starting claude in $(pwd)"
-exec claude "$@"
+claude "$@"

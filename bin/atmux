@@ -329,7 +329,7 @@ main() {
     *)
       cmd="$1"
       case "$cmd" in
-        session) ;;
+        session|update) ;;
         *) require_tmux ;;
       esac
       shift

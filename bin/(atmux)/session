@@ -198,10 +198,10 @@ bootstrap_unlock_pid_matches_session() {
 
 unlock_session_clients() {
   local session="$1"
-  local client readonly
-  while read -r client readonly; do
+  local client is_readonly
+  while read -r client is_readonly; do
     [[ -n "$client" ]] || continue
-    if [[ "$readonly" == "1" ]]; then
+    if [[ "$is_readonly" == "1" ]]; then
       # read-only is reliably cleared by toggling client flags via switch-client -r.
       tmux switch-client -c "$client" -t "$session" -r >/dev/null 2>&1 || true
     fi

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-state_dir="${AMUX_HOME:-$HOME/.amux}/adapters/cursor-agent"
+state_dir="${ATMUX_HOME:-$HOME/.atmux}/adapters/cursor-agent"
 state_file="$state_dir/state.env"
 mkdir -p "$state_dir"
 [[ -f "$state_file" ]] || printf 'MODEL=%s\nREASONING_LEVEL=%s\n' 'composer-2' 'medium' > "$state_file"

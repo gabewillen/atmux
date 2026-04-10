@@ -12,13 +12,13 @@ if ! tmux has-session -t "$TEAM_SESSION" 2>/dev/null; then
   exit 1
 fi
 
-kind="$(tmux show-environment -t "$TEAM_SESSION" AMUX_SESSION_KIND 2>/dev/null | sed -n 's/^AMUX_SESSION_KIND=//p')"
-repo="$(tmux show-environment -t "$TEAM_SESSION" AMUX_REPO 2>/dev/null | sed -n 's/^AMUX_REPO=//p')"
-team="$(tmux show-environment -t "$TEAM_SESSION" AMUX_TEAM 2>/dev/null | sed -n 's/^AMUX_TEAM=//p')"
+kind="$(tmux show-environment -t "$TEAM_SESSION" ATMUX_SESSION_KIND 2>/dev/null | sed -n 's/^ATMUX_SESSION_KIND=//p')"
+repo="$(tmux show-environment -t "$TEAM_SESSION" ATMUX_REPO 2>/dev/null | sed -n 's/^ATMUX_REPO=//p')"
+team="$(tmux show-environment -t "$TEAM_SESSION" ATMUX_TEAM 2>/dev/null | sed -n 's/^ATMUX_TEAM=//p')"
 
-[[ "$kind" == "team" ]] || { echo "expected AMUX_SESSION_KIND=team, got: ${kind:-<empty>}" >&2; exit 1; }
-[[ "$repo" == "$REPO_NAME" ]] || { echo "expected AMUX_REPO=$REPO_NAME, got: ${repo:-<empty>}" >&2; exit 1; }
-[[ "$team" == "$TEAM_NAME" ]] || { echo "expected AMUX_TEAM=$TEAM_NAME, got: ${team:-<empty>}" >&2; exit 1; }
+[[ "$kind" == "team" ]] || { echo "expected ATMUX_SESSION_KIND=team, got: ${kind:-<empty>}" >&2; exit 1; }
+[[ "$repo" == "$REPO_NAME" ]] || { echo "expected ATMUX_REPO=$REPO_NAME, got: ${repo:-<empty>}" >&2; exit 1; }
+[[ "$team" == "$TEAM_NAME" ]] || { echo "expected ATMUX_TEAM=$TEAM_NAME, got: ${team:-<empty>}" >&2; exit 1; }
 
 echo "ok: team created and tagged ($TEAM_SESSION)"
 

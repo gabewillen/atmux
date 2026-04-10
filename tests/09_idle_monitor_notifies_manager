@@ -3,11 +3,11 @@ set -euo pipefail
 
 TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
-SESSION_SCRIPT="$REPO_ROOT/bin/(amux)/session"
+SESSION_SCRIPT="$REPO_ROOT/bin/(atmux)/session"
 
-manager="amux-idle-test-manager-$RANDOM"
-child="amux-idle-test-worker-$RANDOM"
-log_file="${TMPDIR:-/tmp}/amux-idle-monitor-test-$$.log"
+manager="atmux-idle-test-manager-$RANDOM"
+child="atmux-idle-test-worker-$RANDOM"
+log_file="${TMPDIR:-/tmp}/atmux-idle-monitor-test-$$.log"
 
 cleanup() {
   if [[ -n "${monitor_pid:-}" ]]; then
@@ -21,17 +21,17 @@ cleanup() {
 trap cleanup EXIT
 
 tmux new-session -d -s "$manager" -n "$manager" -c "$REPO_ROOT" "cat"
-tmux set-environment -t "$manager" AMUX_REPO idle_test
-tmux set-environment -t "$manager" AMUX_AGENT_NAME manager
+tmux set-environment -t "$manager" ATMUX_REPO idle_test
+tmux set-environment -t "$manager" ATMUX_AGENT_NAME manager
 
 tmux new-session -d -s "$child" -n "$child" -c "$REPO_ROOT" "cat"
-tmux set-environment -t "$child" AMUX_REPO idle_test
-tmux set-environment -t "$child" AMUX_AGENT_NAME worker
-tmux set-environment -t "$child" AMUX_MANAGER "$manager"
-tmux set-environment -t "$child" AMUX_SOURCE_ROOT "$REPO_ROOT"
+tmux set-environment -t "$child" ATMUX_REPO idle_test
+tmux set-environment -t "$child" ATMUX_AGENT_NAME worker
+tmux set-environment -t "$child" ATMUX_MANAGER "$manager"
+tmux set-environment -t "$child" ATMUX_SOURCE_ROOT "$REPO_ROOT"
 
-AMUX_MONITOR_INTERVAL_SECONDS=1 \
-AMUX_MONITOR_IDLE_SECONDS=3 \
+ATMUX_MONITOR_INTERVAL_SECONDS=1 \
+ATMUX_MONITOR_IDLE_SECONDS=3 \
 "$SESSION_SCRIPT" _monitor-supervisor "$child" >"$log_file" 2>&1 &
 monitor_pid=$!
 

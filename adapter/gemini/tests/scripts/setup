@@ -6,8 +6,8 @@ TESTS_DIR="$(cd -- "$SCRIPTS_DIR/.." && pwd)"
 ADAPTER_DIR="$(cd -- "$TESTS_DIR/.." && pwd)"
 REPO_ROOT="$(cd -- "$ADAPTER_DIR/../.." && pwd)"
 
-SESSION_PREFIX="${AMUX_GEMINI_TEST_SESSION_PREFIX:-amux-gemini-test}"
-session_name="${AMUX_GEMINI_TEST_SESSION_NAME:-${SESSION_PREFIX}-$(date +%s)-$$}"
+SESSION_PREFIX="${ATMUX_GEMINI_TEST_SESSION_PREFIX:-atmux-gemini-test}"
+session_name="${ATMUX_GEMINI_TEST_SESSION_NAME:-${SESSION_PREFIX}-$(date +%s)-$$}"
 command=""
 wait_text=""
 
@@ -50,7 +50,7 @@ if tmux has-session -t "$session_name" 2>/dev/null; then
   tmux kill-session -t "$session_name" >/dev/null 2>&1 || true
 fi
 
-printf -v cmd '(%s); rc=$?; echo __AMUX_CMD_EXIT__:$rc; sleep 120' "$command"
+printf -v cmd '(%s); rc=$?; echo __ATMUX_CMD_EXIT__:$rc; sleep 120' "$command"
 
 tmux new-session -d -x 240 -y 60 -s "$session_name" -n "$session_name" -c "$REPO_ROOT" bash -lc "$cmd"
 

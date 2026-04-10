@@ -1,0 +1,236 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ATMUX_HOME="${ATMUX_HOME:-$HOME/.atmux}"
+
+usage() {
+  cat <<'USAGE'
+Usage:
+  atmux assign --to <agent|session> --title <title> [--description <description>] [--todo <todo>]... [--repo <repo>]
+  atmux assign --issue <id> --to <agent|session> [--repo <repo>]
+
+Description:
+  Assign work using filesystem issues.
+  - Without --issue: creates a new issue, then assigns it.
+  - With --issue: assigns an existing issue id.
+USAGE
+}
+
+xml_escape() {
+  printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g' -e "s/'/\&apos;/g"
+}
+
+normalize_name() {
+  local raw="${1:-}"
+  local normalized=""
+  normalized="$(printf '%s' "$raw" | sed -E 's/[^A-Za-z0-9_-]+/_/g; s/_+/_/g; s/^_+//; s/_+$//')"
+  if [[ -z "$normalized" ]]; then
+    normalized="repo"
+  fi
+  printf '%s\n' "$normalized"
+}
+
+repo_name_from_context() {
+  local repo_name="${ATMUX_REPO:-}"
+  if [[ -z "$repo_name" && -n "${TMUX:-}" ]]; then
+    repo_name="$(tmux show-environment ATMUX_REPO 2>/dev/null | sed -n 's/^ATMUX_REPO=//p' || true)"
+  fi
+  if [[ -z "$repo_name" ]]; then
+    local repo_root=""
+    repo_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+    if [[ -n "$repo_root" ]]; then
+      repo_name="$(basename "$repo_root")"
+    fi
+  fi
+  if [[ -n "$repo_name" ]]; then
+    repo_name="$(normalize_name "$repo_name")"
+  fi
+  printf '%s\n' "$repo_name"
+}
+
+resolve_script() {
+  local name="$1"
+  if [[ -n "${ATMUX_SOURCE_ROOT:-}" && -x "${ATMUX_SOURCE_ROOT}/bin/(atmux)/${name}" ]]; then
+    printf '%s\n' "${ATMUX_SOURCE_ROOT}/bin/(atmux)/${name}"
+    return 0
+  fi
+
+  local repo_root=""
+  if repo_root="$(git rev-parse --show-toplevel 2>/dev/null)"; then
+    if [[ -x "${repo_root}/bin/(atmux)/${name}" ]]; then
+      printf '%s\n' "${repo_root}/bin/(atmux)/${name}"
+      return 0
+    fi
+  fi
+
+  if [[ -x "${ATMUX_HOME}/src/atmux/bin/(atmux)/${name}" ]]; then
+    printf '%s\n' "${ATMUX_HOME}/src/atmux/bin/(atmux)/${name}"
+    return 0
+  fi
+
+  if [[ -x "${ATMUX_HOME}/bin/scripts/${name}" ]]; then
+    printf '%s\n' "${ATMUX_HOME}/bin/scripts/${name}"
+    return 0
+  fi
+
+  return 1
+}
+
+resolve_agent_session() {
+  local target="$1"
+  local repo_name="$2"
+  local candidate=""
+
+  if tmux has-session -t "$target" 2>/dev/null; then
+    printf '%s\n' "$target"
+    return 0
+  fi
+
+  if [[ "$target" == atmux-* ]]; then
+    printf '%s\n' "$target"
+    return 0
+  fi
+
+  if [[ -n "$repo_name" ]]; then
+    candidate="atmux-${repo_name}-${target}"
+    if tmux has-session -t "$candidate" 2>/dev/null; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+
+    if [[ "$target" == "${repo_name}-"* ]]; then
+      candidate="atmux-${target}"
+      if tmux has-session -t "$candidate" 2>/dev/null; then
+        printf '%s\n' "$candidate"
+        return 0
+      fi
+    fi
+  fi
+  return 1
+}
+
+issue_id=""
+target=""
+title=""
+description=""
+explicit_repo=""
+todos=()
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --issue)
+      issue_id="${2:-}"
+      shift 2
+      ;;
+    --to)
+      target="${2:-}"
+      shift 2
+      ;;
+    --title)
+      title="${2:-}"
+      shift 2
+      ;;
+    --description)
+      description="${2:-}"
+      shift 2
+      ;;
+    --todo|--todos)
+      todos+=("${2:-}")
+      shift 2
+      ;;
+    --repo)
+      explicit_repo="${2:-}"
+      shift 2
+      ;;
+    -h|--help|help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "unknown argument: $1" >&2
+      exit 2
+      ;;
+  esac
+done
+
+if [[ -z "$target" ]]; then
+  echo "missing required flag: --to <agent|session>" >&2
+  exit 2
+fi
+if [[ -z "$issue_id" && -z "$title" ]]; then
+  echo "missing required flag: --title <title> (or pass --issue <id>)" >&2
+  exit 2
+fi
+if [[ -n "$issue_id" && ( -n "$title" || -n "$description" || "${#todos[@]}" -gt 0 ) ]]; then
+  echo "--issue cannot be combined with --title/--description/--todo" >&2
+  exit 2
+fi
+
+repo_name="$explicit_repo"
+if [[ -z "$repo_name" ]]; then
+  repo_name="$(repo_name_from_context)"
+fi
+resolved_target="$(resolve_agent_session "$target" "$repo_name" || true)"
+if [[ -z "$resolved_target" ]]; then
+  resolved_target="$target"
+fi
+
+issue_script="$(resolve_script issue || true)"
+if [[ -z "$issue_script" ]]; then
+  echo "issue subcommand script not found" >&2
+  exit 127
+fi
+
+created="false"
+if [[ -z "$issue_id" ]]; then
+  final_description="$description"
+  if [[ "${#todos[@]}" -gt 0 ]]; then
+    if [[ -n "$final_description" ]]; then
+      final_description+=$'\n\n'
+    fi
+    final_description+="Todos:"
+    local_todo=""
+    for local_todo in "${todos[@]}"; do
+      [[ -n "$local_todo" ]] || continue
+      final_description+=$'\n'
+      final_description+="- $local_todo"
+    done
+  fi
+
+  create_cmd=("$issue_script" create --title "$title")
+  if [[ -n "$explicit_repo" ]]; then
+    create_cmd+=(--repo "$explicit_repo")
+  fi
+  if [[ -n "$final_description" ]]; then
+    create_cmd+=(--description "$final_description")
+  fi
+
+  create_out="$("${create_cmd[@]}")"
+  issue_id="$(printf '%s\n' "$create_out" | sed -n 's/.*id="\([^"]*\)".*/\1/p' | head -n1)"
+  if [[ -z "$issue_id" ]]; then
+    echo "failed to parse created issue id" >&2
+    printf '%s\n' "$create_out" >&2
+    exit 1
+  fi
+  created="true"
+fi
+
+assign_cmd=("$issue_script" assign "$issue_id" --to "$resolved_target")
+if [[ -n "$explicit_repo" ]]; then
+  assign_cmd+=(--repo "$explicit_repo")
+fi
+"${assign_cmd[@]}" >/dev/null
+
+get_cmd=("$issue_script" get "$issue_id")
+if [[ -n "$explicit_repo" ]]; then
+  get_cmd+=(--repo "$explicit_repo")
+fi
+issue_node="$("${get_cmd[@]}")"
+
+printf '<assignment issue_id="%s" to="%s" created="%s">\n' \
+  "$(xml_escape "$issue_id")" \
+  "$(xml_escape "$resolved_target")" \
+  "$(xml_escape "$created")"
+printf '%s\n' "$issue_node"
+printf '</assignment>\n'
+

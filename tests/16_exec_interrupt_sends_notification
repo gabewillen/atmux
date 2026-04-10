@@ -3,7 +3,7 @@ set -euo pipefail
 
 TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
-AMUX_BIN="$REPO_ROOT/bin/amux"
+ATMUX_BIN="$REPO_ROOT/bin/atmux"
 
 wait_for_text() {
   local target="$1"
@@ -26,7 +26,7 @@ wait_for_text() {
 }
 
 repo_name="e$RANDOM"
-session="amux-${repo_name}-sender"
+session="atmux-${repo_name}-sender"
 
 cleanup() {
   tmux kill-session -t "$session" >/dev/null 2>&1 || true
@@ -36,14 +36,14 @@ trap cleanup EXIT
 tmux kill-session -t "$session" >/dev/null 2>&1 || true
 # Wide session avoids tmux line-wrapping the pasted command on small client displays.
 tmux new-session -d -s "$session" -n "$session" -x 160 -y 40 -c "$REPO_ROOT" "/bin/bash" -l
-tmux set-environment -t "$session" AMUX_REPO "$repo_name"
-tmux set-environment -t "$session" AMUX_AGENT_NAME "sender"
-tmux set-environment -t "$session" AMUX_SESSION_NAME "$session"
+tmux set-environment -t "$session" ATMUX_REPO "$repo_name"
+tmux set-environment -t "$session" ATMUX_AGENT_NAME "sender"
+tmux set-environment -t "$session" ATMUX_SESSION_NAME "$session"
 
 pane="$(tmux list-panes -t "$session" -F '#{pane_id}' 2>/dev/null | head -n1)"
 [[ -n "$pane" ]] || { echo "exec interrupt pane missing" >&2; exit 1; }
 
-tmux send-keys -t "$pane" "AMUX_REPO=\"$repo_name\" AMUX_AGENT_NAME=\"sender\" AMUX_SESSION_NAME=\"$session\" \"$AMUX_BIN\" exec -- sleep 30" C-m
+tmux send-keys -t "$pane" "ATMUX_REPO=\"$repo_name\" ATMUX_AGENT_NAME=\"sender\" ATMUX_SESSION_NAME=\"$session\" \"$ATMUX_BIN\" exec -- sleep 30" C-m
 sleep 1.5
 tmux send-keys -t "$pane" C-c
 

@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+LIST_ROOT="$(cd -- "$HERE/(list)" && pwd)"
+
+usage() {
+  cat <<'USAGE'
+Usage:
+  atmux list teams
+  atmux list sessions
+  atmux list agents [--all] [--status]
+  atmux list issues [--repo <repo>]
+
+Description:
+  Listings are implemented by scripts under bin/(atmux)/(list)/.
+USAGE
+}
+
+sub="${1:-}"
+shift || true
+
+case "${sub:-}" in
+  teams)
+    exec "$LIST_ROOT/teams" "$@"
+    ;;
+  sessions)
+    exec "$LIST_ROOT/sessions" "$@"
+    ;;
+  agents)
+    exec "$LIST_ROOT/agents" "$@"
+    ;;
+  issues)
+    exec "$LIST_ROOT/issues" "$@"
+    ;;
+  -h|--help|help|"")
+    usage
+    ;;
+  *)
+    echo "unknown list subcommand: ${sub:-}" >&2
+    exit 2
+    ;;
+esac

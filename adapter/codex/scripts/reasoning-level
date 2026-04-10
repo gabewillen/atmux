@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-state_dir="${AMUX_HOME:-$HOME/.amux}/adapters/codex"
+state_dir="${ATMUX_HOME:-$HOME/.atmux}/adapters/codex"
 state_file="$state_dir/state.env"
 mkdir -p "$state_dir"
 MODEL='gpt-5.3-codex'
@@ -28,20 +28,20 @@ write_state() {
 load_state
 
 resolve_target() {
-  if [[ -n "${AMUX_TARGET_PANE:-}" ]]; then
-    printf '%s\n' "$AMUX_TARGET_PANE"
+  if [[ -n "${ATMUX_TARGET_PANE:-}" ]]; then
+    printf '%s\n' "$ATMUX_TARGET_PANE"
     return
   fi
   if [[ -n "${TMUX:-}" ]]; then
     tmux display-message -p '#{pane_id}' 2>/dev/null || true
     return
   fi
-  if [[ -n "${AMUX_SESSION_NAME:-}" ]]; then
-    tmux list-panes -t "$AMUX_SESSION_NAME" -F '#{pane_id}' 2>/dev/null | head -n 1
+  if [[ -n "${ATMUX_SESSION_NAME:-}" ]]; then
+    tmux list-panes -t "$ATMUX_SESSION_NAME" -F '#{pane_id}' 2>/dev/null | head -n 1
     return
   fi
-  if [[ -n "${AMUX_REPO:-}" && -n "${AMUX_AGENT_NAME:-}" ]]; then
-    sess="amux-${AMUX_REPO}-${AMUX_AGENT_NAME}"
+  if [[ -n "${ATMUX_REPO:-}" && -n "${ATMUX_AGENT_NAME:-}" ]]; then
+    sess="atmux-${ATMUX_REPO}-${ATMUX_AGENT_NAME}"
     tmux list-panes -t "$sess" -F '#{pane_id}' 2>/dev/null | head -n 1
     return
   fi
@@ -49,7 +49,7 @@ resolve_target() {
 
 wait_for_reasoning_menu() {
   local target="$1"
-  local poll_limit="${AMUX_CODEX_REASONING_MENU_POLLS:-50}"
+  local poll_limit="${ATMUX_CODEX_REASONING_MENU_POLLS:-50}"
   local poll snapshot
 
   for ((poll=1; poll<=poll_limit; poll++)); do
@@ -150,9 +150,9 @@ case "${1:-}" in
     requested_reasoning="$(normalize_reasoning "${2:-}" || true)"
     [[ -n "$requested_reasoning" ]] || { echo "missing/invalid reasoning level value" >&2; exit 2; }
 
-    if [[ "${AMUX_CODEX_CALLED_BY_MODEL:-}" != "1" ]]; then
+    if [[ "${ATMUX_CODEX_CALLED_BY_MODEL:-}" != "1" ]]; then
       model_script="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/model"
-      AMUX_CODEX_CALLED_BY_REASONING=1 "$model_script" set "$MODEL"
+      ATMUX_CODEX_CALLED_BY_REASONING=1 "$model_script" set "$MODEL"
       load_state
     fi
 

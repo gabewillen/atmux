@@ -5,16 +5,16 @@ TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPTS_DIR="$TESTS_DIR/scripts"
 
 eval "$("$SCRIPTS_DIR/setup")"
-amux_home_tmp="$(mktemp -d)"
+atmux_home_tmp="$(mktemp -d)"
 
-manager_session="amux-${REPO_NAME}-mgr"
-child_session="amux-${REPO_NAME}-child"
-grand_session="amux-${REPO_NAME}-grand"
-other_session="amux-${REPO_NAME}-other"
+manager_session="atmux-${REPO_NAME}-mgr"
+child_session="atmux-${REPO_NAME}-child"
+grand_session="atmux-${REPO_NAME}-grand"
+other_session="atmux-${REPO_NAME}-other"
 
 cleanup() {
   "$SCRIPTS_DIR/teardown" --team-session "$TEAM_SESSION" --agent1-session "$AGENT1_SESSION" --agent2-session "$AGENT2_SESSION"
-  rm -rf "$amux_home_tmp"
+  rm -rf "$atmux_home_tmp"
   for s in "$manager_session" "$child_session" "$grand_session" "$other_session"; do
     if tmux has-session -t "$s" 2>/dev/null; then
       tmux kill-session -t "$s" >/dev/null 2>&1 || true
@@ -30,43 +30,43 @@ for s in "$manager_session" "$child_session" "$grand_session" "$other_session"; 
 done
 
 tmux new-session -d -s "$manager_session" -n "$manager_session" -c "$REPO_ROOT" "cat"
-tmux set-environment -t "$manager_session" AMUX_REPO "$REPO_NAME"
-tmux set-environment -t "$manager_session" AMUX_AGENT_NAME "mgr"
-tmux set-environment -t "$manager_session" AMUX_SESSION_NAME "$manager_session"
-tmux set-environment -t "$manager_session" AMUX_ADAPTER "codex"
-tmux set-environment -t "$manager_session" AMUX_SOURCE_ROOT "$REPO_ROOT"
+tmux set-environment -t "$manager_session" ATMUX_REPO "$REPO_NAME"
+tmux set-environment -t "$manager_session" ATMUX_AGENT_NAME "mgr"
+tmux set-environment -t "$manager_session" ATMUX_SESSION_NAME "$manager_session"
+tmux set-environment -t "$manager_session" ATMUX_ADAPTER "codex"
+tmux set-environment -t "$manager_session" ATMUX_SOURCE_ROOT "$REPO_ROOT"
 
 tmux new-session -d -s "$child_session" -n "$child_session" -c "$REPO_ROOT" "cat"
-tmux set-environment -t "$child_session" AMUX_REPO "$REPO_NAME"
-tmux set-environment -t "$child_session" AMUX_AGENT_NAME "child"
-tmux set-environment -t "$child_session" AMUX_SESSION_NAME "$child_session"
-tmux set-environment -t "$child_session" AMUX_MANAGER "mgr"
-tmux set-environment -t "$child_session" AMUX_ADAPTER "codex"
-tmux set-environment -t "$child_session" AMUX_SOURCE_ROOT "$REPO_ROOT"
+tmux set-environment -t "$child_session" ATMUX_REPO "$REPO_NAME"
+tmux set-environment -t "$child_session" ATMUX_AGENT_NAME "child"
+tmux set-environment -t "$child_session" ATMUX_SESSION_NAME "$child_session"
+tmux set-environment -t "$child_session" ATMUX_MANAGER "mgr"
+tmux set-environment -t "$child_session" ATMUX_ADAPTER "codex"
+tmux set-environment -t "$child_session" ATMUX_SOURCE_ROOT "$REPO_ROOT"
 
 tmux new-session -d -s "$grand_session" -n "$grand_session" -c "$REPO_ROOT" "cat"
-tmux set-environment -t "$grand_session" AMUX_REPO "$REPO_NAME"
-tmux set-environment -t "$grand_session" AMUX_AGENT_NAME "grand"
-tmux set-environment -t "$grand_session" AMUX_SESSION_NAME "$grand_session"
-tmux set-environment -t "$grand_session" AMUX_MANAGER "child"
-tmux set-environment -t "$grand_session" AMUX_ADAPTER "codex"
-tmux set-environment -t "$grand_session" AMUX_SOURCE_ROOT "$REPO_ROOT"
+tmux set-environment -t "$grand_session" ATMUX_REPO "$REPO_NAME"
+tmux set-environment -t "$grand_session" ATMUX_AGENT_NAME "grand"
+tmux set-environment -t "$grand_session" ATMUX_SESSION_NAME "$grand_session"
+tmux set-environment -t "$grand_session" ATMUX_MANAGER "child"
+tmux set-environment -t "$grand_session" ATMUX_ADAPTER "codex"
+tmux set-environment -t "$grand_session" ATMUX_SOURCE_ROOT "$REPO_ROOT"
 
 tmux new-session -d -s "$other_session" -n "$other_session" -c "$REPO_ROOT" "cat"
-tmux set-environment -t "$other_session" AMUX_REPO "$REPO_NAME"
-tmux set-environment -t "$other_session" AMUX_AGENT_NAME "other"
-tmux set-environment -t "$other_session" AMUX_SESSION_NAME "$other_session"
-tmux set-environment -t "$other_session" AMUX_ADAPTER "codex"
-tmux set-environment -t "$other_session" AMUX_SOURCE_ROOT "$REPO_ROOT"
+tmux set-environment -t "$other_session" ATMUX_REPO "$REPO_NAME"
+tmux set-environment -t "$other_session" ATMUX_AGENT_NAME "other"
+tmux set-environment -t "$other_session" ATMUX_SESSION_NAME "$other_session"
+tmux set-environment -t "$other_session" ATMUX_ADAPTER "codex"
+tmux set-environment -t "$other_session" ATMUX_SOURCE_ROOT "$REPO_ROOT"
 
 out="$(
-  AMUX_HOME="$amux_home_tmp" \
-  AMUX_SOURCE_ROOT="$REPO_ROOT" \
-  AMUX_REPO="$REPO_NAME" \
-  AMUX_AGENT_NAME="child" \
-  AMUX_SESSION_NAME="$child_session" \
-  AMUX_MANAGER="mgr" \
-  "$AMUX_BIN" list agents --all --status
+  ATMUX_HOME="$atmux_home_tmp" \
+  ATMUX_SOURCE_ROOT="$REPO_ROOT" \
+  ATMUX_REPO="$REPO_NAME" \
+  ATMUX_AGENT_NAME="child" \
+  ATMUX_SESSION_NAME="$child_session" \
+  ATMUX_MANAGER="mgr" \
+  "$ATMUX_BIN" list agents --all --status
 )"
 
 printf '%s\n' "$out" | grep -Fq "session=\"$grand_session\""

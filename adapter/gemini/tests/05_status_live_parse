@@ -5,11 +5,11 @@ TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPTS_DIR="$TESTS_DIR/scripts"
 ADAPTER_DIR="$(cd -- "$TESTS_DIR/.." && pwd)"
 
-amux_home="$(mktemp -d "${TMPDIR:-/tmp}/amux-gemini-test-home.XXXXXX")"
+atmux_home="$(mktemp -d "${TMPDIR:-/tmp}/atmux-gemini-test-home.XXXXXX")"
 
 cleanup() {
   [[ -n "${session_name:-}" ]] && "$SCRIPTS_DIR/teardown" --session "$session_name" >/dev/null 2>&1 || true
-  rm -rf "$amux_home"
+  rm -rf "$atmux_home"
 }
 trap cleanup EXIT
 
@@ -31,8 +31,8 @@ if [[ -z "$session_name" || -z "$pane_id" ]]; then
 fi
 
 status_out="$({
-  AMUX_HOME="$amux_home" \
-  AMUX_TARGET_PANE="$pane_id" \
+  ATMUX_HOME="$atmux_home" \
+  ATMUX_TARGET_PANE="$pane_id" \
   "$ADAPTER_DIR/scripts/status"
 })"
 

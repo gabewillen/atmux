@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+xml_escape() {
+  printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g' -e "s/'/\&apos;/g"
+}
+
+normalize_name() {
+  local raw="${1:-}"
+  local normalized=""
+  normalized="$(printf '%s' "$raw" | sed -E 's/[^A-Za-z0-9_-]+/_/g; s/_+/_/g; s/^_+//; s/_+$//')"
+  if [[ -z "$normalized" ]]; then
+    normalized="repo"
+  fi
+  printf '%s\n' "$normalized"
+}
+
+repo_context() {
+  local repo_root repo_name
+  if ! repo_root="$(git rev-parse --show-toplevel 2>/dev/null)"; then
+    echo "atmux list sessions must be run from a git repository" >&2
+    exit 1
+  fi
+
+  repo_name="${ATMUX_REPO:-}"
+  if [[ -z "$repo_name" && -n "${TMUX:-}" ]]; then
+    repo_name="$(tmux show-environment ATMUX_REPO 2>/dev/null | sed -n 's/^ATMUX_REPO=//p' || true)"
+  fi
+  if [[ -z "$repo_name" ]]; then
+    repo_name="$(basename "$repo_root")"
+  fi
+  repo_name="$(normalize_name "$repo_name")"
+  printf '%s\n%s\n' "$repo_root" "$repo_name"
+}
+
+main() {
+  local repo_root repo_name prefix
+  {
+    IFS= read -r repo_root
+    IFS= read -r repo_name
+  } < <(repo_context)
+
+  prefix="atmux-${repo_name}-"
+  printf '<sessions repo="%s">\n' "$(xml_escape "$repo_name")"
+  while IFS= read -r session; do
+    [[ -z "$session" ]] && continue
+    [[ "$session" == "$prefix"* ]] || continue
+    printf '  <session name="%s" />\n' "$(xml_escape "$session")"
+  done < <(tmux list-sessions -F '#{session_name}' 2>/dev/null | sort -u || true)
+  printf '</sessions>\n'
+}
+
+main "$@"

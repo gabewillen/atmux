@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-AMUX_HOME="${AMUX_HOME:-$HOME/.amux}"
-if [[ -z "${AMUX_SOURCE_ROOT:-}" ]]; then
-  if [[ -d "$AMUX_HOME/src/amux" ]]; then
-    AMUX_SOURCE_ROOT="$AMUX_HOME/src/amux"
+ATMUX_HOME="${ATMUX_HOME:-$HOME/.atmux}"
+if [[ -z "${ATMUX_SOURCE_ROOT:-}" ]]; then
+  if [[ -d "$ATMUX_HOME/src/atmux" ]]; then
+    ATMUX_SOURCE_ROOT="$ATMUX_HOME/src/atmux"
   else
-    AMUX_SOURCE_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../.." && pwd)"
+    ATMUX_SOURCE_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../.." && pwd)"
   fi
 fi
 
-state_dir="$AMUX_HOME/adapters/auto"
+state_dir="$ATMUX_HOME/adapters/auto"
 state_file="$state_dir/state.env"
 mkdir -p "$state_dir"
 
@@ -75,8 +75,8 @@ resolve_adapter_cmd_path() {
   local adapter="$1"
   local repo_root=""
 
-  if [[ -x "$AMUX_SOURCE_ROOT/adapter/$adapter/cmd" ]]; then
-    printf '%s\n' "$AMUX_SOURCE_ROOT/adapter/$adapter/cmd"
+  if [[ -x "$ATMUX_SOURCE_ROOT/adapter/$adapter/cmd" ]]; then
+    printf '%s\n' "$ATMUX_SOURCE_ROOT/adapter/$adapter/cmd"
     return 0
   fi
 
@@ -87,8 +87,8 @@ resolve_adapter_cmd_path() {
     fi
   fi
 
-  if [[ -x "$AMUX_HOME/adapters/$adapter/cmd" ]]; then
-    printf '%s\n' "$AMUX_HOME/adapters/$adapter/cmd"
+  if [[ -x "$ATMUX_HOME/adapters/$adapter/cmd" ]]; then
+    printf '%s\n' "$ATMUX_HOME/adapters/$adapter/cmd"
     return 0
   fi
 
@@ -119,24 +119,24 @@ adapter_available() {
 discover_candidates() {
   local path name
 
-  if [[ -d "$AMUX_SOURCE_ROOT/adapter" ]]; then
+  if [[ -d "$ATMUX_SOURCE_ROOT/adapter" ]]; then
     while IFS= read -r path; do
       [[ -z "$path" ]] && continue
       name="$(basename "$path")"
       [[ "$name" == "auto" ]] && continue
       [[ -x "$path/cmd" ]] || continue
       printf '%s\n' "$name"
-    done < <(find "$AMUX_SOURCE_ROOT/adapter" -mindepth 1 -maxdepth 1 -type d | sort)
+    done < <(find "$ATMUX_SOURCE_ROOT/adapter" -mindepth 1 -maxdepth 1 -type d | sort)
   fi
 
-  if [[ -d "$AMUX_HOME/adapters" ]]; then
+  if [[ -d "$ATMUX_HOME/adapters" ]]; then
     while IFS= read -r path; do
       [[ -z "$path" ]] && continue
       name="$(basename "$path")"
       [[ "$name" == "auto" ]] && continue
       [[ -x "$path/cmd" ]] || continue
       printf '%s\n' "$name"
-    done < <(find "$AMUX_HOME/adapters" -mindepth 1 -maxdepth 1 -type d | sort)
+    done < <(find "$ATMUX_HOME/adapters" -mindepth 1 -maxdepth 1 -type d | sort)
   fi
 }
 
@@ -146,7 +146,7 @@ state_for_session() {
   local pane manager status_out state
 
   pane="$(tmux list-panes -t "$session" -F '#{pane_id}' 2>/dev/null | head -n 1)"
-  manager="$(tmux show-environment -t "$session" AMUX_MANAGER 2>/dev/null | sed -n 's/^AMUX_MANAGER=//p' || true)"
+  manager="$(tmux show-environment -t "$session" ATMUX_MANAGER 2>/dev/null | sed -n 's/^ATMUX_MANAGER=//p' || true)"
 
   if [[ -z "$pane" ]]; then
     printf '%s\n' "errored"
@@ -154,9 +154,9 @@ state_for_session() {
   fi
 
   status_out="$({
-    AMUX_TARGET_PANE="$pane" \
-    AMUX_MANAGER="$manager" \
-    AMUX_STATUS_PASSIVE=1 \
+    ATMUX_TARGET_PANE="$pane" \
+    ATMUX_MANAGER="$manager" \
+    ATMUX_STATUS_PASSIVE=1 \
     "$adapter_cmd" status 2>/dev/null || true
   })"
 
@@ -184,7 +184,7 @@ rank_adapter() {
 
   while IFS= read -r session; do
     [[ -z "$session" ]] && continue
-    session_adapter="$(tmux show-environment -t "$session" AMUX_ADAPTER 2>/dev/null | sed -n 's/^AMUX_ADAPTER=//p' || true)"
+    session_adapter="$(tmux show-environment -t "$session" ATMUX_ADAPTER 2>/dev/null | sed -n 's/^ATMUX_ADAPTER=//p' || true)"
     [[ "$session_adapter" == "$adapter" ]] || continue
 
     total=$((total + 1))
@@ -195,7 +195,7 @@ rank_adapter() {
       usage-limit) usage_limit=$((usage_limit + 1)) ;;
       *) errored=$((errored + 1)) ;;
     esac
-  done < <(tmux list-sessions -F '#{session_name}' 2>/dev/null | awk '/^amux-/ { print }' || true)
+  done < <(tmux list-sessions -F '#{session_name}' 2>/dev/null | awk '/^atmux-/ { print }' || true)
 
   # class priority:
   # 0 = available now (has idle sessions OR has no sessions yet)

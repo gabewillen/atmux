@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+export ATMUX_ALLOW_OUTSIDE_TMUX="${ATMUX_ALLOW_OUTSIDE_TMUX:-1}"
+
 TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 ADAPTER_DIR="$(cd -- "$TESTS_DIR/.." && pwd)"
 REPO_ROOT="$(cd -- "$ADAPTER_DIR/../.." && pwd)"
-STATE_FILE="${AMUX_CODEX_TEST_STATE_FILE:-${TMPDIR:-/tmp}/amux-codex-tests.state}"
-SESSION_PREFIX="${AMUX_CODEX_TEST_SESSION_PREFIX:-amux-codex-test}"
-WORKDIR="${AMUX_CODEX_TEST_WORKDIR:-$REPO_ROOT}"
+STATE_FILE="${ATMUX_CODEX_TEST_STATE_FILE:-${TMPDIR:-/tmp}/atmux-codex-tests.state}"
+SESSION_PREFIX="${ATMUX_CODEX_TEST_SESSION_PREFIX:-atmux-codex-test}"
+WORKDIR="${ATMUX_CODEX_TEST_WORKDIR:-$REPO_ROOT}"
 
 log() {
   printf '[codex-tests] %s\n' "$*"

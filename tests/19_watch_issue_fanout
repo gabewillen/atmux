@@ -3,7 +3,7 @@ set -euo pipefail
 
 TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
-AMUX_BIN="$REPO_ROOT/bin/amux"
+ATMUX_BIN="$REPO_ROOT/bin/atmux"
 
 wait_for_text() {
   local target="$1"
@@ -25,12 +25,12 @@ wait_for_text() {
   done
 }
 
-tmp_home="$(mktemp -d "${TMPDIR:-/tmp}/amux-watch-issue.XXXXXX")"
+tmp_home="$(mktemp -d "${TMPDIR:-/tmp}/atmux-watch-issue.XXXXXX")"
 repo_name="is$RANDOM"
-session_a="amux-${repo_name}-boss"
-session_b="amux-${repo_name}-watcher"
-amux_home="$tmp_home/.amux"
-issues_root="$amux_home/issues/$repo_name"
+session_a="atmux-${repo_name}-boss"
+session_b="atmux-${repo_name}-watcher"
+atmux_home="$tmp_home/.atmux"
+issues_root="$atmux_home/issues/$repo_name"
 
 cleanup() {
   tmux kill-session -t "$session_a" >/dev/null 2>&1 || true
@@ -45,32 +45,32 @@ tmux kill-session -t "$session_b" >/dev/null 2>&1 || true
 tmux new-session -d -s "$session_a" -n "$session_a" -x 160 -y 40 -c "$REPO_ROOT" "/bin/bash" -l
 tmux new-session -d -s "$session_b" -n "$session_b" -x 160 -y 40 -c "$REPO_ROOT" "/bin/bash" -l
 
-tmux set-environment -t "$session_a" AMUX_REPO "$repo_name"
-tmux set-environment -t "$session_a" AMUX_AGENT_NAME "boss"
-tmux set-environment -t "$session_a" AMUX_SESSION_NAME "$session_a"
-tmux set-environment -t "$session_b" AMUX_REPO "$repo_name"
-tmux set-environment -t "$session_b" AMUX_AGENT_NAME "watcher"
-tmux set-environment -t "$session_b" AMUX_SESSION_NAME "$session_b"
+tmux set-environment -t "$session_a" ATMUX_REPO "$repo_name"
+tmux set-environment -t "$session_a" ATMUX_AGENT_NAME "boss"
+tmux set-environment -t "$session_a" ATMUX_SESSION_NAME "$session_a"
+tmux set-environment -t "$session_b" ATMUX_REPO "$repo_name"
+tmux set-environment -t "$session_b" ATMUX_AGENT_NAME "watcher"
+tmux set-environment -t "$session_b" ATMUX_SESSION_NAME "$session_b"
 
 pane_a="$(tmux list-panes -t "$session_a" -F '#{pane_id}' 2>/dev/null | head -n1)"
 pane_b="$(tmux list-panes -t "$session_b" -F '#{pane_id}' 2>/dev/null | head -n1)"
 [[ -n "$pane_a" && -n "$pane_b" ]] || { echo "missing panes" >&2; exit 1; }
 
 set +e
-out_rej="$(AMUX_HOME="$amux_home" AMUX_REPO="$repo_name" "$AMUX_BIN" watch --issue 00000000-0000-0000-0000-000000000001 2>&1)"
+out_rej="$(ATMUX_HOME="$atmux_home" ATMUX_REPO="$repo_name" "$ATMUX_BIN" watch --issue 00000000-0000-0000-0000-000000000001 2>&1)"
 rc_rej=$?
 set -e
 [[ "$rc_rej" -eq 2 ]] || { echo "expected reject exit 2, got $rc_rej: $out_rej" >&2; exit 1; }
 
-create_out="$(AMUX_HOME="$amux_home" AMUX_REPO="$repo_name" "$AMUX_BIN" issue create --title "watch-issue" --repo "$repo_name")"
+create_out="$(ATMUX_HOME="$atmux_home" ATMUX_REPO="$repo_name" "$ATMUX_BIN" issue create --title "watch-issue" --repo "$repo_name")"
 issue_id="$(printf '%s\n' "$create_out" | sed -n 's/.*id="\([^"]*\)".*/\1/p' | head -n1)"
 [[ -n "$issue_id" ]] || { echo "failed to parse issue id" >&2; exit 1; }
 
-tmux send-keys -t "$pane_b" "AMUX_HOME=\"$amux_home\" AMUX_REPO=\"$repo_name\" AMUX_AGENT_NAME=\"watcher\" AMUX_SESSION_NAME=\"$session_b\" \"$AMUX_BIN\" watch --issue \"$issue_id\"" C-m
+tmux send-keys -t "$pane_b" "ATMUX_HOME=\"$atmux_home\" ATMUX_REPO=\"$repo_name\" ATMUX_AGENT_NAME=\"watcher\" ATMUX_SESSION_NAME=\"$session_b\" \"$ATMUX_BIN\" watch --issue \"$issue_id\"" C-m
 
 sleep 0.3
 
-tmux send-keys -t "$pane_a" "AMUX_HOME=\"$amux_home\" AMUX_REPO=\"$repo_name\" AMUX_AGENT_NAME=\"boss\" AMUX_SESSION_NAME=\"$session_a\" \"$AMUX_BIN\" issue assign \"$issue_id\" --to watcher" C-m
+tmux send-keys -t "$pane_a" "ATMUX_HOME=\"$atmux_home\" ATMUX_REPO=\"$repo_name\" ATMUX_AGENT_NAME=\"boss\" ATMUX_SESSION_NAME=\"$session_a\" \"$ATMUX_BIN\" issue assign \"$issue_id\" --to watcher" C-m
 
 if ! wait_for_text "$pane_a" 'notification from="issue assign"' 25; then
   echo "assign pane missing issue notification" >&2
@@ -83,8 +83,22 @@ if ! wait_for_text "$pane_b" 'notification from="issue assign"' 25; then
   exit 1
 fi
 
-sleep 0.5
-wcount="$(find "$issues_root/$issue_id/watchers" -mindepth 1 -maxdepth 1 -type f 2>/dev/null | wc -l | tr -d ' ')"
-[[ "${wcount:-0}" -eq 0 ]] || { echo "expected no watcher files, got $wcount" >&2; exit 1; }
+deadline=$(( $(date +%s) + 15 ))
+while true; do
+  wdir="$issues_root/$issue_id/watchers"
+  wcount=0
+  if [[ -d "$wdir" ]]; then
+    wcount="$(find "$wdir" -mindepth 1 -maxdepth 1 -type f 2>/dev/null | wc -l | tr -d ' ')"
+  fi
+  if [[ "${wcount:-0}" -eq 0 ]]; then
+    break
+  fi
+  now="$(date +%s)"
+  if (( now >= deadline )); then
+    echo "expected no watcher files, got $wcount" >&2
+    exit 1
+  fi
+  sleep 0.1
+done
 
 echo "ok: watch --issue validates, issue assign fans out to watcher, watchers cleaned up"

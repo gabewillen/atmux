@@ -15,13 +15,13 @@ xml_escape() {
 }
 
 owner="agent"
-if [[ -n "${AMUX_MANAGER:-}" ]]; then
+if [[ -n "${ATMUX_MANAGER:-}" ]]; then
   owner="manager"
 fi
 
-selected="${AMUX_ADAPTER_SELECTED:-}"
+selected="${ATMUX_ADAPTER_SELECTED:-}"
 if [[ -z "$selected" || "$selected" == "auto" ]]; then
-  selected="$(AMUX_HOME="${AMUX_HOME:-$HOME/.amux}" AMUX_SOURCE_ROOT="${AMUX_SOURCE_ROOT:-}" "$select_script" --peek 2>/dev/null || true)"
+  selected="$(ATMUX_HOME="${ATMUX_HOME:-$HOME/.atmux}" ATMUX_SOURCE_ROOT="${ATMUX_SOURCE_ROOT:-}" "$select_script" --peek 2>/dev/null || true)"
 fi
 state="idle"
 if [[ -z "$selected" ]]; then

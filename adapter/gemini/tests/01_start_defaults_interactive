@@ -7,15 +7,15 @@ ADAPTER_DIR="$(cd -- "$TESTS_DIR/.." && pwd)"
 
 command -v gemini >/dev/null 2>&1 || { echo "gemini command not found in PATH" >&2; exit 1; }
 
-amux_home="$(mktemp -d "${TMPDIR:-/tmp}/amux-gemini-test-home.XXXXXX")"
+atmux_home="$(mktemp -d "${TMPDIR:-/tmp}/atmux-gemini-test-home.XXXXXX")"
 
 cleanup() {
   [[ -n "${session_name:-}" ]] && "$SCRIPTS_DIR/teardown" --session "$session_name" >/dev/null 2>&1 || true
-  rm -rf "$amux_home"
+  rm -rf "$atmux_home"
 }
 trap cleanup EXIT
 
-start_cmd="AMUX_HOME='$amux_home' '$ADAPTER_DIR/scripts/start'"
+start_cmd="ATMUX_HOME='$atmux_home' '$ADAPTER_DIR/scripts/start'"
 setup_out="$("$SCRIPTS_DIR/setup" --command "$start_cmd" --wait-text 'Type your message')"
 session_name="$(printf '%s\n' "$setup_out" | sed -n 's/^SESSION_NAME=//p' | tail -n 1)"
 pane_id="$(printf '%s\n' "$setup_out" | sed -n 's/^PANE_ID=//p' | tail -n 1)"
@@ -24,7 +24,7 @@ if [[ -z "$session_name" || -z "$pane_id" ]]; then
   exit 1
 fi
 
-status_out="$(AMUX_HOME="$amux_home" AMUX_TARGET_PANE="$pane_id" "$ADAPTER_DIR/scripts/status")"
+status_out="$(ATMUX_HOME="$atmux_home" ATMUX_TARGET_PANE="$pane_id" "$ADAPTER_DIR/scripts/status")"
 
 echo "$status_out" | grep -F '<status ' >/dev/null
 echo "$status_out" | grep -F 'adapter="gemini"' >/dev/null
@@ -33,7 +33,7 @@ echo "$status_out" | grep -F 'state="idle"' >/dev/null
 echo "$status_out" | grep -F 'model="gemini-2.5-flash"' >/dev/null
 echo "$status_out" | grep -F 'control_file="GEMINI.md"' >/dev/null
 
-state_file="$amux_home/adapters/gemini/state.env"
+state_file="$atmux_home/adapters/gemini/state.env"
 [[ -f "$state_file" ]] || { echo "state file missing: $state_file" >&2; exit 1; }
 grep -Fx 'MODEL=gemini-2.5-flash' "$state_file" >/dev/null
 grep -Fx 'REASONING_LEVEL=medium' "$state_file" >/dev/null

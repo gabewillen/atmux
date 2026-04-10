@@ -6,9 +6,9 @@ TESTS_DIR="$(cd -- "$SCRIPTS_DIR/.." && pwd)"
 ADAPTER_DIR="$(cd -- "$TESTS_DIR/.." && pwd)"
 REPO_ROOT="$(cd -- "$ADAPTER_DIR/../.." && pwd)"
 
-SESSION_PREFIX="${AMUX_CODEX_TEST_SESSION_PREFIX:-amux-codex-test}"
-WORKDIR="${AMUX_CODEX_TEST_WORKDIR:-$REPO_ROOT}"
-TIMEOUT="${AMUX_CODEX_TEST_TIMEOUT:-60}"
+SESSION_PREFIX="${ATMUX_CODEX_TEST_SESSION_PREFIX:-atmux-codex-test}"
+WORKDIR="${ATMUX_CODEX_TEST_WORKDIR:-$REPO_ROOT}"
+TIMEOUT="${ATMUX_CODEX_TEST_TIMEOUT:-60}"
 
 require_cmd() {
   command -v "$1" >/dev/null 2>&1 || {
@@ -43,7 +43,7 @@ wait_for_text() {
 require_cmd tmux
 require_cmd codex
 
-session_name="${AMUX_CODEX_TEST_SESSION_NAME:-${SESSION_PREFIX}-$(date +%s)-$$}"
+session_name="${ATMUX_CODEX_TEST_SESSION_NAME:-${SESSION_PREFIX}-$(date +%s)-$$}"
 if tmux has-session -t "$session_name" 2>/dev/null; then
   tmux kill-session -t "$session_name" >/dev/null 2>&1 || true
 fi

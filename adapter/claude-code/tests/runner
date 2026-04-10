@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+export ATMUX_ALLOW_OUTSIDE_TMUX="${ATMUX_ALLOW_OUTSIDE_TMUX:-1}"
+
 TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 log() {

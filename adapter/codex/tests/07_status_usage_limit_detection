@@ -14,15 +14,15 @@ if [[ -z "$session_name" || -z "$pane_id" ]]; then
   exit 1
 fi
 
-amux_home="$(mktemp -d "${TMPDIR:-/tmp}/amux-codex-test-home.XXXXXX")"
+atmux_home="$(mktemp -d "${TMPDIR:-/tmp}/atmux-codex-test-home.XXXXXX")"
 
 cleanup() {
   "$SCRIPTS_DIR/teardown" --session "$session_name" >/dev/null 2>&1 || true
-  rm -rf "$amux_home"
+  rm -rf "$atmux_home"
 }
 trap cleanup EXIT
 
-if ! "$REPO_ROOT/bin/(amux)/watch" --target "$pane_id" --scope pane --text "OpenAI Codex" --timeout 20 --interval 0.2 --lines 600; then
+if ! "$REPO_ROOT/bin/(atmux)/watch" --target "$pane_id" --scope pane --text "OpenAI Codex" --timeout 20 --interval 0.2 --lines 600; then
   tmux capture-pane -p -t "$pane_id" -S -220 >&2 || true
   echo "timed out waiting for codex banner" >&2
   exit 1
@@ -30,9 +30,9 @@ fi
 status_out=""
 for _ in $(seq 1 15); do
   status_out="$(
-    AMUX_HOME="$amux_home" \
-    AMUX_TARGET_PANE="$pane_id" \
-    AMUX_SOURCE_ROOT="$REPO_ROOT" \
+    ATMUX_HOME="$atmux_home" \
+    ATMUX_TARGET_PANE="$pane_id" \
+    ATMUX_SOURCE_ROOT="$REPO_ROOT" \
     "$ADAPTER_DIR/scripts/status"
   )"
   if printf '%s\n' "$status_out" | grep -Eq 'model="[^"]+"'; then

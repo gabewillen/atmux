@@ -7,14 +7,14 @@ ADAPTER_DIR="$(cd -- "$TESTS_DIR/.." && pwd)"
 REPO_ROOT="$(cd -- "$ADAPTER_DIR/../.." && pwd)"
 
 repo="codex-e2e-$(date +%s)-$$"
-manager_session="amux-${repo}-manager"
-worker_session="amux-${repo}-worker"
-steve_session="amux-${repo}-Steve"
+manager_session="atmux-${repo}-manager"
+worker_session="atmux-${repo}-worker"
+steve_session="atmux-${repo}-Steve"
 reply_token="REPLY_STEVE_${repo}"
 task_token="TASK_STEVE_${repo}"
 
-setup_manager_out="$(AMUX_CODEX_TEST_SESSION_NAME="$manager_session" "$SCRIPTS_DIR/setup")"
-setup_worker_out="$(AMUX_CODEX_TEST_SESSION_NAME="$worker_session" "$SCRIPTS_DIR/setup")"
+setup_manager_out="$(ATMUX_CODEX_TEST_SESSION_NAME="$manager_session" "$SCRIPTS_DIR/setup")"
+setup_worker_out="$(ATMUX_CODEX_TEST_SESSION_NAME="$worker_session" "$SCRIPTS_DIR/setup")"
 
 manager_pane="$(printf '%s\n' "$setup_manager_out" | sed -n 's/^PANE_ID=//p' | tail -n 1)"
 worker_pane="$(printf '%s\n' "$setup_worker_out" | sed -n 's/^PANE_ID=//p' | tail -n 1)"
@@ -49,28 +49,28 @@ dump_debug() {
 }
 
 cleanup() {
-  AMUX_REPO="$repo" "$REPO_ROOT/bin/(amux)/agent" rm "$steve_session" >/dev/null 2>&1 || true
+  ATMUX_REPO="$repo" "$REPO_ROOT/bin/atmux" agent destroy "$steve_session" >/dev/null 2>&1 || true
   "$SCRIPTS_DIR/teardown" --session "$manager_session" >/dev/null 2>&1 || true
   "$SCRIPTS_DIR/teardown" --session "$worker_session" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 
-cmd_create="AMUX_NO_WRAP=1 AMUX_REPO=${repo} AMUX_AGENT_NAME=worker AMUX_SOURCE_ROOT=${REPO_ROOT} ${REPO_ROOT}/bin/amux agent create --name Steve --role principal --intelligence 100"
-cmd_reply="AMUX_NO_WRAP=1 AMUX_REPO=${repo} AMUX_MANAGER=manager AMUX_AGENT_NAME=worker AMUX_SESSION_NAME=${worker_session} ${REPO_ROOT}/bin/amux manager send \"${reply_token} Steve created\""
+cmd_create="ATMUX_NO_WRAP=1 ATMUX_REPO=${repo} ATMUX_AGENT_NAME=worker ATMUX_SOURCE_ROOT=${REPO_ROOT} ${REPO_ROOT}/bin/atmux create --agent Steve --role principal --intelligence 100"
+cmd_reply="ATMUX_NO_WRAP=1 ATMUX_REPO=${repo} ATMUX_MANAGER=manager ATMUX_AGENT_NAME=worker ATMUX_SESSION_NAME=${worker_session} ${REPO_ROOT}/bin/atmux send --to manager \"${reply_token} Steve created\""
 instruction="${task_token}: Create the most intelligent agent named Steve. REQUIRED: run this exact command: ${cmd_create} . Then run this exact command: ${cmd_reply} . Do not ask questions."
 
-AMUX_REPO="$repo" \
-AMUX_AGENT_NAME="manager" \
-AMUX_SESSION_NAME="$manager_session" \
-"$REPO_ROOT/bin/(amux)/agent" send --to worker --reply-required "$instruction"
+ATMUX_REPO="$repo" \
+ATMUX_AGENT_NAME="manager" \
+ATMUX_SESSION_NAME="$manager_session" \
+"$REPO_ROOT/bin/atmux" send --to worker --reply-required "$instruction"
 
-if ! "$REPO_ROOT/bin/(amux)/watch" --target "$worker_pane" --scope pane --text "reply_required=\"true\"" --timeout 30 --interval 0.2 --lines 600; then
+if ! "$REPO_ROOT/bin/(atmux)/watch" --target "$worker_pane" --scope pane --text "reply_required=\"true\"" --timeout 30 --interval 0.2 --lines 600; then
   dump_debug
   echo "worker did not receive reply_required=true message" >&2
   exit 1
 fi
 
-if ! "$REPO_ROOT/bin/(amux)/watch" --target "$manager_pane" --scope pane --text "$reply_token" --timeout 240 --interval 0.5 --lines 1500; then
+if ! "$REPO_ROOT/bin/(atmux)/watch" --target "$manager_pane" --scope pane --text "$reply_token" --timeout 240 --interval 0.5 --lines 1500; then
   dump_debug
   echo "manager did not receive required reply from worker" >&2
   exit 1

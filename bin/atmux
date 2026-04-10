@@ -1,0 +1,313 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ATMUX_HOME="${ATMUX_HOME:-$HOME/.atmux}"
+ATMUX_BIN_ORIGIN="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+
+# If running from installed launcher, pin source root to installed source tree.
+if [[ "$ATMUX_BIN_ORIGIN" == "$ATMUX_HOME/bin" && -d "$ATMUX_HOME/src/atmux" ]]; then
+  ATMUX_SOURCE_ROOT="$ATMUX_HOME/src/atmux"
+  export ATMUX_SOURCE_ROOT
+elif [[ -z "${ATMUX_SOURCE_ROOT:-}" ]]; then
+  local_checkout_root="$(cd -- "$ATMUX_BIN_ORIGIN/.." && pwd)"
+  if [[ -x "$local_checkout_root/bin/atmux" && -d "$local_checkout_root/bin/(atmux)" ]]; then
+    ATMUX_SOURCE_ROOT="$local_checkout_root"
+  elif [[ -d "$ATMUX_HOME/src/atmux" ]]; then
+    ATMUX_SOURCE_ROOT="$ATMUX_HOME/src/atmux"
+  else
+    ATMUX_SOURCE_ROOT="$local_checkout_root"
+  fi
+  export ATMUX_SOURCE_ROOT
+fi
+
+# In agent sessions, always route to the source repo's atmux so help/behavior
+# stays current even if the worktree copy is stale.
+if [[ -n "${ATMUX_SOURCE_ROOT:-}" && -x "${ATMUX_SOURCE_ROOT}/bin/atmux" ]]; then
+  if [[ "$ATMUX_BIN_ORIGIN" != "$(cd -- "${ATMUX_SOURCE_ROOT}/bin" && pwd)" ]]; then
+    exec "${ATMUX_SOURCE_ROOT}/bin/atmux" "$@"
+  fi
+fi
+
+usage() {
+  local -a cmds=()
+
+  local -a script_dirs=()
+  if [[ -d "$ATMUX_HOME/bin/scripts" ]]; then
+    script_dirs+=("$ATMUX_HOME/bin/scripts")
+  fi
+  local repo_root=""
+  if repo_root="$(git rev-parse --show-toplevel 2>/dev/null)"; then
+    if [[ -d "$repo_root/bin/(atmux)" ]]; then
+      script_dirs+=("$repo_root/bin/(atmux)")
+    fi
+  fi
+
+  local dir
+  for dir in "${script_dirs[@]}"; do
+    while IFS= read -r name; do
+      [[ -z "$name" ]] && continue
+      cmds+=("$name")
+    done < <(find "$dir" -maxdepth 1 -type f -perm -u+x -exec basename {} \; | sort)
+  done
+
+  local -a uniq_cmds=()
+  while IFS= read -r c; do
+    [[ -n "$c" ]] && uniq_cmds+=("$c")
+  done < <(printf '%s\n' "${cmds[@]}" | awk 'NF' | sort -u)
+  cmds=("${uniq_cmds[@]}")
+
+  echo "Usage:"
+  echo "  atmux"
+  echo "  atmux <subcommand> [args...]"
+  echo
+  echo "With no subcommand, atmux starts tmux (or a new window if already inside tmux)"
+  echo "with this directory on PATH: $ATMUX_BIN_ORIGIN"
+  echo
+  echo "atmux is an agent multiplexer across adapters."
+  echo
+  echo "Purpose:"
+  echo "  Manage atmux agent sessions, adapters, and agent messaging."
+  echo
+  echo "Available subcommands:"
+  for c in "${cmds[@]}"; do
+    echo "  $c"
+  done
+  echo
+  echo "Run:"
+  echo "  atmux <subcommand> --help"
+  echo "for more information."
+}
+
+ensure_atmux_home() {
+  mkdir -p "$ATMUX_HOME/bin" "$ATMUX_HOME/bin/scripts" "$ATMUX_HOME/agents" "$ATMUX_HOME/adapters"
+}
+
+xml_escape() {
+  printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g' -e "s/'/\&apos;/g"
+}
+
+attach_or_switch() {
+  local session="$1"
+  local readonly="${ATMUX_ATTACH_READONLY:-auto}"
+  if [[ ! -t 0 || ! -t 1 ]]; then
+    printf '%s\n' "$session"
+    return
+  fi
+
+  case "$readonly" in
+    auto|AUTO|"")
+      local manager=""
+      manager="$(tmux show-environment -t "$session" ATMUX_MANAGER 2>/dev/null | sed -n 's/^ATMUX_MANAGER=//p' || true)"
+      if [[ -n "$manager" ]]; then
+        readonly="1"
+      else
+        readonly="0"
+      fi
+      ;;
+  esac
+
+  case "$readonly" in
+    0|false|FALSE|no|NO)
+      if [[ -n "${TMUX:-}" ]]; then
+        tmux switch-client -t "$session"
+      else
+        tmux attach-session -t "$session"
+      fi
+      return
+      ;;
+  esac
+
+  if [[ -n "${TMUX:-}" ]]; then
+    tmux refresh-client -f read-only >/dev/null 2>&1 || true
+    tmux switch-client -r -t "$session" 2>/dev/null || tmux switch-client -t "$session"
+  else
+    tmux attach-session -r -t "$session"
+  fi
+}
+
+normalize_github_repo() {
+  local input="$1"
+  local repo_path=""
+
+  case "$input" in
+    https://github.com/*)
+      repo_path="${input#https://github.com/}"
+      ;;
+    github.com/*)
+      repo_path="${input#github.com/}"
+      ;;
+    */*)
+      repo_path="$input"
+      ;;
+    *)
+      echo "invalid github repo: $input" >&2
+      exit 2
+      ;;
+  esac
+
+  repo_path="${repo_path%.git}"
+  repo_path="${repo_path%/}"
+  printf '%s\n' "$repo_path"
+}
+
+resolve_script_subcommand() {
+  local cmd="$1"
+  local repo_root=""
+  local p=""
+
+  if repo_root="$(git rev-parse --show-toplevel 2>/dev/null)"; then
+    p="$repo_root/bin/(atmux)/${cmd}"
+    if [[ -f "$p" && -x "$p" ]]; then
+      printf '%s\n' "$p"
+      return 0
+    fi
+  fi
+
+  p="$ATMUX_HOME/bin/scripts/${cmd}"
+  if [[ -f "$p" && -x "$p" ]]; then
+    printf '%s\n' "$p"
+    return 0
+  fi
+
+  return 1
+}
+
+should_wrap_command() {
+  local cmd="${1:-}"
+  shift || true
+
+  if [[ "${ATMUX_NO_WRAP:-}" == "1" ]]; then
+    return 1
+  fi
+
+  case "$cmd" in
+    exec|watch|notify)
+      return 1
+      ;;
+    session)
+      case "${1:-}" in
+        start|attach|_run-adapter)
+          return 1
+          ;;
+      esac
+      ;;
+    adapter)
+      if [[ "${2:-}" == "start" ]]; then
+        return 1
+      fi
+      ;;
+  esac
+
+  return 0
+}
+
+emit_atmux_wrapper() {
+  local command_text="$1"
+  local stdout_file="$2"
+  local stderr_file="$3"
+  local rc="$4"
+  local first_nonempty
+  first_nonempty="$(awk 'NF { print; exit }' "$stdout_file" 2>/dev/null || true)"
+
+  printf '<atmux command="%s" exit_code="%s">\n' "$(xml_escape "$command_text")" "$(xml_escape "$rc")"
+
+  if [[ -s "$stdout_file" ]]; then
+    if [[ "$first_nonempty" == \<* ]]; then
+      cat "$stdout_file"
+      case "$(tail -c 1 "$stdout_file" 2>/dev/null || true)" in
+        $'\n') ;;
+        *) printf '\n' ;;
+      esac
+    else
+      printf '  <output>%s</output>\n' "$(xml_escape "$(cat "$stdout_file")")"
+    fi
+  fi
+
+  if [[ -s "$stderr_file" ]]; then
+    printf '  <error>%s</error>\n' "$(xml_escape "$(cat "$stderr_file")")"
+  fi
+
+  printf '</atmux>\n'
+}
+
+require_tmux() {
+  if [[ -n "${ATMUX_ALLOW_OUTSIDE_TMUX:-}" ]]; then
+    return 0
+  fi
+  if [[ -z "${TMUX:-}" ]]; then
+    echo "atmux: must be run inside tmux" >&2
+    exit 2
+  fi
+}
+
+bootstrap_tmux_shell() {
+  if ! command -v tmux >/dev/null 2>&1; then
+    echo "atmux: tmux not found in PATH" >&2
+    exit 1
+  fi
+
+  local shell="${SHELL:-/bin/bash}"
+  local path_val="${ATMUX_BIN_ORIGIN}:${PATH}"
+
+  if [[ -z "${TMUX:-}" ]]; then
+    if [[ ! -t 0 || ! -t 1 ]]; then
+      echo "atmux: cannot start tmux: not a terminal" >&2
+      exit 2
+    fi
+    exec tmux new-session -A -s atmux -e "PATH=${path_val}" -- "$shell" -l
+  fi
+
+  tmux new-window -n atmux -e "PATH=${path_val}" -- "$shell" -l
+}
+
+main() {
+  ensure_atmux_home
+
+  if [[ $# -lt 1 ]]; then
+    bootstrap_tmux_shell
+    exit 0
+  fi
+
+  require_tmux
+
+  case "$1" in
+    -h|--help|help)
+      out_file="$(mktemp "${TMPDIR:-/tmp}/atmux-out.XXXXXX")"
+      err_file="$(mktemp "${TMPDIR:-/tmp}/atmux-err.XXXXXX")"
+      trap 'rm -f "$out_file" "$err_file"' EXIT
+      usage >"$out_file"
+      emit_atmux_wrapper "help" "$out_file" "$err_file" 0
+      ;;
+    *)
+      cmd="$1"
+      shift
+      if ! script_path="$(resolve_script_subcommand "$cmd")"; then
+        out_file="$(mktemp "${TMPDIR:-/tmp}/atmux-out.XXXXXX")"
+        err_file="$(mktemp "${TMPDIR:-/tmp}/atmux-err.XXXXXX")"
+        trap 'rm -f "$out_file" "$err_file"' EXIT
+        usage >"$out_file"
+        printf 'unknown command: %s\n' "$cmd" >"$err_file"
+        emit_atmux_wrapper "$cmd $*" "$out_file" "$err_file" 1
+        exit 1
+      fi
+
+      if should_wrap_command "$cmd" "$@"; then
+        out_file="$(mktemp "${TMPDIR:-/tmp}/atmux-out.XXXXXX")"
+        err_file="$(mktemp "${TMPDIR:-/tmp}/atmux-err.XXXXXX")"
+        trap 'rm -f "$out_file" "$err_file"' EXIT
+        rc=0
+        if "$script_path" "$@" >"$out_file" 2>"$err_file"; then
+          rc=0
+        else
+          rc=$?
+        fi
+        emit_atmux_wrapper "$cmd $*" "$out_file" "$err_file" "$rc"
+        exit "$rc"
+      fi
+
+      exec "$script_path" "$@"
+      ;;
+  esac
+}
+
+main "$@"

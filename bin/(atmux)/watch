@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+WATCH_ROOT="$(cd -- "$HERE/[watch]" && pwd)"
+
+usage() {
+  cat <<'USAGE'
+Usage:
+  atmux watch --target <tmux-target> --text <needle> [--scope pane|window|session] [--timeout <seconds>] [--interval <seconds>] [--lines <n>]
+  atmux watch --pid <pid> [--timeout <seconds>] [--interval <seconds>]
+  atmux watch --issue <id> [--repo <repo>] [--timeout <seconds>] [--interval <seconds>]
+
+Description:
+  Pane mode: poll tmux output until text appears, non-zero on timeout.
+  PID mode: wait for an atmux exec process (see ~/.atmux/exec/<repo>/<pid>/) and
+  receive the same exit notification XML as the executor when it finishes.
+  Issue mode: wait for the next filesystem issue update and receive the same
+  notification XML as issue assign/claim fan-out.
+
+  Implementations: bin/(atmux)/[watch]/text, [watch]/pid, [watch]/issue.
+USAGE
+}
+
+case "${1:-}" in
+  -h|--help|help)
+    usage
+    exit 0
+    ;;
+esac
+
+if [[ $# -eq 0 ]]; then
+  usage
+  exit 2
+fi
+
+has_pid=0
+has_issue=0
+for a in "$@"; do
+  if [[ "$a" == "--pid" ]]; then
+    has_pid=1
+  fi
+  if [[ "$a" == "--issue" ]]; then
+    has_issue=1
+  fi
+done
+
+if [[ "$has_pid" -eq 1 && "$has_issue" -eq 1 ]]; then
+  echo "atmux watch: cannot combine --pid and --issue" >&2
+  exit 2
+fi
+
+if [[ "$has_pid" -eq 1 ]]; then
+  exec "$WATCH_ROOT/pid" "$@"
+fi
+
+if [[ "$has_issue" -eq 1 ]]; then
+  exec "$WATCH_ROOT/issue" "$@"
+fi
+
+exec "$WATCH_ROOT/text" "$@"

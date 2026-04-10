@@ -7,17 +7,17 @@ SCRIPTS_DIR="$TESTS_DIR/scripts"
 eval "$("$SCRIPTS_DIR/setup")"
 trap "$SCRIPTS_DIR/teardown --team-session \"$TEAM_SESSION\" --agent1-session \"$AGENT1_SESSION\" --agent2-session \"$AGENT2_SESSION\"" EXIT
 
-teams_out="$(AMUX_REPO="$REPO_NAME" "$AMUX_BIN" list teams)"
+teams_out="$(ATMUX_REPO="$REPO_NAME" "$ATMUX_BIN" list teams)"
 printf '%s\n' "$teams_out" | grep -Fq "<teams repo=\"$REPO_NAME\">"
 printf '%s\n' "$teams_out" | grep -Fq "session=\"$TEAM_SESSION\""
 
-sessions_out="$(AMUX_REPO="$REPO_NAME" "$AMUX_BIN" list sessions)"
+sessions_out="$(ATMUX_REPO="$REPO_NAME" "$ATMUX_BIN" list sessions)"
 printf '%s\n' "$sessions_out" | grep -Fq "<sessions repo=\"$REPO_NAME\">"
 printf '%s\n' "$sessions_out" | grep -Fq "name=\"$AGENT1_SESSION\""
 printf '%s\n' "$sessions_out" | grep -Fq "name=\"$AGENT2_SESSION\""
 printf '%s\n' "$sessions_out" | grep -Fq "name=\"$TEAM_SESSION\""
 
-agents_out="$(AMUX_REPO="$REPO_NAME" "$AMUX_BIN" list agents --all)"
+agents_out="$(ATMUX_REPO="$REPO_NAME" "$ATMUX_BIN" list agents --all)"
 printf '%s\n' "$agents_out" | grep -Fq "<agents repo=\"$REPO_NAME\">"
 printf '%s\n' "$agents_out" | grep -Fq "session=\"$AGENT1_SESSION\""
 printf '%s\n' "$agents_out" | grep -Fq "session=\"$AGENT2_SESSION\""

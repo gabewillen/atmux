@@ -1,7 +1,7 @@
-# amux Architecture
+# atmux Architecture
 
 ## Overview
-`amux` is a Go CLI for routing agent commands into tmux.
+`atmux` is a Go CLI for routing agent commands into tmux.
 
 Constraints we agreed on:
 - Implemented with Cobra.
@@ -38,12 +38,12 @@ No additional orchestration behavior is part of this architecture yet.
 
 ## Runtime Flow
 
-### `amux sessions`
+### `atmux sessions`
 1. CLI command is invoked.
 2. `gotmux` lists tmux sessions.
 3. Session names are printed.
 
-### `amux route --agent <name> --cmd <command>`
+### `atmux route --agent <name> --cmd <command>`
 1. CLI validates required flags.
 2. Router resolves agent to `session:window.pane`.
 3. Router verifies the target session exists.

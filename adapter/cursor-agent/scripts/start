@@ -29,10 +29,10 @@ set_bootstrap_state() {
     session="$(tmux display-message -p '#S' 2>/dev/null || true)"
   fi
   [[ -n "$session" ]] || return 0
-  tmux set-environment -t "$session" AMUX_BOOTSTRAP_STATE "$state" >/dev/null 2>&1 || true
+  tmux set-environment -t "$session" ATMUX_BOOTSTRAP_STATE "$state" >/dev/null 2>&1 || true
 }
 
-state_dir="${AMUX_HOME:-$HOME/.amux}/adapters/cursor-agent"
+state_dir="${ATMUX_HOME:-$HOME/.atmux}/adapters/cursor-agent"
 state_file="$state_dir/state.env"
 mkdir -p "$state_dir"
 [[ -f "$state_file" ]] || printf 'MODEL=%s\nREASONING_LEVEL=%s\n' 'composer-2' 'medium' > "$state_file"
@@ -94,10 +94,10 @@ normalize_reasoning() {
   esac
 }
 
-if [[ -n "${AMUX_INTELLIGENCE:-}" && "${AMUX_INTELLIGENCE}" =~ ^[0-9]+$ ]] \
-  && (( AMUX_INTELLIGENCE >= 0 && AMUX_INTELLIGENCE <= 100 )); then
+if [[ -n "${ATMUX_INTELLIGENCE:-}" && "${ATMUX_INTELLIGENCE}" =~ ^[0-9]+$ ]] \
+  && (( ATMUX_INTELLIGENCE >= 0 && ATMUX_INTELLIGENCE <= 100 )); then
   manifest_path="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)/manifest.json"
-  profile="$(resolve_profile_from_manifest "$AMUX_INTELLIGENCE" "$manifest_path" || true)"
+  profile="$(resolve_profile_from_manifest "$ATMUX_INTELLIGENCE" "$manifest_path" || true)"
   if [[ -n "$profile" ]]; then
     prof_model="${profile%% *}"
     prof_reasoning="${profile#* }"
@@ -106,11 +106,11 @@ if [[ -n "${AMUX_INTELLIGENCE:-}" && "${AMUX_INTELLIGENCE}" =~ ^[0-9]+$ ]] \
   fi
 fi
 
-if [[ -n "${AMUX_CURSOR_AGENT_MODEL:-}" ]]; then
-  MODEL="$(normalize_model "$AMUX_CURSOR_AGENT_MODEL" || { echo "invalid AMUX_CURSOR_AGENT_MODEL: $AMUX_CURSOR_AGENT_MODEL" >&2; exit 2; })"
+if [[ -n "${ATMUX_CURSOR_AGENT_MODEL:-}" ]]; then
+  MODEL="$(normalize_model "$ATMUX_CURSOR_AGENT_MODEL" || { echo "invalid ATMUX_CURSOR_AGENT_MODEL: $ATMUX_CURSOR_AGENT_MODEL" >&2; exit 2; })"
 fi
-if [[ -n "${AMUX_CURSOR_AGENT_REASONING_LEVEL:-}" ]]; then
-  REASONING_LEVEL="$(normalize_reasoning "$AMUX_CURSOR_AGENT_REASONING_LEVEL" || { echo "invalid AMUX_CURSOR_AGENT_REASONING_LEVEL: $AMUX_CURSOR_AGENT_REASONING_LEVEL" >&2; exit 2; })"
+if [[ -n "${ATMUX_CURSOR_AGENT_REASONING_LEVEL:-}" ]]; then
+  REASONING_LEVEL="$(normalize_reasoning "$ATMUX_CURSOR_AGENT_REASONING_LEVEL" || { echo "invalid ATMUX_CURSOR_AGENT_REASONING_LEVEL: $ATMUX_CURSOR_AGENT_REASONING_LEVEL" >&2; exit 2; })"
 fi
 
 printf 'MODEL=%s\nREASONING_LEVEL=%s\n' "$MODEL" "$REASONING_LEVEL" > "$state_file"

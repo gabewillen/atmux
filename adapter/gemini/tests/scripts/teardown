@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-session_name="${AMUX_GEMINI_TEST_SESSION_NAME:-}"
+session_name="${ATMUX_GEMINI_TEST_SESSION_NAME:-}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -17,7 +17,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ -z "$session_name" ]]; then
-  echo "missing session name (use --session or AMUX_GEMINI_TEST_SESSION_NAME)" >&2
+  echo "missing session name (use --session or ATMUX_GEMINI_TEST_SESSION_NAME)" >&2
   exit 2
 fi
 

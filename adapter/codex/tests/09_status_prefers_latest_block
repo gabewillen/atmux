@@ -14,24 +14,24 @@ if [[ -z "$session_name" || -z "$pane_id" ]]; then
   exit 1
 fi
 
-amux_home="$(mktemp -d "${TMPDIR:-/tmp}/amux-codex-test-home.XXXXXX")"
+atmux_home="$(mktemp -d "${TMPDIR:-/tmp}/atmux-codex-test-home.XXXXXX")"
 
 cleanup() {
   "$SCRIPTS_DIR/teardown" --session "$session_name" >/dev/null 2>&1 || true
-  rm -rf "$amux_home"
+  rm -rf "$atmux_home"
 }
 trap cleanup EXIT
 
-AMUX_HOME="$amux_home" \
-AMUX_TARGET_PANE="$pane_id" \
+ATMUX_HOME="$atmux_home" \
+ATMUX_TARGET_PANE="$pane_id" \
 "$ADAPTER_DIR/scripts/model" set gpt-5.3-codex high >/dev/null
 
 status_high=""
 for _ in $(seq 1 15); do
   status_high="$(
-    AMUX_HOME="$amux_home" \
-    AMUX_TARGET_PANE="$pane_id" \
-    AMUX_SOURCE_ROOT="$REPO_ROOT" \
+    ATMUX_HOME="$atmux_home" \
+    ATMUX_TARGET_PANE="$pane_id" \
+    ATMUX_SOURCE_ROOT="$REPO_ROOT" \
     "$ADAPTER_DIR/scripts/status"
   )"
   if printf '%s\n' "$status_high" | grep -Eq 'reasoning_level="(high|xhigh|extra-high)"' >/dev/null 2>&1; then
@@ -45,16 +45,16 @@ echo "$status_high" | grep -F 'adapter="codex"' >/dev/null
 echo "$status_high" | grep -F 'model="gpt-5.3-codex"' >/dev/null
 echo "$status_high" | grep -Eq 'reasoning_level="(high|xhigh|extra-high)"' >/dev/null
 
-AMUX_HOME="$amux_home" \
-AMUX_TARGET_PANE="$pane_id" \
+ATMUX_HOME="$atmux_home" \
+ATMUX_TARGET_PANE="$pane_id" \
 "$ADAPTER_DIR/scripts/model" set gpt-5.3-codex medium >/dev/null
 
 status_medium=""
 for _ in $(seq 1 15); do
   status_medium="$(
-    AMUX_HOME="$amux_home" \
-    AMUX_TARGET_PANE="$pane_id" \
-    AMUX_SOURCE_ROOT="$REPO_ROOT" \
+    ATMUX_HOME="$atmux_home" \
+    ATMUX_TARGET_PANE="$pane_id" \
+    ATMUX_SOURCE_ROOT="$REPO_ROOT" \
     "$ADAPTER_DIR/scripts/status"
   )"
   if printf '%s\n' "$status_medium" | grep -F 'reasoning_level="medium"' >/dev/null 2>&1; then

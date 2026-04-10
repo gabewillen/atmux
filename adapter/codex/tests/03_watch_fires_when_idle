@@ -21,7 +21,7 @@ trap cleanup EXIT
 
 # Stay idle, then ensure watch can still match existing pane content.
 sleep 1
-if ! "$REPO_ROOT/bin/(amux)/watch" --target "$pane_id" --scope pane --text "OpenAI Codex" --timeout 5 --interval 0.2 --lines 400; then
+if ! "$REPO_ROOT/bin/(atmux)/watch" --target "$pane_id" --scope pane --text "OpenAI Codex" --timeout 5 --interval 0.2 --lines 400; then
   tmux capture-pane -p -t "$pane_id" -S -200 >&2 || true
   echo "watch did not fire on idle pane content" >&2
   exit 1

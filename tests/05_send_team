@@ -28,7 +28,7 @@ eval "$("$SCRIPTS_DIR/setup")"
 trap "$SCRIPTS_DIR/teardown --team-session \"$TEAM_SESSION\" --agent1-session \"$AGENT1_SESSION\" --agent2-session \"$AGENT2_SESSION\"" EXIT
 
 marker="team-broadcast-$RANDOM-$(date +%s)"
-out="$(AMUX_REPO="$REPO_NAME" AMUX_AGENT_NAME="sender" AMUX_SESSION_NAME="$AGENT1_SESSION" "$AMUX_BIN" send --to "$TEAM_NAME" "$marker")"
+out="$(ATMUX_REPO="$REPO_NAME" ATMUX_AGENT_NAME="sender" ATMUX_SESSION_NAME="$AGENT1_SESSION" "$ATMUX_BIN" send --to "$TEAM_NAME" "$marker")"
 
 printf '%s\n' "$out" | grep -Fq "<send to=\"team\""
 printf '%s\n' "$out" | grep -Fq "attempted=\"2\""

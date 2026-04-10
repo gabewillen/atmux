@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-state_dir="${AMUX_HOME:-$HOME/.amux}/adapters/claude-code"
+state_dir="${ATMUX_HOME:-$HOME/.atmux}/adapters/claude-code"
 state_file="$state_dir/state.env"
 mkdir -p "$state_dir"
 [[ -f "$state_file" ]] || printf 'MODEL=%s\nREASONING_LEVEL=%s\n' 'sonnet' 'medium' > "$state_file"

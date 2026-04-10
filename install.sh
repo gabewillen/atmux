@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-AMUX_HOME="${AMUX_HOME:-$HOME/.amux}"
-AMUX_BIN_DIR="$AMUX_HOME/bin"
-AMUX_SRC_DIR="$AMUX_HOME/src/amux"
-AMUX_REPO_URL="${AMUX_REPO_URL:-https://github.com/gabrielwillen/amux.git}"
-AMUX_REPO_REF="${AMUX_REPO_REF:-main}"
+ATMUX_HOME="${ATMUX_HOME:-$HOME/.atmux}"
+ATMUX_BIN_DIR="$ATMUX_HOME/bin"
+ATMUX_SRC_DIR="$ATMUX_HOME/src/atmux"
+ATMUX_REPO_URL="${ATMUX_REPO_URL:-https://github.com/gabrielwillen/atmux.git}"
+ATMUX_REPO_REF="${ATMUX_REPO_REF:-main}"
 INSTALL_SLASH_COMMANDS=1
 
 say() {
@@ -13,7 +13,7 @@ say() {
 }
 
 ensure_dirs() {
-  mkdir -p "$AMUX_HOME" "$AMUX_BIN_DIR" "$AMUX_BIN_DIR/scripts" "$AMUX_HOME/agents" "$AMUX_HOME/adapters"
+  mkdir -p "$ATMUX_HOME" "$ATMUX_BIN_DIR" "$ATMUX_BIN_DIR/scripts" "$ATMUX_HOME/agents" "$ATMUX_HOME/adapters"
 }
 
 write_file() {
@@ -24,7 +24,7 @@ write_file() {
 }
 
 install_slash_commands() {
-  local templates_root="$AMUX_SRC_DIR/templates/slash-commands"
+  local templates_root="$ATMUX_SRC_DIR/templates/slash-commands"
   [[ -d "$templates_root" ]] || return 0
 
   local claude_root="$HOME/.claude/skills"
@@ -33,55 +33,55 @@ install_slash_commands() {
 
   mkdir -p "$claude_root" "$gemini_root" "$codex_root"
 
-  rm -rf "$claude_root/amux-send" "$claude_root/amux-assign" "$claude_root/amux-capture"
+  rm -rf "$claude_root/atmux-send" "$claude_root/atmux-assign" "$claude_root/atmux-capture"
   cp -R "$templates_root/claude-code"/. "$claude_root"/
 
-  write_file "$gemini_root/amux-send.toml" "$(cat "$templates_root/gemini/amux-send.toml")"
-  write_file "$gemini_root/amux-assign.toml" "$(cat "$templates_root/gemini/amux-assign.toml")"
-  write_file "$gemini_root/amux-capture.toml" "$(cat "$templates_root/gemini/amux-capture.toml")"
+  write_file "$gemini_root/atmux-send.toml" "$(cat "$templates_root/gemini/atmux-send.toml")"
+  write_file "$gemini_root/atmux-assign.toml" "$(cat "$templates_root/gemini/atmux-assign.toml")"
+  write_file "$gemini_root/atmux-capture.toml" "$(cat "$templates_root/gemini/atmux-capture.toml")"
 
-  write_file "$codex_root/amux-send.md" "$(cat "$templates_root/codex/amux-send.md")"
-  write_file "$codex_root/amux-assign.md" "$(cat "$templates_root/codex/amux-assign.md")"
-  write_file "$codex_root/amux-capture.md" "$(cat "$templates_root/codex/amux-capture.md")"
+  write_file "$codex_root/atmux-send.md" "$(cat "$templates_root/codex/atmux-send.md")"
+  write_file "$codex_root/atmux-assign.md" "$(cat "$templates_root/codex/atmux-assign.md")"
+  write_file "$codex_root/atmux-capture.md" "$(cat "$templates_root/codex/atmux-capture.md")"
 
   say "Installed slash/custom commands for Claude Code, Gemini CLI, and Codex."
 }
 
 install_from_local() {
   local src_root="$1"
-  rm -rf "$AMUX_SRC_DIR"
-  mkdir -p "$(dirname "$AMUX_SRC_DIR")"
+  rm -rf "$ATMUX_SRC_DIR"
+  mkdir -p "$(dirname "$ATMUX_SRC_DIR")"
 
   if command -v rsync >/dev/null 2>&1; then
-    rsync -a --delete --exclude '.git' --exclude '/tests' "$src_root"/ "$AMUX_SRC_DIR"/
+    rsync -a --delete --exclude '.git' --exclude '/tests' "$src_root"/ "$ATMUX_SRC_DIR"/
   else
-    mkdir -p "$AMUX_SRC_DIR"
-    cp -R "$src_root"/. "$AMUX_SRC_DIR"/
-    rm -rf "$AMUX_SRC_DIR/.git"
-    rm -rf "$AMUX_SRC_DIR/tests"
+    mkdir -p "$ATMUX_SRC_DIR"
+    cp -R "$src_root"/. "$ATMUX_SRC_DIR"/
+    rm -rf "$ATMUX_SRC_DIR/.git"
+    rm -rf "$ATMUX_SRC_DIR/tests"
   fi
 }
 
 install_from_remote() {
-  rm -rf "$AMUX_SRC_DIR"
-  mkdir -p "$(dirname "$AMUX_SRC_DIR")"
-  git clone --depth 1 --branch "$AMUX_REPO_REF" "$AMUX_REPO_URL" "$AMUX_SRC_DIR" >/dev/null
-  rm -rf "$AMUX_SRC_DIR/tests"
+  rm -rf "$ATMUX_SRC_DIR"
+  mkdir -p "$(dirname "$ATMUX_SRC_DIR")"
+  git clone --depth 1 --branch "$ATMUX_REPO_REF" "$ATMUX_REPO_URL" "$ATMUX_SRC_DIR" >/dev/null
+  rm -rf "$ATMUX_SRC_DIR/tests"
 }
 
 write_launcher() {
-  cat > "$AMUX_BIN_DIR/amux" <<'LAUNCHER'
+  cat > "$ATMUX_BIN_DIR/atmux" <<'LAUNCHER'
 #!/usr/bin/env bash
 set -euo pipefail
-AMUX_HOME="${AMUX_HOME:-$HOME/.amux}"
-exec "$AMUX_HOME/src/amux/bin/amux" "$@"
+ATMUX_HOME="${ATMUX_HOME:-$HOME/.atmux}"
+exec "$ATMUX_HOME/src/atmux/bin/atmux" "$@"
 LAUNCHER
-  chmod +x "$AMUX_BIN_DIR/amux"
+  chmod +x "$ATMUX_BIN_DIR/atmux"
 }
 
 install_subcommands() {
-  local src_scripts="$AMUX_SRC_DIR/bin/(amux)"
-  local dst_scripts="$AMUX_BIN_DIR/scripts"
+  local src_scripts="$ATMUX_SRC_DIR/bin/(atmux)"
+  local dst_scripts="$ATMUX_BIN_DIR/scripts"
 
   mkdir -p "$dst_scripts"
   rm -f "$dst_scripts"/*
@@ -93,27 +93,27 @@ install_subcommands() {
 }
 
 add_path_hint() {
-  local export_line='export PATH="$HOME/.amux/bin:$PATH"'
+  local export_line='export PATH="$HOME/.atmux/bin:$PATH"'
   local changed=0
   local file
 
   for file in "$HOME/.zshrc" "$HOME/.bashrc" "$HOME/.bash_profile" "$HOME/.profile"; do
     [[ -f "$file" ]] || continue
-    if ! grep -Fq "$HOME/.amux/bin" "$file"; then
-      printf '\n# amux\n%s\n' "$export_line" >> "$file"
+    if ! grep -Fq "$HOME/.atmux/bin" "$file"; then
+      printf '\n# atmux\n%s\n' "$export_line" >> "$file"
       changed=1
     fi
   done
 
   if [[ "$changed" -eq 1 ]]; then
-    say "Updated shell profile(s) with ~/.amux/bin PATH entry."
+    say "Updated shell profile(s) with ~/.atmux/bin PATH entry."
   fi
 
   case ":$PATH:" in
-    *":$HOME/.amux/bin:"*) ;;
+    *":$HOME/.atmux/bin:"*) ;;
     *)
-      say "Current shell PATH does not include ~/.amux/bin."
-      say "Run: export PATH=\"$HOME/.amux/bin:\$PATH\""
+      say "Current shell PATH does not include ~/.atmux/bin."
+      say "Run: export PATH=\"$HOME/.atmux/bin:\$PATH\""
       ;;
   esac
 }
@@ -148,11 +148,11 @@ USAGE
   script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
   src_root="$script_dir"
 
-  if [[ -x "$src_root/bin/amux" && -d "$src_root/bin/(amux)" ]]; then
-    say "Installing amux from local checkout: $src_root"
+  if [[ -x "$src_root/bin/atmux" && -d "$src_root/bin/(atmux)" ]]; then
+    say "Installing atmux from local checkout: $src_root"
     install_from_local "$src_root"
   else
-    say "Installing amux from remote: $AMUX_REPO_URL ($AMUX_REPO_REF)"
+    say "Installing atmux from remote: $ATMUX_REPO_URL ($ATMUX_REPO_REF)"
     install_from_remote
   fi
 
@@ -164,11 +164,11 @@ USAGE
   add_path_hint
 
   say ""
-  say "amux installed"
-  say "  home: $AMUX_HOME"
-  say "  launcher: $AMUX_BIN_DIR/amux"
+  say "atmux installed"
+  say "  home: $ATMUX_HOME"
+  say "  launcher: $ATMUX_BIN_DIR/atmux"
   say ""
-  say "Try: amux --help"
+  say "Try: atmux --help"
 }
 
 main "$@"

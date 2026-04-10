@@ -1,0 +1,137 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<'USAGE'
+Usage:
+  atmux team list
+  atmux team ls
+
+Description:
+  Manage repo-scoped team tmux sessions.
+  Team session format: atmux-<repo>-team-<name>
+USAGE
+}
+
+normalize_name() {
+  local raw="${1:-}"
+  local normalized=""
+  normalized="$(printf '%s' "$raw" | sed -E 's/[^A-Za-z0-9_-]+/_/g; s/_+/_/g; s/^_+//; s/_+$//')"
+  if [[ -z "$normalized" ]]; then
+    normalized="name"
+  fi
+  printf '%s\n' "$normalized"
+}
+
+repo_context() {
+  local repo_root repo_name
+  if ! repo_root="$(git rev-parse --show-toplevel 2>/dev/null)"; then
+    echo "atmux team must be run from a git repository" >&2
+    exit 1
+  fi
+
+  repo_name="${ATMUX_REPO:-}"
+  if [[ -z "$repo_name" && -n "${TMUX:-}" ]]; then
+    repo_name="$(tmux show-environment ATMUX_REPO 2>/dev/null | sed -n 's/^ATMUX_REPO=//p' || true)"
+  fi
+  if [[ -z "$repo_name" ]]; then
+    repo_name="$(basename "$repo_root")"
+  fi
+  repo_name="$(normalize_name "$repo_name")"
+  printf '%s\n%s\n' "$repo_root" "$repo_name"
+}
+
+xml_escape() {
+  printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g' -e "s/'/\&apos;/g"
+}
+
+ensure_tmux_scroll_enabled() {
+  local history_limit
+  history_limit="${ATMUX_TMUX_HISTORY_LIMIT:-200000}"
+  tmux set-option -g mouse on >/dev/null 2>&1 || true
+  tmux set-window-option -g history-limit "$history_limit" >/dev/null 2>&1 || true
+}
+
+create_team() {
+  local raw_name="${1:-}"
+  if [[ -z "$raw_name" ]]; then
+    echo "usage: atmux create --team <name>" >&2
+    exit 2
+  fi
+
+  local repo_root repo_name team_name session
+  {
+    IFS= read -r repo_root
+    IFS= read -r repo_name
+  } < <(repo_context)
+
+  team_name="$(normalize_name "$raw_name")"
+  session="atmux-${repo_name}-team-${team_name}"
+
+  if ! tmux has-session -t "$session" 2>/dev/null; then
+    tmux new-session -d -s "$session" -n "$session" -c "$repo_root"
+    ensure_tmux_scroll_enabled
+    tmux set-environment -t "$session" ATMUX_REPO "$repo_name"
+    tmux set-environment -t "$session" ATMUX_TEAM "$team_name"
+    tmux set-environment -t "$session" ATMUX_SESSION_NAME "$session"
+    tmux set-environment -t "$session" ATMUX_SESSION_KIND "team"
+  fi
+
+  # When invoked from within a repo agent session, remember this as the
+  # default team for subsequent `atmux create --agent ...` calls.
+  if [[ -n "${TMUX:-}" ]]; then
+    local caller_session caller_repo
+    caller_session="$(tmux display-message -p '#S' 2>/dev/null || true)"
+    if [[ -n "$caller_session" ]] && tmux has-session -t "$caller_session" 2>/dev/null; then
+      caller_repo="$(tmux show-environment -t "$caller_session" ATMUX_REPO 2>/dev/null | sed -n 's/^ATMUX_REPO=//p' || true)"
+      if [[ -z "$caller_repo" || "$caller_repo" == "$repo_name" ]]; then
+        tmux set-environment -t "$caller_session" ATMUX_TEAM "$team_name" >/dev/null 2>&1 || true
+      fi
+    fi
+  fi
+
+  printf '<team name="%s" repo="%s" session="%s" />\n' \
+    "$(xml_escape "$team_name")" \
+    "$(xml_escape "$repo_name")" \
+    "$(xml_escape "$session")"
+}
+
+list_teams() {
+  local repo_name
+  {
+    IFS= read -r _
+    IFS= read -r repo_name
+  } < <(repo_context)
+
+  printf '<teams repo="%s">\n' "$(xml_escape "$repo_name")"
+  while IFS= read -r session; do
+    [[ -z "$session" ]] && continue
+    if [[ "$session" == "atmux-${repo_name}-team-"* ]]; then
+      local name="${session#atmux-${repo_name}-team-}"
+      printf '  <team name="%s" repo="%s" session="%s" />\n' \
+        "$(xml_escape "$name")" \
+        "$(xml_escape "$repo_name")" \
+        "$(xml_escape "$session")"
+    fi
+  done < <(tmux list-sessions -F '#{session_name}' 2>/dev/null || true)
+  printf '</teams>\n'
+}
+
+sub="${1:-}"
+shift || true
+
+case "$sub" in
+  _create)
+    create_team "${1:-}"
+    ;;
+  list|ls)
+    list_teams
+    ;;
+  -h|--help|help|"")
+    usage
+    ;;
+  *)
+    echo "unknown team command: $sub" >&2
+    exit 2
+    ;;
+esac

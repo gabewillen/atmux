@@ -44,19 +44,19 @@ receiver_pane="$(tmux list-panes -t "$AGENT2_SESSION" -F '#{pane_id}' 2>/dev/nul
 [[ -n "$sender_pane" ]] || { echo "sender pane missing" >&2; exit 1; }
 [[ -n "$receiver_pane" ]] || { echo "receiver pane missing" >&2; exit 1; }
 
-AMUX_REPO="$REPO_NAME" AMUX_AGENT_NAME="sender" AMUX_SESSION_NAME="$AGENT1_SESSION" "$AMUX_BIN" schedule --to "$TEAM_NAME" --interval 1s "$marker" >/tmp/amux-schedule-interval.$$ 2>&1 &
+ATMUX_REPO="$REPO_NAME" ATMUX_AGENT_NAME="sender" ATMUX_SESSION_NAME="$AGENT1_SESSION" "$ATMUX_BIN" schedule --to "$TEAM_NAME" --interval 1s "$marker" >/tmp/atmux-schedule-interval.$$ 2>&1 &
 scheduler_pid=$!
 
 if ! wait_for_count "$sender_pane" "$marker" 2 12; then
   echo "scheduled interval marker not repeated in sender pane: $marker" >&2
   tmux capture-pane -p -t "$sender_pane" -S -160 >&2 || true
-  cat /tmp/amux-schedule-interval.$$ >&2 || true
+  cat /tmp/atmux-schedule-interval.$$ >&2 || true
   exit 1
 fi
 if ! wait_for_count "$receiver_pane" "$marker" 2 12; then
   echo "scheduled interval marker not repeated in receiver pane: $marker" >&2
   tmux capture-pane -p -t "$receiver_pane" -S -160 >&2 || true
-  cat /tmp/amux-schedule-interval.$$ >&2 || true
+  cat /tmp/atmux-schedule-interval.$$ >&2 || true
   exit 1
 fi
 

@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 TESTS_DIR="$(cd -- "$SCRIPTS_DIR/.." && pwd)"
 REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
-AMUX_BIN="${AMUX_TEST_AMUX_BIN:-$REPO_ROOT/bin/amux}"
+ATMUX_BIN="${ATMUX_TEST_ATMUX_BIN:-$REPO_ROOT/bin/atmux}"
 
 normalize_name() {
   local raw="${1:-}"
@@ -26,17 +26,17 @@ require_cmd() {
 main() {
   require_cmd tmux
 
-  if [[ ! -x "$AMUX_BIN" ]]; then
-    echo "amux binary not found at: $AMUX_BIN" >&2
+  if [[ ! -x "$ATMUX_BIN" ]]; then
+    echo "atmux binary not found at: $ATMUX_BIN" >&2
     exit 1
   fi
 
   local repo_name team_name agent1 agent2 team_session pane1 pane2
   repo_name="$(normalize_name "$(basename "$REPO_ROOT")")"
-  team_name="${AMUX_TEST_TEAM_NAME:-teamtest-$RANDOM}"
-  agent1="amux-${repo_name}-sender"
-  agent2="amux-${repo_name}-receiver"
-  team_session="amux-${repo_name}-team-${team_name}"
+  team_name="${ATMUX_TEST_TEAM_NAME:-teamtest-$RANDOM}"
+  agent1="atmux-${repo_name}-sender"
+  agent2="atmux-${repo_name}-receiver"
+  team_session="atmux-${repo_name}-team-${team_name}"
 
   for s in "$agent1" "$agent2" "$team_session"; do
     if tmux has-session -t "$s" 2>/dev/null; then
@@ -45,32 +45,32 @@ main() {
   done
 
   tmux new-session -d -s "$agent1" -n "$agent1" -c "$REPO_ROOT" "cat"
-  tmux set-environment -t "$agent1" AMUX_REPO "$repo_name"
-  tmux set-environment -t "$agent1" AMUX_AGENT_NAME "sender"
-  tmux set-environment -t "$agent1" AMUX_SESSION_NAME "$agent1"
+  tmux set-environment -t "$agent1" ATMUX_REPO "$repo_name"
+  tmux set-environment -t "$agent1" ATMUX_AGENT_NAME "sender"
+  tmux set-environment -t "$agent1" ATMUX_SESSION_NAME "$agent1"
 
   tmux new-session -d -s "$agent2" -n "$agent2" -c "$REPO_ROOT" "cat"
-  tmux set-environment -t "$agent2" AMUX_REPO "$repo_name"
-  tmux set-environment -t "$agent2" AMUX_AGENT_NAME "receiver"
-  tmux set-environment -t "$agent2" AMUX_SESSION_NAME "$agent2"
+  tmux set-environment -t "$agent2" ATMUX_REPO "$repo_name"
+  tmux set-environment -t "$agent2" ATMUX_AGENT_NAME "receiver"
+  tmux set-environment -t "$agent2" ATMUX_SESSION_NAME "$agent2"
 
-  AMUX_REPO="$repo_name" "$AMUX_BIN" create --team "$team_name" >/dev/null
+  ATMUX_REPO="$repo_name" "$ATMUX_BIN" create --team "$team_name" >/dev/null
 
   tmux send-keys -t "${team_session}:0.0" C-c >/dev/null 2>&1 || true
   tmux send-keys -t "${team_session}:0.0" C-u >/dev/null 2>&1 || true
   tmux send-keys -t "${team_session}:0.0" "TMUX= tmux attach-session -r -t \"$agent1\"" C-m
   pane1="$(tmux display-message -p -t "${team_session}:0.0" '#{pane_id}')"
-  tmux set-option -p -t "$pane1" @amux_agent_session "$agent1" >/dev/null 2>&1 || true
-  tmux set-option -p -t "$pane1" @amux_agent_name "sender" >/dev/null 2>&1 || true
+  tmux set-option -p -t "$pane1" @atmux_agent_session "$agent1" >/dev/null 2>&1 || true
+  tmux set-option -p -t "$pane1" @atmux_agent_name "sender" >/dev/null 2>&1 || true
 
   pane2="$(tmux split-window -d -t "${team_session}:0" -c "$REPO_ROOT" -P -F '#{pane_id}' "TMUX= tmux attach-session -r -t \"$agent2\"")"
-  tmux set-option -p -t "$pane2" @amux_agent_session "$agent2" >/dev/null 2>&1 || true
-  tmux set-option -p -t "$pane2" @amux_agent_name "receiver" >/dev/null 2>&1 || true
+  tmux set-option -p -t "$pane2" @atmux_agent_session "$agent2" >/dev/null 2>&1 || true
+  tmux set-option -p -t "$pane2" @atmux_agent_name "receiver" >/dev/null 2>&1 || true
   tmux select-layout -t "${team_session}:0" tiled >/dev/null 2>&1 || true
 
   printf 'REPO_ROOT=%q\n' "$REPO_ROOT"
   printf 'REPO_NAME=%q\n' "$repo_name"
-  printf 'AMUX_BIN=%q\n' "$AMUX_BIN"
+  printf 'ATMUX_BIN=%q\n' "$ATMUX_BIN"
   printf 'TEAM_NAME=%q\n' "$team_name"
   printf 'TEAM_SESSION=%q\n' "$team_session"
   printf 'AGENT1_SESSION=%q\n' "$agent1"

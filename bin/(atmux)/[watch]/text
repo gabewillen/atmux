@@ -1,0 +1,107 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<'USAGE'
+Usage:
+  atmux watch --target <tmux-target> --text <needle> [--scope pane|window|session] [--timeout <seconds>] [--interval <seconds>] [--lines <n>]
+
+Description:
+  Poll tmux output and exit 0 when text appears, non-zero on timeout.
+
+Examples:
+  atmux watch --target %12 --scope pane --text "Select Model and Effort"
+  atmux watch --target @3 --scope window --text "running tests" --timeout 20
+USAGE
+}
+
+capture_scope() {
+  local scope="$1"
+  local target="$2"
+  local lines="$3"
+
+  case "$scope" in
+    pane)
+      tmux capture-pane -p -t "$target" -S "-$lines" 2>/dev/null || true
+      ;;
+    window|session)
+      tmux list-panes -t "$target" -F '#{pane_id}' 2>/dev/null \
+        | while IFS= read -r pane; do
+            [[ -z "$pane" ]] && continue
+            tmux capture-pane -p -t "$pane" -S "-$lines" 2>/dev/null || true
+            printf '\n'
+          done
+      ;;
+    *)
+      echo "invalid scope: $scope" >&2
+      exit 2
+      ;;
+  esac
+}
+
+main() {
+  local target=""
+  local needle=""
+  local scope="pane"
+  local timeout="10"
+  local interval="0.2"
+  local lines="200"
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --target)
+        target="${2:-}"
+        shift 2
+        ;;
+      --text)
+        needle="${2:-}"
+        shift 2
+        ;;
+      --scope)
+        scope="${2:-}"
+        shift 2
+        ;;
+      --timeout)
+        timeout="${2:-}"
+        shift 2
+        ;;
+      --interval)
+        interval="${2:-}"
+        shift 2
+        ;;
+      --lines)
+        lines="${2:-}"
+        shift 2
+        ;;
+      -h|--help|help)
+        usage
+        exit 0
+        ;;
+      *)
+        echo "unknown flag: $1" >&2
+        usage >&2
+        exit 2
+        ;;
+    esac
+  done
+
+  [[ -n "$target" ]] || { echo "missing --target" >&2; exit 2; }
+  [[ -n "$needle" ]] || { echo "missing --text" >&2; exit 2; }
+
+  local deadline now
+  deadline=$(( $(date +%s) + timeout ))
+
+  while true; do
+    if capture_scope "$scope" "$target" "$lines" | grep -Fq "$needle"; then
+      exit 0
+    fi
+
+    now="$(date +%s)"
+    if (( now >= deadline )); then
+      exit 1
+    fi
+    sleep "$interval"
+  done
+}
+
+main "$@"

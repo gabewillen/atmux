@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<'USAGE'
+Usage:
+  atmux env
+  atmux env get <key>
+
+Description:
+  Inspect ATMUX_* environment variables in the current process.
+
+Examples:
+  atmux env
+  atmux env get repo
+  atmux env get ATMUX_WORKTREE
+USAGE
+}
+
+normalize_key() {
+  local key="$1"
+  key="${key#ATMUX_}"
+  key="$(printf '%s' "$key" | tr '[:lower:]' '[:upper:]')"
+  printf 'ATMUX_%s\n' "$key"
+}
+
+cmd_list() {
+  env | awk -F= '/^ATMUX_/ { print $0 }' | sort
+}
+
+cmd_get() {
+  local raw_key="${1:-}"
+  if [[ -z "$raw_key" ]]; then
+    echo "missing key" >&2
+    usage >&2
+    exit 2
+  fi
+
+  local env_key
+  env_key="$(normalize_key "$raw_key")"
+
+  if [[ -z "${!env_key+x}" ]]; then
+    echo "key not found: $env_key" >&2
+    exit 1
+  fi
+
+  printf '%s\n' "${!env_key}"
+}
+
+main() {
+  if [[ $# -eq 0 ]]; then
+    cmd_list
+    return
+  fi
+
+  case "$1" in
+    get)
+      shift
+      cmd_get "${1:-}"
+      ;;
+    -h|--help|help)
+      usage
+      ;;
+    *)
+      echo "unknown command: $1" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+}
+
+main "$@"

@@ -1,0 +1,185 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ATMUX_HOME="${ATMUX_HOME:-$HOME/.atmux}"
+
+usage() {
+  cat <<'USAGE'
+Usage:
+  atmux schedule [--to <name|session>] [--reply-required] (--interval <duration> | --once <duration>) "message"
+
+Description:
+  Schedule a future or repeating send using the same target matching as `atmux send`.
+  If --to is omitted, the current agent session is targeted.
+  Resolution order for --to:
+    1) Team session/name
+    2) Agent session/name
+
+Durations:
+  Supports integer values with optional unit suffix:
+    ms  milliseconds
+    s   seconds
+    m   minutes
+    h   hours
+    d   days
+  If no suffix is provided, seconds are assumed.
+
+Examples:
+  atmux schedule --to planner --once 10m "status check"
+  atmux schedule --to platform --interval 30m --reply-required "heartbeat"
+  atmux schedule --once 10m "remind myself"
+  atmux schedule "follow up" --to atmux-myrepo-worker --once 45s
+USAGE
+}
+
+xml_escape() {
+  printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g' -e "s/'/\&apos;/g"
+}
+
+resolve_atmux_bin() {
+  local script_dir repo_root=""
+  script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+  repo_root="$(cd -- "$script_dir/../.." && pwd)"
+  if [[ -x "$repo_root/bin/atmux" ]]; then
+    printf '%s\n' "$repo_root/bin/atmux"
+    return 0
+  fi
+  if [[ -x "$ATMUX_HOME/bin/atmux" ]]; then
+    printf '%s\n' "$ATMUX_HOME/bin/atmux"
+    return 0
+  fi
+  echo "atmux binary not found" >&2
+  exit 1
+}
+
+parse_duration_seconds() {
+  local raw="${1:-}"
+  local value unit multiplier
+
+  if [[ ! "$raw" =~ ^([0-9]+)(ms|s|m|h|d)?$ ]]; then
+    echo "invalid duration: $raw" >&2
+    exit 2
+  fi
+
+  value="${BASH_REMATCH[1]}"
+  unit="${BASH_REMATCH[2]:-s}"
+
+  case "$unit" in
+    ms) multiplier="0.001" ;;
+    s) multiplier="1" ;;
+    m) multiplier="60" ;;
+    h) multiplier="3600" ;;
+    d) multiplier="86400" ;;
+    *)
+      echo "invalid duration unit: $unit" >&2
+      exit 2
+      ;;
+  esac
+
+  awk -v value="$value" -v multiplier="$multiplier" 'BEGIN { printf "%.3f\n", value * multiplier }'
+}
+
+sleep_for_duration() {
+  local duration_seconds="$1"
+  sleep "$duration_seconds"
+}
+
+default_target_name() {
+  if [[ -n "${ATMUX_AGENT_NAME:-}" ]]; then
+    printf '%s\n' "$ATMUX_AGENT_NAME"
+    return 0
+  fi
+  if [[ -n "${ATMUX_SESSION_NAME:-}" ]]; then
+    printf '%s\n' "$ATMUX_SESSION_NAME"
+    return 0
+  fi
+  echo "unable to infer self target; set ATMUX_AGENT_NAME or use --to" >&2
+  exit 2
+}
+
+target_name=""
+reply_required=0
+interval_raw=""
+once_raw=""
+message=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --to)
+      target_name="${2:-}"
+      shift 2
+      ;;
+    --reply-required)
+      reply_required=1
+      shift
+      ;;
+    --interval)
+      interval_raw="${2:-}"
+      shift 2
+      ;;
+    --once)
+      once_raw="${2:-}"
+      shift 2
+      ;;
+    -h|--help|help)
+      usage
+      exit 0
+      ;;
+    --)
+      shift
+      message="$*"
+      break
+      ;;
+    *)
+      if [[ -z "$message" ]]; then
+        message="$1"
+      else
+        message+=" $1"
+      fi
+      shift
+      ;;
+  esac
+done
+
+if [[ -z "$message" ]]; then
+  echo "missing message" >&2
+  exit 2
+fi
+if [[ -n "$interval_raw" && -n "$once_raw" ]]; then
+  echo "use exactly one of --interval or --once" >&2
+  exit 2
+fi
+if [[ -z "$interval_raw" && -z "$once_raw" ]]; then
+  echo "missing required flag: --interval <duration> or --once <duration>" >&2
+  exit 2
+fi
+if [[ -z "$target_name" ]]; then
+  target_name="$(default_target_name)"
+fi
+
+atmux_bin="$(resolve_atmux_bin)"
+
+send_args=(send --to "$target_name")
+if [[ "$reply_required" -eq 1 ]]; then
+  send_args+=(--reply-required)
+fi
+send_args+=("$message")
+
+if [[ -n "$once_raw" ]]; then
+  once_seconds="$(parse_duration_seconds "$once_raw")"
+  sleep_for_duration "$once_seconds"
+  exec "$atmux_bin" "${send_args[@]}"
+fi
+
+interval_seconds="$(parse_duration_seconds "$interval_raw")"
+count=0
+
+while true; do
+  sleep_for_duration "$interval_seconds"
+  "$atmux_bin" "${send_args[@]}" >/dev/null
+  count=$((count + 1))
+  printf '<schedule to="%s" mode="interval" duration="%s" iteration="%s" />\n' \
+    "$(xml_escape "$target_name")" \
+    "$(xml_escape "$interval_raw")" \
+    "$(xml_escape "$count")"
+done

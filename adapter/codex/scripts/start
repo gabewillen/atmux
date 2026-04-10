@@ -17,7 +17,7 @@ set_bootstrap_state() {
   local session=""
   session="$(current_session_name)"
   [[ -n "$session" ]] || return 0
-  tmux set-environment -t "$session" AMUX_BOOTSTRAP_STATE "$state" >/dev/null 2>&1 || true
+  tmux set-environment -t "$session" ATMUX_BOOTSTRAP_STATE "$state" >/dev/null 2>&1 || true
 }
 
 resolve_profile_from_manifest() {
@@ -49,7 +49,7 @@ resolve_profile_from_manifest() {
 }
 
 schedule_intelligence_profile() {
-  local intelligence="${AMUX_INTELLIGENCE:-}"
+  local intelligence="${ATMUX_INTELLIGENCE:-}"
   if [[ -z "$intelligence" || ! "$intelligence" =~ ^[0-9]+$ ]] || (( intelligence < 0 || intelligence > 100 )); then
     set_bootstrap_state ready
     return 0
@@ -78,7 +78,7 @@ schedule_intelligence_profile() {
   fi
 
   adapter_cmd="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)/cmd"
-  watch_cmd="${AMUX_SOURCE_ROOT:-${AMUX_HOME:-$HOME/.amux}/src/amux}/bin/(amux)/watch"
+  watch_cmd="${ATMUX_SOURCE_ROOT:-${ATMUX_HOME:-$HOME/.atmux}/src/atmux}/bin/(atmux)/watch"
   set_bootstrap_state pending
 
   (
@@ -88,7 +88,7 @@ schedule_intelligence_profile() {
     else
       sleep 2
     fi
-    if AMUX_TARGET_PANE="$pane_id" "$adapter_cmd" model set "$model" "$reasoning" >/dev/null 2>&1; then
+    if ATMUX_TARGET_PANE="$pane_id" "$adapter_cmd" model set "$model" "$reasoning" >/dev/null 2>&1; then
       success=1
     fi
     if [[ "$success" -eq 1 ]]; then

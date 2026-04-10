@@ -14,7 +14,7 @@ tmux send-keys -t "${AGENT1_SESSION}:0.0" "$marker1" C-m
 tmux send-keys -t "${AGENT2_SESSION}:0.0" "$marker2" C-m
 sleep 0.2
 
-out="$(AMUX_REPO="$REPO_NAME" "$AMUX_BIN" capture --team "$TEAM_NAME" --lines 120)"
+out="$(ATMUX_REPO="$REPO_NAME" "$ATMUX_BIN" capture --team "$TEAM_NAME" --lines 120)"
 
 printf '%s\n' "$out" | grep -Fq "<captures scope=\"team\" team=\"$TEAM_NAME\" session=\"$TEAM_SESSION\">"
 printf '%s\n' "$out" | grep -Fq "$marker1"

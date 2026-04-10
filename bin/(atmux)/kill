@@ -1,0 +1,122 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ATMUX_HOME="${ATMUX_HOME:-$HOME/.atmux}"
+
+HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=bin/(atmux)/notify
+source "$HERE/notify"
+
+usage() {
+  cat <<'USAGE'
+Usage:
+  atmux kill --pid <pid> [--timeout <seconds>] [--signal <NAME>]
+
+Description:
+  Stop an atmux exec-tracked child process for this repo, wait for executor
+  notifications (including watcher fan-out) to finish, then remove metadata
+  under ~/.atmux/exec/<repo>/<pid>/.
+
+Examples:
+  atmux kill --pid 12345
+  atmux kill --pid 12345 --timeout 30 --signal TERM
+USAGE
+}
+
+wait_for_completion_or_timeout() {
+  local exec_dir="$1"
+  local timeout_sec="$2"
+  local deadline now st
+  deadline=$(( $(date +%s) + timeout_sec ))
+  while true; do
+    if [[ -f "$exec_dir/notified" ]]; then
+      return 0
+    fi
+    now="$(date +%s)"
+    if (( now >= deadline )); then
+      st="$(read_state_field "$exec_dir/state")"
+      if [[ "$st" == "exited" ]]; then
+        sleep 0.5
+        return 0
+      fi
+      return 1
+    fi
+    sleep 0.05
+  done
+}
+
+main() {
+  local pid=""
+  local timeout_sec="60"
+  local signal_name="TERM"
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --pid)
+        pid="${2:-}"
+        shift 2
+        ;;
+      --timeout)
+        timeout_sec="${2:-}"
+        shift 2
+        ;;
+      --signal)
+        signal_name="${2:-}"
+        shift 2
+        ;;
+      -h|--help|help)
+        usage
+        exit 0
+        ;;
+      *)
+        echo "unknown flag: $1" >&2
+        usage >&2
+        exit 2
+        ;;
+    esac
+  done
+
+  [[ -n "$pid" ]] || { echo "missing --pid" >&2; usage >&2; exit 2; }
+
+  local repo_name
+  repo_name="$(repo_name_from_context)"
+  local exec_dir
+  exec_dir="$(exec_dir_for_repo_pid "$repo_name" "$pid")"
+
+  if ! validate_exec_ownership "$exec_dir" "$pid" "$repo_name"; then
+    echo "atmux kill: not an atmux-owned exec PID for this repo: $pid" >&2
+    exit 2
+  fi
+
+  local st
+  st="$(read_state_field "$exec_dir/state")"
+
+  if [[ "$st" != "exited" ]]; then
+    if kill -0 "$pid" 2>/dev/null; then
+      kill "-${signal_name}" "$pid" 2>/dev/null || true
+      local deadline now
+      deadline=$(( $(date +%s) + timeout_sec ))
+      while kill -0 "$pid" 2>/dev/null; do
+        now="$(date +%s)"
+        if (( now >= deadline )); then
+          kill -KILL "$pid" 2>/dev/null || true
+          sleep 0.05
+          break
+        fi
+        sleep 0.1
+      done
+    fi
+  fi
+
+  if ! wait_for_completion_or_timeout "$exec_dir" "$timeout_sec"; then
+    echo "atmux kill: timeout waiting for exec completion" >&2
+    exit 124
+  fi
+
+  if [[ -d "$exec_dir" ]]; then
+    rm -rf "$exec_dir"
+  fi
+  exit 0
+}
+
+main "$@"

@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  shellcheck:
+    name: Shellcheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install shellcheck
+        run: sudo apt-get install -y shellcheck
+
+      - name: Run shellcheck
+        run: |
+          find bin install.sh -type f -not -path '*/.git/*' \
+            | xargs shellcheck --severity=error -e SC1091
+
+  test:
+    name: Integration tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install tmux
+        run: sudo apt-get install -y tmux
+
+      - name: Start tmux server
+        run: tmux start-server
+
+      - name: Run tests
+        env:
+          ATMUX_ALLOW_OUTSIDE_TMUX: "1"
+        run: ./tests/runner

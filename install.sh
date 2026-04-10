@@ -5,7 +5,12 @@ ATMUX_HOME="${ATMUX_HOME:-$HOME/.atmux}"
 ATMUX_BIN_DIR="$ATMUX_HOME/bin"
 ATMUX_SRC_DIR="$ATMUX_HOME/src/atmux"
 ATMUX_REPO_URL="${ATMUX_REPO_URL:-https://github.com/gabrielwillen/atmux.git}"
-ATMUX_REPO_REF="${ATMUX_REPO_REF:-main}"
+# ATMUX_VERSION takes precedence over ATMUX_REPO_REF when set (e.g. ATMUX_VERSION=0.2.0)
+if [[ -n "${ATMUX_VERSION:-}" ]]; then
+  ATMUX_REPO_REF="v${ATMUX_VERSION}"
+else
+  ATMUX_REPO_REF="${ATMUX_REPO_REF:-main}"
+fi
 INSTALL_SLASH_COMMANDS=1
 
 say() {
@@ -163,10 +168,16 @@ USAGE
   fi
   add_path_hint
 
+  local installed_version=""
+  if [[ -f "$ATMUX_SRC_DIR/VERSION" ]]; then
+    installed_version="$(tr -d '[:space:]' < "$ATMUX_SRC_DIR/VERSION")"
+  fi
+
   say ""
   say "atmux installed"
-  say "  home: $ATMUX_HOME"
+  say "  home:     $ATMUX_HOME"
   say "  launcher: $ATMUX_BIN_DIR/atmux"
+  [[ -n "$installed_version" ]] && say "  version:  $installed_version"
   say ""
   say "Try: atmux --help"
 }

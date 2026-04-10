@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+ATMUX_BIN="$REPO_ROOT/bin/atmux"
+
+tmp_home="$(mktemp -d "${TMPDIR:-/tmp}/atmux-kill-home.XXXXXX")"
+cleanup() {
+  rm -rf "$tmp_home"
+}
+trap cleanup EXIT
+
+repo_name="kill_test_$RANDOM"
+
+set +e
+out_rej="$(HOME="$tmp_home" ATMUX_HOME="$tmp_home/.atmux" ATMUX_REPO="$repo_name" ATMUX_ALLOW_OUTSIDE_TMUX=1 "$ATMUX_BIN" kill --pid 999999999 2>&1)"
+rc_rej=$?
+set -e
+[[ "$rc_rej" -eq 2 ]] || { echo "expected reject exit 2, got $rc_rej: $out_rej" >&2; exit 1; }
+
+(
+  HOME="$tmp_home" ATMUX_HOME="$tmp_home/.atmux" ATMUX_REPO="$repo_name" ATMUX_AGENT_NAME="t" ATMUX_ALLOW_OUTSIDE_TMUX=1 \
+    exec "$ATMUX_BIN" exec sleep 60
+) &
+exec_wrapper_pid=$!
+
+deadline=$(( $(date +%s) + 15 ))
+child_pid=""
+exec_root="$tmp_home/.atmux/exec/$repo_name"
+while [[ -z "$child_pid" ]]; do
+  now="$(date +%s)"
+  if (( now >= deadline )); then
+    echo "timeout waiting for exec metadata" >&2
+    kill "$exec_wrapper_pid" 2>/dev/null || true
+    exit 1
+  fi
+  if [[ -d "$exec_root" ]]; then
+    ep_dir="$(find "$exec_root" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | head -n1)"
+    if [[ -n "$ep_dir" && -f "$ep_dir/pid" ]]; then
+      child_pid="$(tr -d '\r\n' <"$ep_dir/pid")"
+    fi
+  fi
+  sleep 0.05
+done
+
+HOME="$tmp_home" ATMUX_HOME="$tmp_home/.atmux" ATMUX_REPO="$repo_name" ATMUX_ALLOW_OUTSIDE_TMUX=1 "$ATMUX_BIN" kill --pid "$child_pid" --timeout 30
+rc_kill=$?
+[[ "$rc_kill" -eq 0 ]] || { echo "kill failed rc=$rc_kill" >&2; exit 1; }
+
+wait "$exec_wrapper_pid" || true
+
+[[ ! -d "$exec_root/$child_pid" ]] || { echo "exec dir should be removed" >&2; exit 1; }
+
+echo "ok: kill clears exec metadata"

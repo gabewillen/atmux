@@ -1,0 +1,121 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+ATMUX_BIN="$REPO_ROOT/bin/atmux"
+
+wait_for_text() {
+  local target="$1"
+  local needle="$2"
+  local timeout="${3:-20}"
+  local deadline now snap compact
+  deadline=$(( $(date +%s) + timeout ))
+  while true; do
+    snap="$(tmux capture-pane -p -t "$target" -S -400 2>/dev/null || true)"
+    compact="$(printf '%s' "$snap" | tr -d '\r\n')"
+    if printf '%s' "$compact" | grep -Fq "$needle"; then
+      return 0
+    fi
+    now="$(date +%s)"
+    if (( now >= deadline )); then
+      return 1
+    fi
+    sleep 0.1
+  done
+}
+
+tmp_home="$(mktemp -d "${TMPDIR:-/tmp}/atmux-kill-watch.XXXXXX")"
+repo_name="kw${RANDOM}"
+session_a="atmux-${repo_name}-a"
+session_b="atmux-${repo_name}-b"
+session_c="atmux-${repo_name}-c"
+atmux_home="$tmp_home/.atmux"
+exec_root="$atmux_home/exec/$repo_name"
+
+cleanup() {
+  tmux kill-session -t "$session_a" >/dev/null 2>&1 || true
+  tmux kill-session -t "$session_b" >/dev/null 2>&1 || true
+  tmux kill-session -t "$session_c" >/dev/null 2>&1 || true
+  rm -rf "$tmp_home"
+}
+trap cleanup EXIT
+
+tmux kill-session -t "$session_a" >/dev/null 2>&1 || true
+tmux kill-session -t "$session_b" >/dev/null 2>&1 || true
+tmux kill-session -t "$session_c" >/dev/null 2>&1 || true
+
+tmux new-session -d -s "$session_a" -n "$session_a" -x 160 -y 40 -c "$REPO_ROOT" "/bin/bash" -l
+tmux new-session -d -s "$session_b" -n "$session_b" -x 160 -y 40 -c "$REPO_ROOT" "/bin/bash" -l
+tmux new-session -d -s "$session_c" -n "$session_c" -x 160 -y 40 -c "$REPO_ROOT" "/bin/bash" -l
+
+pane_a="$(tmux list-panes -t "$session_a" -F '#{pane_id}' 2>/dev/null | head -n1)"
+pane_b="$(tmux list-panes -t "$session_b" -F '#{pane_id}' 2>/dev/null | head -n1)"
+pane_c="$(tmux list-panes -t "$session_c" -F '#{pane_id}' 2>/dev/null | head -n1)"
+[[ -n "$pane_a" && -n "$pane_b" && -n "$pane_c" ]] || { echo "missing panes" >&2; exit 1; }
+
+tmux set-environment -t "$session_a" ATMUX_REPO "$repo_name"
+tmux set-environment -t "$session_a" ATMUX_AGENT_NAME "a"
+tmux set-environment -t "$session_a" ATMUX_SESSION_NAME "$session_a"
+
+tmux set-environment -t "$session_b" ATMUX_REPO "$repo_name"
+tmux set-environment -t "$session_b" ATMUX_AGENT_NAME "b"
+tmux set-environment -t "$session_b" ATMUX_SESSION_NAME "$session_b"
+
+tmux set-environment -t "$session_c" ATMUX_REPO "$repo_name"
+tmux set-environment -t "$session_c" ATMUX_AGENT_NAME "c"
+tmux set-environment -t "$session_c" ATMUX_SESSION_NAME "$session_c"
+
+tmux send-keys -t "$pane_a" "ATMUX_HOME=\"$atmux_home\" ATMUX_REPO=\"$repo_name\" ATMUX_AGENT_NAME=\"a\" ATMUX_SESSION_NAME=\"$session_a\" \"$ATMUX_BIN\" exec sleep 8" C-m
+
+deadline=$(( $(date +%s) + 12 ))
+pid=""
+while [[ -z "$pid" ]]; do
+  now="$(date +%s)"
+  if (( now >= deadline )); then
+    echo "timeout waiting for exec metadata" >&2
+    tmux capture-pane -p -t "$pane_a" -S -80 >&2 || true
+    exit 1
+  fi
+  if [[ -d "$exec_root" ]]; then
+    ep_dir="$(find "$exec_root" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | head -n1)"
+    if [[ -n "$ep_dir" && -f "$ep_dir/pid" ]]; then
+      pid="$(tr -d '\r\n' <"$ep_dir/pid")"
+    fi
+  fi
+  sleep 0.05
+done
+
+tmux send-keys -t "$pane_b" "ATMUX_HOME=\"$atmux_home\" ATMUX_REPO=\"$repo_name\" ATMUX_AGENT_NAME=\"b\" ATMUX_SESSION_NAME=\"$session_b\" \"$ATMUX_BIN\" watch --pid \"$pid\"" C-m
+
+deadline=$(( $(date +%s) + 15 ))
+while true; do
+  now="$(date +%s)"
+  if (( now >= deadline )); then
+    echo "timeout waiting for watcher registration" >&2
+    tmux capture-pane -p -t "$pane_b" -S -80 >&2 || true
+    exit 1
+  fi
+  wdir="$exec_root/$pid/watchers"
+  wn=0
+  if [[ -d "$wdir" ]]; then
+    wn="$(find "$wdir" -mindepth 1 -maxdepth 1 -type f 2>/dev/null | wc -l | tr -d ' ')"
+  fi
+  if [[ "${wn:-0}" -ge 1 ]]; then
+    break
+  fi
+  sleep 0.05
+done
+
+tmux send-keys -t "$pane_c" "ATMUX_HOME=\"$atmux_home\" ATMUX_REPO=\"$repo_name\" ATMUX_AGENT_NAME=\"c\" ATMUX_SESSION_NAME=\"$session_c\" \"$ATMUX_BIN\" kill --pid \"$pid\" --timeout 30" C-m
+
+if ! wait_for_text "$pane_b" "<notification from=\"exec" 25; then
+  echo "watcher pane missing notification after kill" >&2
+  tmux capture-pane -p -t "$pane_b" -S -200 >&2 || true
+  exit 1
+fi
+
+sleep 0.3
+[[ ! -d "$exec_root/$pid" ]] || { echo "exec dir should be removed after kill" >&2; exit 1; }
+
+echo "ok: kill notifies watchers before clearing metadata"

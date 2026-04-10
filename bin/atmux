@@ -181,7 +181,7 @@ should_wrap_command() {
   fi
 
   case "$cmd" in
-    exec|watch|notify)
+    exec|watch|notify|kill)
       return 1
       ;;
     session)
@@ -260,6 +260,54 @@ bootstrap_tmux_shell() {
   tmux new-window -n atmux -e "PATH=${path_val}" -- "$shell" -l
 }
 
+maybe_auto_update() {
+  local stamp="$ATMUX_HOME/.last-update-check"
+  local log="$ATMUX_HOME/.update.log"
+  local throttle=3600  # seconds between checks
+
+  # Check global config, then local repo config
+  local enabled=0 val cfg
+  cfg="$ATMUX_HOME/config/update/auto"
+  if [[ -f "$cfg" ]]; then
+    val="$(cat "$cfg")"
+    [[ "$val" == "1" || "$val" == "true" ]] && enabled=1
+  fi
+  if [[ "$enabled" -eq 0 ]]; then
+    local repo_root=""
+    if repo_root="$(git rev-parse --show-toplevel 2>/dev/null)"; then
+      cfg="$repo_root/.atmux/config/update/auto"
+      if [[ -f "$cfg" ]]; then
+        val="$(cat "$cfg")"
+        [[ "$val" == "1" || "$val" == "true" ]] && enabled=1
+      fi
+    fi
+  fi
+  [[ "$enabled" -eq 1 ]] || return 0
+
+  if [[ -f "$stamp" ]]; then
+    local now mtime age
+    now="$(date +%s)"
+    mtime="$(stat -f %m "$stamp" 2>/dev/null || stat -c %Y "$stamp" 2>/dev/null || echo 0)"
+    age=$(( now - mtime ))
+    [[ "$age" -lt "$throttle" ]] && return 0
+  fi
+
+  touch "$stamp"
+
+  local update_script=""
+  if [[ -x "${ATMUX_SOURCE_ROOT:-}/bin/(atmux)/update" ]]; then
+    update_script="${ATMUX_SOURCE_ROOT}/bin/(atmux)/update"
+  elif [[ -x "$ATMUX_HOME/bin/scripts/update" ]]; then
+    update_script="$ATMUX_HOME/bin/scripts/update"
+  else
+    return 0
+  fi
+
+  ( ATMUX_HOME="$ATMUX_HOME" ATMUX_ALLOW_OUTSIDE_TMUX=1 \
+      "$update_script" >> "$log" 2>&1 ) &
+  disown $!
+}
+
 main() {
   ensure_atmux_home
 
@@ -267,6 +315,8 @@ main() {
     bootstrap_tmux_shell
     exit 0
   fi
+
+  maybe_auto_update
 
   require_tmux
 

@@ -29,6 +29,7 @@ record_exec_start() {
   local repo_name="$2"
   local command_text="$3"
   local started_at="$4"
+  local executor_pane="${5:-}"
   exec_dir="$(exec_dir_for_repo_pid "$repo_name" "$pid")"
   mkdir -p "$exec_dir"
   write_field "$exec_dir/pid" "$pid"
@@ -37,6 +38,7 @@ record_exec_start() {
   write_field "$exec_dir/started_at" "$started_at"
   write_field "$exec_dir/session_name" "${ATMUX_SESSION_NAME:-}"
   write_field "$exec_dir/agent_name" "${ATMUX_AGENT_NAME:-}"
+  write_field "$exec_dir/executor_pane" "$executor_pane"
   write_field "$exec_dir/state" "running"
 }
 
@@ -91,7 +93,7 @@ trap 'terminate_child_with_signal QUIT' QUIT
 "${cmd[@]}" &
 child_pid=$!
 exec_dir=""
-record_exec_start "$child_pid" "$repo_name" "$command_text" "$(timestamp_utc)"
+record_exec_start "$child_pid" "$repo_name" "$command_text" "$(timestamp_utc)" "$notify_pane"
 
 set +e
 wait "$child_pid"
@@ -102,5 +104,6 @@ record_exec_finish "$(timestamp_utc)" "$exit_code"
 notification_xml="$(build_notification_xml "$command_text" "$(timestamp_utc)" "$exit_code")"
 queue_self_notification "$notify_pane" "$notification_xml"
 notify_exec_watchers "$exec_dir" "$notify_pane" "$notification_xml"
+write_field "$exec_dir/notified" "$(timestamp_utc)"
 
 exit "$exit_code"

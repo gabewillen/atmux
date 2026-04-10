@@ -71,6 +71,11 @@ When `atmux` runs, it ensures this home layout exists:
   `<notification from="exec ..." timestamp="..." exitcode="..." />`
 - Tracks each launched child process under `~/.atmux/exec/<repo>/<pid>/`.
 
+### `./bin/atmux.sh kill --pid <pid> [--timeout <seconds>] [--signal <NAME>]`
+- Stops the tracked child for this repo (same `exec` metadata as `watch --pid`).
+- After the executor finishes notifications (including watcher fan-out), removes `~/.atmux/exec/<repo>/<pid>/`.
+- Default `TERM` and `--timeout` 60s; escalates to `KILL` if the process is still alive after the timeout.
+
 ### `./bin/atmux.sh assign --to <agent> --title <title> [--description "..."] [--todo "..."]`
 - Creates a filesystem issue and assigns it to the target agent/session.
 

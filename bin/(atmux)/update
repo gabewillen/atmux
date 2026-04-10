@@ -1,0 +1,162 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ATMUX_HOME="${ATMUX_HOME:-$HOME/.atmux}"
+ATMUX_GITHUB_REPO="${ATMUX_GITHUB_REPO:-gabrielwillen/atmux}"
+ATMUX_API_BASE="https://api.github.com/repos/${ATMUX_GITHUB_REPO}"
+
+CHECK_ONLY=0
+TARGET_VERSION=""
+AUTO_UPDATE_CONFIG="$ATMUX_HOME/config/update/auto"
+
+usage() {
+  cat <<'EOF'
+Usage:
+  atmux update [--check] [--version <version>]
+  atmux update --auto
+  atmux update --no-auto
+
+Options:
+  --check              Only report whether an update is available; do not install.
+  --version <version>  Install a specific version (e.g. 0.2.0). Defaults to latest.
+  --auto               Enable background auto-update on every atmux command (hourly throttle).
+  --no-auto            Disable background auto-update.
+
+Examples:
+  atmux update
+  atmux update --check
+  atmux update --version 0.2.0
+  atmux update --auto
+  atmux update --no-auto
+EOF
+}
+
+installed_version() {
+  local f="$ATMUX_HOME/src/atmux/VERSION"
+  if [[ -f "$f" ]]; then
+    tr -d '[:space:]' < "$f"
+  else
+    echo "0.0.0"
+  fi
+}
+
+# Returns 0 if $1 > $2 (semver comparison)
+semver_gt() {
+  [[ "$1" == "$2" ]] && return 1
+  local winner
+  winner="$(printf '%s\n%s\n' "$1" "$2" | sort -V | tail -1)"
+  [[ "$winner" == "$1" ]]
+}
+
+fetch_release_info() {
+  local endpoint="$1"
+  curl -fsSL --max-time 15 \
+    -H "Accept: application/vnd.github+json" \
+    "$ATMUX_API_BASE/releases/${endpoint}"
+}
+
+parse_tag() {
+  grep -o '"tag_name": *"[^"]*"' | head -1 | sed 's/.*"tag_name": *"\([^"]*\)".*/\1/'
+}
+
+parse_tarball_url() {
+  grep -o '"tarball_url": *"[^"]*"' | head -1 | sed 's/.*"tarball_url": *"\([^"]*\)".*/\1/'
+}
+
+main() {
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --check) CHECK_ONLY=1; shift ;;
+      --version) TARGET_VERSION="$2"; shift 2 ;;
+      --auto)
+        mkdir -p "$(dirname "$AUTO_UPDATE_CONFIG")"
+        printf '1\n' > "$AUTO_UPDATE_CONFIG"
+        echo "auto-update enabled"
+        exit 0
+        ;;
+      --no-auto)
+        rm -f "$AUTO_UPDATE_CONFIG"
+        rmdir "$(dirname "$AUTO_UPDATE_CONFIG")" 2>/dev/null || true
+        echo "auto-update disabled"
+        exit 0
+        ;;
+      -h|--help) usage; exit 0 ;;
+      *) echo "unknown flag: $1" >&2; usage >&2; exit 2 ;;
+    esac
+  done
+
+  local current
+  current="$(installed_version)"
+  echo "installed: ${current}"
+
+  # Fetch release info
+  local api_payload tag latest_version
+  if [[ -n "$TARGET_VERSION" ]]; then
+    api_payload="$(fetch_release_info "tags/v${TARGET_VERSION}")" || {
+      echo "error: version ${TARGET_VERSION} not found on GitHub" >&2
+      exit 1
+    }
+  else
+    api_payload="$(fetch_release_info "latest")" || {
+      echo "error: could not reach GitHub releases API" >&2
+      exit 1
+    }
+  fi
+
+  tag="$(printf '%s' "$api_payload" | parse_tag)"
+  latest_version="${tag#v}"
+
+  if [[ -z "$latest_version" ]]; then
+    echo "error: could not determine latest version from GitHub" >&2
+    exit 1
+  fi
+
+  echo "latest:    ${latest_version}"
+
+  if [[ -z "$TARGET_VERSION" ]] && ! semver_gt "$latest_version" "$current"; then
+    echo "atmux is up to date"
+    exit 0
+  fi
+
+  if [[ -n "$TARGET_VERSION" && "$TARGET_VERSION" == "$current" ]]; then
+    echo "requested version ${TARGET_VERSION} is already installed"
+    exit 0
+  fi
+
+  if [[ -z "$TARGET_VERSION" ]]; then
+    echo "update available: ${current} -> ${latest_version}"
+  else
+    echo "installing version: ${latest_version}"
+  fi
+
+  if [[ "$CHECK_ONLY" -eq 1 ]]; then
+    exit 0
+  fi
+
+  # Download release tarball and re-run install
+  local tarball_url tmpdir
+  tarball_url="$(printf '%s' "$api_payload" | parse_tarball_url)"
+  if [[ -z "$tarball_url" ]]; then
+    # Fall back to the standard GitHub source archive URL
+    tarball_url="https://github.com/${ATMUX_GITHUB_REPO}/archive/refs/tags/${tag}.tar.gz"
+  fi
+
+  tmpdir="$(mktemp -d "${TMPDIR:-/tmp}/atmux-update.XXXXXX")"
+  trap 'rm -rf "$tmpdir"' EXIT
+
+  echo "downloading ${tarball_url} ..."
+  curl -fsSL --max-time 120 -L "$tarball_url" | tar xz -C "$tmpdir" --strip-components=1
+
+  local install_script="$tmpdir/install.sh"
+  if [[ ! -f "$install_script" ]]; then
+    echo "error: install.sh not found in release archive" >&2
+    exit 1
+  fi
+  chmod +x "$install_script"
+
+  ATMUX_HOME="$ATMUX_HOME" "$install_script" --no-slash-commands
+  echo ""
+  echo "updated to ${latest_version}"
+}
+
+main "$@"

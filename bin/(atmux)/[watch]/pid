@@ -23,29 +23,6 @@ Examples:
 USAGE
 }
 
-read_state_field() {
-  local file="$1"
-  if [[ ! -f "$file" ]]; then
-    printf ''
-    return 0
-  fi
-  tr -d '\r\n' <"$file" 2>/dev/null || printf ''
-}
-
-validate_exec_ownership() {
-  local exec_dir="$1"
-  local expect_pid="$2"
-  local expect_repo="$3"
-  local got_pid got_repo
-
-  [[ -d "$exec_dir" ]] || return 1
-  got_pid="$(read_state_field "$exec_dir/pid")"
-  got_repo="$(read_state_field "$exec_dir/repo")"
-  [[ -n "$got_pid" && "$got_pid" == "$expect_pid" ]] || return 1
-  [[ -n "$got_repo" && "$got_repo" == "$expect_repo" ]] || return 1
-  return 0
-}
-
 main() {
   local pid=""
   local timeout_sec="0"

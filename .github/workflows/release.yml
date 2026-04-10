@@ -1,0 +1,49 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v[0-9]*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Create release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve version
+        id: ver
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+
+      - name: Validate VERSION matches tag
+        run: |
+          file_version="$(tr -d '[:space:]' < VERSION)"
+          tag_version="${{ steps.ver.outputs.version }}"
+          if [[ "$file_version" != "$tag_version" ]]; then
+            echo "error: VERSION file ($file_version) does not match tag ($tag_version)" >&2
+            exit 1
+          fi
+
+      - name: Create release tarball
+        run: |
+          version="${{ steps.ver.outputs.version }}"
+          git archive \
+            --format=tar.gz \
+            --prefix="atmux-${version}/" \
+            -o "atmux-${version}.tar.gz" \
+            HEAD
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ver.outputs.tag }}
+          generate_release_notes: true
+          files: atmux-${{ steps.ver.outputs.version }}.tar.gz
+          fail_on_unmatched_files: true

@@ -1,0 +1,153 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ATMUX_HOME="${ATMUX_HOME:-$HOME/.atmux}"
+GLOBAL=0
+
+usage() {
+  cat <<'EOF'
+Usage:
+  atmux config get <key> [--global]
+  atmux config set <key> <value> [--global]
+  atmux config unset <key> [--global]
+  atmux config list [--global]
+
+Options:
+  --global  Operate on global config (~/.atmux/config/<key>).
+            Default: local repo config (<repo>/.atmux/config/<key>).
+
+Config is stored as one file per key. Key paths are hierarchical
+using "/" as a separator (e.g. "update/auto").
+
+Resolution order for "get" without --global: local then global.
+
+Examples:
+  atmux config set update/auto 1 --global
+  atmux config get update/auto
+  atmux config unset update/auto --global
+  atmux config list --global
+EOF
+}
+
+global_root() {
+  printf '%s/config' "$ATMUX_HOME"
+}
+
+local_root() {
+  local repo_root
+  if repo_root="$(git rev-parse --show-toplevel 2>/dev/null)"; then
+    printf '%s/.atmux/config' "$repo_root"
+  else
+    printf '%s/.atmux/config' "$PWD"
+  fi
+}
+
+active_root() {
+  if [[ "$GLOBAL" -eq 1 ]]; then
+    global_root
+  else
+    local_root
+  fi
+}
+
+read_config_file() {
+  local f="$1"
+  [[ -f "$f" ]] || return 1
+  cat "$f"
+}
+
+cmd_get() {
+  local key="$1"
+  if [[ "$GLOBAL" -eq 1 ]]; then
+    read_config_file "$(global_root)/$key" || { echo "not set" >&2; return 1; }
+  else
+    # local takes precedence over global
+    if ! read_config_file "$(local_root)/$key" 2>/dev/null; then
+      read_config_file "$(global_root)/$key" || { echo "not set" >&2; return 1; }
+    fi
+  fi
+}
+
+cmd_set() {
+  local key="$1" value="$2"
+  local f
+  f="$(active_root)/$key"
+  mkdir -p "$(dirname "$f")"
+  printf '%s\n' "$value" > "$f"
+  echo "set $key=$value"
+}
+
+cmd_unset() {
+  local key="$1"
+  local f
+  f="$(active_root)/$key"
+  if [[ ! -f "$f" ]]; then
+    echo "not set" >&2
+    return 1
+  fi
+  rm -f "$f"
+  # Remove empty parent dirs up to the config root
+  local dir root
+  dir="$(dirname "$f")"
+  root="$(active_root)"
+  while [[ "$dir" != "$root" && "$dir" != "/" ]]; do
+    rmdir "$dir" 2>/dev/null || break
+    dir="$(dirname "$dir")"
+  done
+  echo "unset $key"
+}
+
+cmd_list() {
+  local root
+  root="$(active_root)"
+  [[ -d "$root" ]] || return 0
+  find "$root" -type f | sort | while IFS= read -r f; do
+    local key val
+    key="${f#"$root"/}"
+    val="$(cat "$f")"
+    printf '%s=%s\n' "$key" "$val"
+  done
+}
+
+main() {
+  # Allow --global anywhere in the argument list
+  local args=()
+  for arg in "$@"; do
+    case "$arg" in
+      --global) GLOBAL=1 ;;
+      *) args+=("$arg") ;;
+    esac
+  done
+  set -- "${args[@]+"${args[@]}"}"
+
+  local subcmd="${1:-}"
+  shift || true
+
+  case "$subcmd" in
+    get)
+      [[ $# -ge 1 ]] || { usage >&2; exit 2; }
+      cmd_get "$1"
+      ;;
+    set)
+      [[ $# -ge 2 ]] || { usage >&2; exit 2; }
+      cmd_set "$1" "$2"
+      ;;
+    unset)
+      [[ $# -ge 1 ]] || { usage >&2; exit 2; }
+      cmd_unset "$1"
+      ;;
+    list)
+      cmd_list
+      ;;
+    -h|--help|help|"")
+      usage
+      ;;
+    *)
+      echo "unknown subcommand: $subcmd" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+}
+
+main "$@"

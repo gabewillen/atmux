@@ -47,12 +47,12 @@ tmux send-keys -t "$pane" "ATMUX_REPO=\"$repo_name\" ATMUX_AGENT_NAME=\"sender\"
 sleep 1.5
 tmux send-keys -t "$pane" C-c
 
-if ! wait_for_text "$pane" "<notification from=\"exec" 10; then
+if ! wait_for_text "$pane" 'type="exec"' 10; then
   echo "interrupt exec notification not found in exec pane" >&2
   tmux capture-pane -p -t "$pane" -S -220 >&2 || true
   exit 1
 fi
-if ! wait_for_text "$pane" "exitcode=\"130\"" 10; then
+if ! wait_for_text "$pane" 'exit_code="130"' 10; then
   echo "interrupt exit code notification missing" >&2
   tmux capture-pane -p -t "$pane" -S -220 >&2 || true
   exit 1

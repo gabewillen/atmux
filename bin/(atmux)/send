@@ -2,227 +2,77 @@
 set -euo pipefail
 
 ATMUX_HOME="${ATMUX_HOME:-$HOME/.atmux}"
+HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=bin/(atmux)/notify
+source "$HERE/notify"
 
 usage() {
   cat <<'USAGE'
 Usage:
-  atmux send --to <name|session> [--reply-required] "message"
+  atmux send --to <name|session> [--reply-required] [--interrupt] "message"
 
 Description:
   Send XML messages to a single agent or every agent in a team.
   Resolution order for --to:
     1) Team session/name
     2) Agent session/name
+  --interrupt  Submit using the adapter's interrupt key (processed after current
+               tool) instead of the default queue key (processed when idle).
 
 Examples:
   atmux send --to planner "run tests"
   atmux send --to platform --reply-required "status check-in"
-  atmux send --to atmux-myrepo-team-platform "sync"
+  atmux send --to worker --interrupt "stop and check this"
 USAGE
 }
 
-xml_escape() {
-  printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g' -e "s/'/\&apos;/g"
-}
-
-normalize_name() {
-  local raw="${1:-}"
-  local normalized=""
-  normalized="$(printf '%s' "$raw" | sed -E 's/[^A-Za-z0-9_-]+/_/g; s/_+/_/g; s/^_+//; s/_+$//')"
-  if [[ -z "$normalized" ]]; then
-    normalized="repo"
-  fi
-  printf '%s\n' "$normalized"
-}
-
-repo_name_from_context() {
-  local repo_name="${ATMUX_REPO:-}"
-  if [[ -z "$repo_name" && -n "${TMUX:-}" ]]; then
-    repo_name="$(tmux show-environment ATMUX_REPO 2>/dev/null | sed -n 's/^ATMUX_REPO=//p' || true)"
-  fi
-  if [[ -z "$repo_name" ]]; then
-    local repo_root=""
-    repo_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
-    if [[ -n "$repo_root" ]]; then
-      repo_name="$(basename "$repo_root")"
-    fi
-  fi
-  if [[ -n "$repo_name" ]]; then
-    repo_name="$(normalize_name "$repo_name")"
-  fi
-  printf '%s\n' "$repo_name"
-}
-
-resolve_agent_session() {
-  local target="$1"
-  local repo_name="$2"
-  local candidate=""
-
-  if tmux has-session -t "$target" 2>/dev/null; then
-    printf '%s\n' "$target"
-    return 0
-  fi
-
-  if [[ "$target" == atmux-* ]]; then
-    printf '%s\n' "$target"
-    return 0
-  fi
-
-  if [[ -n "$repo_name" ]]; then
-    candidate="atmux-${repo_name}-${target}"
-    if tmux has-session -t "$candidate" 2>/dev/null; then
-      printf '%s\n' "$candidate"
-      return 0
-    fi
-
-    if [[ "$target" == "${repo_name}-"* ]]; then
-      candidate="atmux-${target}"
-      if tmux has-session -t "$candidate" 2>/dev/null; then
-        printf '%s\n' "$candidate"
-        return 0
-      fi
-    fi
-  fi
-  return 1
-}
-
-resolve_team_session() {
-  local target="$1"
-  local repo_name="$2"
-  local candidate=""
-
-  if tmux has-session -t "$target" 2>/dev/null; then
-    printf '%s\n' "$target"
-    return 0
-  fi
-
-  if [[ -n "$repo_name" ]]; then
-    candidate="atmux-${repo_name}-team-${target}"
-    if tmux has-session -t "$candidate" 2>/dev/null; then
-      printf '%s\n' "$candidate"
-      return 0
-    fi
-
-    if [[ "$target" == "${repo_name}-team-"* ]]; then
-      candidate="atmux-${target}"
-      if tmux has-session -t "$candidate" 2>/dev/null; then
-        printf '%s\n' "$candidate"
-        return 0
-      fi
-    fi
-  fi
-
-  return 1
-}
-
-primary_pane_for_session() {
-  local session="$1"
-  tmux list-panes -a -F '#{session_name} #{pane_id}' 2>/dev/null | awk -v s="$session" '$1==s { print $2; exit }'
-}
-
-send_payload_to_pane() {
-  local target="$1"
-  local payload="$2"
-  local settle submit_wait extra_enter confirm_polls confirm_interval
-  local attempts retry_wait
-  local before_count after_count confirmed poll attempt snap initial_before_count current_count
-
-  settle="${ATMUX_SEND_SETTLE_SECONDS:-0.2}"
-  submit_wait="${ATMUX_SEND_SUBMIT_WAIT_SECONDS:-0.15}"
-  extra_enter="${ATMUX_SEND_DOUBLE_ENTER:-0}"
-  confirm_polls="${ATMUX_SEND_CONFIRM_POLLS:-20}"
-  confirm_interval="${ATMUX_SEND_CONFIRM_INTERVAL_SECONDS:-0.05}"
-  attempts="${ATMUX_SEND_ATTEMPTS:-8}"
-  retry_wait="${ATMUX_SEND_RETRY_WAIT_SECONDS:-0.5}"
-
-  marker_count() {
-    tmux capture-pane -p -t "$target" -S -800 2>/dev/null | tr -d '\r\n' | grep -o '</atmux>' | wc -l | tr -d ' '
-  }
-
-  initial_before_count="$(marker_count || true)"
-  [[ -n "$initial_before_count" ]] || initial_before_count=0
-
-  for ((attempt=1; attempt<=attempts; attempt++)); do
-    current_count="$(marker_count || true)"
-    [[ -n "$current_count" ]] || current_count=0
-    if (( current_count > initial_before_count )); then
-      return 0
-    fi
-    before_count="$current_count"
-    [[ -n "$before_count" ]] || before_count=0
-
-    tmux send-keys -t "$target" C-u
-    sleep "$settle"
-    tmux send-keys -t "$target" -l "$payload"
-    sleep "$settle"
-    tmux send-keys -t "$target" Enter
-    sleep "$submit_wait"
-
-    confirmed=0
-    for poll in $(seq 1 "$confirm_polls"); do
-      snap="$(tmux capture-pane -p -t "$target" -S -800 2>/dev/null || true)"
-      after_count="$(printf '%s' "$snap" | tr -d '\r\n' | grep -o '</atmux>' | wc -l | tr -d ' ' || true)"
-      [[ -n "$after_count" ]] || after_count=0
-      if (( after_count > before_count )); then
-        confirmed=1
-        break
-      fi
-      sleep "$confirm_interval"
-    done
-
-    if [[ "$extra_enter" == "1" || "$confirmed" -eq 0 ]]; then
-      tmux send-keys -t "$target" Enter
-      sleep "$submit_wait"
-      after_count="$(marker_count || true)"
-      [[ -n "$after_count" ]] || after_count=0
-      if (( after_count > before_count )); then
-        confirmed=1
-      fi
-    fi
-
-    if [[ "$confirmed" -eq 1 ]]; then
-      return 0
-    fi
-
-    current_count="$(marker_count || true)"
-    [[ -n "$current_count" ]] || current_count=0
-    if (( current_count > initial_before_count )); then
-      return 0
-    fi
-
-    sleep "$retry_wait"
-  done
-
-  return 1
-}
-
-build_message_xml() {
-  local msg="$1"
-  local require_reply="$2"
-  local from_session from_escaped msg_escaped reply_comment=""
-
-  from_session="${ATMUX_SESSION_NAME:-}"
-  if [[ -z "$from_session" ]]; then
+sender_session() {
+  local from="${ATMUX_SESSION_NAME:-}"
+  if [[ -z "$from" ]]; then
     local from_repo
     from_repo="$(repo_name_from_context)"
     if [[ -n "$from_repo" ]]; then
-      from_session="atmux-${from_repo}-${ATMUX_AGENT_NAME:-unknown}"
+      from="atmux-${from_repo}-${ATMUX_AGENT_NAME:-unknown}"
     else
-      from_session="atmux-unknown-${ATMUX_AGENT_NAME:-unknown}"
+      from="atmux-unknown-${ATMUX_AGENT_NAME:-unknown}"
     fi
   fi
-  from_escaped="$(xml_escape "$from_session")"
-  msg_escaped="$(xml_escape "$msg")"
-  if [[ "$require_reply" == "true" ]]; then
-    reply_comment='<!-- if reply_required is true you MUST reply to the message -->'
+  printf '%s\n' "$from"
+}
+
+store_message() {
+  local repo="$1" from="$2" to="$3" body="$4" reply_required="$5"
+  local root id dir ts
+  root="$ATMUX_HOME/messages/$repo"
+  mkdir -p "$root"
+  id="$(uuidgen | tr '[:upper:]' '[:lower:]')"
+  dir="$root/$id"
+  mkdir -p "$dir"
+  ts="$(timestamp_utc)"
+  write_field "$dir/from" "$from"
+  write_field "$dir/to" "$to"
+  write_field "$dir/body" "$body"
+  write_field "$dir/reply_required" "$reply_required"
+  write_field "$dir/timestamp" "$ts"
+  printf '%s\n' "$id"
+}
+
+resolve_interrupt_keys() {
+  local session="$1"
+  local adapter=""
+  adapter="$(get_session_env "$session" ATMUX_ADAPTER)"
+  if [[ -n "$adapter" ]]; then
+    resolve_submit_keys "$adapter" "interrupt"
+  else
+    printf 'Enter\n'
   fi
-  printf '<atmux>%s<message from="%s" reply_required="%s">%s</message></atmux>' \
-    "$reply_comment" "$from_escaped" "$require_reply" "$msg_escaped"
 }
 
 send_to_session() {
   local target_session="$1"
   local payload="$2"
+  shift 2
+  local submit_keys=("$@")
   local target_pane=""
 
   if ! tmux has-session -t "$target_session" 2>/dev/null; then
@@ -230,12 +80,13 @@ send_to_session() {
   fi
   target_pane="$(primary_pane_for_session "$target_session")"
   [[ -n "$target_pane" ]] || return 1
-  send_payload_to_pane "$target_pane" "$payload"
+  send_payload_to_pane "$target_pane" "$payload" ${submit_keys[@]+"${submit_keys[@]}"}
 }
 
 send_to_type=""
 target_name=""
 reply_required=0
+interrupt=0
 message=""
 
 while [[ $# -gt 0 ]]; do
@@ -246,6 +97,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --reply-required)
       reply_required=1
+      shift
+      ;;
+    --interrupt)
+      interrupt=1
       shift
       ;;
     -h|--help|help)
@@ -281,10 +136,16 @@ reply_required_value="false"
 if [[ "$reply_required" -eq 1 ]]; then
   reply_required_value="true"
 fi
-payload="$(build_message_xml "$message" "$reply_required_value")"
 
 repo_name="$(repo_name_from_context)"
-team_session="$(resolve_team_session "$target_name" "$repo_name" || true)"
+from_session="$(sender_session)"
+
+# Store message and build notification
+msg_id="$(store_message "$repo_name" "$from_session" "$target_name" "$message" "$reply_required_value")"
+payload="$(build_notification "message" "$from_session" "atmux message read $msg_id" \
+  "reply_required=$reply_required_value")"
+
+team_session="$("$HERE/team" resolve "$target_name" "$repo_name" || true)"
 
 if [[ -n "$team_session" ]]; then
   members=()
@@ -304,7 +165,11 @@ if [[ -n "$team_session" ]]; then
   results=""
   for s in "${members[@]}"; do
     attempted=$((attempted + 1))
-    if send_to_session "$s" "$payload"; then
+    member_keys=()
+    if [[ "$interrupt" -eq 1 ]]; then
+      mapfile -t member_keys < <(resolve_interrupt_keys "$s")
+    fi
+    if send_to_session "$s" "$payload" ${member_keys[@]+"${member_keys[@]}"}; then
       delivered=$((delivered + 1))
       results+="  <target session=\"$(xml_escape "$s")\" delivered=\"true\" />"$'\n'
     else
@@ -313,9 +178,10 @@ if [[ -n "$team_session" ]]; then
     fi
   done
 
-  printf '<send to="team" name="%s" session="%s" delivered="%s" attempted="%s" failed="%s">\n%s</send>\n' \
+  printf '<send to="team" name="%s" session="%s" message_id="%s" delivered="%s" attempted="%s" failed="%s">\n%s</send>\n' \
     "$(xml_escape "$target_name")" \
     "$(xml_escape "$team_session")" \
+    "$(xml_escape "$msg_id")" \
     "$(xml_escape "$delivered")" \
     "$(xml_escape "$attempted")" \
     "$(xml_escape "$failed")" \
@@ -327,15 +193,20 @@ if [[ -n "$team_session" ]]; then
   exit 0
 fi
 
-target_session="$(resolve_agent_session "$target_name" "$repo_name" || true)"
+target_session="$("$HERE/agent" resolve "$target_name" "$repo_name" || true)"
 if [[ -z "$target_session" ]]; then
   echo "target not found as team or agent: $target_name" >&2
   exit 1
 fi
-if ! send_to_session "$target_session" "$payload"; then
+submit_keys=()
+if [[ "$interrupt" -eq 1 ]]; then
+  mapfile -t submit_keys < <(resolve_interrupt_keys "$target_session")
+fi
+if ! send_to_session "$target_session" "$payload" ${submit_keys[@]+"${submit_keys[@]}"}; then
   echo "failed to send to session: $target_session" >&2
   exit 1
 fi
-printf '<send to="agent" name="%s" session="%s" delivered="1" attempted="1" failed="0" />\n' \
+printf '<send to="agent" name="%s" session="%s" message_id="%s" delivered="1" attempted="1" failed="0" />\n' \
   "$(xml_escape "$target_name")" \
-  "$(xml_escape "$target_session")"
+  "$(xml_escape "$target_session")" \
+  "$(xml_escape "$msg_id")"

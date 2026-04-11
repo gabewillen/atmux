@@ -50,12 +50,12 @@ if ! wait_for_text "$pane" "$marker" 10; then
   tmux capture-pane -p -t "$pane" -S -200 >&2 || true
   exit 1
 fi
-if ! wait_for_text "$pane" "<notification from=\"exec" 10; then
+if ! wait_for_text "$pane" 'type="exec"' 10; then
   echo "exec notification not found in exec pane" >&2
   tmux capture-pane -p -t "$pane" -S -200 >&2 || true
   exit 1
 fi
-if ! wait_for_text "$pane" "exitcode=\"0\"" 10; then
+if ! wait_for_text "$pane" 'exit_code="0"' 10; then
   echo "successful exec exit code notification missing" >&2
   tmux capture-pane -p -t "$pane" -S -200 >&2 || true
   exit 1

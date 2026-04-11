@@ -6,10 +6,23 @@ HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=bin/(atmux)/notify
 source "$HERE/notify"
 
+TEMPLATE_DIR="$(cd -- "$HERE/../.." && pwd)/templates"
+
+render_issue_template() {
+  local given="$1" when="$2" then_="$3" todos="$4"
+  local tpl
+  tpl="$(cat "$TEMPLATE_DIR/issue.md")"
+  tpl="${tpl//%%GIVEN%%/$given}"
+  tpl="${tpl//%%WHEN%%/$when}"
+  tpl="${tpl//%%THEN%%/$then_}"
+  tpl="${tpl//%%TODOS%%/$todos}"
+  printf '%s\n' "$tpl"
+}
+
 usage() {
   cat <<'USAGE'
 Usage:
-  atmux issue create --title <title> [--description <description>] [--repo <repo>]
+  atmux issue create --title <title> [--description <description>] [--given <context>] [--when <action>] [--then <outcome>] [--todo <todo>]... [--repo <repo>]
   atmux issue list [--repo <repo>]
   atmux issue ls [--repo <repo>]
   atmux issue get <id> [--repo <repo>]
@@ -26,7 +39,6 @@ USAGE
 resolve_repo_name() {
   local explicit_repo="${1:-}"
   local repo=""
-
   if [[ -n "$explicit_repo" ]]; then
     repo="$explicit_repo"
   elif [[ -n "${ATMUX_REPO:-}" ]]; then
@@ -34,7 +46,6 @@ resolve_repo_name() {
   elif [[ -n "${TMUX:-}" ]]; then
     repo="$(tmux show-environment ATMUX_REPO 2>/dev/null | sed -n 's/^ATMUX_REPO=//p' || true)"
   fi
-
   if [[ -z "$repo" ]]; then
     local repo_root=""
     repo_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
@@ -42,13 +53,32 @@ resolve_repo_name() {
       repo="$(basename "$repo_root")"
     fi
   fi
-
   if [[ -z "$repo" ]]; then
     echo "unable to resolve repo; pass --repo <repo> or run inside a git repo" >&2
     exit 2
   fi
-
   normalize_name "$repo"
+}
+
+current_actor_name() {
+  local repo="${1:-}"
+  local actor="${ATMUX_AGENT_NAME:-}"
+  if [[ -z "$actor" && -n "${TMUX:-}" ]]; then
+    actor="$(tmux show-environment ATMUX_AGENT_NAME 2>/dev/null | sed -n 's/^ATMUX_AGENT_NAME=//p' || true)"
+  fi
+  if [[ -n "$actor" ]]; then
+    printf '%s\n' "$actor"
+    return
+  fi
+  if [[ -n "${TMUX:-}" ]]; then
+    local session=""
+    session="$(tmux display-message -p '#S' 2>/dev/null || true)"
+    if [[ -n "$session" ]]; then
+      session_short_name "$session" "$repo"
+      return
+    fi
+  fi
+  printf '%s\n' "external"
 }
 
 now_utc() {
@@ -58,41 +88,6 @@ now_utc() {
 read_field() {
   local file="$1"
   cat "$file" 2>/dev/null || true
-}
-
-tmux_env_value() {
-  local key="$1"
-  if [[ -z "${TMUX:-}" ]]; then
-    return 0
-  fi
-  tmux show-environment "$key" 2>/dev/null | sed -n "s/^${key}=//p" || true
-}
-
-current_env_value() {
-  local key="$1"
-  local value="${!key:-}"
-  if [[ -z "$value" ]]; then
-    value="$(tmux_env_value "$key")"
-  fi
-  printf '%s\n' "$value"
-}
-
-current_session_name() {
-  if [[ -z "${TMUX:-}" ]]; then
-    return 0
-  fi
-  tmux display-message -p '#S' 2>/dev/null || true
-}
-
-session_short_name() {
-  local session="$1"
-  local repo="$2"
-  local prefix="atmux-${repo}-"
-  if [[ -n "$repo" && "$session" == "$prefix"* ]]; then
-    printf '%s\n' "${session#"$prefix"}"
-    return
-  fi
-  printf '%s\n' "$session"
 }
 
 identity_matches() {
@@ -116,26 +111,11 @@ identity_matches() {
   return 1
 }
 
-current_actor_name() {
-  local repo="$1"
-  local actor=""
-  local session=""
-  actor="$(current_env_value ATMUX_AGENT_NAME)"
-  if [[ -n "$actor" ]]; then
-    printf '%s\n' "$actor"
-    return
-  fi
-  session="$(current_session_name)"
-  if [[ -n "$session" ]]; then
-    session_short_name "$session" "$repo"
-    return
-  fi
-  printf '%s\n' "external"
-}
-
 ensure_can_assign() {
-  local manager=""
-  manager="$(current_env_value ATMUX_MANAGER)"
+  local manager="${ATMUX_MANAGER:-}"
+  if [[ -z "$manager" && -n "${TMUX:-}" ]]; then
+    manager="$(tmux show-environment ATMUX_MANAGER 2>/dev/null | sed -n 's/^ATMUX_MANAGER=//p' || true)"
+  fi
   if [[ -n "$manager" ]]; then
     echo "managed agents cannot assign issues; use 'atmux issue claim' instead" >&2
     exit 1
@@ -145,7 +125,11 @@ ensure_can_assign() {
 create_issue() {
   local title=""
   local description=""
+  local given=""
+  local when=""
+  local then_=""
   local explicit_repo=""
+  local todos=()
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -155,6 +139,22 @@ create_issue() {
         ;;
       --description)
         description="${2:-}"
+        shift 2
+        ;;
+      --given)
+        given="${2:-}"
+        shift 2
+        ;;
+      --when)
+        when="${2:-}"
+        shift 2
+        ;;
+      --then)
+        then_="${2:-}"
+        shift 2
+        ;;
+      --todo|--todos)
+        todos+=("${2:-}")
         shift 2
         ;;
       --repo)
@@ -171,6 +171,29 @@ create_issue() {
   if [[ -z "$title" ]]; then
     echo "missing required flag: --title" >&2
     exit 2
+  fi
+
+  # Build description from template if structured flags were provided
+  local has_todos=0
+  [[ ${#todos[@]+x} ]] && [[ "${#todos[@]}" -gt 0 ]] && has_todos=1
+  if [[ -n "$given" || -n "$when" || -n "$then_" || "$has_todos" -eq 1 ]]; then
+    local todos_text=""
+    local t
+    if [[ "$has_todos" -eq 1 ]]; then
+      for t in "${todos[@]}"; do
+        [[ -n "$t" ]] || continue
+        todos_text+="- $t"$'\n'
+      done
+    fi
+    todos_text="${todos_text%$'\n'}"
+
+    if [[ -f "$TEMPLATE_DIR/issue.md" ]]; then
+      description="$(render_issue_template "$given" "$when" "$then_" "$todos_text")"
+    else
+      # Inline fallback if template file is missing
+      description="**Given** ${given}"$'\n'"**When** ${when}"$'\n'"**Then** ${then_}"
+      [[ -z "$todos_text" ]] || description+=$'\n\n'"## Tasks"$'\n'"$todos_text"
+    fi
   fi
 
   local repo root id dir created_at
@@ -372,7 +395,7 @@ assign_issue() {
 
   local actor_pane notification_xml
   actor_pane="$(current_pane)"
-  notification_xml="$(build_issue_notification_xml "assign" "$id" "assigned" "$now")"
+  notification_xml="$(build_notification "issue" "assign" "atmux issue get $id" "state=assigned")"
   queue_self_notification "$actor_pane" "$notification_xml"
   notify_issue_watchers "$dir" "$actor_pane" "$notification_xml"
 }
@@ -457,7 +480,7 @@ claim_issue() {
 
   local actor_pane notification_xml
   actor_pane="$(current_pane)"
-  notification_xml="$(build_issue_notification_xml "claim" "$id" "in_progress" "$now")"
+  notification_xml="$(build_notification "issue" "claim" "atmux issue get $id" "state=in_progress")"
   queue_self_notification "$actor_pane" "$notification_xml"
   notify_issue_watchers "$dir" "$actor_pane" "$notification_xml"
 }

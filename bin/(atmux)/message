@@ -1,0 +1,185 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ATMUX_HOME="${ATMUX_HOME:-$HOME/.atmux}"
+HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=bin/(atmux)/notify
+source "$HERE/notify"
+
+usage() {
+  cat <<'USAGE'
+Usage:
+  atmux message read <id> [--repo <repo>]
+  atmux message list [--repo <repo>]
+
+Description:
+  Read or list filesystem-backed messages.
+  Messages are stored at: ~/.atmux/messages/<repo>/<id>/
+USAGE
+}
+
+resolve_repo_name() {
+  local explicit_repo="${1:-}"
+  local repo=""
+  if [[ -n "$explicit_repo" ]]; then
+    repo="$explicit_repo"
+  elif [[ -n "${ATMUX_REPO:-}" ]]; then
+    repo="${ATMUX_REPO}"
+  elif [[ -n "${TMUX:-}" ]]; then
+    repo="$(tmux show-environment ATMUX_REPO 2>/dev/null | sed -n 's/^ATMUX_REPO=//p' || true)"
+  fi
+  if [[ -z "$repo" ]]; then
+    local repo_root=""
+    repo_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+    if [[ -n "$repo_root" ]]; then
+      repo="$(basename "$repo_root")"
+    fi
+  fi
+  if [[ -z "$repo" ]]; then
+    echo "unable to resolve repo; pass --repo <repo> or run inside a git repo" >&2
+    exit 2
+  fi
+  normalize_name "$repo"
+}
+
+message_root_for_repo() {
+  local repo="$1"
+  printf '%s/messages/%s\n' "$ATMUX_HOME" "$repo"
+}
+
+read_message() {
+  local id="${1:-}"
+  shift || true
+  local explicit_repo=""
+
+  if [[ -z "$id" ]]; then
+    echo "usage: atmux message read <id> [--repo <repo>]" >&2
+    exit 2
+  fi
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --repo)
+        explicit_repo="${2:-}"
+        shift 2
+        ;;
+      *)
+        echo "unknown flag: $1" >&2
+        exit 2
+        ;;
+    esac
+  done
+
+  local repo root dir
+  repo="$(resolve_repo_name "$explicit_repo")"
+  root="$(message_root_for_repo "$repo")"
+  dir="$root/$id"
+
+  if [[ ! -d "$dir" ]]; then
+    echo "message not found: $id" >&2
+    exit 1
+  fi
+
+  local from to body reply_required timestamp
+  from="$(cat "$dir/from" 2>/dev/null || true)"
+  to="$(cat "$dir/to" 2>/dev/null || true)"
+  body="$(cat "$dir/body" 2>/dev/null || true)"
+  reply_required="$(cat "$dir/reply_required" 2>/dev/null || true)"
+  timestamp="$(cat "$dir/timestamp" 2>/dev/null || true)"
+
+  printf '<message id="%s" from="%s" to="%s" reply_required="%s" timestamp="%s">\n' \
+    "$(xml_escape "$id")" \
+    "$(xml_escape "$from")" \
+    "$(xml_escape "$to")" \
+    "$(xml_escape "$reply_required")" \
+    "$(xml_escape "$timestamp")"
+  printf '  <body>%s</body>\n' "$(xml_escape "$body")"
+  printf '</message>\n'
+
+  # Notify author exactly once
+  if [[ ! -f "$dir/read_at" ]]; then
+    local now reader_name
+    now="$(timestamp_utc)"
+    write_field "$dir/read_at" "$now"
+    reader_name="${ATMUX_AGENT_NAME:-}"
+    if [[ -z "$reader_name" && -n "${TMUX:-}" ]]; then
+      reader_name="$(tmux show-environment ATMUX_AGENT_NAME 2>/dev/null | sed -n 's/^ATMUX_AGENT_NAME=//p' || true)"
+    fi
+
+    if [[ -n "$from" ]]; then
+      local author_session author_pane notification_xml
+      # Strip session prefix to get bare agent name for resolution
+      local author_name="$from"
+      local prefix="atmux-${repo}-"
+      if [[ "$author_name" == "$prefix"* ]]; then
+        author_name="${author_name#"$prefix"}"
+      fi
+      author_session="atmux-${repo}-${author_name}"
+      author_pane="$(primary_pane_for_session "$author_session" 2>/dev/null || true)"
+      if [[ -n "$author_pane" ]]; then
+        notification_xml="$(build_notification "read" "${reader_name:-unknown}" "")"
+        queue_self_notification "$author_pane" "$notification_xml"
+      fi
+    fi
+  fi
+}
+
+list_messages() {
+  local explicit_repo=""
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --repo)
+        explicit_repo="${2:-}"
+        shift 2
+        ;;
+      *)
+        echo "unknown flag: $1" >&2
+        exit 2
+        ;;
+    esac
+  done
+
+  local repo root
+  repo="$(resolve_repo_name "$explicit_repo")"
+  root="$(message_root_for_repo "$repo")"
+
+  printf '<messages repo="%s">\n' "$(xml_escape "$repo")"
+  if [[ -d "$root" ]]; then
+    local dir id from to reply_required timestamp
+    while IFS= read -r dir; do
+      [[ -d "$dir" ]] || continue
+      id="$(basename "$dir")"
+      from="$(cat "$dir/from" 2>/dev/null || true)"
+      to="$(cat "$dir/to" 2>/dev/null || true)"
+      reply_required="$(cat "$dir/reply_required" 2>/dev/null || true)"
+      timestamp="$(cat "$dir/timestamp" 2>/dev/null || true)"
+      printf '  <message id="%s" from="%s" to="%s" reply_required="%s" timestamp="%s" />\n' \
+        "$(xml_escape "$id")" \
+        "$(xml_escape "$from")" \
+        "$(xml_escape "$to")" \
+        "$(xml_escape "$reply_required")" \
+        "$(xml_escape "$timestamp")"
+    done < <(find "$root" -mindepth 1 -maxdepth 1 -type d | sort)
+  fi
+  printf '</messages>\n'
+}
+
+sub="${1:-}"
+shift || true
+
+case "$sub" in
+  read|get)
+    read_message "$@"
+    ;;
+  list|ls)
+    list_messages "$@"
+    ;;
+  -h|--help|help|"")
+    usage
+    ;;
+  *)
+    echo "unknown message command: $sub" >&2
+    exit 2
+    ;;
+esac

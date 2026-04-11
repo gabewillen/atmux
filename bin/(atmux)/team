@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=bin/(atmux)/notify
+source "$HERE/notify"
+
 usage() {
   cat <<'USAGE'
 Usage:
@@ -11,16 +15,6 @@ Description:
   Manage repo-scoped team tmux sessions.
   Team session format: atmux-<repo>-team-<name>
 USAGE
-}
-
-normalize_name() {
-  local raw="${1:-}"
-  local normalized=""
-  normalized="$(printf '%s' "$raw" | sed -E 's/[^A-Za-z0-9_-]+/_/g; s/_+/_/g; s/^_+//; s/_+$//')"
-  if [[ -z "$normalized" ]]; then
-    normalized="name"
-  fi
-  printf '%s\n' "$normalized"
 }
 
 repo_context() {
@@ -39,10 +33,6 @@ repo_context() {
   fi
   repo_name="$(normalize_name "$repo_name")"
   printf '%s\n%s\n' "$repo_root" "$repo_name"
-}
-
-xml_escape() {
-  printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g' -e "s/'/\&apos;/g"
 }
 
 ensure_tmux_scroll_enabled() {
@@ -126,6 +116,44 @@ case "$sub" in
     ;;
   list|ls)
     list_teams
+    ;;
+  resolve)
+    target="${1:-}"
+    if [[ -z "$target" ]]; then
+      echo "usage: atmux team resolve <name> [<repo_name>]" >&2
+      exit 2
+    fi
+    r_repo="${2:-}"
+    if [[ -z "$r_repo" ]]; then
+      r_repo="$(repo_name_from_context)"
+    fi
+
+    if tmux has-session -t "$target" 2>/dev/null; then
+      printf '%s\n' "$target"
+      exit 0
+    fi
+    if [[ -n "$r_repo" ]]; then
+      candidate="atmux-${r_repo}-team-${target}"
+      if tmux has-session -t "$candidate" 2>/dev/null; then
+        printf '%s\n' "$candidate"
+        exit 0
+      fi
+      if [[ "$target" == "team-"* ]]; then
+        candidate="atmux-${r_repo}-${target}"
+        if tmux has-session -t "$candidate" 2>/dev/null; then
+          printf '%s\n' "$candidate"
+          exit 0
+        fi
+      fi
+      if [[ "$target" == "${r_repo}-team-"* ]]; then
+        candidate="atmux-${target}"
+        if tmux has-session -t "$candidate" 2>/dev/null; then
+          printf '%s\n' "$candidate"
+          exit 0
+        fi
+      fi
+    fi
+    exit 1
     ;;
   -h|--help|help|"")
     usage

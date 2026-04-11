@@ -1,6 +1,10 @@
 {
   "name": "gemini",
   "version": 1,
+  "submit_keys": {
+    "queue": ["Enter"],
+    "interrupt": ["Enter"]
+  },
   "intelligence_map": [
     {
       "min": 0,

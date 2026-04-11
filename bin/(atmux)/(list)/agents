@@ -1,19 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-xml_escape() {
-  printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g' -e "s/'/\&apos;/g"
-}
-
-normalize_name() {
-  local raw="${1:-}"
-  local normalized=""
-  normalized="$(printf '%s' "$raw" | sed -E 's/[^A-Za-z0-9_-]+/_/g; s/_+/_/g; s/^_+//; s/_+$//')"
-  if [[ -z "$normalized" ]]; then
-    normalized="repo"
-  fi
-  printf '%s\n' "$normalized"
-}
+HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=bin/(atmux)/notify
+source "$HERE/../notify"
 
 repo_context() {
   local repo_root repo_name
@@ -31,17 +21,6 @@ repo_context() {
   fi
   repo_name="$(normalize_name "$repo_name")"
   printf '%s\n%s\n' "$repo_root" "$repo_name"
-}
-
-get_session_env() {
-  local session="$1"
-  local key="$2"
-  tmux show-environment -t "$session" "$key" 2>/dev/null | sed -n "s/^${key}=//p" || true
-}
-
-primary_pane_for_session() {
-  local session="$1"
-  tmux list-panes -a -F '#{session_name} #{pane_id}' 2>/dev/null | awk -v s="$session" '$1==s { print $2; exit }'
 }
 
 resolve_adapter_cmd_for_session() {

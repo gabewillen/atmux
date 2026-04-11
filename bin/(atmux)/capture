@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=bin/(atmux)/notify
+source "$HERE/notify"
+
 usage() {
   cat <<'USAGE'
 Usage:
@@ -18,121 +22,6 @@ Examples:
   atmux capture --team atmux-myrepo-team-platform --lines 500
   atmux capture --all --lines 200
 USAGE
-}
-
-normalize_repo_name() {
-  local raw="${1:-}"
-  local normalized=""
-  normalized="$(printf '%s' "$raw" | sed -E 's/[^A-Za-z0-9_-]+/_/g; s/_+/_/g; s/^_+//; s/_+$//')"
-  if [[ -z "$normalized" ]]; then
-    normalized="repo"
-  fi
-  printf '%s\n' "$normalized"
-}
-
-xml_escape() {
-  printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g' -e "s/'/\&apos;/g"
-}
-
-repo_name_from_context() {
-  local repo_name="${ATMUX_REPO:-}"
-  if [[ -z "$repo_name" && -n "${TMUX:-}" ]]; then
-    repo_name="$(tmux show-environment ATMUX_REPO 2>/dev/null | sed -n 's/^ATMUX_REPO=//p' || true)"
-  fi
-  if [[ -z "$repo_name" ]]; then
-    local repo_root=""
-    repo_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
-    if [[ -n "$repo_root" ]]; then
-      repo_name="$(basename "$repo_root")"
-    fi
-  fi
-  if [[ -n "$repo_name" ]]; then
-    repo_name="$(normalize_repo_name "$repo_name")"
-  fi
-  printf '%s\n' "$repo_name"
-}
-
-get_session_env() {
-  local session="$1"
-  local key="$2"
-  tmux show-environment -t "$session" "$key" 2>/dev/null | sed -n "s/^${key}=//p" || true
-}
-
-session_short_name() {
-  local session="$1"
-  local repo_name="$2"
-  local prefix="atmux-${repo_name}-"
-  if [[ -n "$repo_name" && "$session" == "$prefix"* ]]; then
-    printf '%s\n' "${session#"$prefix"}"
-  else
-    printf '%s\n' "$session"
-  fi
-}
-
-resolve_agent_session() {
-  local target="$1"
-  local repo_name="$2"
-  local candidate=""
-
-  if tmux has-session -t "$target" 2>/dev/null; then
-    printf '%s\n' "$target"
-    return 0
-  fi
-
-  if [[ -n "$repo_name" ]]; then
-    candidate="atmux-${repo_name}-${target}"
-    if tmux has-session -t "$candidate" 2>/dev/null; then
-      printf '%s\n' "$candidate"
-      return 0
-    fi
-
-    if [[ "$target" == "${repo_name}-"* ]]; then
-      candidate="atmux-${target}"
-      if tmux has-session -t "$candidate" 2>/dev/null; then
-        printf '%s\n' "$candidate"
-        return 0
-      fi
-    fi
-  fi
-
-  return 1
-}
-
-resolve_team_session() {
-  local target="$1"
-  local repo_name="$2"
-  local candidate=""
-
-  if tmux has-session -t "$target" 2>/dev/null; then
-    printf '%s\n' "$target"
-    return 0
-  fi
-
-  if [[ -n "$repo_name" ]]; then
-    candidate="atmux-${repo_name}-team-${target}"
-    if tmux has-session -t "$candidate" 2>/dev/null; then
-      printf '%s\n' "$candidate"
-      return 0
-    fi
-
-    if [[ "$target" == "team-"* ]]; then
-      candidate="atmux-${repo_name}-${target}"
-      if tmux has-session -t "$candidate" 2>/dev/null; then
-        printf '%s\n' "$candidate"
-        return 0
-      fi
-    fi
-
-    if [[ "$target" == "${repo_name}-team-"* ]]; then
-      candidate="atmux-${target}"
-      if tmux has-session -t "$candidate" 2>/dev/null; then
-        printf '%s\n' "$candidate"
-        return 0
-      fi
-    fi
-  fi
-
-  return 1
 }
 
 capture_session_panes() {
@@ -232,7 +121,7 @@ if [[ "$capture_all" -eq 1 ]]; then
 fi
 
 if [[ -n "$agent_target" ]]; then
-  session="$(resolve_agent_session "$agent_target" "$repo_name" || true)"
+  session="$("$HERE/agent" resolve "$agent_target" "$repo_name" || true)"
   if [[ -z "$session" ]]; then
     echo "agent session not found: $agent_target" >&2
     echo "pass absolute (atmux-<repo>-<agent>) or shorthand (<agent>)" >&2
@@ -259,7 +148,7 @@ if [[ -n "$agent_target" ]]; then
   exit 0
 fi
 
-session="$(resolve_team_session "$team_target" "$repo_name" || true)"
+session="$("$HERE/team" resolve "$team_target" "$repo_name" || true)"
 if [[ -z "$session" ]]; then
   echo "team session not found: $team_target" >&2
   echo "pass absolute (atmux-<repo>-team-<name>) or shorthand (<name>)" >&2

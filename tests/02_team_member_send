@@ -27,20 +27,13 @@ wait_for_text() {
 eval "$("$SCRIPTS_DIR/setup")"
 trap "$SCRIPTS_DIR/teardown --team-session \"$TEAM_SESSION\" --agent1-session \"$AGENT1_SESSION\" --agent2-session \"$AGENT2_SESSION\"" EXIT
 
-marker="team-send-$RANDOM-$(date +%s)"
-
-ATMUX_REPO="$REPO_NAME" ATMUX_AGENT_NAME="sender" ATMUX_SESSION_NAME="$AGENT1_SESSION" "$ATMUX_BIN" send --to receiver "$marker" >/dev/null
+ATMUX_REPO="$REPO_NAME" ATMUX_AGENT_NAME="sender" ATMUX_SESSION_NAME="$AGENT1_SESSION" "$ATMUX_BIN" send --to receiver "hello" >/dev/null
 
 receiver_pane="$(tmux list-panes -t "$AGENT2_SESSION" -F '#{pane_id}' 2>/dev/null | head -n1)"
 [[ -n "$receiver_pane" ]] || { echo "receiver pane missing" >&2; exit 1; }
 
-if ! wait_for_text "$receiver_pane" "$marker" 10; then
-  echo "message marker not found in receiver pane: $marker" >&2
-  tmux capture-pane -p -t "$receiver_pane" -S -120 >&2 || true
-  exit 1
-fi
-if ! wait_for_text "$receiver_pane" "</atmux>" 10; then
-  echo "expected closing </atmux> marker not found in receiver pane" >&2
+if ! wait_for_text "$receiver_pane" '<notification' 10; then
+  echo "notification not found in receiver pane" >&2
   tmux capture-pane -p -t "$receiver_pane" -S -120 >&2 || true
   exit 1
 fi

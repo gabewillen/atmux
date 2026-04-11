@@ -109,7 +109,7 @@ done
 
 tmux send-keys -t "$pane_c" "ATMUX_HOME=\"$atmux_home\" ATMUX_REPO=\"$repo_name\" ATMUX_AGENT_NAME=\"c\" ATMUX_SESSION_NAME=\"$session_c\" \"$ATMUX_BIN\" kill --pid \"$pid\" --timeout 30" C-m
 
-if ! wait_for_text "$pane_b" "<notification from=\"exec" 25; then
+if ! wait_for_text "$pane_b" 'type="exec"' 25; then
   echo "watcher pane missing notification after kill" >&2
   tmux capture-pane -p -t "$pane_b" -S -200 >&2 || true
   exit 1

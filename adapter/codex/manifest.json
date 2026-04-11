@@ -1,6 +1,10 @@
 {
   "name": "codex",
   "version": 1,
+  "submit_keys": {
+    "queue": ["Enter"],
+    "interrupt": ["Tab"]
+  },
   "intelligence_map": [
     {
       "min": 0,

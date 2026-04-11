@@ -1,0 +1,153 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ATMUX_HOME="${ATMUX_HOME:-$HOME/.atmux}"
+
+HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=bin/(atmux)/notify
+source "$HERE/../notify"
+
+usage() {
+  cat <<'USAGE'
+Usage:
+  atmux watch --agent <name|session> [--idle <seconds>] [--timeout <seconds>] [--interval <seconds>] [--lines <n>]
+
+Description:
+  Wait until an agent's pane output has been stable (unchanged) for --idle
+  seconds. Exits 0 when idle, 124 on timeout.
+
+  Stuck interactive prompts (e.g. "Enter to select" / "Esc to cancel") are
+  always detected and exit immediately regardless of --idle.
+
+  Defaults: --idle 30, --timeout 120, --interval 2, --lines 80.
+
+Examples:
+  atmux watch --agent worker
+  atmux watch --agent worker --idle 10 --timeout 60
+  atmux watch --agent atmux-myrepo-planner --idle 5
+USAGE
+}
+
+resolve_agent_session() {
+  local target="$1"
+  local repo_name="$2"
+
+  if tmux has-session -t "$target" 2>/dev/null; then
+    printf '%s\n' "$target"
+    return 0
+  fi
+
+  if [[ -n "$repo_name" ]]; then
+    local candidate="atmux-${repo_name}-${target}"
+    if tmux has-session -t "$candidate" 2>/dev/null; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  fi
+
+  return 1
+}
+
+detect_stuck_prompt() {
+  local recent="$1"
+  if printf '%s\n' "$recent" | grep -Fq 'Enter to select' && \
+     printf '%s\n' "$recent" | grep -Fq 'Esc to cancel'; then
+    return 0
+  fi
+  return 1
+}
+
+main() {
+  local agent=""
+  local idle_seconds="30"
+  local timeout_sec="120"
+  local interval="2"
+  local lines="80"
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --agent)
+        agent="${2:-}"
+        shift 2
+        ;;
+      --idle)
+        idle_seconds="${2:-}"
+        shift 2
+        ;;
+      --timeout)
+        timeout_sec="${2:-}"
+        shift 2
+        ;;
+      --interval)
+        interval="${2:-}"
+        shift 2
+        ;;
+      --lines)
+        lines="${2:-}"
+        shift 2
+        ;;
+      -h|--help|help)
+        usage
+        exit 0
+        ;;
+      *)
+        echo "unknown flag: $1" >&2
+        usage >&2
+        exit 2
+        ;;
+    esac
+  done
+
+  [[ -n "$agent" ]] || { echo "missing --agent" >&2; exit 2; }
+
+  local repo_name session pane
+  repo_name="$(repo_name_from_context)"
+  session="$(resolve_agent_session "$agent" "$repo_name")"
+  if [[ -z "$session" ]]; then
+    echo "agent session not found: $agent" >&2
+    exit 1
+  fi
+
+  pane="$(primary_pane_for_session "$session")"
+  if [[ -z "$pane" ]]; then
+    echo "no pane found for session: $session" >&2
+    exit 1
+  fi
+
+  local deadline last_hash last_change_ts
+  deadline=$(( $(date +%s) + timeout_sec ))
+  last_hash=""
+  last_change_ts="$(date +%s)"
+
+  while true; do
+    local snap hash now
+    snap="$(tmux capture-pane -p -t "$pane" -S "-$lines" 2>/dev/null | tr -d '\r' || true)"
+    hash="$(printf '%s' "$snap" | cksum | awk '{print $1 ":" $2}')"
+    now="$(date +%s)"
+
+    if [[ "$hash" != "$last_hash" ]]; then
+      last_hash="$hash"
+      last_change_ts="$now"
+    fi
+
+    local idle_for=$(( now - last_change_ts ))
+    if (( idle_for >= idle_seconds )); then
+      exit 0
+    fi
+
+    # Stuck prompt — always checked
+    local recent
+    recent="$(printf '%s\n' "$snap" | tail -n 30)"
+    if detect_stuck_prompt "$recent"; then
+      exit 0
+    fi
+
+    if (( now >= deadline )); then
+      exit 124
+    fi
+
+    sleep "$interval"
+  done
+}
+
+main "$@"

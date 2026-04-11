@@ -10,6 +10,7 @@ Usage:
   atmux watch --target <tmux-target> --text <needle> [--scope pane|window|session] [--timeout <seconds>] [--interval <seconds>] [--lines <n>]
   atmux watch --pid <pid> [--timeout <seconds>] [--interval <seconds>]
   atmux watch --issue <id> [--repo <repo>] [--timeout <seconds>] [--interval <seconds>]
+  atmux watch --agent <name|session> [--idle <seconds>] [--timeout <seconds>] [--interval <seconds>] [--lines <n>]
 
 Description:
   Pane mode: poll tmux output until text appears, non-zero on timeout.
@@ -17,8 +18,10 @@ Description:
   receive the same exit notification XML as the executor when it finishes.
   Issue mode: wait for the next filesystem issue update and receive the same
   notification XML as issue assign/claim fan-out.
+  Agent mode: wait until an agent's pane output has been stable for --idle
+  seconds (default 30). Exits 0 when idle, 124 on timeout.
 
-  Implementations: bin/(atmux)/[watch]/text, [watch]/pid, [watch]/issue.
+  Implementations: bin/(atmux)/[watch]/text, [watch]/pid, [watch]/issue, [watch]/agent.
 USAGE
 }
 
@@ -36,17 +39,18 @@ fi
 
 has_pid=0
 has_issue=0
+has_agent=0
 for a in "$@"; do
-  if [[ "$a" == "--pid" ]]; then
-    has_pid=1
-  fi
-  if [[ "$a" == "--issue" ]]; then
-    has_issue=1
-  fi
+  case "$a" in
+    --pid) has_pid=1 ;;
+    --issue) has_issue=1 ;;
+    --agent) has_agent=1 ;;
+  esac
 done
 
-if [[ "$has_pid" -eq 1 && "$has_issue" -eq 1 ]]; then
-  echo "atmux watch: cannot combine --pid and --issue" >&2
+mode_count=$(( has_pid + has_issue + has_agent ))
+if (( mode_count > 1 )); then
+  echo "atmux watch: cannot combine --pid, --issue, and --agent" >&2
   exit 2
 fi
 
@@ -56,6 +60,10 @@ fi
 
 if [[ "$has_issue" -eq 1 ]]; then
   exec "$WATCH_ROOT/issue" "$@"
+fi
+
+if [[ "$has_agent" -eq 1 ]]; then
+  exec "$WATCH_ROOT/agent" "$@"
 fi
 
 exec "$WATCH_ROOT/text" "$@"

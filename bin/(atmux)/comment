@@ -1,0 +1,164 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ATMUX_HOME="${ATMUX_HOME:-$HOME/.atmux}"
+HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=bin/(atmux)/notify
+source "$HERE/notify"
+
+usage() {
+  cat <<'USAGE'
+Usage:
+  atmux comment "message" --issue <id> [--repo <repo>]
+
+Description:
+  Add a comment to a filesystem issue.
+  Notifies watchers, assignee, and assigner.
+USAGE
+}
+
+resolve_repo_name() {
+  local explicit_repo="${1:-}"
+  local repo=""
+  if [[ -n "$explicit_repo" ]]; then
+    repo="$explicit_repo"
+  elif [[ -n "${ATMUX_REPO:-}" ]]; then
+    repo="${ATMUX_REPO}"
+  elif [[ -n "${TMUX:-}" ]]; then
+    repo="$(tmux show-environment ATMUX_REPO 2>/dev/null | sed -n 's/^ATMUX_REPO=//p' || true)"
+  fi
+  if [[ -z "$repo" ]]; then
+    local repo_root=""
+    repo_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+    if [[ -n "$repo_root" ]]; then
+      repo="$(basename "$repo_root")"
+    fi
+  fi
+  if [[ -z "$repo" ]]; then
+    echo "unable to resolve repo; pass --repo <repo> or run inside a git repo" >&2
+    exit 2
+  fi
+  normalize_name "$repo"
+}
+
+current_actor_name() {
+  local repo="${1:-}"
+  local actor="${ATMUX_AGENT_NAME:-}"
+  if [[ -z "$actor" && -n "${TMUX:-}" ]]; then
+    actor="$(tmux show-environment ATMUX_AGENT_NAME 2>/dev/null | sed -n 's/^ATMUX_AGENT_NAME=//p' || true)"
+  fi
+  if [[ -n "$actor" ]]; then
+    printf '%s\n' "$actor"
+    return
+  fi
+  if [[ -n "${TMUX:-}" ]]; then
+    local session=""
+    session="$(tmux display-message -p '#S' 2>/dev/null || true)"
+    if [[ -n "$session" ]]; then
+      session_short_name "$session" "$repo"
+      return
+    fi
+  fi
+  printf '%s\n' "external"
+}
+
+notify_agent_by_name() {
+  local agent_name="$1"
+  local repo="$2"
+  local skip_pane="$3"
+  local payload="$4"
+
+  [[ -n "$agent_name" ]] || return 0
+
+  local session="atmux-${repo}-${agent_name}"
+  local pane
+  pane="$(primary_pane_for_session "$session" 2>/dev/null || true)"
+  [[ -n "$pane" ]] || return 0
+  [[ "$pane" == "$skip_pane" ]] && return 0
+
+  queue_self_notification "$pane" "$payload"
+}
+
+message=""
+issue_id=""
+explicit_repo=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --issue)
+      issue_id="${2:-}"
+      shift 2
+      ;;
+    --repo)
+      explicit_repo="${2:-}"
+      shift 2
+      ;;
+    -h|--help|help)
+      usage
+      exit 0
+      ;;
+    -*)
+      echo "unknown flag: $1" >&2
+      exit 2
+      ;;
+    *)
+      if [[ -z "$message" ]]; then
+        message="$1"
+        shift
+      else
+        echo "unexpected argument: $1" >&2
+        exit 2
+      fi
+      ;;
+  esac
+done
+
+if [[ -z "$message" ]]; then
+  echo "missing required argument: message" >&2
+  exit 2
+fi
+if [[ -z "$issue_id" ]]; then
+  echo "missing required flag: --issue <id>" >&2
+  exit 2
+fi
+
+repo="$(resolve_repo_name "$explicit_repo")"
+issue_dir="$(issue_root_for_repo "$repo")/$issue_id"
+
+if [[ ! -d "$issue_dir" ]]; then
+  echo "issue not found: $issue_id" >&2
+  exit 1
+fi
+
+author="$(current_actor_name "$repo")"
+now="$(timestamp_utc)"
+comments_dir="$issue_dir/comments"
+mkdir -p "$comments_dir"
+
+# Filename: timestamp + author for uniqueness and sort order
+comment_file="$comments_dir/${now//:/}-${author}"
+write_field "$comment_file" "$message"
+write_field "$issue_dir/updated_at" "$now"
+
+printf '<comment issue_id="%s" repo="%s" author="%s" timestamp="%s">\n' \
+  "$(xml_escape "$issue_id")" \
+  "$(xml_escape "$repo")" \
+  "$(xml_escape "$author")" \
+  "$(xml_escape "$now")"
+printf '  <body>%s</body>\n' "$(xml_escape "$message")"
+printf '</comment>\n'
+
+# Notify watchers, assignee, and assigner
+actor_pane="$(current_pane)"
+notification_xml="$(build_notification "issue" "comment" "atmux issue get $issue_id" "state=comment")"
+
+queue_self_notification "$actor_pane" "$notification_xml"
+notify_issue_watchers "$issue_dir" "$actor_pane" "$notification_xml"
+
+assigned_to="$(cat "$issue_dir/assigned_to" 2>/dev/null || true)"
+assigned_by="$(cat "$issue_dir/assigned_by" 2>/dev/null || true)"
+
+notify_agent_by_name "$assigned_to" "$repo" "$actor_pane" "$notification_xml"
+if [[ -n "$assigned_by" && "$assigned_by" != "$assigned_to" && "$assigned_by" != "self-claim" ]]; then
+  notify_agent_by_name "$assigned_by" "$repo" "$actor_pane" "$notification_xml"
+fi

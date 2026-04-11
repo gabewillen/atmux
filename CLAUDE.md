@@ -54,7 +54,10 @@ Usage:
   atmux send --to <name|session> [--reply-required] "message"
 
 Description:
-  Send XML messages to a single agent or every agent in a team.
+  Send a message to a single agent or every agent in a team.
+  Message body is stored on disk; agent receives a one-line notification:
+    <notification type="message" from="..." cmd="atmux message read <id>" />
+  Agent runs the cmd to read the full message.
   Resolution order for --to:
     1) Team session/name
     2) Agent session/name
@@ -63,17 +66,42 @@ Examples:
   atmux send --to planner "run tests"
   atmux send --to platform --reply-required "status check-in"
 
+## message
+Usage:
+  atmux message read <id> [--repo <repo>]
+  atmux message list [--repo <repo>]
+
+Description:
+  Read or list filesystem-backed messages.
+  Messages are stored at: ~/.atmux/messages/<repo>/<id>/
+
+Examples:
+  atmux message read 123e4567-e89b-12d3-a456-426614174000
+
 ## assign
 Usage:
-  atmux assign --to <agent|session> --title <title> [--description <description>] [--todo <todo>]...
+  atmux assign --to <agent|session> --title <title> [--given <context>] [--when <action>] [--then <outcome>] [--todo <todo>]... [--description <description>]
   atmux assign --issue <id> --to <agent|session>
 
 Description:
   Create-and-assign (or assign existing) filesystem issues.
+  Structured flags (--given, --when, --then, --todo) render via templates/issue.md as BDD scenarios.
+  Use --description for freeform text (bypasses template).
 
 Examples:
-  atmux assign --to planner --title "stabilize parser" --todo "write failing test first"
+  atmux assign --to planner --title "stabilize parser" --given "a token stream containing nulls" --when "the parser encounters a null token" --then "it returns an error instead of panicking" --todo "write failing test" --todo "fix null check in parse()"
   atmux assign --issue 123e4567-e89b-12d3-a456-426614174000 --to atmux-myrepo-planner
+
+## comment
+Usage:
+  atmux comment "message" --issue <id>
+
+Description:
+  Add a comment to a filesystem issue.
+  Notifies watchers, assignee, and assigner.
+
+Examples:
+  atmux comment "blocking on upstream API" --issue 123e4567-e89b-12d3-a456-426614174000
 
 ## capture
 Usage:

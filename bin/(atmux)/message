@@ -96,31 +96,9 @@ read_message() {
   printf '  <body>%s</body>\n' "$(xml_escape "$body")"
   printf '</message>\n'
 
-  # Notify author exactly once
+  # Mark read exactly once (no notification to author — avoids agent loops)
   if [[ ! -f "$dir/read_at" ]]; then
-    local now reader_name
-    now="$(timestamp_utc)"
-    write_field "$dir/read_at" "$now"
-    reader_name="${ATMUX_AGENT_NAME:-}"
-    if [[ -z "$reader_name" && -n "${TMUX:-}" ]]; then
-      reader_name="$(tmux show-environment ATMUX_AGENT_NAME 2>/dev/null | sed -n 's/^ATMUX_AGENT_NAME=//p' || true)"
-    fi
-
-    if [[ -n "$from" ]]; then
-      local author_session author_pane notification_xml
-      # Strip session prefix to get bare agent name for resolution
-      local author_name="$from"
-      local prefix="atmux-${repo}-"
-      if [[ "$author_name" == "$prefix"* ]]; then
-        author_name="${author_name#"$prefix"}"
-      fi
-      author_session="atmux-${repo}-${author_name}"
-      author_pane="$(primary_pane_for_session "$author_session" 2>/dev/null || true)"
-      if [[ -n "$author_pane" ]]; then
-        notification_xml="$(build_notification "read" "${reader_name:-unknown}" "")"
-        queue_self_notification "$author_pane" "$notification_xml"
-      fi
-    fi
+    write_field "$dir/read_at" "$(timestamp_utc)"
   fi
 }
 

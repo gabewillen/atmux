@@ -22,7 +22,40 @@ _xe() { printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/
 _ts="$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date -u)"
 _xml="<stopped agent=\"$(_xe "${ATMUX_AGENT_NAME:-unknown}")\" session=\"$(_xe "${ATMUX_SESSION_NAME}")\" adapter=\"$(_xe "${ATMUX_ADAPTER:-unknown}")\" timestamp=\"$(_xe "$_ts")\" />"
 
+# Stamp stopped on the most recent unread message from this agent to the target.
+# Returns 0 if a message was stamped, 1 if no pending message exists.
+_stamp_unread() {
+  local target="$1"
+  local repo="${ATMUX_REPO:-}"
+  [[ -n "$repo" ]] || return 1
+  local root="${ATMUX_HOME}/messages/${repo}"
+  [[ -d "$root" ]] || return 1
+  local agent="${ATMUX_AGENT_NAME:-}"
+  [[ -n "$agent" ]] || return 1
+  local newest="" newest_ts="" dir
+  for dir in "$root"/*/; do
+    [[ -d "$dir" ]] || continue
+    [[ ! -f "$dir/read_at" ]] \
+      && [[ "$(cat "$dir/from" 2>/dev/null)" == *"$agent"* ]] \
+      && [[ "$(cat "$dir/to" 2>/dev/null)" == "$target" ]] || continue
+    local ts
+    ts="$(cat "$dir/timestamp" 2>/dev/null || true)"
+    if [[ -z "$newest_ts" || "$ts" > "$newest_ts" ]]; then
+      newest="$dir"
+      newest_ts="$ts"
+    fi
+  done
+  if [[ -n "$newest" ]]; then
+    printf '%s\n' "$_ts" > "$newest/stopped"
+    return 0
+  fi
+  return 1
+}
+
 _do_send() {
+  # If there's an unread message to this target, fold the stopped signal into it
+  _stamp_unread "$1" && return 0
+  # Otherwise send a standalone stopped notification
   ATMUX_ALLOW_OUTSIDE_TMUX=1 "$_send" --to "$1" "$_xml" >/dev/null 2>&1 || true
 }
 

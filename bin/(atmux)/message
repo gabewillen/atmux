@@ -80,19 +80,24 @@ read_message() {
     exit 1
   fi
 
-  local from to body reply_required timestamp
+  local from to body reply_required timestamp stopped
   from="$(cat "$dir/from" 2>/dev/null || true)"
   to="$(cat "$dir/to" 2>/dev/null || true)"
   body="$(cat "$dir/body" 2>/dev/null || true)"
   reply_required="$(cat "$dir/reply_required" 2>/dev/null || true)"
   timestamp="$(cat "$dir/timestamp" 2>/dev/null || true)"
+  stopped="$(cat "$dir/stopped" 2>/dev/null || true)"
 
-  printf '<message id="%s" from="%s" to="%s" reply_required="%s" timestamp="%s">\n' \
+  local stopped_attr=""
+  [[ -n "$stopped" ]] && stopped_attr=" stopped=\"$(xml_escape "$stopped")\""
+
+  printf '<message id="%s" from="%s" to="%s" reply_required="%s" timestamp="%s"%s>\n' \
     "$(xml_escape "$id")" \
     "$(xml_escape "$from")" \
     "$(xml_escape "$to")" \
     "$(xml_escape "$reply_required")" \
-    "$(xml_escape "$timestamp")"
+    "$(xml_escape "$timestamp")" \
+    "$stopped_attr"
   printf '  <body>%s</body>\n' "$(xml_escape "$body")"
   printf '</message>\n'
 

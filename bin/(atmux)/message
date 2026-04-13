@@ -98,7 +98,7 @@ read_message() {
     "$(xml_escape "$reply_required")" \
     "$(xml_escape "$timestamp")" \
     "$stopped_attr"
-  printf '  <body>%s</body>\n' "$(xml_escape "$body")"
+  printf '  <body>%s</body>\n' "$body"
   printf '</message>\n'
 
   # Mark read exactly once (no notification to author — avoids agent loops)

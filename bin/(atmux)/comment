@@ -145,7 +145,7 @@ printf '<comment issue_id="%s" repo="%s" author="%s" timestamp="%s">\n' \
   "$(xml_escape "$repo")" \
   "$(xml_escape "$author")" \
   "$(xml_escape "$now")"
-printf '  <body>%s</body>\n' "$(xml_escape "$message")"
+printf '  <body>%s</body>\n' "$message"
 printf '</comment>\n'
 
 # Notify watchers, assignee, and assigner

@@ -37,7 +37,7 @@ capture_session_panes() {
       "$(xml_escape "$pane")" \
       "$(xml_escape "$lines")" \
       "$extra_attrs" \
-      "$(xml_escape "$snapshot")"
+      "$snapshot"
   done < <(tmux list-panes -t "$session" -F '#{pane_id}' 2>/dev/null || true)
 }
 
@@ -114,7 +114,7 @@ if [[ "$capture_all" -eq 1 ]]; then
       "$(xml_escape "$s")" \
       "$(xml_escape "$p")" \
       "$(xml_escape "$lines")" \
-      "$(xml_escape "$snapshot")"
+      "$snapshot"
   done < <(tmux list-panes -a -F '#{session_name} #{pane_id}' 2>/dev/null || true)
   printf '</captures>\n'
   exit 0

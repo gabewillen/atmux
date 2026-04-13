@@ -318,8 +318,8 @@ get_issue() {
     "$(xml_escape "$state")" \
     "$(xml_escape "$created_at")" \
     "$(xml_escape "$updated_at")"
-  printf '  <title>%s</title>\n' "$(xml_escape "$title")"
-  printf '  <description>%s</description>\n' "$(xml_escape "$description")"
+  printf '  <title>%s</title>\n' "$title"
+  printf '  <description>%s</description>\n' "$description"
   printf '  <assignment to="%s" by="%s" at="%s" />\n' \
     "$(xml_escape "$assigned_to")" \
     "$(xml_escape "$assigned_by")" \

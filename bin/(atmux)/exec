@@ -10,17 +10,21 @@ source "$HERE/notify"
 usage() {
   cat <<'USAGE'
 Usage:
-  atmux exec [--] <command> [args...]
+  atmux exec [--detach] [--] <command> [args...]
 
 Description:
   Execute a command with passthrough stdio and unchanged exit behavior.
   After the command exits or is interrupted, send an ATMUX notification back
   to the current agent pane with the exit code.
 
+  --detach  Run the command in a new tmux window. Returns immediately.
+            The process pane is stored so watchers can capture its output.
+            Notification is sent to the agent pane when the process exits.
+
 Examples:
   atmux exec sleep 30
   atmux exec -- make test
-  atmux exec -- bash -lc 'sleep 30'
+  atmux exec --detach -- make test
 USAGE
 }
 
@@ -58,20 +62,169 @@ terminate_child_with_signal() {
   fi
 }
 
+exec_foreground() {
+  child_pid=""
+  trap 'terminate_child_with_signal INT' INT
+  trap 'terminate_child_with_signal TERM' TERM
+  trap 'terminate_child_with_signal HUP' HUP
+  trap 'terminate_child_with_signal QUIT' QUIT
+
+  "${cmd[@]}" &
+  child_pid=$!
+  exec_dir=""
+  record_exec_start "$child_pid" "$repo_name" "$command_text" "$(timestamp_utc)" "$notify_pane"
+
+  set +e
+  wait "$child_pid"
+  exit_code=$?
+  set -e
+
+  record_exec_finish "$(timestamp_utc)" "$exit_code"
+  notification_xml="$(build_notification "exec" "$command_text" "atmux capture --agent ${ATMUX_AGENT_NAME:-unknown}" "exit_code=$exit_code")"
+  queue_self_notification "$notify_pane" "$notification_xml"
+  notify_exec_watchers "$exec_dir" "$notify_pane" "$notification_xml"
+  write_field "$exec_dir/notified" "$(timestamp_utc)"
+
+  exit "$exit_code"
+}
+
+exec_detached() {
+  local session="${ATMUX_SESSION_NAME:-}"
+  if [[ -z "$session" ]]; then
+    echo "--detach requires an atmux session (ATMUX_SESSION_NAME not set)" >&2
+    exit 2
+  fi
+
+  # Store argv null-delimited to avoid quoting issues across tmux shells
+  mkdir -p "${ATMUX_HOME}/tmp"
+  local argv_file
+  argv_file="$(mktemp "${ATMUX_HOME}/tmp/argv.XXXXXX")"
+  printf '%s\0' "${cmd[@]}" > "$argv_file"
+
+  # Pre-create exec_dir with a temp key; _run will update with real PID
+  local detach_id="detach-$$-$RANDOM"
+  exec_dir=""
+  record_exec_start "$detach_id" "$repo_name" "$command_text" "$(timestamp_utc)" "$notify_pane"
+  write_field "$exec_dir/detached" "1"
+
+  # Write a runner script to avoid quoting issues across tmux's default shell
+  local runner="$argv_file.run"
+  local self="${BASH_SOURCE[0]}"
+  cat > "$runner" <<RUNNER
+#!/usr/bin/env bash
+export ATMUX_HOME='${ATMUX_HOME}'
+exec '${self}' _run '${argv_file}' '${notify_pane}' '${repo_name}' '${exec_dir}'
+RUNNER
+  chmod +x "$runner"
+
+  # Launch in a new tmux window
+  local process_pane
+  process_pane="$(tmux new-window -d -t "$session:" -n "exec-$$" -P -F '#{pane_id}' "$runner")"
+
+  write_field "$exec_dir/executor_pane" "$process_pane"
+
+  # Wait for _run to write its real PID
+  local real_pid="" deadline
+  deadline=$(( $(date +%s) + 5 ))
+  while true; do
+    real_pid="$(tr -d '\r\n' < "$exec_dir/pid" 2>/dev/null || true)"
+    if [[ -n "$real_pid" && "$real_pid" != "$detach_id" ]]; then
+      break
+    fi
+    if (( $(date +%s) >= deadline )); then
+      echo "timeout waiting for detached process PID" >&2
+      exit 1
+    fi
+    sleep 0.05
+  done
+
+  # Symlink from real PID so watch --pid <real_pid> resolves
+  local real_dir
+  real_dir="$(exec_dir_for_repo_pid "$repo_name" "$real_pid")"
+  if [[ "$real_dir" != "$exec_dir" ]]; then
+    ln -snf "$exec_dir" "$real_dir"
+  fi
+
+  printf '<exec pid="%s" pane="%s" detached="true" />\n' "$real_pid" "$process_pane"
+}
+
+# Runs inside the detached tmux window.
+# Invoked as: exec _run <argv_file> <notify_pane> <repo_name> <exec_dir>
+_run_detached() {
+  local argv_file="$1"
+  local notify_pane="$2"
+  local repo_name="$3"
+  exec_dir="$4"
+
+  # Write our real PID (parent polls for this)
+  write_field "$exec_dir/pid" "$$"
+
+  # Read command from null-delimited argv file
+  local -a run_cmd=()
+  while IFS= read -r -d '' arg; do
+    run_cmd+=("$arg")
+  done < "$argv_file"
+  rm -f "$argv_file" "$argv_file.run"
+
+  set +e
+  "${run_cmd[@]}"
+  local exit_code=$?
+  set -e
+
+  write_field "$exec_dir/finished_at" "$(timestamp_utc)"
+  write_field "$exec_dir/exit_code" "$exit_code"
+
+  local command_text
+  command_text="$(read_state_field "$exec_dir/command")"
+  local agent_name
+  agent_name="$(read_state_field "$exec_dir/agent_name")"
+
+  # Queue notifications BEFORE marking state=exited, so watchers polling
+  # state haven't cleaned up their watcher files yet
+  local notification_xml
+  notification_xml="$(build_notification "exec" "$command_text" "atmux capture --agent ${agent_name:-unknown}" "exit_code=$exit_code")"
+  queue_self_notification "$notify_pane" "$notification_xml"
+  notify_exec_watchers "$exec_dir" "" "$notification_xml"
+  write_field "$exec_dir/notified" "$(timestamp_utc)"
+
+  write_field "$exec_dir/state" "exited"
+
+  exit "$exit_code"
+}
+
+detach=0
+
 if [[ $# -eq 0 ]]; then
   usage
   exit 2
 fi
 
-case "${1:-}" in
-  -h|--help|help)
-    usage
-    exit 0
-    ;;
-  --)
-    shift
-    ;;
-esac
+# Internal subcommand: _run is invoked inside a detached tmux window
+if [[ "$1" == "_run" ]]; then
+  shift
+  _run_detached "$@"
+  exit $?
+fi
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help|help)
+      usage
+      exit 0
+      ;;
+    --detach)
+      detach=1
+      shift
+      ;;
+    --)
+      shift
+      break
+      ;;
+    *)
+      break
+      ;;
+  esac
+done
 
 if [[ $# -eq 0 ]]; then
   echo "missing command" >&2
@@ -84,26 +237,8 @@ command_text="${command_text% }"
 notify_pane="$(current_pane)"
 repo_name="$(repo_name_from_context)"
 
-child_pid=""
-trap 'terminate_child_with_signal INT' INT
-trap 'terminate_child_with_signal TERM' TERM
-trap 'terminate_child_with_signal HUP' HUP
-trap 'terminate_child_with_signal QUIT' QUIT
-
-"${cmd[@]}" &
-child_pid=$!
-exec_dir=""
-record_exec_start "$child_pid" "$repo_name" "$command_text" "$(timestamp_utc)" "$notify_pane"
-
-set +e
-wait "$child_pid"
-exit_code=$?
-set -e
-
-record_exec_finish "$(timestamp_utc)" "$exit_code"
-notification_xml="$(build_notification "exec" "$command_text" "atmux capture --agent ${ATMUX_AGENT_NAME:-unknown}" "exit_code=$exit_code")"
-queue_self_notification "$notify_pane" "$notification_xml"
-notify_exec_watchers "$exec_dir" "$notify_pane" "$notification_xml"
-write_field "$exec_dir/notified" "$(timestamp_utc)"
-
-exit "$exit_code"
+if [[ "$detach" -eq 1 ]]; then
+  exec_detached
+else
+  exec_foreground
+fi

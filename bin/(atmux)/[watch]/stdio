@@ -1,0 +1,168 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ATMUX_HOME="${ATMUX_HOME:-$HOME/.atmux}"
+
+HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=bin/(atmux)/notify
+source "$HERE/../notify"
+
+usage() {
+  cat <<'USAGE'
+Usage:
+  atmux watch --pid <pid> --stdio [--duration <seconds>] [--timeout <seconds>] [--interval <seconds>] [--lines <n>]
+
+Description:
+  Monitor a detached exec process pane for output changes. Each time new
+  output is detected, sends a notification to the calling agent's pane.
+
+  --duration   Total time to watch (0 = until process exits, default 0).
+  --timeout    Exit if no new output for this many seconds (0 = disabled, default 0).
+  --interval   Poll interval in seconds (default 2).
+  --lines      Number of scrollback lines to hash (default 200).
+
+  Exits 0 when the process exits, 124 on duration/timeout expiry.
+
+Examples:
+  atmux watch --pid 12345 --stdio --duration 600 --timeout 30
+  atmux watch --pid 12345 --stdio --timeout 60
+USAGE
+}
+
+main() {
+  local pid=""
+  local duration="0"
+  local timeout_sec="0"
+  local interval="2"
+  local lines="200"
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --pid)
+        pid="${2:-}"
+        shift 2
+        ;;
+      --stdio)
+        shift
+        ;;
+      --duration)
+        duration="${2:-}"
+        shift 2
+        ;;
+      --timeout)
+        timeout_sec="${2:-}"
+        shift 2
+        ;;
+      --interval)
+        interval="${2:-}"
+        shift 2
+        ;;
+      --lines)
+        lines="${2:-}"
+        shift 2
+        ;;
+      -h|--help|help)
+        usage
+        exit 0
+        ;;
+      *)
+        echo "unknown flag: $1" >&2
+        usage >&2
+        exit 2
+        ;;
+    esac
+  done
+
+  [[ -n "$pid" ]] || { echo "missing --pid" >&2; exit 2; }
+
+  local repo_name
+  repo_name="$(repo_name_from_context)"
+  local exec_dir
+  exec_dir="$(exec_dir_for_repo_pid "$repo_name" "$pid")"
+
+  if ! validate_exec_ownership "$exec_dir" "$pid" "$repo_name"; then
+    echo "atmux watch --stdio: not an atmux-owned exec PID for this repo: $pid" >&2
+    exit 2
+  fi
+
+  # Resolve the process pane from exec_dir
+  local executor_pane
+  executor_pane="$(read_state_field "$exec_dir/executor_pane")"
+  if [[ -z "$executor_pane" ]]; then
+    echo "atmux watch --stdio: no executor_pane recorded for PID $pid" >&2
+    exit 2
+  fi
+
+  # Register as a watcher (also receives the exit notification)
+  mkdir -p "$exec_dir/watchers"
+  local watcher_file
+  watcher_file="$(mktemp "$exec_dir/watchers/watcher.XXXXXX")"
+  local my_pane
+  my_pane="$(current_pane)"
+  write_field "$watcher_file" "$my_pane"
+
+  cleanup_watcher() {
+    [[ -n "${watcher_file:-}" ]] && rm -f "$watcher_file"
+  }
+  trap cleanup_watcher EXIT INT TERM HUP
+
+  local command_text
+  command_text="$(read_state_field "$exec_dir/command")"
+
+  # Deadline calculations
+  local now duration_deadline
+  now="$(date +%s)"
+  if [[ "$duration" != "0" ]]; then
+    duration_deadline=$(( now + duration ))
+  else
+    duration_deadline=0
+  fi
+
+  local last_hash="" last_output_ts
+  last_output_ts="$now"
+
+  while true; do
+    local snap hash
+    snap="$(tmux capture-pane -p -t "$executor_pane" -S "-$lines" 2>/dev/null | tr -d '\r' || true)"
+    hash="$(printf '%s' "$snap" | cksum | awk '{print $1 ":" $2}')"
+    now="$(date +%s)"
+
+    if [[ -z "$last_hash" ]]; then
+      # First poll — record baseline, don't notify
+      last_hash="$hash"
+    elif [[ "$hash" != "$last_hash" ]]; then
+      last_hash="$hash"
+      last_output_ts="$now"
+      # New output — notify the calling agent
+      local notification_xml
+      notification_xml="$(build_notification "exec_output" "$command_text" \
+        "tmux capture-pane -p -t $executor_pane -S -$lines" \
+        "pid=$pid" "pane=$executor_pane")"
+      queue_self_notification "$my_pane" "$notification_xml"
+    fi
+
+    # Check if process exited
+    local st
+    st="$(read_state_field "$exec_dir/state" || true)"
+    if [[ "$st" == "exited" ]]; then
+      exit 0
+    fi
+
+    # Duration expiry
+    if [[ "$duration_deadline" -gt 0 ]] && (( now >= duration_deadline )); then
+      exit 124
+    fi
+
+    # Idle timeout (no new output)
+    if [[ "$timeout_sec" != "0" ]]; then
+      local idle_for=$(( now - last_output_ts ))
+      if (( idle_for >= timeout_sec )); then
+        exit 124
+      fi
+    fi
+
+    sleep "$interval"
+  done
+}
+
+main "$@"

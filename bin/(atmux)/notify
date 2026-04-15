@@ -23,6 +23,12 @@ primary_pane_for_session() {
 }
 
 current_pane() {
+  # Prefer TMUX_PANE (set by tmux per-pane) — display-message -p resolves
+  # wrong without an attached client.
+  if [[ -n "${TMUX_PANE:-}" ]]; then
+    printf '%s\n' "$TMUX_PANE"
+    return 0
+  fi
   if [[ -n "${TMUX:-}" ]]; then
     tmux display-message -p '#{pane_id}' 2>/dev/null || true
     return 0

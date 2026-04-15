@@ -9,6 +9,7 @@ usage() {
 Usage:
   atmux watch --target <tmux-target> --text <needle> [--scope pane|window|session] [--timeout <seconds>] [--interval <seconds>] [--lines <n>]
   atmux watch --pid <pid> [--timeout <seconds>] [--interval <seconds>]
+  atmux watch --pid <pid> --stdio [--duration <seconds>] [--timeout <seconds>] [--interval <seconds>] [--lines <n>]
   atmux watch --issue <id> [--repo <repo>] [--timeout <seconds>] [--interval <seconds>]
   atmux watch --agent <name|session> [--idle <seconds>] [--timeout <seconds>] [--interval <seconds>] [--lines <n>]
 
@@ -16,12 +17,15 @@ Description:
   Pane mode: poll tmux output until text appears, non-zero on timeout.
   PID mode: wait for an atmux exec process (see ~/.atmux/exec/<repo>/<pid>/) and
   receive the same exit notification XML as the executor when it finishes.
+  Stdio mode: monitor a detached exec process pane for output changes. Sends
+  a notification each time new output is detected. Exits when --duration
+  expires, --timeout (no new output) expires, or the process exits.
   Issue mode: wait for the next filesystem issue update and receive the same
   notification XML as issue assign/claim fan-out.
   Agent mode: wait until an agent's pane output has been stable for --idle
   seconds (default 30). Exits 0 when idle, 124 on timeout.
 
-  Implementations: bin/(atmux)/[watch]/text, [watch]/pid, [watch]/issue, [watch]/agent.
+  Implementations: bin/(atmux)/[watch]/text, [watch]/pid, [watch]/stdio, [watch]/issue, [watch]/agent.
 USAGE
 }
 
@@ -40,11 +44,13 @@ fi
 has_pid=0
 has_issue=0
 has_agent=0
+has_stdio=0
 for a in "$@"; do
   case "$a" in
     --pid) has_pid=1 ;;
     --issue) has_issue=1 ;;
     --agent) has_agent=1 ;;
+    --stdio) has_stdio=1 ;;
   esac
 done
 
@@ -52,6 +58,10 @@ mode_count=$(( has_pid + has_issue + has_agent ))
 if (( mode_count > 1 )); then
   echo "atmux watch: cannot combine --pid, --issue, and --agent" >&2
   exit 2
+fi
+
+if [[ "$has_pid" -eq 1 && "$has_stdio" -eq 1 ]]; then
+  exec "$WATCH_ROOT/stdio" "$@"
 fi
 
 if [[ "$has_pid" -eq 1 ]]; then

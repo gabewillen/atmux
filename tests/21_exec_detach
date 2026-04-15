@@ -1,0 +1,108 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+ATMUX_BIN="$REPO_ROOT/bin/atmux"
+
+wait_for_text() {
+  local target="$1"
+  local needle="$2"
+  local timeout="${3:-15}"
+  local deadline now snap compact
+  deadline=$(( $(date +%s) + timeout ))
+  while true; do
+    snap="$(tmux capture-pane -p -t "$target" -S -400 2>/dev/null || true)"
+    compact="$(printf '%s' "$snap" | tr -d '\r\n')"
+    if printf '%s' "$compact" | grep -Fq "$needle"; then
+      return 0
+    fi
+    now="$(date +%s)"
+    if (( now >= deadline )); then
+      return 1
+    fi
+    sleep 0.1
+  done
+}
+
+tmp_home="$(mktemp -d "${TMPDIR:-/tmp}/atmux-exec-detach.XXXXXX")"
+repo_name="d${RANDOM}"
+session="atmux-${repo_name}-agent"
+atmux_home="$tmp_home/.atmux"
+exec_root="$atmux_home/exec/$repo_name"
+
+cleanup() {
+  tmux kill-session -t "$session" >/dev/null 2>&1 || true
+  rm -rf "$tmp_home"
+}
+trap cleanup EXIT
+
+tmux kill-session -t "$session" >/dev/null 2>&1 || true
+tmux new-session -d -s "$session" -n "$session" -x 160 -y 40 -c "$REPO_ROOT" "/bin/bash" -l
+
+pane="$(tmux list-panes -t "$session" -F '#{pane_id}' 2>/dev/null | head -n1)"
+[[ -n "$pane" ]] || { echo "agent pane missing" >&2; exit 1; }
+
+# Run exec --detach — should return immediately with XML
+marker="detach-marker-$RANDOM"
+tmux send-keys -t "$pane" "ATMUX_HOME=\"$atmux_home\" ATMUX_REPO=\"$repo_name\" ATMUX_AGENT_NAME=\"agent\" ATMUX_SESSION_NAME=\"$session\" \"$ATMUX_BIN\" exec --detach -- bash -lc 'sleep 1; echo $marker; sleep 1'" C-m
+
+# Should see detached XML response quickly (agent not blocked)
+if ! wait_for_text "$pane" 'detached="true"' 10; then
+  echo "detach XML response not found — agent may be blocked" >&2
+  tmux capture-pane -p -t "$pane" -S -200 >&2 || true
+  exit 1
+fi
+
+# Wait for exec_dir to exist and find the PID
+deadline=$(( $(date +%s) + 10 ))
+pid=""
+while [[ -z "$pid" ]]; do
+  now="$(date +%s)"
+  if (( now >= deadline )); then
+    echo "timeout waiting for exec metadata" >&2
+    exit 1
+  fi
+  if [[ -d "$exec_root" ]]; then
+    ep_dir="$(find "$exec_root" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | head -n1)"
+    if [[ -n "$ep_dir" && -f "$ep_dir/pid" ]]; then
+      pid="$(tr -d '\r\n' <"$ep_dir/pid")"
+    fi
+  fi
+  sleep 0.05
+done
+
+exec_dir="$exec_root/$pid"
+
+# Verify detached field
+[[ "$(tr -d '\r\n' < "$exec_dir/detached")" == "1" ]] || { echo "detached field not set" >&2; exit 1; }
+
+# Verify state is running while process executes
+st="$(tr -d '\r\n' < "$exec_dir/state")"
+[[ "$st" == "running" ]] || { echo "expected running state, got: $st" >&2; exit 1; }
+
+# Verify executor_pane is set and different from the agent pane
+exec_pane="$(tr -d '\r\n' < "$exec_dir/executor_pane")"
+[[ -n "$exec_pane" ]] || { echo "executor_pane not recorded" >&2; exit 1; }
+
+# Verify the command output appears in the process pane (not the agent pane)
+if ! wait_for_text "$exec_pane" "$marker" 10; then
+  echo "command output not found in process pane" >&2
+  tmux capture-pane -p -t "$exec_pane" -S -200 >&2 || true
+  exit 1
+fi
+
+# Wait for process to exit and notification to arrive at agent pane
+if ! wait_for_text "$pane" 'type="exec"' 15; then
+  echo "exit notification not received at agent pane" >&2
+  tmux capture-pane -p -t "$pane" -S -200 >&2 || true
+  exit 1
+fi
+
+# Verify exec_dir recorded the exit
+st="$(tr -d '\r\n' < "$exec_dir/state")"
+[[ "$st" == "exited" ]] || { echo "expected exited state, got: $st" >&2; exit 1; }
+ec="$(tr -d '\r\n' < "$exec_dir/exit_code")"
+[[ "$ec" == "0" ]] || { echo "expected exit code 0, got: $ec" >&2; exit 1; }
+
+echo "ok: exec --detach returns immediately, runs in separate pane, notifies on exit"

@@ -205,7 +205,9 @@ emit_atmux_wrapper() {
   local first_nonempty
   first_nonempty="$(awk 'NF { print; exit }' "$stdout_file" 2>/dev/null || true)"
 
-  printf '<atmux command="%s" exit_code="%s">\n' "$(xml_escape "$command_text")" "$(xml_escape "$rc")"
+  printf '<atmux command="%s" exit_code="%s" date="%s" time="%s">\n' \
+    "$(xml_escape "$command_text")" "$(xml_escape "$rc")" \
+    "$(date -u +%Y-%m-%d)" "$(date -u +%H:%M:%SZ)"
 
   if [[ -s "$stdout_file" ]]; then
     if [[ "$first_nonempty" == \<* ]]; then

@@ -83,8 +83,9 @@ queue_self_notification() {
     cleanup() { rm -f "$queue_dir/runner.pid"; }
     trap cleanup EXIT
 
-    # Resolve idle pattern once (root manager only)
+    # Resolve idle pattern + prompt prefix once (root manager only)
     idle_pat=""
+    prompt_prefix=""
     sess="$(tmux display-message -t "$pane" -p "#{session_name}" 2>/dev/null || true)"
     if [[ -n "$sess" ]]; then
       mgr="$(tmux show-environment -t "$sess" ATMUX_MANAGER 2>/dev/null | sed -n "s/^ATMUX_MANAGER=//p" || true)"
@@ -93,17 +94,47 @@ queue_self_notification() {
         if [[ -n "$adapter" ]]; then
           mf="$source_root/adapter/$adapter/manifest.json"
           if [[ -f "$mf" ]]; then
-            idle_pat="$(tr -d "\n\r\t" < "$mf" | sed -n "s/.*\"input_idle\"[[:space:]]*:[[:space:]]*{[^}]*\"pattern\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p")"
+            compact="$(tr -d "\n\r\t" < "$mf")"
+            idle_pat="$(printf "%s" "$compact" | sed -n "s/.*\"input_idle\"[[:space:]]*:[[:space:]]*{[^}]*\"pattern\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p")"
+            prompt_prefix="$(printf "%s" "$compact" | sed -n "s/.*\"input_idle\"[[:space:]]*:[[:space:]]*{[^}]*\"prompt\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p")"
           fi
         fi
       fi
     fi
 
+    # Save the current user input (text after prompt), clear, deliver, restore.
+    save_input() {
+      saved_input=""
+      [[ -n "$prompt_prefix" ]] || return 0
+      local ll
+      ll="$(tmux capture-pane -p -t "$pane" -S -5 2>/dev/null | grep -v "^[[:space:]]*$" | tail -1)"
+      if [[ -n "$ll" && "$ll" == "${prompt_prefix}"* ]]; then
+        saved_input="${ll#"$prompt_prefix"}"
+      fi
+    }
+
+    restore_input() {
+      [[ -n "$saved_input" ]] || return 0
+      # Wait for the prompt to reappear after delivering
+      local wait_deadline=$(( $(date +%s) + 10 ))
+      while true; do
+        local ll
+        ll="$(tmux capture-pane -p -t "$pane" -S -5 2>/dev/null | grep -v "^[[:space:]]*$" | tail -1)"
+        if [[ -n "$idle_pat" ]] && printf "%s" "$ll" | grep -Eq "$idle_pat" 2>/dev/null; then
+          break
+        fi
+        [[ $(date +%s) -lt $wait_deadline ]] || break
+        sleep "$idle_interval"
+      done
+      sleep "$settle"
+      tmux send-keys -t "$pane" -l "$saved_input" >/dev/null 2>&1 || true
+    }
+
     deliver_one() {
-      local msg_file="$1" pending="$2"
+      local notif_file="$1" pending="$2"
       local sk pl
-      sk="$(head -1 "$msg_file")"
-      pl="$(tail -n +2 "$msg_file")"
+      sk="$(head -1 "$notif_file")"
+      pl="$(tail -n +2 "$notif_file")"
       [[ -n "$pl" ]] || return 0
       # Inject pending count into notification XML
       if [[ "$pending" -gt 1 ]]; then
@@ -122,7 +153,6 @@ queue_self_notification() {
     sleep 0.2
 
     while true; do
-      # Collect pending payloads
       msgs=()
       for f in "$queue_dir/payloads/"*.notification; do
         [[ -f "$f" ]] || continue
@@ -130,16 +160,16 @@ queue_self_notification() {
       done
       [[ ${#msgs[@]} -gt 0 ]] || break
 
-      # Wait for input idle indefinitely (root manager only)
-      if [[ -n "$idle_pat" ]]; then
+      # Wait for prompt to be visible (blocks during streaming output)
+      if [[ -n "$prompt_prefix" ]]; then
         while true; do
           ll="$(tmux capture-pane -p -t "$pane" -S -5 2>/dev/null | grep -v "^[[:space:]]*$" | tail -1)"
-          if printf "%s" "$ll" | grep -Eq "$idle_pat" 2>/dev/null; then break; fi
+          if [[ -n "$ll" && "$ll" == "${prompt_prefix}"* ]]; then break; fi
           sleep "$idle_interval"
         done
       fi
 
-      # Drain queue — re-scan in case new payloads arrived while waiting
+      # Re-scan to catch payloads that arrived while waiting
       msgs=()
       for f in "$queue_dir/payloads/"*.notification; do
         [[ -f "$f" ]] || continue
@@ -147,11 +177,22 @@ queue_self_notification() {
       done
       pending_count=${#msgs[@]}
 
-      for msg in "${msgs[@]}"; do
-        deliver_one "$msg" "$pending_count"
-        rm -f "$msg"
+      # Save user input before first delivery (root manager only)
+      saved_input=""
+      if [[ -n "$prompt_prefix" ]]; then
+        save_input
+      fi
+
+      for notif in "${msgs[@]}"; do
+        deliver_one "$notif" "$pending_count"
+        rm -f "$notif"
         pending_count=$((pending_count - 1))
       done
+
+      # Restore user input after all deliveries (root manager only)
+      if [[ -n "$saved_input" ]]; then
+        restore_input
+      fi
 
       # Brief pause then check for newly arrived payloads
       sleep 0.1

@@ -6,7 +6,8 @@
     "interrupt": ["Escape", "Enter"]
   },
   "input_idle": {
-    "pattern": "^> *$"
+    "pattern": "^> *$",
+    "prompt": "> "
   },
   "intelligence_map": [
     {

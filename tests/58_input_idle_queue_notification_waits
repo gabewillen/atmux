@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Test that queue_self_notification (async path) waits for input idle
-# on root manager panes before delivering.
+# Test that queue_self_notification on a root manager pane:
+# 1. Saves user input before delivering
+# 2. Delivers the notification
+# 3. Restores the user's input afterward
 
 TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
@@ -41,7 +43,7 @@ cleanup() {
 trap cleanup EXIT
 
 tmux kill-session -t "$session" >/dev/null 2>&1 || true
-# Use cat process — no shell prompt, simulates adapter CLI
+# Use cat — simulates adapter CLI (no shell prompt)
 tmux new-session -d -s "$session" -n "$session" -x 160 -y 40 "cat"
 
 # Root manager: no ATMUX_MANAGER, has ATMUX_ADAPTER
@@ -50,36 +52,32 @@ tmux set-environment -t "$session" ATMUX_ADAPTER "claude-code"
 pane="$(tmux list-panes -t "$session" -F '#{pane_id}' 2>/dev/null | head -n1)"
 [[ -n "$pane" ]] || { echo "pane missing" >&2; exit 1; }
 
-# Simulate user typing (non-idle)
+# Simulate user typing on an idle prompt
+user_text="my important partial input"
 sleep 0.3
-tmux send-keys -t "$pane" -l "> user is typing here"
-
-# Queue a notification — it should wait for idle before sending
-marker="queuetest-$RANDOM"
-payload="$(build_notification "test" "$marker" "")"
-ATMUX_INPUT_IDLE_TIMEOUT=10 queue_self_notification "$pane" "$payload"
-
-# Notification should NOT appear yet (user is typing)
-sleep 1
-snap="$(tmux capture-pane -p -t "$pane" -S -400 2>/dev/null | tr -d '\r\n' || true)"
-if printf '%s' "$snap" | grep -Fq "$marker"; then
-  echo "notification delivered while user was typing — idle check failed" >&2
-  exit 1
-fi
-
-# Now clear the input to simulate user finishing — put prompt on its own line
-tmux send-keys -t "$pane" C-u
-sleep 0.1
-tmux send-keys -t "$pane" Enter
-sleep 0.1
 tmux send-keys -t "$pane" -l "> "
 tmux send-keys -t "$pane" Enter
+sleep 0.3
+tmux send-keys -t "$pane" -l "> ${user_text}"
 
-# Notification should arrive after input becomes idle
+# Queue a notification
+marker="queuetest-$RANDOM"
+payload="$(build_notification "test" "$marker" "")"
+queue_self_notification "$pane" "$payload"
+
+# Notification should be delivered (runner saves input, delivers, restores)
 if ! wait_for_text "$pane" "$marker" 15; then
-  echo "notification not delivered after input became idle" >&2
+  echo "notification not delivered" >&2
   tmux capture-pane -p -t "$pane" -S -200 >&2 || true
   exit 1
 fi
 
-echo "ok: queue_self_notification waits for input idle on root manager pane"
+# User's input should be restored on the current line
+sleep 2
+if ! wait_for_text "$pane" "$user_text" 10; then
+  echo "user input not restored after notification" >&2
+  tmux capture-pane -p -t "$pane" -S -20 >&2 || true
+  exit 1
+fi
+
+echo "ok: queue_self_notification saves input, delivers, and restores on root manager"

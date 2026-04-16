@@ -55,10 +55,10 @@ pane="$(tmux list-panes -t "$session" -F '#{pane_id}' 2>/dev/null | head -n1)"
 # Simulate user typing on an idle prompt
 user_text="my important partial input"
 sleep 0.3
-tmux send-keys -t "$pane" -l "> "
+tmux send-keys -t "$pane" -l "❯ "
 tmux send-keys -t "$pane" Enter
 sleep 0.3
-tmux send-keys -t "$pane" -l "> ${user_text}"
+tmux send-keys -t "$pane" -l "❯ ${user_text}"
 
 # Queue a notification
 marker="queuetest-$RANDOM"

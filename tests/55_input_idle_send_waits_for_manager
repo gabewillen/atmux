@@ -60,11 +60,11 @@ pane_mgr="$(tmux list-panes -t "$session_mgr" -F '#{pane_id}' 2>/dev/null | head
 
 # Simulate user typing on prompt
 sleep 0.3
-tmux send-keys -t "$pane_mgr" -l "> "
+tmux send-keys -t "$pane_mgr" -l "❯ "
 tmux send-keys -t "$pane_mgr" Enter
 sleep 0.3
 user_text="reviewing the architecture docs"
-tmux send-keys -t "$pane_mgr" -l "> ${user_text}"
+tmux send-keys -t "$pane_mgr" -l "❯ ${user_text}"
 
 # Agent sends to manager
 ATMUX_REPO="$repo_name" ATMUX_AGENT_NAME="worker" ATMUX_SESSION_NAME="$session_agent" \

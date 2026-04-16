@@ -6,7 +6,7 @@
     "interrupt": ["Tab"]
   },
   "input_idle": {
-    "prompt": "> "
+    "prompt": "›"
   },
   "intelligence_map": [
     {

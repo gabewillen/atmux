@@ -61,11 +61,11 @@ pane="$(tmux list-panes -t "$session" -F '#{pane_id}' 2>/dev/null | head -n1)"
 [[ -n "$pane" ]] || { echo "pane missing" >&2; exit 1; }
 
 sleep 0.3
-tmux send-keys -t "$pane" -l "> "
+tmux send-keys -t "$pane" -l "❯ "
 tmux send-keys -t "$pane" Enter
 sleep 0.3
 user_text="my partial input must survive"
-tmux send-keys -t "$pane" -l "> ${user_text}"
+tmux send-keys -t "$pane" -l "❯ ${user_text}"
 
 markers=()
 for idx in 1 2 3 4 5; do

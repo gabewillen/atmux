@@ -6,7 +6,7 @@
     "interrupt": ["Escape", "Enter"]
   },
   "input_idle": {
-    "prompt": "> "
+    "prompt": "❯"
   },
   "intelligence_map": [
     {

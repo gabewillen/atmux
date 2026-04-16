@@ -81,6 +81,30 @@ resolve_input_prompt_for_adapter() {
   printf '%s' "$compact" | sed -n 's/.*"input_idle"[[:space:]]*:[[:space:]]*{[^}]*"prompt"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p'
 }
 
+normalize_prompt_text() {
+  local text="${1:-}"
+  local nbsp=$'\u00a0'
+  text="${text//$nbsp/ }"
+  printf '%s' "$text"
+}
+
+split_prompt_line() {
+  local line normalized_line prompt normalized_prompt leading_trimmed rest
+
+  line="$(normalize_prompt_text "${1:-}")"
+  prompt="$(normalize_prompt_text "${2:-}")"
+  prompt="${prompt%"${prompt##*[![:space:]]}"}"
+  prompt="${prompt#"${prompt%%[![:space:]]*}"}"
+  [[ -n "$prompt" ]] || return 1
+
+  leading_trimmed="${line#"${line%%[![:space:]]*}"}"
+  [[ "$leading_trimmed" == "$prompt"* ]] || return 1
+
+  rest="${leading_trimmed#"$prompt"}"
+  rest="${rest#"${rest%%[![:space:]]*}"}"
+  printf '%s' "$rest"
+}
+
 resolve_prompt_prefix_for_pane() {
   local pane="$1"
   local source_root="$2"
@@ -120,14 +144,14 @@ extract_prompt_input() {
   (( end_idx >= 0 )) || return 0
 
   for (( idx=end_idx; idx>=0; idx-- )); do
-    if [[ "${lines[idx]}" == "$prompt_prefix"* ]]; then
+    if split_prompt_line "${lines[idx]}" "$prompt_prefix" >/dev/null; then
       start_idx=$idx
       break
     fi
   done
   (( start_idx >= 0 )) || return 0
 
-  saved_input="${lines[start_idx]#"$prompt_prefix"}"
+  saved_input="$(split_prompt_line "${lines[start_idx]}" "$prompt_prefix" || true)"
   for (( idx=start_idx + 1; idx<=end_idx; idx++ )); do
     saved_input+="${lines[idx]}"
   done
@@ -152,8 +176,10 @@ pane_has_prompt_line() {
     if [[ -z "${lines[idx]//[[:space:]]/}" ]]; then
       continue
     fi
-    [[ "${lines[idx]}" == "$prompt_prefix"* ]]
-    return $?
+    if split_prompt_line "${lines[idx]}" "$prompt_prefix" >/dev/null; then
+      return 0
+    fi
+    return 1
   done
 
   return 1

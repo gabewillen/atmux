@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Test that queue_self_notification on a root manager pane:
+# Test that notification to a root manager pane:
 # 1. Saves user input before delivering
 # 2. Delivers the notification
 # 3. Restores the user's input afterward

@@ -191,12 +191,12 @@ collect_agent_help() {
   local runner_cwd="${2:-}"
   local out=""
   local cmd
-  for cmd in create list send assign capture env; do
+  for cmd in create list send message schedule assign comment capture kill exec watch env; do
     local cmd_out=""
     if [[ -n "$runner_cwd" ]]; then
-      cmd_out="$(cd "$runner_cwd" && ATMUX_NO_WRAP=1 "$runner" "$cmd" --help 2>/dev/null || true)"
+      cmd_out="$(cd "$runner_cwd" && ATMUX_NO_WRAP=1 ATMUX_ALLOW_OUTSIDE_TMUX=1 "$runner" "$cmd" --help 2>/dev/null || true)"
     else
-      cmd_out="$(ATMUX_NO_WRAP=1 "$runner" "$cmd" --help 2>/dev/null || true)"
+      cmd_out="$(ATMUX_NO_WRAP=1 ATMUX_ALLOW_OUTSIDE_TMUX=1 "$runner" "$cmd" --help 2>/dev/null || true)"
     fi
     if [[ -n "$cmd_out" ]] && printf '%s\n' "$cmd_out" | grep -Eq "^  atmux ${cmd}( |$)"; then
       out+=$'## '"$cmd"$'\n'

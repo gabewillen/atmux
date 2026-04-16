@@ -40,10 +40,9 @@ current_pane() {
   return 0
 }
 
-# File-based notification queue with a single runner per pane.
-# Enqueue: writes payload to disk, starts runner if not already active.
-# Runner: saves user input on root manager panes, drains all queued
-#          payloads immediately, then restores user input.
+# Send a notification to a pane in the background.
+# On root manager panes (no ATMUX_MANAGER, has ATMUX_ADAPTER): saves user
+# input before delivering and restores it afterward.
 queue_self_notification() {
   local pane="$1"
   local payload="$2"
@@ -51,38 +50,14 @@ queue_self_notification() {
   local submit_key_str="${*:-Enter}"
   [[ -n "$pane" ]] || return 0
 
-  local atmux_home="${ATMUX_HOME:-$HOME/.atmux}"
-  local pane_hash="${pane//%/_}"
-  local queue_dir="$atmux_home/notify-queue/$pane_hash"
-  mkdir -p "$queue_dir/payloads"
-
-  # Enqueue payload
-  local ts
-  ts="$(date +%s%N 2>/dev/null || date +%s)"
-  printf '%s\n%s' "$submit_key_str" "$payload" > "$queue_dir/payloads/${ts}-$$.notification"
-
-  # If runner is alive, it will pick up the new payload — done
-  if [[ -f "$queue_dir/runner.pid" ]]; then
-    local runner_pid
-    runner_pid="$(cat "$queue_dir/runner.pid" 2>/dev/null || true)"
-    if [[ -n "$runner_pid" ]] && kill -0 "$runner_pid" 2>/dev/null; then
-      return 0
-    fi
-  fi
-
-  # Start a new runner
-  local source_root="${ATMUX_SOURCE_ROOT:-${atmux_home}/src/atmux}"
+  local source_root="${ATMUX_SOURCE_ROOT:-${ATMUX_HOME:-$HOME/.atmux}/src/atmux}"
 
   nohup bash -c '
-    pane="$1"; queue_dir="$2"; source_root="$3"
-    echo $$ > "$queue_dir/runner.pid"
+    pane="$1"; payload="$2"; submit_keys="$3"; source_root="$4"
     settle="${ATMUX_SEND_SETTLE_SECONDS:-0.4}"
     submit_wait="${ATMUX_SEND_SUBMIT_WAIT_SECONDS:-0.3}"
 
-    cleanup() { rm -f "$queue_dir/runner.pid"; }
-    trap cleanup EXIT
-
-    # Resolve prompt prefix once (root manager only — for save/restore)
+    # Resolve prompt prefix (root manager only — for save/restore)
     prompt_prefix=""
     sess="$(tmux display-message -t "$pane" -p "#{session_name}" 2>/dev/null || true)"
     if [[ -n "$sess" ]]; then
@@ -108,51 +83,22 @@ queue_self_notification() {
       fi
     fi
 
-    deliver_one() {
-      local notif_file="$1" pending="$2"
-      local sk pl
-      sk="$(head -1 "$notif_file")"
-      pl="$(tail -n +2 "$notif_file")"
-      [[ -n "$pl" ]] || return 0
-      if [[ "$pending" -gt 1 ]]; then
-        pl="$(printf "%s" "$pl" | sed "s| />| pending=\"$pending\" />|")"
-      fi
-      tmux send-keys -t "$pane" C-u >/dev/null 2>&1 || return 0
-      sleep "$settle"
-      tmux send-keys -t "$pane" -l "$pl" >/dev/null 2>&1 || return 0
-      sleep "$settle"
-      for _sk in $sk; do
-        tmux send-keys -t "$pane" "$_sk" >/dev/null 2>&1 || return 0
-      done
-      sleep "$submit_wait"
-    }
-
-    sleep 0.2
-
-    # Drain queue — loop until no new notifications arrive
-    while true; do
-      msgs=()
-      for f in "$queue_dir/payloads/"*.notification; do
-        [[ -f "$f" ]] || continue
-        msgs+=("$f")
-      done
-      [[ ${#msgs[@]} -gt 0 ]] || break
-      pending_count=${#msgs[@]}
-
-      for notif in "${msgs[@]}"; do
-        deliver_one "$notif" "$pending_count"
-        rm -f "$notif"
-        pending_count=$((pending_count - 1))
-      done
-      sleep 0.1
+    # Deliver
+    tmux send-keys -t "$pane" C-u >/dev/null 2>&1 || exit 0
+    sleep "$settle"
+    tmux send-keys -t "$pane" -l "$payload" >/dev/null 2>&1 || exit 0
+    sleep "$settle"
+    for sk in $submit_keys; do
+      tmux send-keys -t "$pane" "$sk" >/dev/null 2>&1 || exit 0
     done
+    sleep "$submit_wait"
 
-    # Restore user input after all deliveries
+    # Restore user input
     if [[ -n "$saved_input" ]]; then
       sleep "$settle"
       tmux send-keys -t "$pane" -l "$saved_input" >/dev/null 2>&1 || true
     fi
-  ' _ "$pane" "$queue_dir" "$source_root" >/dev/null 2>&1 &
+  ' _ "$pane" "$payload" "$submit_key_str" "$source_root" >/dev/null 2>&1 &
 }
 
 # Unified notification builder.
@@ -338,8 +284,7 @@ notify_issue_watchers() {
   done < <(find "$wdir" -maxdepth 1 -type f 2>/dev/null)
 }
 
-# Async delivery — delegates to queue_self_notification (always background).
-# Kept as a named entry point so callers don't need to know submit_keys format.
+# Convenience wrapper — callers pass submit_keys as an array.
 send_payload_to_pane() {
   local target="$1"
   local payload="$2"
@@ -355,8 +300,8 @@ Usage:
   atmux notify --pane <tmux-pane-id> --xml <payload> [--interrupt]
 
 Description:
-  Queue an ATMUX XML notification to a tmux pane (same mechanism as exec/issue fan-out).
-  --interrupt  Use the adapter's interrupt submit key instead of the default queue
+  Send an ATMUX XML notification to a tmux pane.
+  --interrupt  Use the adapter's interrupt submit key instead of the default
                key (Enter). Resolves the adapter from the pane's session, or from
                --session if provided.
 
@@ -429,14 +374,6 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     build)
       shift
       build_notification "$@"
-      ;;
-    queue)
-      shift
-      queue_self_notification "$@"
-      ;;
-    deliver)
-      shift
-      send_payload_to_pane "$@"
       ;;
     --pane|--xml|-h|--help|help|"")
       notify_cli_main "$@"

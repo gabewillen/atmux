@@ -68,15 +68,9 @@ message_id="$(printf '%s\n' "$send_out" | sed -n 's/.*message_id="\([^"]*\)".*/\
 printf '%s\n' "$send_out" | grep -F 'to="agent"' >/dev/null
 [[ -n "$message_id" ]] || { echo "missing message_id from send output" >&2; exit 1; }
 
-if ! wait_for_text "$pane_id" "Incoming ATMUX message" 20; then
+if ! wait_for_text "$pane_id" "<notification type=\"message\"" 20; then
   tmux capture-pane -p -t "$pane_id" -S -220 >&2 || true
   echo "live gemini pane did not receive message notification" >&2
-  exit 1
-fi
-
-if ! wait_for_text "$pane_id" "$token" 20; then
-  tmux capture-pane -p -t "$pane_id" -S -220 >&2 || true
-  echo "live gemini pane did not display the sent message body" >&2
   exit 1
 fi
 

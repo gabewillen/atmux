@@ -73,33 +73,26 @@ build_message_payload_for_session() {
   local from_session="$2"
   local read_cmd="$3"
   local reply_required_value="$4"
-  local message_body="$5"
-  local message_id="$6"
-  local payload_xml="" reply_suffix=""
+  local adapter="" payload_xml="" instruction=""
 
+  adapter="$(get_session_env "$target_session" ATMUX_ADAPTER)"
+  instruction="Incoming ATMUX message. Run this exact command now to read it, then act on the message body: ${read_cmd}"
   if [[ "$reply_required_value" == "true" ]]; then
-    reply_suffix=" Reply required."
+    instruction="${instruction} A reply is required after you read it."
   fi
 
-  payload_xml="$(build_notification "message" "$from_session" "" \
-    "reply_required=$reply_required_value" \
-    "message_id=$message_id")"
-  printf 'Incoming ATMUX message from %s.%s\n\n%s\n\n%s\n' \
-    "$from_session" \
-    "$reply_suffix" \
-    "$message_body" \
-    "$payload_xml"
-}
+  if [[ "$adapter" == "cursor-agent" ]]; then
+    instruction="Incoming ATMUX message. Run this exact shell command now using ! to read it, then act on the message body: !${read_cmd}"
+    if [[ "$reply_required_value" == "true" ]]; then
+      instruction="${instruction} A reply is required after you read it."
+    fi
+    printf '%s\n' "$instruction"
+    return 0
+  fi
 
-mark_message_delivered_for_session() {
-  local target_session="$1"
-  local repo_name="$2"
-  local msg_id="$3"
-  local msg_dir=""
-
-  msg_dir="$ATMUX_HOME/messages/$repo_name/$msg_id"
-  [[ -d "$msg_dir" ]] || return 0
-  [[ -f "$msg_dir/read_at" ]] || write_field "$msg_dir/read_at" "$(timestamp_utc)"
+  payload_xml="$(build_notification "message" "$from_session" "$read_cmd" \
+    "reply_required=$reply_required_value")"
+  printf '%s %s\n' "$instruction" "$payload_xml"
 }
 
 send_to_session() {
@@ -199,13 +192,12 @@ if [[ -n "$team_session" ]]; then
   results=""
   for s in "${members[@]}"; do
     attempted=$((attempted + 1))
-    payload="$(build_message_payload_for_session "$s" "$from_session" "$read_cmd" "$reply_required_value" "$message" "$msg_id")"
+    payload="$(build_message_payload_for_session "$s" "$from_session" "$read_cmd" "$reply_required_value")"
     member_keys=()
     if [[ "$interrupt" -eq 1 ]]; then
       mapfile -t member_keys < <(resolve_interrupt_keys "$s")
     fi
     if send_to_session "$s" "$payload" ${member_keys[@]+"${member_keys[@]}"}; then
-      mark_message_delivered_for_session "$s" "$repo_name" "$msg_id"
       delivered=$((delivered + 1))
       results+="  <target session=\"$(xml_escape "$s")\" queued=\"true\" />"$'\n'
     else
@@ -234,7 +226,7 @@ if [[ -z "$target_session" ]]; then
   echo "target not found as team or agent: $target_name" >&2
   exit 1
 fi
-payload="$(build_message_payload_for_session "$target_session" "$from_session" "$read_cmd" "$reply_required_value" "$message" "$msg_id")"
+payload="$(build_message_payload_for_session "$target_session" "$from_session" "$read_cmd" "$reply_required_value")"
 submit_keys=()
 if [[ "$interrupt" -eq 1 ]]; then
   mapfile -t submit_keys < <(resolve_interrupt_keys "$target_session")
@@ -243,7 +235,6 @@ if ! send_to_session "$target_session" "$payload" ${submit_keys[@]+"${submit_key
   echo "failed to queue for session: $target_session" >&2
   exit 1
 fi
-mark_message_delivered_for_session "$target_session" "$repo_name" "$msg_id"
 printf '<send to="agent" name="%s" session="%s" message_id="%s" queued="1" attempted="1" failed="0" />\n' \
   "$(xml_escape "$target_name")" \
   "$(xml_escape "$target_session")" \

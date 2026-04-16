@@ -2,6 +2,8 @@
 
 **atmux** is a tmux-first toolkit for running and coordinating multiple AI coding agents in parallel. It handles session lifecycle, inter-agent messaging, work assignment, output capture, and notifications — across different AI CLIs (Claude Code, Gemini, Codex, Cursor) and git repos.
 
+> **Experimental** — this project is under active development. APIs, commands, and behavior may change without notice. Use at your own risk.
+
 ## Install
 
 ```sh

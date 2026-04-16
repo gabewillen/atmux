@@ -43,7 +43,7 @@ current_pane() {
 # Send a notification to a pane in the background.
 # On root manager panes (no ATMUX_MANAGER, has ATMUX_ADAPTER): saves user
 # input before delivering and restores it afterward.
-queue_self_notification() {
+send_notification() {
   local pane="$1"
   local payload="$2"
   shift 2
@@ -263,7 +263,7 @@ notify_exec_watchers() {
     pane="$(tr -d '\r\n' <"$f" 2>/dev/null || true)"
     [[ -n "$pane" ]] || continue
     [[ "$pane" == "$skip_pane" ]] && continue
-    queue_self_notification "$pane" "$payload"
+    send_notification "$pane" "$payload"
   done < <(find "$wdir" -maxdepth 1 -type f 2>/dev/null)
 }
 
@@ -280,7 +280,7 @@ notify_issue_watchers() {
     pane="$(tr -d '\r\n' <"$f" 2>/dev/null || true)"
     [[ -n "$pane" ]] || continue
     [[ "$pane" == "$skip_pane" ]] && continue
-    queue_self_notification "$pane" "$payload"
+    send_notification "$pane" "$payload"
   done < <(find "$wdir" -maxdepth 1 -type f 2>/dev/null)
 }
 
@@ -291,7 +291,7 @@ send_payload_to_pane() {
   shift 2
   local submit_keys=("$@")
   [[ ${#submit_keys[@]} -gt 0 ]] || submit_keys=("Enter")
-  queue_self_notification "$target" "$payload" "${submit_keys[@]}"
+  send_notification "$target" "$payload" "${submit_keys[@]}"
 }
 
 notify_cli_usage() {
@@ -364,7 +364,7 @@ notify_cli_main() {
     fi
   fi
 
-  queue_self_notification "$pane" "$xml_payload" ${submit_keys[@]+"${submit_keys[@]}"}
+  send_notification "$pane" "$xml_payload" ${submit_keys[@]+"${submit_keys[@]}"}
 }
 
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then

@@ -396,7 +396,7 @@ assign_issue() {
   local actor_pane notification_xml
   actor_pane="$(current_pane)"
   notification_xml="$(build_notification "issue" "assign" "atmux issue get $id" "state=assigned")"
-  queue_self_notification "$actor_pane" "$notification_xml"
+  send_notification "$actor_pane" "$notification_xml"
   notify_issue_watchers "$dir" "$actor_pane" "$notification_xml"
 }
 
@@ -481,7 +481,7 @@ claim_issue() {
   local actor_pane notification_xml
   actor_pane="$(current_pane)"
   notification_xml="$(build_notification "issue" "claim" "atmux issue get $id" "state=in_progress")"
-  queue_self_notification "$actor_pane" "$notification_xml"
+  send_notification "$actor_pane" "$notification_xml"
   notify_issue_watchers "$dir" "$actor_pane" "$notification_xml"
 }
 

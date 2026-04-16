@@ -138,7 +138,7 @@ main() {
       notification_xml="$(build_notification "exec_output" "$command_text" \
         "tmux capture-pane -p -t $executor_pane -S -$lines" \
         "pid=$pid" "pane=$executor_pane")"
-      queue_self_notification "$my_pane" "$notification_xml"
+      send_notification "$my_pane" "$notification_xml"
     fi
 
     # Check if process exited

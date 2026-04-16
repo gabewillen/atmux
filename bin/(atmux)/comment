@@ -76,7 +76,7 @@ notify_agent_by_name() {
   [[ -n "$pane" ]] || return 0
   [[ "$pane" == "$skip_pane" ]] && return 0
 
-  queue_self_notification "$pane" "$payload"
+  send_notification "$pane" "$payload"
 }
 
 message=""
@@ -152,7 +152,7 @@ printf '</comment>\n'
 actor_pane="$(current_pane)"
 notification_xml="$(build_notification "issue" "comment" "atmux issue get $issue_id" "state=comment")"
 
-queue_self_notification "$actor_pane" "$notification_xml"
+send_notification "$actor_pane" "$notification_xml"
 notify_issue_watchers "$issue_dir" "$actor_pane" "$notification_xml"
 
 assigned_to="$(cat "$issue_dir/assigned_to" 2>/dev/null || true)"

@@ -63,7 +63,7 @@ tmux send-keys -t "$pane" -l "> ${user_text}"
 # Queue a notification
 marker="queuetest-$RANDOM"
 payload="$(build_notification "test" "$marker" "")"
-queue_self_notification "$pane" "$payload"
+send_notification "$pane" "$payload"
 
 # Notification should be delivered (runner saves input, delivers, restores)
 if ! wait_for_text "$pane" "$marker" 15; then
@@ -80,4 +80,4 @@ if ! wait_for_text "$pane" "$user_text" 10; then
   exit 1
 fi
 
-echo "ok: queue_self_notification saves input, delivers, and restores on root manager"
+echo "ok: send_notification saves input, delivers, and restores on root manager"

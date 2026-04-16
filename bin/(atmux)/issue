@@ -175,7 +175,7 @@ create_issue() {
 
   # Build description from template if structured flags were provided
   local has_todos=0
-  [[ ${#todos[@]+x} ]] && [[ "${#todos[@]}" -gt 0 ]] && has_todos=1
+  (( ${#todos[@]} > 0 )) && has_todos=1
   if [[ -n "$given" || -n "$when" || -n "$then_" || "$has_todos" -eq 1 ]]; then
     local todos_text=""
     local t

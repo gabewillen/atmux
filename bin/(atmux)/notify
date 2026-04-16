@@ -40,6 +40,10 @@ current_pane() {
   return 0
 }
 
+# File-based notification queue with a single runner per pane.
+# Enqueue: writes payload to disk, starts runner if not already active.
+# Runner: waits indefinitely for input idle on root manager panes,
+#          then drains all queued payloads. Never times out while user types.
 queue_self_notification() {
   local pane="$1"
   local payload="$2"
@@ -47,58 +51,112 @@ queue_self_notification() {
   local submit_key_str="${*:-Enter}"
   [[ -n "$pane" ]] || return 0
 
-  # The runner script handles idle-wait + delivery entirely in the background.
-  # It resolves the adapter from the pane's session at delivery time.
-  local source_root="${ATMUX_SOURCE_ROOT:-${ATMUX_HOME:-$HOME/.atmux}/src/atmux}"
-  local notify_script="$source_root/bin/(atmux)/notify"
+  local atmux_home="${ATMUX_HOME:-$HOME/.atmux}"
+  local pane_hash="${pane//%/_}"
+  local queue_dir="$atmux_home/notify-queue/$pane_hash"
+  mkdir -p "$queue_dir/payloads"
+
+  # Enqueue payload
+  local ts
+  ts="$(date +%s%N 2>/dev/null || date +%s)"
+  printf '%s\n%s' "$submit_key_str" "$payload" > "$queue_dir/payloads/${ts}-$$.notification"
+
+  # If runner is alive, it will pick up the new payload — done
+  if [[ -f "$queue_dir/runner.pid" ]]; then
+    local runner_pid
+    runner_pid="$(cat "$queue_dir/runner.pid" 2>/dev/null || true)"
+    if [[ -n "$runner_pid" ]] && kill -0 "$runner_pid" 2>/dev/null; then
+      return 0
+    fi
+  fi
+
+  # Start a new runner
+  local source_root="${ATMUX_SOURCE_ROOT:-${atmux_home}/src/atmux}"
 
   nohup bash -c '
-    pane="$1"; payload="$2"; submit_key_str="$3"; notify_lib="$4"
-    sleep 0.2
+    pane="$1"; queue_dir="$2"; source_root="$3"
+    echo $$ > "$queue_dir/runner.pid"
     settle="${ATMUX_SEND_SETTLE_SECONDS:-0.4}"
     submit_wait="${ATMUX_SEND_SUBMIT_WAIT_SECONDS:-0.3}"
     idle_interval="${ATMUX_INPUT_IDLE_INTERVAL:-0.3}"
-    idle_timeout="${ATMUX_INPUT_IDLE_TIMEOUT:-30}"
 
-    # Resolve idle pattern from adapter manifest (root manager only)
+    cleanup() { rm -f "$queue_dir/runner.pid"; }
+    trap cleanup EXIT
+
+    # Resolve idle pattern once (root manager only)
     idle_pat=""
-    if [[ -f "$notify_lib" ]]; then
-      sess="$(tmux display-message -t "$pane" -p "#{session_name}" 2>/dev/null || true)"
-      if [[ -n "$sess" ]]; then
-        mgr="$(tmux show-environment -t "$sess" ATMUX_MANAGER 2>/dev/null | sed -n "s/^ATMUX_MANAGER=//p" || true)"
-        if [[ -z "$mgr" ]]; then
-          adapter="$(tmux show-environment -t "$sess" ATMUX_ADAPTER 2>/dev/null | sed -n "s/^ATMUX_ADAPTER=//p" || true)"
-          if [[ -n "$adapter" ]]; then
-            source_root="$(dirname "$(dirname "$(dirname "$notify_lib")")")"
-            mf="$source_root/adapter/$adapter/manifest.json"
-            if [[ -f "$mf" ]]; then
-              idle_pat="$(tr -d "\n\r\t" < "$mf" | sed -n "s/.*\"input_idle\"[[:space:]]*:[[:space:]]*{[^}]*\"pattern\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p")"
-            fi
+    sess="$(tmux display-message -t "$pane" -p "#{session_name}" 2>/dev/null || true)"
+    if [[ -n "$sess" ]]; then
+      mgr="$(tmux show-environment -t "$sess" ATMUX_MANAGER 2>/dev/null | sed -n "s/^ATMUX_MANAGER=//p" || true)"
+      if [[ -z "$mgr" ]]; then
+        adapter="$(tmux show-environment -t "$sess" ATMUX_ADAPTER 2>/dev/null | sed -n "s/^ATMUX_ADAPTER=//p" || true)"
+        if [[ -n "$adapter" ]]; then
+          mf="$source_root/adapter/$adapter/manifest.json"
+          if [[ -f "$mf" ]]; then
+            idle_pat="$(tr -d "\n\r\t" < "$mf" | sed -n "s/.*\"input_idle\"[[:space:]]*:[[:space:]]*{[^}]*\"pattern\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p")"
           fi
         fi
       fi
     fi
 
-    # Wait for input idle if pattern resolved (root manager pane)
-    if [[ -n "$idle_pat" ]]; then
-      end=$(( $(date +%s) + idle_timeout ))
-      while true; do
-        ll="$(tmux capture-pane -p -t "$pane" -S -5 2>/dev/null | grep -v "^[[:space:]]*$" | tail -1)"
-        if printf "%s" "$ll" | grep -Eq "$idle_pat" 2>/dev/null; then break; fi
-        [[ $(date +%s) -lt $end ]] || break
-        sleep "$idle_interval"
+    deliver_one() {
+      local msg_file="$1" pending="$2"
+      local sk pl
+      sk="$(head -1 "$msg_file")"
+      pl="$(tail -n +2 "$msg_file")"
+      [[ -n "$pl" ]] || return 0
+      # Inject pending count into notification XML
+      if [[ "$pending" -gt 1 ]]; then
+        pl="$(printf "%s" "$pl" | sed "s| />| pending=\"$pending\" />|")"
+      fi
+      tmux send-keys -t "$pane" C-u >/dev/null 2>&1 || return 0
+      sleep "$settle"
+      tmux send-keys -t "$pane" -l "$pl" >/dev/null 2>&1 || return 0
+      sleep "$settle"
+      for _sk in $sk; do
+        tmux send-keys -t "$pane" "$_sk" >/dev/null 2>&1 || return 0
       done
-    fi
+      sleep "$submit_wait"
+    }
 
-    tmux send-keys -t "$pane" C-u >/dev/null 2>&1 || exit 0
-    sleep "$settle"
-    tmux send-keys -t "$pane" -l "$payload" >/dev/null 2>&1 || exit 0
-    sleep "$settle"
-    for _sk in $submit_key_str; do
-      tmux send-keys -t "$pane" "$_sk" >/dev/null 2>&1 || exit 0
+    sleep 0.2
+
+    while true; do
+      # Collect pending payloads
+      msgs=()
+      for f in "$queue_dir/payloads/"*.notification; do
+        [[ -f "$f" ]] || continue
+        msgs+=("$f")
+      done
+      [[ ${#msgs[@]} -gt 0 ]] || break
+
+      # Wait for input idle indefinitely (root manager only)
+      if [[ -n "$idle_pat" ]]; then
+        while true; do
+          ll="$(tmux capture-pane -p -t "$pane" -S -5 2>/dev/null | grep -v "^[[:space:]]*$" | tail -1)"
+          if printf "%s" "$ll" | grep -Eq "$idle_pat" 2>/dev/null; then break; fi
+          sleep "$idle_interval"
+        done
+      fi
+
+      # Drain queue — re-scan in case new payloads arrived while waiting
+      msgs=()
+      for f in "$queue_dir/payloads/"*.notification; do
+        [[ -f "$f" ]] || continue
+        msgs+=("$f")
+      done
+      pending_count=${#msgs[@]}
+
+      for msg in "${msgs[@]}"; do
+        deliver_one "$msg" "$pending_count"
+        rm -f "$msg"
+        pending_count=$((pending_count - 1))
+      done
+
+      # Brief pause then check for newly arrived payloads
+      sleep 0.1
     done
-    sleep "$submit_wait"
-  ' _ "$pane" "$payload" "$submit_key_str" "$notify_script" >/dev/null 2>&1 &
+  ' _ "$pane" "$queue_dir" "$source_root" >/dev/null 2>&1 &
 }
 
 # Unified notification builder.
@@ -222,16 +280,21 @@ resolve_idle_context_for_pane() {
 }
 
 # Block until the last non-blank line of a pane matches a pattern.
-# Usage: wait_for_input_idle <pane> <pattern> <timeout_seconds>
-# Returns 0 when idle detected, 1 on timeout (caller should send anyway).
+# Usage: wait_for_input_idle <pane> <pattern> [<timeout_seconds>]
+# Returns 0 when idle detected. If timeout is 0 or omitted, waits indefinitely.
+# Returns 1 only when an explicit timeout is set and expires.
 wait_for_input_idle() {
   local pane="$1"
   local pattern="$2"
-  local timeout_sec="${3:-30}"
+  local timeout_sec="${3:-0}"
   local deadline last_line now
   local interval="${ATMUX_INPUT_IDLE_INTERVAL:-0.3}"
 
-  deadline=$(( $(date +%s) + timeout_sec ))
+  if [[ "$timeout_sec" -gt 0 ]]; then
+    deadline=$(( $(date +%s) + timeout_sec ))
+  else
+    deadline=0
+  fi
 
   while true; do
     last_line="$(tmux capture-pane -p -t "$pane" -S -5 2>/dev/null \
@@ -239,9 +302,11 @@ wait_for_input_idle() {
     if printf '%s' "$last_line" | grep -Eq "$pattern" 2>/dev/null; then
       return 0
     fi
-    now="$(date +%s)"
-    if (( now >= deadline )); then
-      return 1
+    if [[ "$deadline" -gt 0 ]]; then
+      now="$(date +%s)"
+      if (( now >= deadline )); then
+        return 1
+      fi
     fi
     sleep "$interval"
   done

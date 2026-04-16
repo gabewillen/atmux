@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+NOTIFY_SCRIPT="$REPO_ROOT/bin/(atmux)/notify"
+
+ATMUX_HOME="${TMPDIR:-/tmp}"
+ATMUX_SOURCE_ROOT="$REPO_ROOT"
+source "$NOTIFY_SCRIPT"
+
+repo_name="idle${RANDOM}"
+session="atmux-${repo_name}-bare"
+
+cleanup() {
+  tmux kill-session -t "$session" >/dev/null 2>&1 || true
+}
+trap cleanup EXIT
+
+tmux kill-session -t "$session" >/dev/null 2>&1 || true
+tmux new-session -d -s "$session" -n "$session" -x 160 -y 40 -c "$REPO_ROOT" "/bin/bash" -l
+
+# No ATMUX_MANAGER and no ATMUX_ADAPTER — bare session
+pane="$(tmux list-panes -t "$session" -F '#{pane_id}' 2>/dev/null | head -n1)"
+[[ -n "$pane" ]] || { echo "pane missing" >&2; exit 1; }
+
+# resolve_idle_context_for_pane should return empty (no adapter = no pattern)
+ctx="$(resolve_idle_context_for_pane "$pane" 2>/dev/null || true)"
+[[ -z "$ctx" ]] || { echo "expected empty context for bare session, got: $ctx" >&2; exit 1; }
+
+echo "ok: pane without adapter skips input idle check"

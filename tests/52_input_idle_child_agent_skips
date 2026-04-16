@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+NOTIFY_SCRIPT="$REPO_ROOT/bin/(atmux)/notify"
+
+ATMUX_HOME="${TMPDIR:-/tmp}"
+ATMUX_SOURCE_ROOT="$REPO_ROOT"
+source "$NOTIFY_SCRIPT"
+
+repo_name="idle${RANDOM}"
+session="atmux-${repo_name}-child"
+
+cleanup() {
+  tmux kill-session -t "$session" >/dev/null 2>&1 || true
+}
+trap cleanup EXIT
+
+tmux kill-session -t "$session" >/dev/null 2>&1 || true
+tmux new-session -d -s "$session" -n "$session" -x 160 -y 40 -c "$REPO_ROOT" "/bin/bash" -l
+
+# Set ATMUX_MANAGER — this is a child agent, NOT the root manager
+tmux set-environment -t "$session" ATMUX_MANAGER "agent-0"
+tmux set-environment -t "$session" ATMUX_ADAPTER "claude-code"
+
+pane="$(tmux list-panes -t "$session" -F '#{pane_id}' 2>/dev/null | head -n1)"
+[[ -n "$pane" ]] || { echo "pane missing" >&2; exit 1; }
+
+# Simulate non-idle input (user typing)
+sleep 0.5
+tmux send-keys -t "$pane" -l "> some text being typed"
+
+# resolve_idle_context_for_pane should return empty for child agents
+ctx="$(resolve_idle_context_for_pane "$pane" 2>/dev/null || true)"
+[[ -z "$ctx" ]] || { echo "expected empty context for child agent, got: $ctx" >&2; exit 1; }
+
+echo "ok: child agent panes (with ATMUX_MANAGER) skip input idle check"

@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+NOTIFY_SCRIPT="$REPO_ROOT/bin/(atmux)/notify"
+
+ATMUX_HOME="${TMPDIR:-/tmp}"
+ATMUX_SOURCE_ROOT="$REPO_ROOT"
+source "$NOTIFY_SCRIPT"
+
+repo_name="idle${RANDOM}"
+session="atmux-${repo_name}-mgr"
+
+cleanup() {
+  tmux kill-session -t "$session" >/dev/null 2>&1 || true
+}
+trap cleanup EXIT
+
+tmux kill-session -t "$session" >/dev/null 2>&1 || true
+# Run a script that streams output then shows the idle prompt, followed by cat to keep alive
+tmux new-session -d -s "$session" -n "$session" -x 160 -y 40 \
+  "bash -c 'for i in 1 2 3; do echo processing_step_\$i; sleep 1; done; printf \"> \n\"; exec cat'"
+
+pane="$(tmux list-panes -t "$session" -F '#{pane_id}' 2>/dev/null | head -n1)"
+[[ -n "$pane" ]] || { echo "pane missing" >&2; exit 1; }
+
+# wait_for_input_idle should block during streaming, then detect the prompt
+ATMUX_INPUT_IDLE_INTERVAL=0.3 start_ts="$(date +%s)"
+if ! wait_for_input_idle "$pane" '^> *$' 15; then
+  echo "idle not detected after streaming finished" >&2
+  tmux capture-pane -p -t "$pane" -S -10 >&2 || true
+  exit 1
+fi
+elapsed=$(( $(date +%s) - start_ts ))
+
+# Should have waited at least 2 seconds (streaming takes ~3s)
+[[ "$elapsed" -ge 2 ]] || { echo "didn't wait for streaming to finish: ${elapsed}s" >&2; exit 1; }
+
+echo "ok: wait_for_input_idle blocks during streaming output, detects prompt when done"

@@ -47,13 +47,31 @@ queue_self_notification() {
   local submit_key_str="${*:-Enter}"
   [[ -n "$pane" ]] || return 0
 
+  # Resolve idle context before spawning background process
+  local idle_pattern="" idle_timeout=""
+  local idle_ctx
+  idle_ctx="$(resolve_idle_context_for_pane "$pane" 2>/dev/null || true)"
+  if [[ -n "$idle_ctx" ]]; then
+    idle_pattern="$(printf '%s\n' "$idle_ctx" | head -1)"
+    idle_timeout="$(printf '%s\n' "$idle_ctx" | tail -1)"
+  fi
+
   nohup bash -lc '
-    pane="$1"
-    payload="$2"
-    submit_key_str="$3"
+    pane="$1"; payload="$2"; submit_key_str="$3"
+    idle_pat="$4"; idle_to="$5"
     sleep 0.2
     settle="${ATMUX_SEND_SETTLE_SECONDS:-0.4}"
     submit_wait="${ATMUX_SEND_SUBMIT_WAIT_SECONDS:-0.3}"
+    idle_interval="${ATMUX_INPUT_IDLE_INTERVAL:-0.3}"
+    if [[ -n "$idle_pat" ]]; then
+      end=$(( $(date +%s) + idle_to ))
+      while true; do
+        ll="$(tmux capture-pane -p -t "$pane" -S -5 2>/dev/null | grep -v "^[[:space:]]*$" | tail -1)"
+        if printf "%s" "$ll" | grep -Eq "$idle_pat" 2>/dev/null; then break; fi
+        [[ $(date +%s) -lt $end ]] || break
+        sleep "$idle_interval"
+      done
+    fi
     tmux send-keys -t "$pane" C-u >/dev/null 2>&1 || exit 0
     sleep "$settle"
     tmux send-keys -t "$pane" -l "$payload" >/dev/null 2>&1 || exit 0
@@ -62,7 +80,7 @@ queue_self_notification() {
       tmux send-keys -t "$pane" "$_sk" >/dev/null 2>&1 || exit 0
     done
     sleep "$submit_wait"
-  ' _ "$pane" "$payload" "$submit_key_str" >/dev/null 2>&1 &
+  ' _ "$pane" "$payload" "$submit_key_str" "$idle_pattern" "$idle_timeout" >/dev/null 2>&1 &
 }
 
 # Unified notification builder.
@@ -104,17 +122,30 @@ session_short_name() {
   fi
 }
 
-resolve_submit_keys() {
+resolve_manifest_path() {
   local adapter="$1"
-  local mode="${2:-queue}"
-  local source_root manifest_path compact raw_keys
+  local source_root manifest_path
 
   source_root="${ATMUX_SOURCE_ROOT:-${ATMUX_HOME}/src/atmux}"
   manifest_path="$source_root/adapter/$adapter/manifest.json"
-  if [[ ! -f "$manifest_path" ]]; then
-    manifest_path="$ATMUX_HOME/adapters/$adapter/manifest.json"
+  if [[ -f "$manifest_path" ]]; then
+    printf '%s\n' "$manifest_path"
+    return 0
   fi
-  if [[ ! -f "$manifest_path" ]]; then
+  manifest_path="$ATMUX_HOME/adapters/$adapter/manifest.json"
+  if [[ -f "$manifest_path" ]]; then
+    printf '%s\n' "$manifest_path"
+    return 0
+  fi
+  return 1
+}
+
+resolve_submit_keys() {
+  local adapter="$1"
+  local mode="${2:-queue}"
+  local manifest_path compact raw_keys
+
+  if ! manifest_path="$(resolve_manifest_path "$adapter")"; then
     printf 'Enter\n'
     return 0
   fi
@@ -127,6 +158,75 @@ resolve_submit_keys() {
   fi
 
   printf '%s' "$raw_keys" | sed 's/"//g; s/,/\n/g'
+}
+
+# Read input_idle.pattern from an adapter manifest.
+# Returns empty string (and exit 1) if not found.
+resolve_input_idle_pattern() {
+  local adapter="$1"
+  local manifest_path compact pattern
+
+  if ! manifest_path="$(resolve_manifest_path "$adapter")"; then
+    return 1
+  fi
+
+  compact="$(tr -d '\n\r\t' < "$manifest_path")"
+  pattern="$(printf '%s' "$compact" | sed -n 's/.*"input_idle"[[:space:]]*:[[:space:]]*{[^}]*"pattern"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
+  if [[ -z "$pattern" ]]; then
+    return 1
+  fi
+
+  printf '%s\n' "$pattern"
+}
+
+# Resolve idle-check context for a target pane.
+# Only applies to root manager panes (no ATMUX_MANAGER set).
+# Prints: <pattern>\n<timeout>   or nothing if check not needed.
+resolve_idle_context_for_pane() {
+  local pane="$1"
+  local pane_session mgr adapter pattern
+
+  pane_session="$(tmux display-message -t "$pane" -p '#{session_name}' 2>/dev/null || true)"
+  [[ -n "$pane_session" ]] || return 0
+
+  mgr="$(get_session_env "$pane_session" ATMUX_MANAGER)"
+  # Has a manager → child agent, skip idle check
+  [[ -z "$mgr" ]] || return 0
+
+  adapter="$(get_session_env "$pane_session" ATMUX_ADAPTER)"
+  [[ -n "$adapter" ]] || return 0
+
+  pattern="$(resolve_input_idle_pattern "$adapter" 2>/dev/null || true)"
+  [[ -n "$pattern" ]] || return 0
+
+  printf '%s\n' "$pattern"
+  printf '%s\n' "${ATMUX_INPUT_IDLE_TIMEOUT:-30}"
+}
+
+# Block until the last non-blank line of a pane matches a pattern.
+# Usage: wait_for_input_idle <pane> <pattern> <timeout_seconds>
+# Returns 0 when idle detected, 1 on timeout (caller should send anyway).
+wait_for_input_idle() {
+  local pane="$1"
+  local pattern="$2"
+  local timeout_sec="${3:-30}"
+  local deadline last_line now
+  local interval="${ATMUX_INPUT_IDLE_INTERVAL:-0.3}"
+
+  deadline=$(( $(date +%s) + timeout_sec ))
+
+  while true; do
+    last_line="$(tmux capture-pane -p -t "$pane" -S -5 2>/dev/null \
+      | grep -v '^[[:space:]]*$' | tail -1 || true)"
+    if printf '%s' "$last_line" | grep -Eq "$pattern" 2>/dev/null; then
+      return 0
+    fi
+    now="$(date +%s)"
+    if (( now >= deadline )); then
+      return 1
+    fi
+    sleep "$interval"
+  done
 }
 
 timestamp_utc() {
@@ -252,6 +352,16 @@ send_payload_to_pane() {
   confirm_interval="${ATMUX_SEND_CONFIRM_INTERVAL_SECONDS:-0.05}"
   attempts="${ATMUX_SEND_ATTEMPTS:-8}"
   retry_wait="${ATMUX_SEND_RETRY_WAIT_SECONDS:-0.5}"
+
+  # Wait for input idle on root manager panes
+  local idle_ctx
+  idle_ctx="$(resolve_idle_context_for_pane "$target" 2>/dev/null || true)"
+  if [[ -n "$idle_ctx" ]]; then
+    local _idle_pat _idle_to
+    _idle_pat="$(printf '%s\n' "$idle_ctx" | head -1)"
+    _idle_to="$(printf '%s\n' "$idle_ctx" | tail -1)"
+    wait_for_input_idle "$target" "$_idle_pat" "$_idle_to" || true
+  fi
 
   marker_count() {
     tmux capture-pane -p -t "$target" -S -800 2>/dev/null | tr -d '\r\n' | grep -o '<notification ' | wc -l | tr -d ' '

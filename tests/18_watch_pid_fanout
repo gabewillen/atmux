@@ -56,7 +56,7 @@ rc_rej=$?
 set -e
 [[ "$rc_rej" -eq 2 ]] || { echo "expected reject exit 2, got $rc_rej: $out_rej" >&2; exit 1; }
 
-tmux send-keys -t "$pane_a" "ATMUX_HOME=\"$atmux_home\" ATMUX_REPO=\"$repo_name\" ATMUX_AGENT_NAME=\"a\" ATMUX_SESSION_NAME=\"$session_a\" \"$ATMUX_BIN\" exec sleep 8" C-m
+tmux send-keys -t "$pane_a" "ATMUX_HOME=\"$atmux_home\" ATMUX_REPO=\"$repo_name\" ATMUX_AGENT_NAME=\"a\" ATMUX_SESSION_NAME=\"$session_a\" \"$ATMUX_BIN\" exec sleep 15" C-m
 
 deadline=$(( $(date +%s) + 12 ))
 pid=""

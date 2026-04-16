@@ -5,6 +5,9 @@
     "queue": ["Enter"],
     "interrupt": ["Tab"]
   },
+  "input_idle": {
+    "pattern": "^> *$"
+  },
   "intelligence_map": [
     {
       "min": 0,

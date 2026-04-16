@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+NOTIFY_SCRIPT="$REPO_ROOT/bin/(atmux)/notify"
+
+# Source notify to get access to resolve_input_idle_pattern and resolve_manifest_path
+ATMUX_HOME="${TMPDIR:-/tmp}"
+source "$NOTIFY_SCRIPT"
+ATMUX_SOURCE_ROOT="$REPO_ROOT"
+
+# Claude Code manifest has input_idle.pattern
+pat="$(resolve_input_idle_pattern "claude-code")"
+[[ "$pat" == '^> *$' ]] || { echo "claude-code pattern mismatch: $pat" >&2; exit 1; }
+
+# Codex manifest
+pat="$(resolve_input_idle_pattern "codex")"
+[[ "$pat" == '^> *$' ]] || { echo "codex pattern mismatch: $pat" >&2; exit 1; }
+
+# Gemini manifest
+pat="$(resolve_input_idle_pattern "gemini")"
+[[ -n "$pat" ]] || { echo "gemini pattern empty" >&2; exit 1; }
+
+# Cursor manifest
+pat="$(resolve_input_idle_pattern "cursor-agent")"
+[[ "$pat" == '^> *$' ]] || { echo "cursor-agent pattern mismatch: $pat" >&2; exit 1; }
+
+# Non-existent adapter returns failure
+set +e
+pat="$(resolve_input_idle_pattern "nonexistent-adapter" 2>/dev/null)"
+rc=$?
+set -e
+[[ "$rc" -ne 0 ]] || { echo "expected failure for nonexistent adapter" >&2; exit 1; }
+
+echo "ok: input_idle pattern resolved correctly for all adapters"

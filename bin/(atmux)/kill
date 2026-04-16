@@ -12,6 +12,7 @@ usage() {
 Usage:
   atmux kill --pid <pid> [--timeout <seconds>] [--signal <NAME>]
   atmux kill --agent <name|pattern> [name|pattern...]
+  atmux kill --all [--yes]
 
 Description:
   --pid    Stop an atmux exec-tracked child process for this repo, wait for
@@ -19,6 +20,9 @@ Description:
            remove metadata under ~/.atmux/exec/<repo>/<pid>/.
   --agent  Kill agent sessions and clean up their worktrees and branches.
            Accepts agent names, session names, or glob patterns.
+  --all    Kill every atmux session, worktree, and branch for this repo.
+           Prompts for y/N confirmation; use --yes to skip. Refuses to run
+           from inside an atmux session.
 
 Examples:
   atmux kill --pid 12345
@@ -26,6 +30,8 @@ Examples:
   atmux kill --agent worker
   atmux kill --agent 'agent-*'
   atmux kill --agent worker planner
+  atmux kill --all
+  atmux kill --all --yes
 USAGE
 }
 
@@ -242,11 +248,43 @@ kill_agents() {
 
 # --- Main ---
 
+inside_atmux_session() {
+  if [[ -n "${ATMUX_SESSION_NAME:-}" || -n "${ATMUX_MANAGER:-}" ]]; then
+    return 0
+  fi
+  if [[ -n "${TMUX:-}" ]]; then
+    local cur
+    cur="$(tmux display-message -p '#{session_name}' 2>/dev/null || true)"
+    [[ "$cur" == atmux-* ]] && return 0
+  fi
+  return 1
+}
+
+confirm_kill_all() {
+  local repo_name="$1"
+  if [[ ! -t 0 ]]; then
+    echo "atmux kill --all: stdin is not a tty; pass --yes to skip prompt" >&2
+    exit 2
+  fi
+  printf 'atmux kill --all will destroy every session, worktree, and branch for repo "%s".\nContinue? [y/N] ' "$repo_name" >&2
+  local reply=""
+  IFS= read -r reply || reply=""
+  case "$reply" in
+    y|Y|yes|YES) return 0 ;;
+    *)
+      echo "aborted" >&2
+      exit 1
+      ;;
+  esac
+}
+
 main() {
   local pid=""
   local timeout_sec="60"
   local signal_name="TERM"
   local agent_mode=0
+  local all_mode=0
+  local assume_yes=0
   local -a agent_targets=()
 
   while [[ $# -gt 0 ]]; do
@@ -275,6 +313,14 @@ main() {
           esac
         done
         ;;
+      --all)
+        all_mode=1
+        shift
+        ;;
+      --yes|-y)
+        assume_yes=1
+        shift
+        ;;
       --timeout)
         timeout_sec="${2:-}"
         shift 2
@@ -295,6 +341,27 @@ main() {
     esac
   done
 
+  if [[ "$all_mode" -eq 1 ]]; then
+    if [[ "$agent_mode" -eq 1 || -n "$pid" ]]; then
+      echo "--all cannot be combined with --agent or --pid" >&2
+      exit 2
+    fi
+    if inside_atmux_session; then
+      echo "atmux kill --all: refusing to run from inside an atmux session" >&2
+      exit 2
+    fi
+    local repo_root="" repo_name=""
+    {
+      IFS= read -r repo_root
+      IFS= read -r repo_name
+    } < <(repo_context)
+    if [[ "$assume_yes" -ne 1 ]]; then
+      confirm_kill_all "$repo_name"
+    fi
+    kill_agents '*'
+    exit $?
+  fi
+
   if [[ "$agent_mode" -eq 1 ]]; then
     if [[ "${#agent_targets[@]}" -eq 0 ]]; then
       echo "missing agent name or pattern" >&2
@@ -310,7 +377,7 @@ main() {
     exit $?
   fi
 
-  echo "missing --pid or --agent" >&2
+  echo "missing --pid, --agent, or --all" >&2
   usage >&2
   exit 2
 }

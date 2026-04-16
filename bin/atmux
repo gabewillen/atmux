@@ -307,7 +307,7 @@ main() {
     *)
       cmd="$1"
       case "$cmd" in
-        session|update|list|env|message) ;;
+        session|update|list|env|message|kill) ;;
         *) require_tmux ;;
       esac
       shift

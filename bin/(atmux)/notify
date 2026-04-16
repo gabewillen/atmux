@@ -52,8 +52,8 @@ queue_self_notification() {
     payload="$2"
     submit_key_str="$3"
     sleep 0.2
-    settle="${ATMUX_SEND_SETTLE_SECONDS:-0.2}"
-    submit_wait="${ATMUX_SEND_SUBMIT_WAIT_SECONDS:-0.15}"
+    settle="${ATMUX_SEND_SETTLE_SECONDS:-0.4}"
+    submit_wait="${ATMUX_SEND_SUBMIT_WAIT_SECONDS:-0.3}"
     tmux send-keys -t "$pane" C-u >/dev/null 2>&1 || exit 0
     sleep "$settle"
     tmux send-keys -t "$pane" -l "$payload" >/dev/null 2>&1 || exit 0
@@ -245,8 +245,8 @@ send_payload_to_pane() {
   local attempts retry_wait
   local before_count after_count confirmed poll attempt snap initial_before_count current_count _sk
 
-  settle="${ATMUX_SEND_SETTLE_SECONDS:-0.2}"
-  submit_wait="${ATMUX_SEND_SUBMIT_WAIT_SECONDS:-0.15}"
+  settle="${ATMUX_SEND_SETTLE_SECONDS:-0.4}"
+  submit_wait="${ATMUX_SEND_SUBMIT_WAIT_SECONDS:-0.3}"
   extra_enter="${ATMUX_SEND_DOUBLE_ENTER:-0}"
   confirm_polls="${ATMUX_SEND_CONFIRM_POLLS:-20}"
   confirm_interval="${ATMUX_SEND_CONFIRM_INTERVAL_SECONDS:-0.05}"

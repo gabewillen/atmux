@@ -497,6 +497,7 @@ start_session() {
   local team="${ATMUX_TEAM:-}"
   local intelligence="${ATMUX_INTELLIGENCE:-20}"
   local name_explicit=0
+  local no_worktree=0
   local -a forward_args=()
 
   while [[ $# -gt 0 ]]; do
@@ -509,6 +510,10 @@ start_session() {
       --adapter)
         adapter="${2:-}"
         shift 2
+        ;;
+      --no-worktree)
+        no_worktree=1
+        shift
         ;;
       --)
         shift
@@ -588,25 +593,31 @@ start_session() {
     return
   fi
 
-  mkdir -p "$ATMUX_HOME/agents"
+  local work_dir="$worktree"
 
-  if [[ -e "$worktree" ]]; then
-    if ! git -C "$worktree" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-      echo "path exists and is not a git worktree: $worktree" >&2
-      exit 1
-    fi
+  if [[ "$no_worktree" -eq 1 ]]; then
+    work_dir="$repo_root"
   else
-    worktree_err="$(
-      git -C "$repo_root" worktree add -B "$branch" "$worktree" HEAD 2>&1
-    )" || {
-      if printf '%s\n' "$worktree_err" | grep -Eq 'cannot lock ref|Operation not permitted|Permission denied'; then
-        echo "branch creation failed; retrying detached worktree for $worktree" >&2
-        git -C "$repo_root" worktree add "$worktree" HEAD >/dev/null
-      else
-        printf '%s\n' "$worktree_err" >&2
+    mkdir -p "$ATMUX_HOME/agents"
+
+    if [[ -e "$worktree" ]]; then
+      if ! git -C "$worktree" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        echo "path exists and is not a git worktree: $worktree" >&2
         exit 1
       fi
-    }
+    else
+      worktree_err="$(
+        git -C "$repo_root" worktree add -B "$branch" "$worktree" HEAD 2>&1
+      )" || {
+        if printf '%s\n' "$worktree_err" | grep -Eq 'cannot lock ref|Operation not permitted|Permission denied'; then
+          echo "branch creation failed; retrying detached worktree for $worktree" >&2
+          git -C "$repo_root" worktree add "$worktree" HEAD >/dev/null
+        else
+          printf '%s\n' "$worktree_err" >&2
+          exit 1
+        fi
+      }
+    fi
   fi
 
   local session_id
@@ -615,12 +626,12 @@ start_session() {
     session_id="$(date +%s)-$$"
   fi
 
-  tmux new-session -d -s "$session" -n "$session" -c "$worktree"
+  tmux new-session -d -s "$session" -n "$session" -c "$work_dir"
   ensure_tmux_scroll_enabled
   tmux set-environment -t "$session" ATMUX_REPO "$repo_name"
   tmux set-environment -t "$session" ATMUX_SESSION_ID "$session_id"
   tmux set-environment -t "$session" ATMUX_SESSION_NAME "$session"
-  tmux set-environment -t "$session" ATMUX_WORKTREE "$worktree"
+  tmux set-environment -t "$session" ATMUX_WORKTREE "$work_dir"
   tmux set-environment -t "$session" ATMUX_SOURCE_ROOT "$source_root"
   tmux set-environment -t "$session" ATMUX_AGENT_NAME "$name"
   tmux set-environment -t "$session" ATMUX_ADAPTER "$adapter"

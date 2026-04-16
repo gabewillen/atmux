@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+ATMUX_BIN="$REPO_ROOT/bin/atmux"
+
+tmp_home="$(mktemp -d "${TMPDIR:-/tmp}/atmux-exec-fields.XXXXXX")"
+cleanup() {
+  rm -rf "$tmp_home"
+}
+trap cleanup EXIT
+
+repo_name="fields_test_$RANDOM"
+
+set +e
+HOME="$tmp_home" ATMUX_HOME="$tmp_home/.atmux" ATMUX_REPO="$repo_name" \
+  ATMUX_AGENT_NAME="worker" ATMUX_SESSION_NAME="atmux-${repo_name}-worker" \
+  ATMUX_ALLOW_OUTSIDE_TMUX=1 \
+  "$ATMUX_BIN" exec -- bash -lc 'echo hello; exit 0'
+rc=$?
+set -e
+
+[[ "$rc" -eq 0 ]] || { echo "expected exit 0, got $rc" >&2; exit 1; }
+
+exec_root="$tmp_home/.atmux/exec/$repo_name"
+[[ -d "$exec_root" ]] || { echo "exec root missing" >&2; exit 1; }
+
+entry_dir="$(find "$exec_root" -mindepth 1 -maxdepth 1 -type d | head -n1)"
+[[ -n "$entry_dir" ]] || { echo "exec entry missing" >&2; exit 1; }
+
+# Verify all expected metadata fields
+[[ "$(cat "$entry_dir/repo")" == "$repo_name" ]] || { echo "repo mismatch" >&2; exit 1; }
+[[ "$(cat "$entry_dir/agent_name")" == "worker" ]] || { echo "agent_name mismatch" >&2; exit 1; }
+[[ "$(cat "$entry_dir/session_name")" == "atmux-${repo_name}-worker" ]] || { echo "session_name mismatch" >&2; exit 1; }
+[[ "$(cat "$entry_dir/state")" == "exited" ]] || { echo "state mismatch" >&2; exit 1; }
+[[ "$(cat "$entry_dir/exit_code")" == "0" ]] || { echo "exit_code mismatch" >&2; exit 1; }
+
+# PID should be a numeric value
+pid_val="$(tr -d '\r\n' < "$entry_dir/pid")"
+[[ "$pid_val" =~ ^[0-9]+$ ]] || { echo "pid not numeric: $pid_val" >&2; exit 1; }
+
+# Timestamps should be ISO 8601 UTC format
+started="$(tr -d '\r\n' < "$entry_dir/started_at")"
+[[ "$started" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] || { echo "started_at not ISO 8601: $started" >&2; exit 1; }
+
+finished="$(tr -d '\r\n' < "$entry_dir/finished_at")"
+[[ "$finished" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] || { echo "finished_at not ISO 8601: $finished" >&2; exit 1; }
+
+# Command field should contain the command text
+cmd_val="$(tr -d '\r\n' < "$entry_dir/command")"
+[[ -n "$cmd_val" ]] || { echo "command field empty" >&2; exit 1; }
+
+echo "ok: exec metadata fields are complete and well-formatted"

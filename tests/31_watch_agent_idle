@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+ATMUX_BIN="$REPO_ROOT/bin/atmux"
+
+repo_name="wa${RANDOM}"
+session="atmux-${repo_name}-idle"
+
+cleanup() {
+  tmux kill-session -t "$session" >/dev/null 2>&1 || true
+}
+trap cleanup EXIT
+
+tmux kill-session -t "$session" >/dev/null 2>&1 || true
+tmux new-session -d -s "$session" -n "$session" -x 160 -y 40 -c "$REPO_ROOT" "/bin/bash" -l
+tmux set-environment -t "$session" ATMUX_REPO "$repo_name"
+tmux set-environment -t "$session" ATMUX_AGENT_NAME "idle"
+tmux set-environment -t "$session" ATMUX_SESSION_NAME "$session"
+
+# Send some initial output so the pane isn't blank
+pane="$(tmux list-panes -t "$session" -F '#{pane_id}' 2>/dev/null | head -n1)"
+[[ -n "$pane" ]] || { echo "pane missing" >&2; exit 1; }
+tmux send-keys -t "$pane" "echo 'agent started'" C-m
+sleep 1
+
+# Watch with short idle — pane will become stable quickly
+set +e
+ATMUX_REPO="$repo_name" ATMUX_ALLOW_OUTSIDE_TMUX=1 \
+  "$ATMUX_BIN" watch --agent "$session" --idle 2 --timeout 15 --interval 1
+rc=$?
+set -e
+
+[[ "$rc" -eq 0 ]] || { echo "expected exit 0 when agent idle, got $rc" >&2; exit 1; }
+
+echo "ok: watch --agent exits 0 when pane is idle"

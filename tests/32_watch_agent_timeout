@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+ATMUX_BIN="$REPO_ROOT/bin/atmux"
+
+repo_name="wa${RANDOM}"
+session="atmux-${repo_name}-busy"
+
+cleanup() {
+  tmux kill-session -t "$session" >/dev/null 2>&1 || true
+}
+trap cleanup EXIT
+
+tmux kill-session -t "$session" >/dev/null 2>&1 || true
+tmux new-session -d -s "$session" -n "$session" -x 160 -y 40 -c "$REPO_ROOT" "/bin/bash" -l
+tmux set-environment -t "$session" ATMUX_REPO "$repo_name"
+tmux set-environment -t "$session" ATMUX_AGENT_NAME "busy"
+tmux set-environment -t "$session" ATMUX_SESSION_NAME "$session"
+
+pane="$(tmux list-panes -t "$session" -F '#{pane_id}' 2>/dev/null | head -n1)"
+[[ -n "$pane" ]] || { echo "pane missing" >&2; exit 1; }
+
+# Keep producing output so the agent never looks idle
+tmux send-keys -t "$pane" "while true; do echo busy-\$RANDOM; sleep 0.5; done" C-m
+
+# Watch with short idle and very short timeout — should timeout because output keeps changing
+set +e
+ATMUX_REPO="$repo_name" ATMUX_ALLOW_OUTSIDE_TMUX=1 \
+  "$ATMUX_BIN" watch --agent "$session" --idle 5 --timeout 3 --interval 1
+rc=$?
+set -e
+
+[[ "$rc" -eq 124 ]] || { echo "expected exit 124 on timeout, got $rc" >&2; exit 1; }
+
+echo "ok: watch --agent exits 124 when agent never idles"

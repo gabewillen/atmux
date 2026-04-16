@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+ATMUX_BIN="$REPO_ROOT/bin/atmux"
+
+repo_name="wa${RANDOM}"
+session="atmux-${repo_name}-stuck"
+
+cleanup() {
+  tmux kill-session -t "$session" >/dev/null 2>&1 || true
+}
+trap cleanup EXIT
+
+tmux kill-session -t "$session" >/dev/null 2>&1 || true
+tmux new-session -d -s "$session" -n "$session" -x 160 -y 40 -c "$REPO_ROOT" "/bin/bash" -l
+tmux set-environment -t "$session" ATMUX_REPO "$repo_name"
+tmux set-environment -t "$session" ATMUX_AGENT_NAME "stuck"
+tmux set-environment -t "$session" ATMUX_SESSION_NAME "$session"
+
+pane="$(tmux list-panes -t "$session" -F '#{pane_id}' 2>/dev/null | head -n1)"
+[[ -n "$pane" ]] || { echo "pane missing" >&2; exit 1; }
+
+# Simulate a stuck interactive prompt (the pattern watch --agent detects)
+tmux send-keys -t "$pane" "echo 'Enter to select'" C-m
+sleep 0.3
+tmux send-keys -t "$pane" "echo 'Esc to cancel'" C-m
+sleep 0.5
+
+# Watch with long idle — should detect stuck prompt immediately and exit 0
+set +e
+ATMUX_REPO="$repo_name" ATMUX_ALLOW_OUTSIDE_TMUX=1 \
+  "$ATMUX_BIN" watch --agent "$session" --idle 60 --timeout 10 --interval 1
+rc=$?
+set -e
+
+[[ "$rc" -eq 0 ]] || { echo "expected exit 0 for stuck prompt detection, got $rc" >&2; exit 1; }
+
+echo "ok: watch --agent detects stuck prompt and exits 0 immediately"

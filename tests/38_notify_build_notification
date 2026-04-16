@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+NOTIFY_SCRIPT="$REPO_ROOT/bin/(atmux)/notify"
+
+# Test basic notification format
+out="$(ATMUX_HOME="${TMPDIR:-/tmp}" "$NOTIFY_SCRIPT" build "exec" "make test" "atmux capture --agent worker" "exit_code=0")"
+expected='<notification type="exec" from="make test" cmd="atmux capture --agent worker" exit_code="0" />'
+[[ "$out" == "$expected" ]] || { echo "basic notification mismatch" >&2; echo "got:      $out" >&2; echo "expected: $expected" >&2; exit 1; }
+
+# Test with multiple key=value attributes
+out2="$(ATMUX_HOME="${TMPDIR:-/tmp}" "$NOTIFY_SCRIPT" build "exec_output" "sleep 30" "tmux capture-pane -p" "pid=12345" "pane=%42")"
+if ! printf '%s' "$out2" | grep -Fq 'type="exec_output"'; then
+  echo "missing type attribute" >&2; exit 1
+fi
+if ! printf '%s' "$out2" | grep -Fq 'pid="12345"'; then
+  echo "missing pid attribute" >&2; exit 1
+fi
+if ! printf '%s' "$out2" | grep -Fq 'pane="%42"'; then
+  echo "missing pane attribute" >&2; exit 1
+fi
+
+# Test XML escaping in from field
+out3="$(ATMUX_HOME="${TMPDIR:-/tmp}" "$NOTIFY_SCRIPT" build "exec" "echo \"hello <world> & 'friends'\"" "")"
+if ! printf '%s' "$out3" | grep -Fq '&amp;'; then
+  echo "ampersand not escaped" >&2; exit 1
+fi
+if ! printf '%s' "$out3" | grep -Fq '&lt;'; then
+  echo "less-than not escaped" >&2; exit 1
+fi
+if ! printf '%s' "$out3" | grep -Fq '&gt;'; then
+  echo "greater-than not escaped" >&2; exit 1
+fi
+
+# Test with empty cmd (should omit cmd attribute)
+out4="$(ATMUX_HOME="${TMPDIR:-/tmp}" "$NOTIFY_SCRIPT" build "message" "sender" "" "id=abc123")"
+if printf '%s' "$out4" | grep -Fq 'cmd='; then
+  echo "empty cmd should be omitted" >&2; exit 1
+fi
+if ! printf '%s' "$out4" | grep -Fq 'id="abc123"'; then
+  echo "missing id attribute" >&2; exit 1
+fi
+
+echo "ok: build_notification produces correct XML with escaping"

@@ -9,14 +9,19 @@ source "$HERE/notify"
 usage() {
   cat <<'USAGE'
 Usage:
-  atmux schedule [--to <name|session>] [--reply-required] (--interval <duration> | --once <duration>) "message"
+  atmux schedule [--to <name|session>] [--reply-required] (--interval <duration> | --once <duration>) [--no-detach] "message"
 
 Description:
   Schedule a future or repeating send using the same target matching as `atmux send`.
+  Runs detached by default so the agent is not blocked.
   If --to is omitted, the current agent session is targeted.
   Resolution order for --to:
     1) Team session/name
     2) Agent session/name
+
+  --no-detach  Run in the foreground (blocking). By default, the scheduled
+               task runs in a detached tmux window and the command returns
+               immediately.
 
 Durations:
   Supports integer values with optional unit suffix:
@@ -100,6 +105,7 @@ target_name=""
 reply_required=0
 interval_raw=""
 once_raw=""
+no_detach=0
 message=""
 
 while [[ $# -gt 0 ]]; do
@@ -119,6 +125,10 @@ while [[ $# -gt 0 ]]; do
     --once)
       once_raw="${2:-}"
       shift 2
+      ;;
+    --no-detach)
+      no_detach=1
+      shift
       ;;
     -h|--help|help)
       usage
@@ -158,6 +168,42 @@ fi
 
 atmux_bin="$(resolve_atmux_bin)"
 
+# --- Detach by default ---
+if [[ "$no_detach" -eq 0 ]]; then
+  # Build args for the inner (blocking) schedule call
+  inner_args=(schedule --no-detach --to "$target_name")
+  if [[ "$reply_required" -eq 1 ]]; then
+    inner_args+=(--reply-required)
+  fi
+  if [[ -n "$once_raw" ]]; then
+    inner_args+=(--once "$once_raw")
+  elif [[ -n "$interval_raw" ]]; then
+    inner_args+=(--interval "$interval_raw")
+  fi
+  inner_args+=(-- "$message")
+
+  detach_out="$("$atmux_bin" exec --detach -- "$atmux_bin" "${inner_args[@]}")"
+
+  pid="$(printf '%s' "$detach_out" | sed -n 's/.*pid="\([^"]*\)".*/\1/p')"
+  pane="$(printf '%s' "$detach_out" | sed -n 's/.*pane="\([^"]*\)".*/\1/p')"
+
+  mode="once"
+  duration="$once_raw"
+  if [[ -n "$interval_raw" ]]; then
+    mode="interval"
+    duration="$interval_raw"
+  fi
+
+  printf '<schedule to="%s" mode="%s" duration="%s" pid="%s" pane="%s" />\n' \
+    "$(xml_escape "$target_name")" \
+    "$(xml_escape "$mode")" \
+    "$(xml_escape "$duration")" \
+    "$(xml_escape "$pid")" \
+    "$(xml_escape "$pane")"
+  exit 0
+fi
+
+# --- Foreground (--no-detach) ---
 send_args=(send --to "$target_name")
 if [[ "$reply_required" -eq 1 ]]; then
   send_args+=(--reply-required)

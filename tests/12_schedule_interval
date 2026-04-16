@@ -27,35 +27,26 @@ wait_for_count() {
 }
 
 eval "$("$SCRIPTS_DIR/setup")"
-
-scheduler_pid=""
-cleanup() {
-  if [[ -n "$scheduler_pid" ]]; then
-    kill "$scheduler_pid" >/dev/null 2>&1 || true
-    wait "$scheduler_pid" >/dev/null 2>&1 || true
-  fi
-  "$SCRIPTS_DIR/teardown" --team-session "$TEAM_SESSION" --agent1-session "$AGENT1_SESSION" --agent2-session "$AGENT2_SESSION"
-}
-trap cleanup EXIT
+trap "$SCRIPTS_DIR/teardown --team-session \"$TEAM_SESSION\" --agent1-session \"$AGENT1_SESSION\" --agent2-session \"$AGENT2_SESSION\"" EXIT
 
 sender_pane="$(tmux list-panes -t "$AGENT1_SESSION" -F '#{pane_id}' 2>/dev/null | head -n1)"
 receiver_pane="$(tmux list-panes -t "$AGENT2_SESSION" -F '#{pane_id}' 2>/dev/null | head -n1)"
 [[ -n "$sender_pane" ]] || { echo "sender pane missing" >&2; exit 1; }
 [[ -n "$receiver_pane" ]] || { echo "receiver pane missing" >&2; exit 1; }
 
-ATMUX_REPO="$REPO_NAME" ATMUX_AGENT_NAME="sender" ATMUX_SESSION_NAME="$AGENT1_SESSION" "$ATMUX_BIN" schedule --to "$TEAM_NAME" --interval 1s "ping" >/tmp/atmux-schedule-interval.$$ 2>&1 &
-scheduler_pid=$!
+# Schedule returns immediately (detached by default)
+out="$(ATMUX_REPO="$REPO_NAME" ATMUX_AGENT_NAME="sender" ATMUX_SESSION_NAME="$AGENT1_SESSION" "$ATMUX_BIN" schedule --to "$TEAM_NAME" --interval 1s "ping")"
+printf '%s\n' "$out" | grep -Fq '<schedule'
+printf '%s\n' "$out" | grep -Fq 'mode="interval"'
 
 if ! wait_for_count "$sender_pane" '<notification' 2 12; then
   echo "scheduled notifications not repeated in sender pane" >&2
   tmux capture-pane -p -t "$sender_pane" -S -160 >&2 || true
-  cat /tmp/atmux-schedule-interval.$$ >&2 || true
   exit 1
 fi
 if ! wait_for_count "$receiver_pane" '<notification' 2 12; then
   echo "scheduled notifications not repeated in receiver pane" >&2
   tmux capture-pane -p -t "$receiver_pane" -S -160 >&2 || true
-  cat /tmp/atmux-schedule-interval.$$ >&2 || true
   exit 1
 fi
 

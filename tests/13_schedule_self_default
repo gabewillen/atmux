@@ -30,11 +30,12 @@ trap "$SCRIPTS_DIR/teardown --team-session \"$TEAM_SESSION\" --agent1-session \"
 sender_pane="$(tmux list-panes -t "$AGENT1_SESSION" -F '#{pane_id}' 2>/dev/null | head -n1)"
 [[ -n "$sender_pane" ]] || { echo "sender pane missing" >&2; exit 1; }
 
+# Schedule with no --to defaults to self; returns immediately (detached)
 out="$(ATMUX_REPO="$REPO_NAME" ATMUX_AGENT_NAME="sender" ATMUX_SESSION_NAME="$AGENT1_SESSION" "$ATMUX_BIN" schedule --once 1s "ping")"
-printf '%s\n' "$out" | grep -Fq '<send to="agent"'
-printf '%s\n' "$out" | grep -Fq "session=\"$AGENT1_SESSION\""
+printf '%s\n' "$out" | grep -Fq '<schedule'
+printf '%s\n' "$out" | grep -Fq 'to="sender"'
 
-if ! wait_for_text "$sender_pane" '<notification' 10; then
+if ! wait_for_text "$sender_pane" '<notification' 15; then
   echo "scheduled notification not found in sender pane" >&2
   tmux capture-pane -p -t "$sender_pane" -S -120 >&2 || true
   exit 1

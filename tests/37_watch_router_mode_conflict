@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+ATMUX_BIN="$REPO_ROOT/bin/atmux"
+
+# Combining --pid and --issue should fail
+set +e
+out="$(ATMUX_REPO="test" ATMUX_ALLOW_OUTSIDE_TMUX=1 "$ATMUX_BIN" watch --pid 1234 --issue abc 2>&1)"
+rc=$?
+set -e
+[[ "$rc" -eq 2 ]] || { echo "expected exit 2 for --pid + --issue, got $rc" >&2; exit 1; }
+
+# Combining --pid and --agent should fail
+set +e
+out2="$(ATMUX_REPO="test" ATMUX_ALLOW_OUTSIDE_TMUX=1 "$ATMUX_BIN" watch --pid 1234 --agent foo 2>&1)"
+rc2=$?
+set -e
+[[ "$rc2" -eq 2 ]] || { echo "expected exit 2 for --pid + --agent, got $rc2" >&2; exit 1; }
+
+# Combining --issue and --agent should fail
+set +e
+out3="$(ATMUX_REPO="test" ATMUX_ALLOW_OUTSIDE_TMUX=1 "$ATMUX_BIN" watch --issue abc --agent foo 2>&1)"
+rc3=$?
+set -e
+[[ "$rc3" -eq 2 ]] || { echo "expected exit 2 for --issue + --agent, got $rc3" >&2; exit 1; }
+
+# No arguments at all
+set +e
+out4="$(ATMUX_REPO="test" ATMUX_ALLOW_OUTSIDE_TMUX=1 "$ATMUX_BIN" watch 2>&1)"
+rc4=$?
+set -e
+[[ "$rc4" -eq 2 ]] || { echo "expected exit 2 for no args, got $rc4" >&2; exit 1; }
+
+echo "ok: watch rejects conflicting mode flags and missing args"

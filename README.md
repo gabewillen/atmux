@@ -45,7 +45,7 @@ atmux assign --to planner --title "stabilize parser" \
 
 ### Sessions and agents
 
-Each agent runs in a named tmux session: `atmux-<repo>-<agent>`. Agents get their own git worktree at `~/.atmux/agents/<repo>-<name>`, keeping their changes isolated.
+Each agent runs in a named tmux session: `atmux-<repo>-<agent>`. By default, agents get their own git worktree at `~/.atmux/agents/<repo>-<name>`, keeping their changes isolated. Pass `--no-worktree` to skip worktree creation and run in the repo root instead.
 
 ### Teams
 
@@ -97,7 +97,7 @@ atmux adapter install owner/repo
 
 ```sh
 atmux create --agent <name> --role <role> --intelligence <0-100> \
-  [--team <team>] [--adapter <adapter>] [-- <adapter-args...>]
+  [--team <team>] [--adapter <adapter>] [--no-worktree] [-- <adapter-args...>]
 
 atmux create --team <name>
 
@@ -133,24 +133,45 @@ atmux capture --team <name>   [--lines <n>]
 atmux capture --all           [--lines <n>]
 ```
 
-### `notify`
-
-Send a notification immediately, after a delay, or on a repeating interval.
-
-```sh
-atmux notify "message"
-atmux notify --agent <name> --once <duration>     "message"
-atmux notify --agent <name> --interval <duration> "message"
-```
-
-Duration suffixes: `ms`, `s`, `m`, `h`, `d`.
-
 ### `exec`
 
 Run a shell command with tracked exit status. Sends an ATMUX notification when the process finishes.
 
 ```sh
-atmux exec -- <command> [args...]
+atmux exec [--detach] -- <command> [args...]
+```
+
+`--detach` runs the command in a new tmux window and returns immediately so the agent stays unblocked. Watchers can monitor the process via `watch --pid <pid> --stdio`.
+
+### `watch`
+
+Wait for a condition: process exit, pane text, output changes, issue updates, or agent idle state.
+
+```sh
+atmux watch --pid <pid> [--timeout <seconds>]
+atmux watch --pid <pid> --stdio [--duration <seconds>] [--timeout <seconds>]
+atmux watch --target <tmux-target> --text <needle> [--scope pane|window|session]
+atmux watch --issue <id> [--timeout <seconds>]
+atmux watch --agent <name> [--idle <seconds>] [--timeout <seconds>]
+```
+
+### `schedule`
+
+Schedule a future or repeating send. Runs detached by default.
+
+```sh
+atmux schedule --to <name> --once <duration> "message"
+atmux schedule --to <name> --interval <duration> "message"
+```
+
+`--no-detach` runs in the foreground (blocking). Duration suffixes: `ms`, `s`, `m`, `h`, `d`.
+
+### `kill`
+
+Stop an exec-tracked process, notify its watchers, and clean up metadata.
+
+```sh
+atmux kill --pid <pid> [--timeout <seconds>] [--signal <NAME>]
 ```
 
 ### `session`
@@ -192,7 +213,7 @@ atmux agent destroy <session-pattern> [pattern...]
 | `ATMUX_REPO`       | Repository name for the current session       |
 | `ATMUX_AGENT_NAME` | Current agent's name                          |
 | `ATMUX_MANAGER`    | Parent manager agent name                     |
-| `ATMUX_WORKTREE`   | Git worktree path for this agent              |
+| `ATMUX_WORKTREE`   | Working directory (worktree or repo root)     |
 | `ATMUX_TEAM`       | Team this agent belongs to                    |
 | `ATMUX_SESSION_ID` | Unique session identifier                     |
 | `ATMUX_SESSION_KIND` | `agent` or `team`                           |

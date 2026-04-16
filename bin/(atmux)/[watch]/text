@@ -92,7 +92,9 @@ main() {
   deadline=$(( $(date +%s) + timeout ))
 
   while true; do
-    if capture_scope "$scope" "$target" "$lines" | grep -Fq "$needle"; then
+    local snap
+    snap="$(capture_scope "$scope" "$target" "$lines")"
+    if printf '%s' "$snap" | grep -Fq "$needle"; then
       exit 0
     fi
 

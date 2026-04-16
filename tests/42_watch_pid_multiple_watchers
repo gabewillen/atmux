@@ -1,0 +1,115 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+ATMUX_BIN="$REPO_ROOT/bin/atmux"
+
+wait_for_text() {
+  local target="$1"
+  local needle="$2"
+  local timeout="${3:-20}"
+  local deadline now snap compact
+  deadline=$(( $(date +%s) + timeout ))
+  while true; do
+    snap="$(tmux capture-pane -p -t "$target" -S -400 2>/dev/null || true)"
+    compact="$(printf '%s' "$snap" | tr -d '\r\n')"
+    if printf '%s' "$compact" | grep -Fq "$needle"; then
+      return 0
+    fi
+    now="$(date +%s)"
+    if (( now >= deadline )); then
+      return 1
+    fi
+    sleep 0.1
+  done
+}
+
+tmp_home="$(mktemp -d "${TMPDIR:-/tmp}/atmux-multi-watch.XXXXXX")"
+repo_name="mw${RANDOM}"
+session_exec="atmux-${repo_name}-exec"
+session_w1="atmux-${repo_name}-w1"
+session_w2="atmux-${repo_name}-w2"
+atmux_home="$tmp_home/.atmux"
+exec_root="$atmux_home/exec/$repo_name"
+
+cleanup() {
+  tmux kill-session -t "$session_exec" >/dev/null 2>&1 || true
+  tmux kill-session -t "$session_w1" >/dev/null 2>&1 || true
+  tmux kill-session -t "$session_w2" >/dev/null 2>&1 || true
+  rm -rf "$tmp_home"
+}
+trap cleanup EXIT
+
+for s in "$session_exec" "$session_w1" "$session_w2"; do
+  tmux kill-session -t "$s" >/dev/null 2>&1 || true
+  tmux new-session -d -s "$s" -n "$s" -x 160 -y 40 -c "$REPO_ROOT" "/bin/bash" -l
+done
+
+pane_exec="$(tmux list-panes -t "$session_exec" -F '#{pane_id}' 2>/dev/null | head -n1)"
+pane_w1="$(tmux list-panes -t "$session_w1" -F '#{pane_id}' 2>/dev/null | head -n1)"
+pane_w2="$(tmux list-panes -t "$session_w2" -F '#{pane_id}' 2>/dev/null | head -n1)"
+[[ -n "$pane_exec" && -n "$pane_w1" && -n "$pane_w2" ]] || { echo "missing panes" >&2; exit 1; }
+
+# Start a slow exec (long enough for both watchers to register before it finishes)
+tmux send-keys -t "$pane_exec" "ATMUX_HOME=\"$atmux_home\" ATMUX_REPO=\"$repo_name\" ATMUX_AGENT_NAME=\"exec\" ATMUX_SESSION_NAME=\"$session_exec\" \"$ATMUX_BIN\" exec sleep 12" C-m
+
+# Wait for exec metadata
+deadline=$(( $(date +%s) + 12 ))
+pid=""
+while [[ -z "$pid" ]]; do
+  now="$(date +%s)"
+  if (( now >= deadline )); then
+    echo "timeout waiting for exec metadata" >&2
+    exit 1
+  fi
+  if [[ -d "$exec_root" ]]; then
+    ep_dir="$(find "$exec_root" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | head -n1)"
+    if [[ -n "$ep_dir" && -f "$ep_dir/pid" ]]; then
+      pid="$(tr -d '\r\n' <"$ep_dir/pid")"
+    fi
+  fi
+  sleep 0.05
+done
+
+# Start two watchers
+tmux send-keys -t "$pane_w1" "ATMUX_HOME=\"$atmux_home\" ATMUX_REPO=\"$repo_name\" ATMUX_AGENT_NAME=\"w1\" ATMUX_SESSION_NAME=\"$session_w1\" \"$ATMUX_BIN\" watch --pid \"$pid\"" C-m
+tmux send-keys -t "$pane_w2" "ATMUX_HOME=\"$atmux_home\" ATMUX_REPO=\"$repo_name\" ATMUX_AGENT_NAME=\"w2\" ATMUX_SESSION_NAME=\"$session_w2\" \"$ATMUX_BIN\" watch --pid \"$pid\"" C-m
+
+# Wait for both watcher files to appear
+deadline=$(( $(date +%s) + 15 ))
+while true; do
+  now="$(date +%s)"
+  if (( now >= deadline )); then
+    echo "timeout waiting for watcher registrations" >&2
+    exit 1
+  fi
+  wdir="$exec_root/$pid/watchers"
+  wn=0
+  if [[ -d "$wdir" ]]; then
+    wn="$(find "$wdir" -mindepth 1 -maxdepth 1 -type f 2>/dev/null | wc -l | tr -d ' ')"
+  fi
+  if [[ "${wn:-0}" -ge 2 ]]; then
+    break
+  fi
+  sleep 0.05
+done
+
+# Wait for exec to finish and both watchers to receive notification
+if ! wait_for_text "$pane_w1" 'type="exec"' 25; then
+  echo "watcher 1 missing notification" >&2
+  tmux capture-pane -p -t "$pane_w1" -S -200 >&2 || true
+  exit 1
+fi
+if ! wait_for_text "$pane_w2" 'type="exec"' 25; then
+  echo "watcher 2 missing notification" >&2
+  tmux capture-pane -p -t "$pane_w2" -S -200 >&2 || true
+  exit 1
+fi
+
+# Both watchers should clean up their files
+sleep 0.5
+wcount="$(find "$exec_root/$pid/watchers" -mindepth 1 -maxdepth 1 -type f 2>/dev/null | wc -l | tr -d ' ')"
+[[ "${wcount:-0}" -eq 0 ]] || { echo "expected 0 watcher files, found $wcount" >&2; exit 1; }
+
+echo "ok: multiple watchers all receive exec notification and clean up"

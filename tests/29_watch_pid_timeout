@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+ATMUX_BIN="$REPO_ROOT/bin/atmux"
+
+tmp_home="$(mktemp -d "${TMPDIR:-/tmp}/atmux-watch-pid-to.XXXXXX")"
+repo_name="pt${RANDOM}"
+atmux_home="$tmp_home/.atmux"
+exec_root="$atmux_home/exec/$repo_name"
+
+cleanup() {
+  # Kill any lingering sleep process
+  [[ -n "${child_pid:-}" ]] && kill "$child_pid" 2>/dev/null || true
+  rm -rf "$tmp_home"
+}
+trap cleanup EXIT
+
+# Start a long-running exec process
+(
+  HOME="$tmp_home" ATMUX_HOME="$atmux_home" ATMUX_REPO="$repo_name" \
+    ATMUX_AGENT_NAME="t" ATMUX_ALLOW_OUTSIDE_TMUX=1 \
+    exec "$ATMUX_BIN" exec sleep 60
+) &
+exec_wrapper_pid=$!
+
+# Wait for exec metadata to appear
+deadline=$(( $(date +%s) + 15 ))
+child_pid=""
+while [[ -z "$child_pid" ]]; do
+  now="$(date +%s)"
+  if (( now >= deadline )); then
+    echo "timeout waiting for exec metadata" >&2
+    kill "$exec_wrapper_pid" 2>/dev/null || true
+    exit 1
+  fi
+  if [[ -d "$exec_root" ]]; then
+    ep_dir="$(find "$exec_root" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | head -n1)"
+    if [[ -n "$ep_dir" && -f "$ep_dir/pid" ]]; then
+      child_pid="$(tr -d '\r\n' <"$ep_dir/pid")"
+    fi
+  fi
+  sleep 0.05
+done
+
+# Watch with a short timeout — process won't exit, so watch should timeout
+set +e
+ATMUX_HOME="$atmux_home" ATMUX_REPO="$repo_name" ATMUX_ALLOW_OUTSIDE_TMUX=1 \
+  "$ATMUX_BIN" watch --pid "$child_pid" --timeout 2
+rc=$?
+set -e
+
+[[ "$rc" -eq 124 ]] || { echo "expected exit 124 on watch --pid timeout, got $rc" >&2; exit 1; }
+
+# Clean up the exec process
+kill "$child_pid" 2>/dev/null || true
+wait "$exec_wrapper_pid" 2>/dev/null || true
+
+echo "ok: watch --pid exits 124 on timeout"

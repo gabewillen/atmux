@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+ATMUX_BIN="$REPO_ROOT/bin/atmux"
+
+repo_name="ws${RANDOM}"
+session="atmux-${repo_name}-scope"
+
+cleanup() {
+  tmux kill-session -t "$session" >/dev/null 2>&1 || true
+}
+trap cleanup EXIT
+
+tmux kill-session -t "$session" >/dev/null 2>&1 || true
+tmux new-session -d -s "$session" -n "$session" -x 160 -y 40 -c "$REPO_ROOT" "/bin/bash" -l
+
+# Split into two panes
+pane1="$(tmux list-panes -t "$session" -F '#{pane_id}' 2>/dev/null | head -n1)"
+pane2="$(tmux split-window -d -t "${session}:0" -P -F '#{pane_id}' -c "$REPO_ROOT" "/bin/bash" -l)"
+[[ -n "$pane1" && -n "$pane2" ]] || { echo "missing panes" >&2; exit 1; }
+
+marker="window-scope-$RANDOM"
+
+# Put marker in the second pane only
+tmux send-keys -t "$pane2" "echo '$marker'" C-m
+sleep 1
+
+# Watch with window scope — should find text in second pane even though targeting pane1's window
+set +e
+ATMUX_REPO="$repo_name" ATMUX_ALLOW_OUTSIDE_TMUX=1 \
+  "$ATMUX_BIN" watch --target "${session}:0" --text "$marker" --scope window --timeout 5
+rc=$?
+set -e
+
+[[ "$rc" -eq 0 ]] || { echo "expected exit 0 for window scope, got $rc" >&2; exit 1; }
+
+# Watch with pane scope targeting pane1 — should NOT find the text
+set +e
+ATMUX_REPO="$repo_name" ATMUX_ALLOW_OUTSIDE_TMUX=1 \
+  "$ATMUX_BIN" watch --target "$pane1" --text "$marker" --scope pane --timeout 2
+rc2=$?
+set -e
+
+[[ "$rc2" -eq 1 ]] || { echo "expected exit 1 for pane scope (text in other pane), got $rc2" >&2; exit 1; }
+
+echo "ok: watch --text window scope searches all panes in window"

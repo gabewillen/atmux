@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+ATMUX_BIN="$REPO_ROOT/bin/atmux"
+
+tmp_home="$(mktemp -d "${TMPDIR:-/tmp}/atmux-detach-sess.XXXXXX")"
+cleanup() {
+  rm -rf "$tmp_home"
+}
+trap cleanup EXIT
+
+# exec --detach without ATMUX_SESSION_NAME should fail
+set +e
+out="$(HOME="$tmp_home" ATMUX_HOME="$tmp_home/.atmux" ATMUX_REPO="test" \
+  ATMUX_AGENT_NAME="t" ATMUX_SESSION_NAME="" ATMUX_ALLOW_OUTSIDE_TMUX=1 \
+  "$ATMUX_BIN" exec --detach -- echo hello 2>&1)"
+rc=$?
+set -e
+
+[[ "$rc" -eq 2 ]] || { echo "expected exit 2 for detach without session, got $rc" >&2; exit 1; }
+
+echo "ok: exec --detach rejects when ATMUX_SESSION_NAME not set"

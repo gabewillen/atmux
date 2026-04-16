@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+NOTIFY_SCRIPT="$REPO_ROOT/bin/(atmux)/notify"
+
+# Missing --pane
+set +e
+out="$(ATMUX_HOME="${TMPDIR:-/tmp}" "$NOTIFY_SCRIPT" --xml '<notification type="test" />' 2>&1)"
+rc=$?
+set -e
+[[ "$rc" -eq 2 ]] || { echo "expected exit 2 for missing --pane, got $rc" >&2; exit 1; }
+
+# Missing --xml
+set +e
+out2="$(ATMUX_HOME="${TMPDIR:-/tmp}" "$NOTIFY_SCRIPT" --pane %0 2>&1)"
+rc2=$?
+set -e
+[[ "$rc2" -eq 2 ]] || { echo "expected exit 2 for missing --xml, got $rc2" >&2; exit 1; }
+
+# Unknown flag
+set +e
+out3="$(ATMUX_HOME="${TMPDIR:-/tmp}" "$NOTIFY_SCRIPT" --unknown-flag 2>&1)"
+rc3=$?
+set -e
+[[ "$rc3" -eq 2 ]] || { echo "expected exit 2 for unknown flag, got $rc3" >&2; exit 1; }
+
+# Help flag
+set +e
+out4="$(ATMUX_HOME="${TMPDIR:-/tmp}" "$NOTIFY_SCRIPT" --help 2>&1)"
+rc4=$?
+set -e
+[[ "$rc4" -eq 0 ]] || { echo "expected exit 0 for --help, got $rc4" >&2; exit 1; }
+if ! printf '%s' "$out4" | grep -Fq 'Usage:'; then
+  echo "--help should print usage" >&2; exit 1
+fi
+
+echo "ok: notify CLI validates arguments correctly"

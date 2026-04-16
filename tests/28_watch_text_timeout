@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+ATMUX_BIN="$REPO_ROOT/bin/atmux"
+
+repo_name="wt${RANDOM}"
+session="atmux-${repo_name}-text"
+
+cleanup() {
+  tmux kill-session -t "$session" >/dev/null 2>&1 || true
+}
+trap cleanup EXIT
+
+tmux kill-session -t "$session" >/dev/null 2>&1 || true
+tmux new-session -d -s "$session" -n "$session" -x 160 -y 40 -c "$REPO_ROOT" "/bin/bash" -l
+
+pane="$(tmux list-panes -t "$session" -F '#{pane_id}' 2>/dev/null | head -n1)"
+[[ -n "$pane" ]] || { echo "pane missing" >&2; exit 1; }
+
+# Search for text that will never appear, with a short timeout
+set +e
+ATMUX_REPO="$repo_name" ATMUX_ALLOW_OUTSIDE_TMUX=1 "$ATMUX_BIN" watch --target "$pane" --text "this-will-never-appear-$RANDOM" --timeout 2
+rc=$?
+set -e
+
+[[ "$rc" -eq 1 ]] || { echo "expected exit 1 on timeout, got $rc" >&2; exit 1; }
+
+# Missing required args
+set +e
+out="$(ATMUX_REPO="$repo_name" ATMUX_ALLOW_OUTSIDE_TMUX=1 "$ATMUX_BIN" watch --target "$pane" 2>&1)"
+rc2=$?
+set -e
+[[ "$rc2" -eq 2 ]] || { echo "expected exit 2 for missing --text, got $rc2" >&2; exit 1; }
+
+set +e
+out="$(ATMUX_REPO="$repo_name" ATMUX_ALLOW_OUTSIDE_TMUX=1 "$ATMUX_BIN" watch --text "foo" 2>&1)"
+rc3=$?
+set -e
+[[ "$rc3" -eq 2 ]] || { echo "expected exit 2 for missing --target, got $rc3" >&2; exit 1; }
+
+echo "ok: watch --text exits 1 on timeout, exits 2 for missing args"

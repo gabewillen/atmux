@@ -669,6 +669,7 @@ case "$sub" in
     fi
     adapter="auto"
     intelligence=""
+    no_worktree=0
     task_mode=0
     task_description=""
     task_todos_blob=""
@@ -694,6 +695,10 @@ case "$sub" in
         --intelligence)
           intelligence="${2:-}"
           shift 2
+          ;;
+        --no-worktree)
+          no_worktree=1
+          shift
           ;;
         --task)
           task_mode=1
@@ -758,6 +763,9 @@ case "$sub" in
     fi
     if [[ -n "$adapter" ]]; then
       cmd+=(--adapter "$adapter")
+    fi
+    if [[ "$no_worktree" -eq 1 ]]; then
+      cmd+=(--no-worktree)
     fi
     if [[ ${#forward[@]} -gt 0 ]]; then
       cmd+=(-- "${forward[@]}")

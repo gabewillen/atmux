@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+NOTIFY_SCRIPT="$REPO_ROOT/bin/(atmux)/notify"
+
+# Test escaping in type field
+out="$(ATMUX_HOME="${TMPDIR:-/tmp}" "$NOTIFY_SCRIPT" build 'exec&test' 'from' 'cmd')"
+if ! printf '%s' "$out" | grep -Fq 'type="exec&amp;test"'; then
+  echo "ampersand not escaped in type" >&2
+  echo "got: $out" >&2
+  exit 1
+fi
+
+# Test escaping in key=value attributes with special chars
+out2="$(ATMUX_HOME="${TMPDIR:-/tmp}" "$NOTIFY_SCRIPT" build "exec" "from" "cmd" "path=<dir>/file")"
+if ! printf '%s' "$out2" | grep -Fq '&lt;dir&gt;'; then
+  echo "angle brackets not escaped in attribute value" >&2
+  echo "got: $out2" >&2
+  exit 1
+fi
+
+# Test single quotes in values
+out3="$(ATMUX_HOME="${TMPDIR:-/tmp}" "$NOTIFY_SCRIPT" build "exec" "it's" "cmd")"
+if ! printf '%s' "$out3" | grep -Fq "&apos;"; then
+  echo "single quote not escaped" >&2
+  echo "got: $out3" >&2
+  exit 1
+fi
+
+# Test double quotes in values
+out4="$(ATMUX_HOME="${TMPDIR:-/tmp}" "$NOTIFY_SCRIPT" build "exec" 'say "hi"' "cmd")"
+if ! printf '%s' "$out4" | grep -Fq '&quot;'; then
+  echo "double quote not escaped" >&2
+  echo "got: $out4" >&2
+  exit 1
+fi
+
+echo "ok: XML escaping handles all special characters"

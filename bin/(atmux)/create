@@ -6,7 +6,7 @@ ATMUX_HOME="${ATMUX_HOME:-$HOME/.atmux}"
 usage() {
   cat <<'USAGE'
 Usage:
-  atmux create --agent <name> --role <role> --intelligence <0-100> [--team <team>] [--adapter <adapter>] [--task --description <desc> --todo <todo>...] [-- <adapter-args...>]
+  atmux create --agent <name> --role <role> --intelligence <0-100> [--team <team>] [--adapter <adapter>] [--no-worktree] [--task --description <desc> --todo <todo>...] [-- <adapter-args...>]
   atmux create --team <name>
   atmux create --issue --title <title> [--description <description>] [--todo <todo>...] [--repo <repo>]
 
@@ -50,6 +50,7 @@ agent_role=""
 agent_team=""
 agent_adapter=""
 agent_intelligence=""
+agent_no_worktree=0
 agent_task=0
 agent_task_description=""
 agent_todos=()
@@ -107,6 +108,10 @@ while [[ $# -gt 0 ]]; do
     --intelligence)
       agent_intelligence="${2:-}"
       shift 2
+      ;;
+    --no-worktree)
+      agent_no_worktree=1
+      shift
       ;;
     --task)
       agent_task=1
@@ -176,6 +181,9 @@ case "$mode" in
     fi
     if [[ -n "$agent_intelligence" ]]; then
       cmd+=(--intelligence "$agent_intelligence")
+    fi
+    if [[ "$agent_no_worktree" -eq 1 ]]; then
+      cmd+=(--no-worktree)
     fi
     if [[ "$agent_task" -eq 1 ]]; then
       cmd+=(--task)

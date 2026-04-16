@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+ATMUX_BIN="$REPO_ROOT/bin/atmux"
+
+repo_name="wt${RANDOM}"
+session="atmux-${repo_name}-text"
+
+cleanup() {
+  tmux kill-session -t "$session" >/dev/null 2>&1 || true
+}
+trap cleanup EXIT
+
+tmux kill-session -t "$session" >/dev/null 2>&1 || true
+tmux new-session -d -s "$session" -n "$session" -x 160 -y 40 -c "$REPO_ROOT" "/bin/bash" -l
+
+pane="$(tmux list-panes -t "$session" -F '#{pane_id}' 2>/dev/null | head -n1)"
+[[ -n "$pane" ]] || { echo "pane missing" >&2; exit 1; }
+
+marker="textwatch-$RANDOM-$(date +%s)"
+
+# Schedule the marker to appear after 1 second
+tmux send-keys -t "$pane" "sleep 1 && echo '$marker'" C-m
+
+# Run watch --text looking for the marker
+set +e
+ATMUX_REPO="$repo_name" ATMUX_ALLOW_OUTSIDE_TMUX=1 "$ATMUX_BIN" watch --target "$pane" --text "$marker" --timeout 10
+rc=$?
+set -e
+
+[[ "$rc" -eq 0 ]] || { echo "expected exit 0 when text found, got $rc" >&2; exit 1; }
+
+echo "ok: watch --text exits 0 when text appears"

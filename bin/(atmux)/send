@@ -171,14 +171,14 @@ if [[ -n "$team_session" ]]; then
     fi
     if send_to_session "$s" "$payload" ${member_keys[@]+"${member_keys[@]}"}; then
       delivered=$((delivered + 1))
-      results+="  <target session=\"$(xml_escape "$s")\" delivered=\"true\" />"$'\n'
+      results+="  <target session=\"$(xml_escape "$s")\" queued=\"true\" />"$'\n'
     else
       failed=$((failed + 1))
-      results+="  <target session=\"$(xml_escape "$s")\" delivered=\"false\" />"$'\n'
+      results+="  <target session=\"$(xml_escape "$s")\" queued=\"false\" />"$'\n'
     fi
   done
 
-  printf '<send to="team" name="%s" session="%s" message_id="%s" delivered="%s" attempted="%s" failed="%s">\n%s</send>\n' \
+  printf '<send to="team" name="%s" session="%s" message_id="%s" queued="%s" attempted="%s" failed="%s">\n%s</send>\n' \
     "$(xml_escape "$target_name")" \
     "$(xml_escape "$team_session")" \
     "$(xml_escape "$msg_id")" \
@@ -203,10 +203,10 @@ if [[ "$interrupt" -eq 1 ]]; then
   mapfile -t submit_keys < <(resolve_interrupt_keys "$target_session")
 fi
 if ! send_to_session "$target_session" "$payload" ${submit_keys[@]+"${submit_keys[@]}"}; then
-  echo "failed to send to session: $target_session" >&2
+  echo "failed to queue for session: $target_session" >&2
   exit 1
 fi
-printf '<send to="agent" name="%s" session="%s" message_id="%s" delivered="1" attempted="1" failed="0" />\n' \
+printf '<send to="agent" name="%s" session="%s" message_id="%s" queued="1" attempted="1" failed="0" />\n' \
   "$(xml_escape "$target_name")" \
   "$(xml_escape "$target_session")" \
   "$(xml_escape "$msg_id")"

@@ -172,11 +172,15 @@ atmux schedule --to <name> --interval <duration> "message"
 
 ### `kill`
 
-Stop an exec-tracked process, notify its watchers, and clean up metadata.
+Stop exec-tracked processes or remove agent sessions.
 
 ```sh
 atmux kill --pid <pid> [--timeout <seconds>] [--signal <NAME>]
+atmux kill --agent <name|pattern> [name|pattern...]
 ```
+
+`--pid` stops an exec process, notifies watchers, and cleans up metadata.
+`--agent` kills agent sessions and removes their worktrees and branches.
 
 ### `session`
 
@@ -202,12 +206,6 @@ atmux env            # show all ATMUX_* variables
 atmux env get <key>  # get a single variable
 ```
 
-### `agent destroy`
-
-```sh
-atmux agent destroy <session-pattern> [pattern...]
-# e.g. atmux agent destroy 'atmux-myrepo-worker-*'
-```
 
 ## Environment variables
 

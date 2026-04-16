@@ -28,10 +28,9 @@ Usage:
     # 0-100, choose based on task complexity
     --intelligence <0-100>
     [-- <adapter-args...>]
-  atmux agent destroy <session-pattern> [session-pattern...]
 
 Description:
-  Create agents or remove agent sessions/worktrees/branches.
+  Create agents.
 
   Notes:
   create requires ATMUX_AGENT_NAME (used as ATMUX_MANAGER for child agents).
@@ -47,7 +46,6 @@ Examples:
   atmux create --agent reviewer --role reviewer --intelligence 80
   atmux create --agent reviewer --role reviewer --team platform --intelligence 80
   atmux create --agent worker-1 --role implementer --intelligence 55 --adapter claude-code -- --dangerously-skip-permissions
-  atmux agent destroy 'atmux-myrepo-agent-*'
 
 ## send
 Usage:

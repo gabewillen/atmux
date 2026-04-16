@@ -11,17 +11,25 @@ usage() {
   cat <<'USAGE'
 Usage:
   atmux kill --pid <pid> [--timeout <seconds>] [--signal <NAME>]
+  atmux kill --agent <name|pattern> [name|pattern...]
 
 Description:
-  Stop an atmux exec-tracked child process for this repo, wait for executor
-  notifications (including watcher fan-out) to finish, then remove metadata
-  under ~/.atmux/exec/<repo>/<pid>/.
+  --pid    Stop an atmux exec-tracked child process for this repo, wait for
+           executor notifications (including watcher fan-out) to finish, then
+           remove metadata under ~/.atmux/exec/<repo>/<pid>/.
+  --agent  Kill agent sessions and clean up their worktrees and branches.
+           Accepts agent names, session names, or glob patterns.
 
 Examples:
   atmux kill --pid 12345
   atmux kill --pid 12345 --timeout 30 --signal TERM
+  atmux kill --agent worker
+  atmux kill --agent 'agent-*'
+  atmux kill --agent worker planner
 USAGE
 }
+
+# --- PID mode helpers ---
 
 wait_for_completion_or_timeout() {
   local exec_dir="$1"
@@ -45,38 +53,10 @@ wait_for_completion_or_timeout() {
   done
 }
 
-main() {
-  local pid=""
-  local timeout_sec="60"
-  local signal_name="TERM"
-
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-      --pid)
-        pid="${2:-}"
-        shift 2
-        ;;
-      --timeout)
-        timeout_sec="${2:-}"
-        shift 2
-        ;;
-      --signal)
-        signal_name="${2:-}"
-        shift 2
-        ;;
-      -h|--help|help)
-        usage
-        exit 0
-        ;;
-      *)
-        echo "unknown flag: $1" >&2
-        usage >&2
-        exit 2
-        ;;
-    esac
-  done
-
-  [[ -n "$pid" ]] || { echo "missing --pid" >&2; usage >&2; exit 2; }
+kill_pid() {
+  local pid="$1"
+  local timeout_sec="$2"
+  local signal_name="$3"
 
   local repo_name
   repo_name="$(repo_name_from_context)"
@@ -117,6 +97,222 @@ main() {
     rm -rf "$exec_dir"
   fi
   exit 0
+}
+
+# --- Agent mode helpers ---
+
+normalize_repo_name() {
+  local raw="${1:-}"
+  local normalized=""
+  normalized="$(printf '%s' "$raw" | sed -E 's/[^A-Za-z0-9_-]+/_/g; s/_+/_/g; s/^_+//; s/_+$//')"
+  if [[ -z "$normalized" ]]; then
+    normalized="repo"
+  fi
+  printf '%s\n' "$normalized"
+}
+
+repo_context() {
+  local repo_root repo_name
+  if ! repo_root="$(git rev-parse --show-toplevel 2>/dev/null)"; then
+    echo "must be run from a git repository" >&2
+    exit 1
+  fi
+  repo_name="${ATMUX_REPO:-}"
+  if [[ -z "$repo_name" && -n "${TMUX:-}" ]]; then
+    repo_name="$(tmux show-environment ATMUX_REPO 2>/dev/null | sed -n 's/^ATMUX_REPO=//p' || true)"
+  fi
+  if [[ -z "$repo_name" ]]; then
+    repo_name="$(basename "$repo_root")"
+  fi
+  repo_name="$(normalize_repo_name "$repo_name")"
+  printf '%s\n%s\n' "$repo_root" "$repo_name"
+}
+
+matches_any_pattern() {
+  local value="$1"
+  shift || true
+  local pattern
+  for pattern in "$@"; do
+    case "$value" in
+      $pattern) return 0 ;;
+    esac
+  done
+  return 1
+}
+
+kill_agents() {
+  local repo_root="" repo_name=""
+  {
+    IFS= read -r repo_root
+    IFS= read -r repo_name
+  } < <(repo_context)
+
+  local atmux_home="${ATMUX_HOME:-$HOME/.atmux}"
+  local worktree_root="$atmux_home/agents"
+  local prefix="atmux-${repo_name}-"
+
+  local candidates
+  candidates="$(
+    {
+      tmux list-sessions -F '#{session_name}' 2>/dev/null | awk -v p="$prefix" 'index($0,p)==1 { print }'
+      if [[ -d "$worktree_root" ]]; then
+        find "$worktree_root" -maxdepth 1 -mindepth 1 -type d -name "${repo_name}-*" -exec basename {} \; | sed 's/^/atmux-/'
+      fi
+      git -C "$repo_root" for-each-ref --format='%(refname:short)' "refs/heads/${prefix}*" 2>/dev/null
+    } | awk -v p="$prefix" 'index($0,p)==1 { print }' | sort -u
+  )"
+
+  local removed_any=0
+  local results_xml=""
+  local session
+  while IFS= read -r session; do
+    [[ -z "$session" ]] && continue
+
+    # Match against full session name, short name (without atmux-repo- prefix), or agent name
+    local short_name="${session#"$prefix"}"
+    if ! matches_any_pattern "$session" "$@" && \
+       ! matches_any_pattern "$short_name" "$@"; then
+      continue
+    fi
+
+    removed_any=1
+    local state="removed"
+    local removed_session="false"
+    local removed_worktree="false"
+    local removed_branch="false"
+    local note=""
+
+    if tmux has-session -t "$session" 2>/dev/null; then
+      tmux kill-session -t "$session"
+      removed_session="true"
+    fi
+
+    local suffix="${session#atmux-}"
+    local worktree="$worktree_root/$suffix"
+    if [[ -d "$worktree" ]]; then
+      if git -C "$repo_root" worktree list --porcelain 2>/dev/null | grep -Fqx "worktree $worktree"; then
+        git -C "$repo_root" worktree remove -f "$worktree" >/dev/null 2>&1 || true
+        if [[ -d "$worktree" ]]; then
+          state="errored"
+        else
+          removed_worktree="true"
+        fi
+      else
+        rm -rf -- "$worktree"
+        if [[ -d "$worktree" ]]; then
+          state="errored"
+          note="worktree-unregistered-remove-failed"
+        else
+          removed_worktree="true"
+          note="worktree-unregistered-pruned"
+        fi
+      fi
+    fi
+
+    if git -C "$repo_root" show-ref --verify --quiet "refs/heads/$session"; then
+      git -C "$repo_root" branch -D "$session" >/dev/null 2>&1 || true
+      if git -C "$repo_root" show-ref --verify --quiet "refs/heads/$session"; then
+        state="errored"
+      else
+        removed_branch="true"
+      fi
+    fi
+
+    local agent_name="${session#atmux-${repo_name}-}"
+    if [[ "$agent_name" == "$session" ]]; then
+      agent_name="$session"
+    fi
+
+    results_xml+="  <agent name=\"$(xml_escape "$agent_name")\" session=\"$(xml_escape "$session")\">"
+    if [[ -n "$note" ]]; then
+      results_xml+="<status state=\"$(xml_escape "$state")\" removed_session=\"$removed_session\" removed_worktree=\"$removed_worktree\" removed_branch=\"$removed_branch\" note=\"$(xml_escape "$note")\" />"
+    else
+      results_xml+="<status state=\"$(xml_escape "$state")\" removed_session=\"$removed_session\" removed_worktree=\"$removed_worktree\" removed_branch=\"$removed_branch\" />"
+    fi
+    results_xml+="</agent>"$'\n'
+  done <<< "$candidates"
+
+  if [[ "$removed_any" -eq 0 ]]; then
+    echo "no agents matched: $*" >&2
+    exit 1
+  fi
+
+  printf '<agents>\n%s</agents>\n' "$results_xml"
+}
+
+# --- Main ---
+
+main() {
+  local pid=""
+  local timeout_sec="60"
+  local signal_name="TERM"
+  local agent_mode=0
+  local -a agent_targets=()
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --pid)
+        pid="${2:-}"
+        shift 2
+        ;;
+      --agent)
+        agent_mode=1
+        shift
+        # Collect all remaining non-flag args as agent targets
+        while [[ $# -gt 0 ]]; do
+          case "$1" in
+            --timeout|--signal)
+              break
+              ;;
+            -h|--help|help)
+              usage
+              exit 0
+              ;;
+            *)
+              agent_targets+=("$1")
+              shift
+              ;;
+          esac
+        done
+        ;;
+      --timeout)
+        timeout_sec="${2:-}"
+        shift 2
+        ;;
+      --signal)
+        signal_name="${2:-}"
+        shift 2
+        ;;
+      -h|--help|help)
+        usage
+        exit 0
+        ;;
+      *)
+        echo "unknown flag: $1" >&2
+        usage >&2
+        exit 2
+        ;;
+    esac
+  done
+
+  if [[ "$agent_mode" -eq 1 ]]; then
+    if [[ "${#agent_targets[@]}" -eq 0 ]]; then
+      echo "missing agent name or pattern" >&2
+      usage >&2
+      exit 2
+    fi
+    kill_agents "${agent_targets[@]}"
+    exit $?
+  fi
+
+  if [[ -n "$pid" ]]; then
+    kill_pid "$pid" "$timeout_sec" "$signal_name"
+    exit $?
+  fi
+
+  echo "missing --pid or --agent" >&2
+  usage >&2
+  exit 2
 }
 
 main "$@"

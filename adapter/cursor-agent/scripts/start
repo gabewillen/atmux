@@ -32,6 +32,43 @@ set_bootstrap_state() {
   tmux set-environment -t "$session" ATMUX_BOOTSTRAP_STATE "$state" >/dev/null 2>&1 || true
 }
 
+ensure_cursor_atmux_allowlist() {
+  local config_dir="$HOME/.cursor"
+  local config_file="$config_dir/cli-config.json"
+  local tmp_file=""
+
+  mkdir -p "$config_dir"
+
+  if [[ ! -f "$config_file" ]]; then
+    cat > "$config_file" <<'EOF'
+{
+  "permissions": {
+    "allow": [
+      "Shell(atmux)"
+    ],
+    "deny": []
+  }
+}
+EOF
+    return 0
+  fi
+
+  if ! command -v jq >/dev/null 2>&1; then
+    return 0
+  fi
+
+  tmp_file="$(mktemp "${TMPDIR:-/tmp}/cursor-cli-config.XXXXXX")"
+  if jq '
+    .permissions = (.permissions // {}) |
+    .permissions.allow = ((.permissions.allow // []) + ["Shell(atmux)"] | unique) |
+    .permissions.deny = (.permissions.deny // [])
+  ' "$config_file" > "$tmp_file"; then
+    mv "$tmp_file" "$config_file"
+  else
+    rm -f "$tmp_file"
+  fi
+}
+
 state_dir="${ATMUX_HOME:-$HOME/.atmux}/adapters/cursor-agent"
 state_file="$state_dir/state.env"
 mkdir -p "$state_dir"
@@ -119,6 +156,8 @@ args=("$@")
 if ! arg_present --model "${args[@]-}"; then
   args=(--model "$MODEL" "${args[@]-}")
 fi
+
+ensure_cursor_atmux_allowlist
 
 set_bootstrap_state ready
 echo "starting $agent_bin in $(pwd)"

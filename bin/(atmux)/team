@@ -107,6 +107,24 @@ list_teams() {
   printf '</teams>\n'
 }
 
+is_team_session() {
+  local session="$1"
+  local repo_name="${2:-}"
+  local kind team_name
+
+  kind="$(get_session_env "$session" ATMUX_SESSION_KIND)"
+  [[ "$kind" == "team" ]] && return 0
+
+  team_name="$(get_session_env "$session" ATMUX_TEAM)"
+  [[ -n "$team_name" ]] && return 0
+
+  if [[ -n "$repo_name" && "$session" == "atmux-${repo_name}-team-"* ]]; then
+    return 0
+  fi
+
+  return 1
+}
+
 sub="${1:-}"
 shift || true
 
@@ -129,25 +147,28 @@ case "$sub" in
     fi
 
     if tmux has-session -t "$target" 2>/dev/null; then
-      printf '%s\n' "$target"
-      exit 0
+      if is_team_session "$target" "$r_repo"; then
+        printf '%s\n' "$target"
+        exit 0
+      fi
+      exit 1
     fi
     if [[ -n "$r_repo" ]]; then
       candidate="atmux-${r_repo}-team-${target}"
-      if tmux has-session -t "$candidate" 2>/dev/null; then
+      if tmux has-session -t "$candidate" 2>/dev/null && is_team_session "$candidate" "$r_repo"; then
         printf '%s\n' "$candidate"
         exit 0
       fi
       if [[ "$target" == "team-"* ]]; then
         candidate="atmux-${r_repo}-${target}"
-        if tmux has-session -t "$candidate" 2>/dev/null; then
+        if tmux has-session -t "$candidate" 2>/dev/null && is_team_session "$candidate" "$r_repo"; then
           printf '%s\n' "$candidate"
           exit 0
         fi
       fi
       if [[ "$target" == "${r_repo}-team-"* ]]; then
         candidate="atmux-${target}"
-        if tmux has-session -t "$candidate" 2>/dev/null; then
+        if tmux has-session -t "$candidate" 2>/dev/null && is_team_session "$candidate" "$r_repo"; then
           printf '%s\n' "$candidate"
           exit 0
         fi

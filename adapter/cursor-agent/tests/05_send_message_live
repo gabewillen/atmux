@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+ADAPTER_DIR="$(cd -- "$TESTS_DIR/.." && pwd)"
+REPO_ROOT="$(cd -- "$ADAPTER_DIR/../.." && pwd)"
+ATMUX_BIN="$REPO_ROOT/bin/atmux"
+
+wait_for_text() {
+  local target="$1"
+  local needle="$2"
+  local timeout="${3:-20}"
+  local deadline now snap
+  deadline=$(( $(date +%s) + timeout ))
+  while true; do
+    snap="$(tmux capture-pane -p -t "$target" -S -1200 2>/dev/null | tr -d '\r' || true)"
+    if printf '%s' "$snap" | grep -Fq "$needle"; then
+      return 0
+    fi
+    now="$(date +%s)"
+    if (( now >= deadline )); then
+      return 1
+    fi
+    sleep 0.2
+  done
+}
+
+wait_for_file() {
+  local path="$1"
+  local timeout="${2:-20}"
+  local deadline now
+  deadline=$(( $(date +%s) + timeout ))
+  while true; do
+    [[ -f "$path" ]] && return 0
+    now="$(date +%s)"
+    if (( now >= deadline )); then
+      return 1
+    fi
+    sleep 0.2
+  done
+}
+
+atmux_home="$(mktemp -d "${TMPDIR:-/tmp}/atmux-cursor-live.XXXXXX")"
+session_name="atmux-cursor-agent-live-$(date +%s)-$$"
+
+cleanup() {
+  tmux kill-session -t "$session_name" >/dev/null 2>&1 || true
+  rm -rf "$atmux_home"
+}
+trap cleanup EXIT
+
+tmux kill-session -t "$session_name" >/dev/null 2>&1 || true
+tmux new-session -d -x 240 -y 60 -s "$session_name" -n "$session_name" -c "$REPO_ROOT" \
+  "ATMUX_HOME='$atmux_home' '$ADAPTER_DIR/scripts/start'"
+
+pane_id="$(tmux list-panes -t "$session_name" -F '#{pane_id}' 2>/dev/null | head -n 1)"
+[[ -n "$pane_id" ]] || { echo "unable to resolve pane id" >&2; exit 1; }
+
+if ! wait_for_text "$pane_id" 'Cursor Agent' 60; then
+  tmux capture-pane -p -t "$pane_id" -S -220 >&2 || true
+  echo "timed out waiting for Cursor Agent startup" >&2
+  exit 1
+fi
+
+tmux set-environment -t "$session_name" ATMUX_ADAPTER "cursor-agent"
+tmux set-environment -t "$session_name" ATMUX_SESSION_NAME "$session_name"
+
+token="send-cursor-live-${RANDOM}"
+send_out="$(ATMUX_ALLOW_OUTSIDE_TMUX=1 ATMUX_REPO="live-send" ATMUX_AGENT_NAME="sender" ATMUX_SESSION_NAME="atmux-live-send-sender" \
+  "$ATMUX_BIN" send --to "$session_name" "$token")"
+message_id="$(printf '%s\n' "$send_out" | sed -n 's/.*message_id="\([^"]*\)".*/\1/p')"
+
+printf '%s\n' "$send_out" | grep -F 'to="agent"' >/dev/null
+[[ -n "$message_id" ]] || { echo "missing message_id from send output" >&2; exit 1; }
+
+if ! wait_for_text "$pane_id" "<notification type=\"message\"" 20; then
+  if ! wait_for_text "$pane_id" "Incoming ATMUX message." 20; then
+    tmux capture-pane -p -t "$pane_id" -S -220 >&2 || true
+    echo "live cursor-agent pane did not receive message prompt" >&2
+    exit 1
+  fi
+fi
+
+if ! wait_for_file "$HOME/.atmux/messages/live-send/$message_id/read_at" 20; then
+  tmux capture-pane -p -t "$pane_id" -S -220 >&2 || true
+  echo "live cursor-agent pane did not read the sent message" >&2
+  exit 1
+fi
+
+echo "PASS 05_send_message_live"

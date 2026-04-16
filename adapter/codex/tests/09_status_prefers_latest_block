@@ -24,7 +24,7 @@ trap cleanup EXIT
 
 ATMUX_HOME="$atmux_home" \
 ATMUX_TARGET_PANE="$pane_id" \
-"$ADAPTER_DIR/scripts/model" set gpt-5.3-codex high >/dev/null
+"$ADAPTER_DIR/scripts/model" set gpt-5.4 high >/dev/null
 
 status_high=""
 for _ in $(seq 1 15); do
@@ -42,12 +42,12 @@ done
 
 echo "$status_high" | grep -F '<status ' >/dev/null
 echo "$status_high" | grep -F 'adapter="codex"' >/dev/null
-echo "$status_high" | grep -F 'model="gpt-5.3-codex"' >/dev/null
+echo "$status_high" | grep -F 'model="gpt-5.4"' >/dev/null
 echo "$status_high" | grep -Eq 'reasoning_level="(high|xhigh|extra-high)"' >/dev/null
 
 ATMUX_HOME="$atmux_home" \
 ATMUX_TARGET_PANE="$pane_id" \
-"$ADAPTER_DIR/scripts/model" set gpt-5.3-codex medium >/dev/null
+"$ADAPTER_DIR/scripts/model" set gpt-5.4 medium >/dev/null
 
 status_medium=""
 for _ in $(seq 1 15); do
@@ -65,7 +65,7 @@ done
 
 echo "$status_medium" | grep -F '<status ' >/dev/null
 echo "$status_medium" | grep -F 'adapter="codex"' >/dev/null
-echo "$status_medium" | grep -F 'model="gpt-5.3-codex"' >/dev/null
+echo "$status_medium" | grep -F 'model="gpt-5.4"' >/dev/null
 echo "$status_medium" | grep -F 'reasoning_level="medium"' >/dev/null
 
 echo "PASS 09_status_prefers_latest_block"

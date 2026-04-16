@@ -3,7 +3,7 @@ set -euo pipefail
 state_dir="${ATMUX_HOME:-$HOME/.atmux}/adapters/codex"
 state_file="$state_dir/state.env"
 mkdir -p "$state_dir"
-MODEL='gpt-5.3-codex'
+MODEL='gpt-5.4'
 REASONING_LEVEL='medium'
 
 load_state() {
@@ -119,7 +119,7 @@ send_model_selection() {
 }
 
 case "${1:-}" in
-  list) printf '%s\n' gpt-5.2-codex gpt-5.3-codex gpt-5.1-codex-max gpt-5.2 gpt-5.1-codex-mini ;;
+  list) printf '%s\n' gpt-5.4 gpt-5.3-codex gpt-5.2-codex gpt-5.1-codex-max gpt-5.2 gpt-5.1-codex-mini ;;
   get) printf '%s\n' "$MODEL" ;;
   set)
     MODEL="${2:-}"; [[ -n "$MODEL" ]] || { echo "missing model value" >&2; exit 2; }

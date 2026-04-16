@@ -1,0 +1,220 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+ATMUX_BIN="$REPO_ROOT/bin/atmux"
+
+wait_for_text() {
+  local target="$1"
+  local needle="$2"
+  local timeout="${3:-30}"
+  local deadline now snap
+  deadline=$(( $(date +%s) + timeout ))
+  while true; do
+    snap="$(tmux capture-pane -p -t "$target" -S -1200 2>/dev/null | tr -d '\r' || true)"
+    if printf '%s' "$snap" | grep -Fq "$needle"; then
+      return 0
+    fi
+    now="$(date +%s)"
+    if (( now >= deadline )); then
+      return 1
+    fi
+    sleep 0.2
+  done
+}
+
+wait_for_file() {
+  local path="$1"
+  local timeout="${2:-30}"
+  local deadline now
+  deadline=$(( $(date +%s) + timeout ))
+  while true; do
+    [[ -f "$path" ]] && return 0
+    now="$(date +%s)"
+    if (( now >= deadline )); then
+      return 1
+    fi
+    sleep 0.2
+  done
+}
+
+dump_pane() {
+  local pane="$1"
+  tmux capture-pane -p -t "$pane" -S -220 >&2 || true
+}
+
+sanitize_name() {
+  printf '%s' "$1" | sed 's/[^A-Za-z0-9]/-/g'
+}
+
+receiver_wait_text() {
+  case "$1" in
+    codex) printf '%s\n' "OpenAI Codex" ;;
+    claude-code) printf '%s\n' "Claude Code v" ;;
+    gemini) printf '%s\n' "Type your message" ;;
+    cursor-agent) printf '%s\n' "Cursor Agent" ;;
+    *) return 1 ;;
+  esac
+}
+
+configure_receiver_env() {
+  local adapter="$1"
+  local session="$2"
+  tmux set-environment -t "$session" ATMUX_ADAPTER "$adapter"
+  tmux set-environment -t "$session" ATMUX_SESSION_NAME "$session"
+  tmux set-environment -t "$session" ATMUX_AGENT_NAME "${adapter//[^A-Za-z0-9]/_}_receiver"
+  tmux set-environment -t "$session" ATMUX_REPO "$matrix_repo"
+}
+
+start_receiver() {
+  local adapter="$1"
+  local suffix="$2"
+  local setup_out start_cmd wait_text
+
+  receiver_session="atmux-matrix-$(sanitize_name "$adapter")-$suffix"
+  receiver_pane=""
+  receiver_home=""
+
+  case "$adapter" in
+    codex)
+      setup_out="$(ATMUX_ALLOW_OUTSIDE_TMUX=1 ATMUX_CODEX_TEST_SESSION_NAME="$receiver_session" \
+        "$REPO_ROOT/adapter/codex/tests/scripts/setup")"
+      receiver_pane="$(printf '%s\n' "$setup_out" | sed -n 's/^PANE_ID=//p' | tail -n 1)"
+      ;;
+    claude-code)
+      receiver_home="$(mktemp -d "${TMPDIR:-/tmp}/atmux-claude-matrix.XXXXXX")"
+      start_cmd="ATMUX_HOME='$receiver_home' '$REPO_ROOT/adapter/claude-code/scripts/start'"
+      setup_out="$("$REPO_ROOT/adapter/claude-code/tests/scripts/setup" \
+        --session "$receiver_session" \
+        --command "$start_cmd" \
+        --wait-text "$(receiver_wait_text "$adapter")")"
+      receiver_pane="$(printf '%s\n' "$setup_out" | sed -n 's/^PANE_ID=//p' | tail -n 1)"
+      ;;
+    gemini)
+      receiver_home="$(mktemp -d "${TMPDIR:-/tmp}/atmux-gemini-matrix.XXXXXX")"
+      start_cmd="ATMUX_HOME='$receiver_home' '$REPO_ROOT/adapter/gemini/scripts/start'"
+      setup_out="$("$REPO_ROOT/adapter/gemini/tests/scripts/setup" \
+        --session "$receiver_session" \
+        --command "$start_cmd" \
+        --wait-text "$(receiver_wait_text "$adapter")")"
+      receiver_pane="$(printf '%s\n' "$setup_out" | sed -n 's/^PANE_ID=//p' | tail -n 1)"
+      ;;
+    cursor-agent)
+      receiver_home="$(mktemp -d "${TMPDIR:-/tmp}/atmux-cursor-matrix.XXXXXX")"
+      tmux kill-session -t "$receiver_session" >/dev/null 2>&1 || true
+      tmux new-session -d -x 240 -y 60 -s "$receiver_session" -n "$receiver_session" -c "$REPO_ROOT" \
+        "ATMUX_HOME='$receiver_home' '$REPO_ROOT/adapter/cursor-agent/scripts/start'"
+      receiver_pane="$(tmux list-panes -t "$receiver_session" -F '#{pane_id}' 2>/dev/null | head -n 1)"
+      wait_text="$(receiver_wait_text "$adapter")"
+      if ! wait_for_text "$receiver_pane" "$wait_text" 60; then
+        dump_pane "$receiver_pane"
+        echo "timed out waiting for $adapter startup" >&2
+        exit 1
+      fi
+      ;;
+    *)
+      echo "unknown receiver adapter: $adapter" >&2
+      exit 1
+      ;;
+  esac
+
+  [[ -n "$receiver_pane" ]] || { echo "missing pane id for $adapter" >&2; exit 1; }
+  configure_receiver_env "$adapter" "$receiver_session"
+}
+
+stop_receiver() {
+  local adapter="$1"
+  local session="$2"
+  local home="$3"
+
+  case "$adapter" in
+    codex)
+      ATMUX_ALLOW_OUTSIDE_TMUX=1 "$REPO_ROOT/adapter/codex/tests/scripts/teardown" --session "$session" >/dev/null 2>&1 || true
+      ;;
+    claude-code)
+      "$REPO_ROOT/adapter/claude-code/tests/scripts/teardown" --session "$session" >/dev/null 2>&1 || true
+      ;;
+    gemini)
+      "$REPO_ROOT/adapter/gemini/tests/scripts/teardown" --session "$session" >/dev/null 2>&1 || true
+      ;;
+    cursor-agent)
+      tmux kill-session -t "$session" >/dev/null 2>&1 || true
+      ;;
+  esac
+
+  if [[ -n "$home" ]]; then
+    rm -rf "$home"
+  fi
+}
+
+probe_pair() {
+  local sender_adapter="$1"
+  local receiver_adapter="$2"
+  local suffix sender_session sender_agent token send_out message_id read_at
+
+  suffix="$$-$(sanitize_name "$sender_adapter")-to-$(sanitize_name "$receiver_adapter")-$RANDOM"
+  start_receiver "$receiver_adapter" "$suffix"
+
+  sender_session="atmux-matrix-$(sanitize_name "$sender_adapter")-sender-$suffix"
+  sender_agent="${sender_adapter//[^A-Za-z0-9]/_}_sender"
+  token="matrix-$(sanitize_name "$sender_adapter")-to-$(sanitize_name "$receiver_adapter")-$RANDOM"
+
+  send_out="$(ATMUX_ALLOW_OUTSIDE_TMUX=1 ATMUX_REPO="$matrix_repo" ATMUX_AGENT_NAME="$sender_agent" \
+    ATMUX_SESSION_NAME="$sender_session" "$ATMUX_BIN" send --to "$receiver_session" "$token")"
+  message_id="$(printf '%s\n' "$send_out" | sed -n 's/.*message_id="\([^"]*\)".*/\1/p')"
+  read_at="$HOME/.atmux/messages/$matrix_repo/$message_id/read_at"
+
+  printf '%s\n' "$send_out" | grep -F 'to="agent"' >/dev/null || {
+    echo "send did not resolve to agent for ${sender_adapter} -> ${receiver_adapter}" >&2
+    printf '%s\n' "$send_out" >&2
+    stop_receiver "$receiver_adapter" "$receiver_session" "$receiver_home"
+    exit 1
+  }
+  [[ -n "$message_id" ]] || {
+    echo "missing message_id for ${sender_adapter} -> ${receiver_adapter}" >&2
+    printf '%s\n' "$send_out" >&2
+    stop_receiver "$receiver_adapter" "$receiver_session" "$receiver_home"
+    exit 1
+  }
+
+  if ! wait_for_text "$receiver_pane" "$token" 30; then
+    echo "message body did not appear for ${sender_adapter} -> ${receiver_adapter}" >&2
+    echo "session: $receiver_session pane: $receiver_pane message_id: $message_id" >&2
+    dump_pane "$receiver_pane"
+    stop_receiver "$receiver_adapter" "$receiver_session" "$receiver_home"
+    exit 1
+  fi
+
+  if ! wait_for_file "$read_at" 30; then
+    echo "message was not marked read for ${sender_adapter} -> ${receiver_adapter}" >&2
+    echo "session: $receiver_session pane: $receiver_pane message_id: $message_id" >&2
+    dump_pane "$receiver_pane"
+    stop_receiver "$receiver_adapter" "$receiver_session" "$receiver_home"
+    exit 1
+  fi
+
+  printf 'ok: %s -> %s\n' "$sender_adapter" "$receiver_adapter"
+  stop_receiver "$receiver_adapter" "$receiver_session" "$receiver_home"
+}
+
+matrix_repo="matrix-live-${RANDOM}"
+had_codex_dir=0
+had_gemini_dir=0
+[[ -d "$REPO_ROOT/.codex" ]] && had_codex_dir=1
+[[ -d "$REPO_ROOT/.gemini" ]] && had_gemini_dir=1
+
+cleanup() {
+  [[ "$had_codex_dir" -eq 1 ]] || rm -rf "$REPO_ROOT/.codex"
+  [[ "$had_gemini_dir" -eq 1 ]] || rm -rf "$REPO_ROOT/.gemini"
+}
+trap cleanup EXIT
+
+adapters=("codex" "claude-code" "gemini" "cursor-agent")
+for sender in "${adapters[@]}"; do
+  for receiver in "${adapters[@]}"; do
+    probe_pair "$sender" "$receiver"
+  done
+done
+
+echo "ok: live adapter send matrix delivered across all pairs"

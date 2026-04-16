@@ -119,6 +119,40 @@ resolve_prompt_prefix_for_pane() {
   resolve_input_prompt_for_adapter "$adapter" "$source_root"
 }
 
+resolve_adapter_for_pane() {
+  local pane="$1"
+  local sess
+
+  sess="$(tmux display-message -t "$pane" -p "#{session_name}" 2>/dev/null || true)"
+  [[ -n "$sess" ]] || return 1
+
+  get_session_env "$sess" ATMUX_ADAPTER
+}
+
+resolve_status_script_for_adapter() {
+  local adapter="$1"
+  local source_root="$2"
+  local status_script="$source_root/adapter/$adapter/scripts/status"
+
+  if [[ -x "$status_script" ]]; then
+    printf '%s\n' "$status_script"
+    return 0
+  fi
+
+  status_script="$ATMUX_HOME/adapters/$adapter/scripts/status"
+  if [[ -x "$status_script" ]]; then
+    printf '%s\n' "$status_script"
+    return 0
+  fi
+
+  return 1
+}
+
+status_state_from_xml() {
+  local xml="${1:-}"
+  printf '%s\n' "$xml" | sed -n 's/.*state="\([^"]*\)".*/\1/p' | tail -n 1
+}
+
 extract_prompt_input() {
   local pane="$1"
   local prompt_prefix="$2"
@@ -209,6 +243,44 @@ restore_prompt_input() {
   sleep "$settle"
   tmux send-keys -t "$pane" -l "$saved_input" >/dev/null 2>&1 || true
   sleep "$submit_wait"
+}
+
+wait_for_pane_ready() {
+  local pane="$1"
+  local source_root="$2"
+  local prompt_prefix="${3:-}"
+  local timeout="${4:-45}"
+  local deadline now adapter status_script status_xml state
+
+  deadline=$(( $(date +%s) + timeout ))
+  adapter="$(resolve_adapter_for_pane "$pane" 2>/dev/null || true)"
+  status_script=""
+  if [[ -n "$adapter" ]]; then
+    status_script="$(resolve_status_script_for_adapter "$adapter" "$source_root" 2>/dev/null || true)"
+  fi
+
+  while true; do
+    if [[ -n "$prompt_prefix" ]] && ! pane_has_prompt_line "$pane" "$prompt_prefix"; then
+      :
+    else
+      if [[ -n "$status_script" ]]; then
+        status_xml="$(ATMUX_HOME="$ATMUX_HOME" ATMUX_SOURCE_ROOT="$source_root" ATMUX_STATUS_PASSIVE=1 \
+          ATMUX_TARGET_PANE="$pane" "$status_script" 2>/dev/null || true)"
+        state="$(status_state_from_xml "$status_xml")"
+        case "$state" in
+          idle|errored|usage-limit) return 0 ;;
+        esac
+      else
+        return 0
+      fi
+    fi
+
+    now="$(date +%s)"
+    if (( now >= deadline )); then
+      return 1
+    fi
+    sleep 0.2
+  done
 }
 
 deliver_notification_to_pane() {

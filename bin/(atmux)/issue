@@ -393,10 +393,17 @@ assign_issue() {
     "$(xml_escape "$assigned_by")" \
     "$(xml_escape "$now")"
 
-  local actor_pane notification_xml
+  local actor_pane assignee_session assignee_pane notification_xml
   actor_pane="$(current_pane)"
+  assignee_session="$("$HERE/agent" resolve "$to" "$repo" 2>/dev/null || true)"
+  if [[ -n "$assignee_session" ]]; then
+    assignee_pane="$(primary_pane_for_session "$assignee_session")"
+  fi
   notification_xml="$(build_notification "issue" "assign" "atmux issue get $id" "state=assigned")"
   send_notification "$actor_pane" "$notification_xml"
+  if [[ -n "$assignee_pane" && "$assignee_pane" != "$actor_pane" ]]; then
+    send_notification "$assignee_pane" "$notification_xml"
+  fi
   notify_issue_watchers "$dir" "$actor_pane" "$notification_xml"
 }
 

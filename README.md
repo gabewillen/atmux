@@ -2,7 +2,22 @@
 
 **atmux** is a tmux-first toolkit for running and coordinating multiple AI coding agents in parallel. It handles session lifecycle, inter-agent messaging, work assignment, output capture, and notifications — across different AI CLIs (Claude Code, Gemini, Codex, Cursor) and git repos.
 
-Pure shell. No build step, no runtime, no dependencies beyond `bash`, `git`, and `tmux`. Clone it or `curl` the installer and you're running.
+## No frills. No dependencies. No build.
+
+- **No build step.** Pure shell scripts — nothing to compile, bundle, or transpile. `git clone` and run.
+- **No runtime.** No Node, Python, Go, or Rust toolchain required. No package manager, no lockfiles, no `node_modules`.
+- **No dependencies** beyond what's already on every Unix box you'd run an agent on: `bash`, `git`, and `tmux`. That's it.
+- **No daemon, no server, no database.** State lives in plain files under `~/.atmux/`. Inspect it with `ls` and `cat`.
+- **No frills.** One shell script per command. Read the source, patch it in place, move on.
+
+Install by piping `curl` into `sh`, or clone the repo and run `./install.sh`. Uninstall by deleting a directory.
+
+## What makes it different
+
+- **CLI-agnostic via adapters.** Run Claude Code, Gemini, Codex, and Cursor side-by-side in the same session. Swap vendors without rewriting your workflow. Third-party adapters install with `atmux adapter install owner/repo`.
+- **Intelligence scale, not model names.** Say `--intelligence 80` and the adapter picks the right model and reasoning level. Portable across vendors, survives model renames — no more hardcoding `claude-opus-4-7` or `gpt-5-codex` across your scripts.
+- **You can actually see the agents work.** It's just tmux. Attach to any session, watch the agent think in real time, detach and come back later. No custom TUI, no web dashboard, no log tailing.
+- **Git worktree per agent.** Each agent gets its own branch and working directory under `~/.atmux/agents/`. Parallel agents can't stomp each other's changes, and cleanup is a single `atmux kill --agent`.
 
 > **Experimental** — this project is under active development. APIs, commands, and behavior may change without notice. Use at your own risk.
 

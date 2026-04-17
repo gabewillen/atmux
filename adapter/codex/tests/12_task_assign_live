@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPTS_DIR="$TESTS_DIR/scripts"
+ADAPTER_DIR="$(cd -- "$TESTS_DIR/.." && pwd)"
+REPO_ROOT="$(cd -- "$ADAPTER_DIR/../.." && pwd)"
+ATMUX_BIN="$REPO_ROOT/bin/atmux"
+
+wait_for_text() {
+  local target="$1"
+  local needle="$2"
+  local timeout="${3:-20}"
+  local deadline now snap compact normalized_needle
+  normalized_needle="$(printf '%s' "$needle" | tr -d '[:space:]')"
+  deadline=$(( $(date +%s) + timeout ))
+  while true; do
+    snap="$(tmux capture-pane -p -t "$target" -S -1200 2>/dev/null | tr -d '\r' || true)"
+    compact="$(printf '%s' "$snap" | tr -d '[:space:]')"
+    if printf '%s' "$compact" | grep -Fq "$normalized_needle"; then
+      return 0
+    fi
+    now="$(date +%s)"
+    if (( now >= deadline )); then
+      return 1
+    fi
+    sleep 0.2
+  done
+}
+
+atmux_home="$(mktemp -d "${TMPDIR:-/tmp}/atmux-codex-task.XXXXXX")"
+mkdir -p "$atmux_home/src" "$HOME/.atmux/issues"
+ln -s "$REPO_ROOT" "$atmux_home/src/atmux"
+ln -s "$HOME/.atmux/issues" "$atmux_home/issues"
+setup_out="$(ATMUX_ALLOW_OUTSIDE_TMUX=1 "$SCRIPTS_DIR/setup")"
+session_name="$(printf '%s\n' "$setup_out" | sed -n 's/^SESSION_NAME=//p' | tail -n 1)"
+pane_id="$(printf '%s\n' "$setup_out" | sed -n 's/^PANE_ID=//p' | tail -n 1)"
+if [[ -z "$session_name" || -z "$pane_id" ]]; then
+  echo "missing setup output (SESSION_NAME or PANE_ID)" >&2
+  exit 1
+fi
+
+cleanup() {
+  ATMUX_ALLOW_OUTSIDE_TMUX=1 "$SCRIPTS_DIR/teardown" --session "$session_name" >/dev/null 2>&1 || true
+  rm -rf "$atmux_home"
+}
+trap cleanup EXIT
+
+tmux set-environment -t "$session_name" ATMUX_ADAPTER "codex"
+tmux set-environment -t "$session_name" ATMUX_SESSION_NAME "$session_name"
+tmux set-environment -t "$session_name" ATMUX_REPO "live-task"
+
+title="task-codex-live-${RANDOM}"
+assign_out="$(ATMUX_ALLOW_OUTSIDE_TMUX=1 ATMUX_HOME="$atmux_home" ATMUX_REPO="live-task" ATMUX_AGENT_NAME="sender" ATMUX_SESSION_NAME="atmux-live-task-sender" \
+  "$ATMUX_BIN" assign --to "$session_name" --title "$title" --todo "inspect failure" --todo "report status")"
+issue_id="$(printf '%s\n' "$assign_out" | sed -n 's/.*issue_id="\([^"]*\)".*/\1/p' | head -n1)"
+
+printf '%s\n' "$assign_out" | grep -F '<assignment ' >/dev/null
+printf '%s\n' "$assign_out" | grep -F 'created="true"' >/dev/null
+[[ -n "$issue_id" ]] || { echo "missing issue_id from assign output" >&2; exit 1; }
+
+get_out="$(ATMUX_ALLOW_OUTSIDE_TMUX=1 ATMUX_HOME="$atmux_home" ATMUX_REPO="live-task" "$ATMUX_BIN" issue get "$issue_id")"
+printf '%s\n' "$get_out" | grep -F 'state="assigned"' >/dev/null
+printf '%s\n' "$get_out" | grep -F "<title>$title</title>" >/dev/null
+printf '%s\n' "$get_out" | grep -F "<assignment to=\"$session_name\"" >/dev/null
+
+if ! wait_for_text "$pane_id" '<notification type="issue"' 20; then
+  tmux capture-pane -p -t "$pane_id" -S -220 >&2 || true
+  echo "live codex pane did not receive issue notification" >&2
+  exit 1
+fi
+
+if ! wait_for_text "$pane_id" "cmd=\"atmux issue get $issue_id\"" 20; then
+  tmux capture-pane -p -t "$pane_id" -S -220 >&2 || true
+  echo "live codex pane did not receive issue get command" >&2
+  exit 1
+fi
+
+echo "PASS 12_task_assign_live"

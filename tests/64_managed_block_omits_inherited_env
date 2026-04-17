@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+SESSION_SCRIPT="$REPO_ROOT/bin/(atmux)/session"
+
+repo_name="managed-envless-${RANDOM}"
+session="atmux-${repo_name}-worker"
+tmp_repo="$(mktemp -d)"
+
+cleanup() {
+  tmux kill-session -t "$session" >/dev/null 2>&1 || true
+  rm -rf "$tmp_repo"
+}
+trap cleanup EXIT
+
+tmux kill-session -t "$session" >/dev/null 2>&1 || true
+
+(
+  cd "$tmp_repo"
+  git init -q
+)
+
+cat > "$tmp_repo/AGENTS.md" <<'EOF'
+# Local Rules
+Keep this section.
+EOF
+
+tmux new-session -d -s "$session" -n "$session" -x 120 -y 30 -c "$tmp_repo" "cat"
+tmux set-environment -t "$session" ATMUX_ADAPTER "codex"
+tmux set-environment -t "$session" ATMUX_REPO "$repo_name"
+tmux set-environment -t "$session" ATMUX_MANAGER "boss"
+tmux set-environment -t "$session" ATMUX_WORKTREE "$tmp_repo"
+tmux set-environment -t "$session" ATMUX_SOURCE_ROOT "$REPO_ROOT"
+
+attach_out="$(
+  cd "$tmp_repo" && \
+  ATMUX_REPO="$repo_name" ATMUX_SOURCE_ROOT="$REPO_ROOT" "$SESSION_SCRIPT" attach "$session"
+)"
+
+[[ "$attach_out" == "$session" ]] || {
+  echo "unexpected attach output: $attach_out" >&2
+  exit 1
+}
+
+control_text="$(cat "$tmp_repo/AGENTS.md")"
+
+printf '%s\n' "$control_text" | grep -Fq '# atmux Rules'
+printf '%s\n' "$control_text" | grep -Fq 'Use plain `atmux ...` commands; do not prefix them with inherited session environment.'
+printf '%s\n' "$control_text" | grep -Fq 'atmux manager send "..."'
+
+if printf '%s\n' "$control_text" | grep -Fq '# Agent TMUX env'; then
+  echo "managed block still prints inherited env heading" >&2
+  exit 1
+fi
+if printf '%s\n' "$control_text" | grep -Fq 'ATMUX_REPO='; then
+  echo "managed block still prints ATMUX_REPO" >&2
+  exit 1
+fi
+if printf '%s\n' "$control_text" | grep -Fq 'ATMUX_MANAGER='; then
+  echo "managed block still prints ATMUX_MANAGER" >&2
+  exit 1
+fi
+if printf '%s\n' "$control_text" | grep -Fq '$ATMUX_MANAGER'; then
+  echo "managed block still teaches manager env expansion" >&2
+  exit 1
+fi
+
+echo "ok: managed control block omits inherited env vars"

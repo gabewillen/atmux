@@ -212,7 +212,6 @@ collect_agent_help() {
 render_managed_block() {
   local repo_root="$1"
   local role_name="${ATMUX_ROLE:-}"
-  local repo_value="${ATMUX_REPO:-}"
   local manager_value="${ATMUX_MANAGER:-}"
   local atmux_runner=""
   local atmux_help=""
@@ -241,9 +240,8 @@ render_managed_block() {
       echo "- ROLE: $role_name"
       echo
     fi
-    echo "# Agent TMUX env"
-    echo "ATMUX_REPO=${repo_value}"
-    echo "ATMUX_MANAGER=${manager_value}"
+    echo "# atmux Rules"
+    echo "- Use plain \`atmux ...\` commands; do not prefix them with inherited session environment."
     echo
     if [[ -z "$manager_value" ]]; then
       echo "# Delegation Rules"
@@ -259,7 +257,7 @@ render_managed_block() {
       echo "# Managed Agent Rules"
       echo "- ALWAYS acknowledge manager messages quickly with a short plan."
       echo "- ALWAYS send a message to your manager when stuck or after completing any task."
-      echo "- ALWAYS message your manager with \`atmux send --to \"\$ATMUX_MANAGER\" \"...\"\`."
+      echo "- ALWAYS message your manager with \`atmux manager send \"...\"\`."
       echo "- ALWAYS coordinate with peer agents using \`atmux send --to <agent> \"...\"\`."
       echo "- ALWAYS check \`atmux list agents --all --status\` before creating new agents."
       echo "- ALWAYS reuse idle capable agents before creating new ones."

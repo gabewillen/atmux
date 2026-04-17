@@ -228,7 +228,7 @@ Agents running inside `atmux` sessions are expected to:
 
 - Acknowledge manager messages quickly with a short plan.
 - Report completion with validation evidence (not just "done").
-- Message their manager when stuck: `atmux send --to "$ATMUX_MANAGER" "..."`
+- Message their manager when stuck: `atmux manager send "..."`
 - Escalate blockers immediately — never leave them unreported.
 - Reuse idle agents before spawning new ones.
 - Check `atmux list teams` before creating new team members.

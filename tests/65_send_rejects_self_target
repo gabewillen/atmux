@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPTS_DIR="$TESTS_DIR/scripts"
+
+eval "$("$SCRIPTS_DIR/setup")"
+trap "$SCRIPTS_DIR/teardown --team-session \"$TEAM_SESSION\" --agent1-session \"$AGENT1_SESSION\" --agent2-session \"$AGENT2_SESSION\"" EXIT
+
+if out="$(ATMUX_REPO="$REPO_NAME" ATMUX_AGENT_NAME="sender" ATMUX_SESSION_NAME="$AGENT1_SESSION" "$ATMUX_BIN" send --to sender "hello" 2>&1)"; then
+  echo "send unexpectedly allowed self target by agent name" >&2
+  printf '%s\n' "$out" >&2
+  exit 1
+fi
+printf '%s\n' "$out" | grep -Fq 'cannot send to yourself'
+
+if out="$(ATMUX_REPO="$REPO_NAME" ATMUX_AGENT_NAME="sender" ATMUX_SESSION_NAME="$AGENT1_SESSION" "$ATMUX_BIN" send --to "$AGENT1_SESSION" "hello" 2>&1)"; then
+  echo "send unexpectedly allowed self target by session name" >&2
+  printf '%s\n' "$out" >&2
+  exit 1
+fi
+printf '%s\n' "$out" | grep -Fq 'cannot send to yourself'
+
+echo "ok: send rejects self target by name and session"

@@ -40,6 +40,17 @@ sender_session() {
   printf '%s\n' "$from"
 }
 
+filter_nonself_members() {
+  local sender="$1"
+  shift
+  local member
+  for member in "$@"; do
+    [[ -n "$member" ]] || continue
+    [[ "$member" == "$sender" ]] && continue
+    printf '%s\n' "$member"
+  done
+}
+
 store_message() {
   local repo="$1" from="$2" to="$3" body="$4" reply_required="$5"
   local root id dir ts
@@ -154,10 +165,6 @@ fi
 repo_name="$(repo_name_from_context)"
 from_session="$(sender_session)"
 
-# Store message and build notification
-msg_id="$(store_message "$repo_name" "$from_session" "$target_name" "$message" "$reply_required_value")"
-printf -v read_cmd 'atmux message read %q --repo %q' "$msg_id" "$repo_name"
-
 team_session="$("$HERE/team" resolve "$target_name" "$repo_name" || true)"
 
 if [[ -n "$team_session" ]]; then
@@ -166,11 +173,20 @@ if [[ -n "$team_session" ]]; then
     [[ -n "$s" ]] || continue
     members+=("$s")
   done < <(tmux list-panes -t "${team_session}:0" -F '#{@atmux_agent_session}' 2>/dev/null | awk 'NF' | sort -u)
+  filtered_members=()
+  while IFS= read -r s; do
+    [[ -n "$s" ]] || continue
+    filtered_members+=("$s")
+  done < <(filter_nonself_members "$from_session" "${members[@]}")
+  members=("${filtered_members[@]}")
 
   if [[ "${#members[@]}" -eq 0 ]]; then
-    echo "no team members found in session: $team_session" >&2
-    exit 1
+    echo "cannot send to yourself" >&2
+    exit 2
   fi
+
+  msg_id="$(store_message "$repo_name" "$from_session" "$target_name" "$message" "$reply_required_value")"
+  printf -v read_cmd 'atmux message read %q --repo %q' "$msg_id" "$repo_name"
 
   attempted=0
   delivered=0
@@ -212,6 +228,12 @@ if [[ -z "$target_session" ]]; then
   echo "target not found as team or agent: $target_name" >&2
   exit 1
 fi
+if [[ "$target_session" == "$from_session" ]]; then
+  echo "cannot send to yourself" >&2
+  exit 2
+fi
+msg_id="$(store_message "$repo_name" "$from_session" "$target_name" "$message" "$reply_required_value")"
+printf -v read_cmd 'atmux message read %q --repo %q' "$msg_id" "$repo_name"
 payload="$(build_message_payload_for_session "$target_session" "$from_session" "$read_cmd" "$reply_required_value")"
 submit_keys=()
 if [[ "$interrupt" -eq 1 ]]; then

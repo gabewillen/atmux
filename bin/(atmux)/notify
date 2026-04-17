@@ -372,10 +372,11 @@ deliver_notification_to_pane() {
   local pane="$1"
   local payload="$2"
   local submit_keys="$3"
-  local settle submit_wait
+  local settle paste_submit_wait submit_wait
   local sk
 
   settle="${ATMUX_SEND_SETTLE_SECONDS:-0.4}"
+  paste_submit_wait="${ATMUX_SEND_PASTE_TO_SUBMIT_WAIT_SECONDS:-0.8}"
   submit_wait="${ATMUX_SEND_SUBMIT_WAIT_SECONDS:-0.3}"
 
   debug_notify "deliver:start pane=$(printf '%q' "$pane") submit_keys=$(printf '%q' "$submit_keys") $(payload_debug_summary "$payload")"
@@ -389,7 +390,7 @@ deliver_notification_to_pane() {
     debug_notify "deliver:payload_failed pane=$(printf '%q' "$pane")"
     return 1
   }
-  sleep "$settle"
+  sleep "$paste_submit_wait"
   for sk in $submit_keys; do
     tmux send-keys -t "$pane" "$sk" >/dev/null 2>&1 || {
       debug_notify "deliver:submit_failed pane=$(printf '%q' "$pane") key=$(printf '%q' "$sk")"

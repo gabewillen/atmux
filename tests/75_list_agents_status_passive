@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPTS_DIR="$TESTS_DIR/scripts"
+
+eval "$("$SCRIPTS_DIR/setup")"
+
+tmp_root="$(mktemp -d "${TMPDIR:-/tmp}/atmux-passive-status.XXXXXX")"
+probe_log="$tmp_root/status-passive.log"
+
+cleanup() {
+  "$SCRIPTS_DIR/teardown" --team-session "$TEAM_SESSION" --agent1-session "$AGENT1_SESSION" --agent2-session "$AGENT2_SESSION"
+  rm -rf "$tmp_root"
+}
+trap cleanup EXIT
+
+mkdir -p "$tmp_root/adapter/probe/scripts"
+cat > "$tmp_root/adapter/probe/cmd" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+root_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+exec "$root_dir/scripts/$1" "${@:2}"
+EOF
+chmod +x "$tmp_root/adapter/probe/cmd"
+
+cat > "$tmp_root/adapter/probe/scripts/status" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "${ATMUX_STATUS_PASSIVE:-}" >> "$ATMUX_PASSIVE_LOG"
+printf '<status adapter="probe" owner="agent" state="idle" model="" reasoning_level="" control_file="" />\n'
+EOF
+chmod +x "$tmp_root/adapter/probe/scripts/status"
+
+tmux set-environment -t "$AGENT1_SESSION" ATMUX_ADAPTER "probe"
+tmux set-environment -t "$AGENT1_SESSION" ATMUX_SOURCE_ROOT "$tmp_root"
+tmux set-environment -t "$AGENT2_SESSION" ATMUX_ADAPTER "probe"
+tmux set-environment -t "$AGENT2_SESSION" ATMUX_SOURCE_ROOT "$tmp_root"
+
+out="$(
+  ATMUX_REPO="$REPO_NAME" \
+  ATMUX_PASSIVE_LOG="$probe_log" \
+  "$ATMUX_BIN" list agents --all --status
+)"
+
+printf '%s\n' "$out" | grep -Fq "session=\"$AGENT1_SESSION\""
+printf '%s\n' "$out" | grep -Fq "session=\"$AGENT2_SESSION\""
+
+[[ -f "$probe_log" ]] || { echo "status probe log missing" >&2; exit 1; }
+count="$(wc -l < "$probe_log" | tr -d ' ')"
+[[ "$count" -eq 2 ]] || { echo "expected 2 passive status calls, got $count" >&2; cat "$probe_log" >&2; exit 1; }
+if grep -Fxvq '1' "$probe_log"; then
+  echo "list agents --status invoked adapter status without passive mode" >&2
+  cat "$probe_log" >&2
+  exit 1
+fi
+
+echo "ok: list agents --status uses passive adapter status"

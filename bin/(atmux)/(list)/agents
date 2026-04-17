@@ -160,7 +160,7 @@ main() {
     aname="$(agent_local_name "$repo_name" "$session")"
     if [[ "$status" -eq 1 ]]; then
       printf '  <agent name="%s" session="%s">\n' "$(xml_escape "$aname")" "$(xml_escape "$session")"
-      printf '    %s\n' "$(status_node_for_session "$session" 0)"
+      printf '    %s\n' "$(status_node_for_session "$session" 1)"
       printf '  </agent>\n'
     else
       printf '  <agent name="%s" session="%s" />\n' "$(xml_escape "$aname")" "$(xml_escape "$session")"

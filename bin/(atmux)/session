@@ -17,6 +17,9 @@ Usage:
 Description:
   List atmux sessions, start a session, or attach to an existing one.
 
+Notes:
+  session attach must be run outside tmux.
+
 Examples:
   atmux session list
   atmux session start
@@ -674,6 +677,10 @@ attach_session() {
   local target="${1:-}"
   if [[ -z "$target" ]]; then
     echo "usage: atmux session attach <name|session>" >&2
+    exit 2
+  fi
+  if [[ -n "${TMUX:-}" ]]; then
+    echo "atmux session attach must be run outside tmux" >&2
     exit 2
   fi
 

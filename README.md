@@ -190,6 +190,8 @@ atmux session start [--name <name>] [--adapter <adapter>] [-- <adapter-args...>]
 atmux session attach <name|session>
 ```
 
+`atmux session attach` must be run outside tmux.
+
 ### `list`
 
 ```sh

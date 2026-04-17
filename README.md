@@ -164,8 +164,8 @@ atmux watch --agent <name> [--idle <seconds>] [--timeout <seconds>]
 Schedule a future or repeating action. Runs detached by default.
 
 ```sh
-atmux schedule [--to <name>] --once <duration> --notification "check on training"
-atmux schedule [--to <name>] --interval <duration> --notification "heartbeat"
+atmux schedule --once <duration> --notification "check on training"
+atmux schedule --interval <duration> --notification "heartbeat"
 atmux schedule --once <duration> -- atmux send --to <name> "message"
 ```
 

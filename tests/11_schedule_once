@@ -27,25 +27,37 @@ wait_for_text() {
 eval "$("$SCRIPTS_DIR/setup")"
 trap "$SCRIPTS_DIR/teardown --team-session \"$TEAM_SESSION\" --agent1-session \"$AGENT1_SESSION\" --agent2-session \"$AGENT2_SESSION\"" EXIT
 
-receiver_pane="$(tmux list-panes -t "$AGENT2_SESSION" -F '#{pane_id}' 2>/dev/null | head -n1)"
-[[ -n "$receiver_pane" ]] || { echo "receiver pane missing" >&2; exit 1; }
+sender_pane="$(tmux list-panes -t "$AGENT1_SESSION" -F '#{pane_id}' 2>/dev/null | head -n1)"
+[[ -n "$sender_pane" ]] || { echo "sender pane missing" >&2; exit 1; }
 
 # Schedule returns immediately (detached by default)
-out="$(ATMUX_REPO="$REPO_NAME" ATMUX_AGENT_NAME="sender" ATMUX_SESSION_NAME="$AGENT1_SESSION" "$ATMUX_BIN" schedule --to receiver --once 1s --notification "hello")"
+out="$(ATMUX_REPO="$REPO_NAME" ATMUX_AGENT_NAME="sender" ATMUX_SESSION_NAME="$AGENT1_SESSION" "$ATMUX_BIN" schedule --once 1s --notification "hello there")"
 printf '%s\n' "$out" | grep -Fq '<schedule'
 printf '%s\n' "$out" | grep -Fq 'kind="notification"'
 printf '%s\n' "$out" | grep -Fq 'mode="once"'
 printf '%s\n' "$out" | grep -Fq 'pid="'
 
-if ! wait_for_text "$receiver_pane" 'type="scheduled"' 15; then
-  echo "scheduled notification not found in receiver pane" >&2
-  tmux capture-pane -p -t "$receiver_pane" -S -120 >&2 || true
+if ! wait_for_text "$sender_pane" 'type="scheduled"' 15; then
+  echo "scheduled notification not found in sender pane" >&2
+  tmux capture-pane -p -t "$sender_pane" -S -120 >&2 || true
   exit 1
 fi
-if ! wait_for_text "$receiver_pane" 'text="hello"' 15; then
-  echo "scheduled notification text not found in receiver pane" >&2
-  tmux capture-pane -p -t "$receiver_pane" -S -120 >&2 || true
+if ! wait_for_text "$sender_pane" 'text="hello there"' 15; then
+  echo "scheduled notification text not found in sender pane" >&2
+  tmux capture-pane -p -t "$sender_pane" -S -120 >&2 || true
+  exit 1
+fi
+if ! wait_for_text "$sender_pane" 'type="exec"' 15; then
+  echo "schedule completion exec notification not found in sender pane" >&2
+  tmux capture-pane -p -t "$sender_pane" -S -120 >&2 || true
   exit 1
 fi
 
-echo "ok: schedule --once notification delivered to agent target"
+sender_snap="$(tmux capture-pane -p -t "$sender_pane" -S -200 2>/dev/null | tr -d '\r' || true)"
+if printf '%s\n' "$sender_snap" | grep -Fq 'hello\ there'; then
+  echo "schedule exec notification still uses shell-escaped spacing" >&2
+  printf '%s\n' "$sender_snap" >&2
+  exit 1
+fi
+
+echo "ok: schedule --once notification delivered to self"

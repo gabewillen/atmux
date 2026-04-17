@@ -28,6 +28,18 @@ Examples:
 USAGE
 }
 
+display_command_text() {
+  local joined=""
+  local part=""
+  for part in "$@"; do
+    if [[ -n "$joined" ]]; then
+      joined+=" "
+    fi
+    joined+="$part"
+  done
+  printf '%s\n' "$joined"
+}
+
 record_exec_start() {
   local pid="$1"
   local repo_name="$2"
@@ -232,8 +244,7 @@ if [[ $# -eq 0 ]]; then
 fi
 
 cmd=( "$@" )
-command_text="$(printf '%q ' "${cmd[@]}")"
-command_text="${command_text% }"
+command_text="$(display_command_text "${cmd[@]}")"
 notify_pane="$(current_pane)"
 repo_name="$(repo_name_from_context)"
 

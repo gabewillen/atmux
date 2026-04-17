@@ -69,30 +69,17 @@ resolve_interrupt_keys() {
 }
 
 build_message_payload_for_session() {
-  local target_session="$1"
+  local _target_session="$1"
   local from_session="$2"
   local read_cmd="$3"
   local reply_required_value="$4"
-  local adapter="" payload_xml="" instruction=""
+  local hint_text=""
 
-  adapter="$(get_session_env "$target_session" ATMUX_ADAPTER)"
-  instruction="Incoming ATMUX message. Run this exact command now to read it, then act on the message body: ${read_cmd}"
-  if [[ "$reply_required_value" == "true" ]]; then
-    instruction="${instruction} A reply is required after you read it."
-  fi
+  printf -v hint_text 'run %s' "$read_cmd"
 
-  if [[ "$adapter" == "cursor-agent" ]]; then
-    instruction="Incoming ATMUX message. Run this exact shell command now using ! to read it, then act on the message body: !${read_cmd}"
-    if [[ "$reply_required_value" == "true" ]]; then
-      instruction="${instruction} A reply is required after you read it."
-    fi
-    printf '%s\n' "$instruction"
-    return 0
-  fi
-
-  payload_xml="$(build_notification "message" "$from_session" "$read_cmd" \
-    "reply_required=$reply_required_value")"
-  printf '%s %s\n' "$instruction" "$payload_xml"
+  build_notification "message" "$from_session" "$read_cmd" \
+    "reply_required=$reply_required_value" \
+    "hint=$hint_text"
 }
 
 send_to_session() {
@@ -169,8 +156,7 @@ from_session="$(sender_session)"
 
 # Store message and build notification
 msg_id="$(store_message "$repo_name" "$from_session" "$target_name" "$message" "$reply_required_value")"
-printf -v read_cmd 'ATMUX_HOME=%q ATMUX_REPO=%q atmux message read %q --repo %q' \
-  "$ATMUX_HOME" "$repo_name" "$msg_id" "$repo_name"
+printf -v read_cmd 'atmux message read %q --repo %q' "$msg_id" "$repo_name"
 
 team_session="$("$HERE/team" resolve "$target_name" "$repo_name" || true)"
 

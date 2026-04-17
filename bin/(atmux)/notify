@@ -88,6 +88,46 @@ normalize_prompt_text() {
   printf '%s' "$text"
 }
 
+pane_cursor_position() {
+  local pane="$1"
+  local cursor_x cursor_y
+
+  cursor_x="$(tmux display-message -t "$pane" -p "#{cursor_x}" 2>/dev/null || true)"
+  cursor_y="$(tmux display-message -t "$pane" -p "#{cursor_y}" 2>/dev/null || true)"
+
+  [[ "$cursor_x" =~ ^[0-9]+$ ]] || return 1
+  [[ "$cursor_y" =~ ^[0-9]+$ ]] || return 1
+
+  printf '%s %s\n' "$cursor_x" "$cursor_y"
+}
+
+truncate_line_to_cursor() {
+  local line="${1:-}"
+  local cursor_x="${2:-}"
+
+  [[ "$cursor_x" =~ ^[0-9]+$ ]] || {
+    printf '%s' "$line"
+    return 0
+  }
+
+  if (( cursor_x <= 0 )); then
+    printf ''
+    return 0
+  fi
+
+  if command -v perl >/dev/null 2>&1; then
+    printf '%s' "$line" | PERL_BADLANG=0 perl -CS -e '
+      use utf8;
+      my $limit = shift @ARGV;
+      my $text = do { local $/; <STDIN> };
+      print substr($text, 0, $limit);
+    ' "$cursor_x"
+    return 0
+  fi
+
+  printf '%s' "$line" | cut -c "1-${cursor_x}"
+}
+
 split_prompt_line() {
   local line normalized_line prompt normalized_prompt leading_trimmed rest
 
@@ -156,26 +196,32 @@ status_state_from_xml() {
 extract_prompt_input() {
   local pane="$1"
   local prompt_prefix="$2"
-  local snap line
+  local snap line cursor_x cursor_y cursor_info
   local -a lines=()
-  local end_idx=-1
+  local end_idx
   local start_idx=-1
   local idx saved_input=""
 
   [[ -n "$prompt_prefix" ]] || return 0
 
-  snap="$(tmux capture-pane -p -t "$pane" -S -20 2>/dev/null || true)"
+  snap="$(tmux capture-pane -p -t "$pane" 2>/dev/null || true)"
   while IFS= read -r line; do
     lines+=("$line")
   done <<< "$snap"
+  [[ ${#lines[@]} -gt 0 ]] || return 0
 
-  for (( idx=${#lines[@]}-1; idx>=0; idx-- )); do
-    if [[ -n "${lines[idx]//[[:space:]]/}" ]]; then
-      end_idx=$idx
-      break
+  cursor_info="$(pane_cursor_position "$pane" 2>/dev/null || true)"
+  if [[ -n "$cursor_info" ]]; then
+    cursor_x="${cursor_info%% *}"
+    cursor_y="${cursor_info##* }"
+    if (( cursor_y >= ${#lines[@]} )); then
+      cursor_y=$((${#lines[@]} - 1))
     fi
-  done
-  (( end_idx >= 0 )) || return 0
+    lines[cursor_y]="$(truncate_line_to_cursor "${lines[cursor_y]}" "$cursor_x")"
+    end_idx=$cursor_y
+  else
+    end_idx=$((${#lines[@]} - 1))
+  fi
 
   for (( idx=end_idx; idx>=0; idx-- )); do
     if split_prompt_line "${lines[idx]}" "$prompt_prefix" >/dev/null; then
@@ -195,25 +241,32 @@ extract_prompt_input() {
 pane_has_prompt_line() {
   local pane="$1"
   local prompt_prefix="$2"
-  local snap line
+  local snap line cursor_y cursor_info
   local -a lines=()
   local idx
 
   [[ -n "$prompt_prefix" ]] || return 1
 
-  snap="$(tmux capture-pane -p -t "$pane" -S -20 2>/dev/null || true)"
+  snap="$(tmux capture-pane -p -t "$pane" 2>/dev/null || true)"
   while IFS= read -r line; do
     lines+=("$line")
   done <<< "$snap"
+  [[ ${#lines[@]} -gt 0 ]] || return 1
 
-  for (( idx=${#lines[@]}-1; idx>=0; idx-- )); do
-    if [[ -z "${lines[idx]//[[:space:]]/}" ]]; then
-      continue
+  cursor_info="$(pane_cursor_position "$pane" 2>/dev/null || true)"
+  if [[ -n "$cursor_info" ]]; then
+    cursor_y="${cursor_info##* }"
+    if (( cursor_y >= ${#lines[@]} )); then
+      cursor_y=$((${#lines[@]} - 1))
     fi
+  else
+    cursor_y=$((${#lines[@]} - 1))
+  fi
+
+  for (( idx=cursor_y; idx>=0; idx-- )); do
     if split_prompt_line "${lines[idx]}" "$prompt_prefix" >/dev/null; then
       return 0
     fi
-    return 1
   done
 
   return 1

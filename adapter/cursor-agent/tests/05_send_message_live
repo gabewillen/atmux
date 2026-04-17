@@ -41,6 +41,10 @@ wait_for_file() {
 }
 
 atmux_home="$(mktemp -d "${TMPDIR:-/tmp}/atmux-cursor-live.XXXXXX")"
+mkdir -p "$atmux_home/src"
+ln -s "$REPO_ROOT" "$atmux_home/src/atmux"
+mkdir -p "$HOME/.atmux"
+ln -s "$HOME/.atmux/messages" "$atmux_home/messages"
 session_name="atmux-cursor-agent-live-$(date +%s)-$$"
 
 cleanup() {
@@ -64,6 +68,7 @@ fi
 
 tmux set-environment -t "$session_name" ATMUX_ADAPTER "cursor-agent"
 tmux set-environment -t "$session_name" ATMUX_SESSION_NAME "$session_name"
+tmux set-environment -t "$session_name" ATMUX_REPO "live-send"
 
 token="send-cursor-live-${RANDOM}"
 send_out="$(ATMUX_ALLOW_OUTSIDE_TMUX=1 ATMUX_REPO="live-send" ATMUX_AGENT_NAME="sender" ATMUX_SESSION_NAME="atmux-live-send-sender" \
@@ -74,11 +79,9 @@ printf '%s\n' "$send_out" | grep -F 'to="agent"' >/dev/null
 [[ -n "$message_id" ]] || { echo "missing message_id from send output" >&2; exit 1; }
 
 if ! wait_for_text "$pane_id" "<notification type=\"message\"" 20; then
-  if ! wait_for_text "$pane_id" "Incoming ATMUX message." 20; then
-    tmux capture-pane -p -t "$pane_id" -S -220 >&2 || true
-    echo "live cursor-agent pane did not receive message prompt" >&2
-    exit 1
-  fi
+  tmux capture-pane -p -t "$pane_id" -S -220 >&2 || true
+  echo "live cursor-agent pane did not receive message notification" >&2
+  exit 1
 fi
 
 if ! wait_for_file "$HOME/.atmux/messages/live-send/$message_id/read_at" 20; then

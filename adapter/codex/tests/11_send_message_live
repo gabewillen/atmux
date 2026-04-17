@@ -56,6 +56,7 @@ trap cleanup EXIT
 
 tmux set-environment -t "$session_name" ATMUX_ADAPTER "codex"
 tmux set-environment -t "$session_name" ATMUX_SESSION_NAME "$session_name"
+tmux set-environment -t "$session_name" ATMUX_REPO "live-send"
 
 token="send-codex-live-${RANDOM}"
 send_out="$(ATMUX_ALLOW_OUTSIDE_TMUX=1 ATMUX_REPO="live-send" ATMUX_AGENT_NAME="sender" ATMUX_SESSION_NAME="atmux-live-send-sender" \

@@ -42,6 +42,10 @@ wait_for_file() {
 }
 
 atmux_home="$(mktemp -d "${TMPDIR:-/tmp}/atmux-claude-live.XXXXXX")"
+mkdir -p "$atmux_home/src"
+ln -s "$REPO_ROOT" "$atmux_home/src/atmux"
+mkdir -p "$HOME/.atmux"
+ln -s "$HOME/.atmux/messages" "$atmux_home/messages"
 cleanup() {
   [[ -n "${session_name:-}" ]] && "$SCRIPTS_DIR/teardown" --session "$session_name" >/dev/null 2>&1 || true
   rm -rf "$atmux_home"
@@ -59,6 +63,7 @@ fi
 
 tmux set-environment -t "$session_name" ATMUX_ADAPTER "claude-code"
 tmux set-environment -t "$session_name" ATMUX_SESSION_NAME "$session_name"
+tmux set-environment -t "$session_name" ATMUX_REPO "live-send"
 
 token="send-claude-live-${RANDOM}"
 send_out="$(ATMUX_ALLOW_OUTSIDE_TMUX=1 ATMUX_REPO="live-send" ATMUX_AGENT_NAME="sender" ATMUX_SESSION_NAME="atmux-live-send-sender" \

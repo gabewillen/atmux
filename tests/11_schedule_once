@@ -31,15 +31,21 @@ receiver_pane="$(tmux list-panes -t "$AGENT2_SESSION" -F '#{pane_id}' 2>/dev/nul
 [[ -n "$receiver_pane" ]] || { echo "receiver pane missing" >&2; exit 1; }
 
 # Schedule returns immediately (detached by default)
-out="$(ATMUX_REPO="$REPO_NAME" ATMUX_AGENT_NAME="sender" ATMUX_SESSION_NAME="$AGENT1_SESSION" "$ATMUX_BIN" schedule --to receiver --once 1s "hello")"
+out="$(ATMUX_REPO="$REPO_NAME" ATMUX_AGENT_NAME="sender" ATMUX_SESSION_NAME="$AGENT1_SESSION" "$ATMUX_BIN" schedule --to receiver --once 1s --notification "hello")"
 printf '%s\n' "$out" | grep -Fq '<schedule'
+printf '%s\n' "$out" | grep -Fq 'kind="notification"'
 printf '%s\n' "$out" | grep -Fq 'mode="once"'
 printf '%s\n' "$out" | grep -Fq 'pid="'
 
-if ! wait_for_text "$receiver_pane" '<notification' 15; then
+if ! wait_for_text "$receiver_pane" 'type="scheduled"' 15; then
   echo "scheduled notification not found in receiver pane" >&2
   tmux capture-pane -p -t "$receiver_pane" -S -120 >&2 || true
   exit 1
 fi
+if ! wait_for_text "$receiver_pane" 'text="hello"' 15; then
+  echo "scheduled notification text not found in receiver pane" >&2
+  tmux capture-pane -p -t "$receiver_pane" -S -120 >&2 || true
+  exit 1
+fi
 
-echo "ok: schedule --once delivered to agent target"
+echo "ok: schedule --once notification delivered to agent target"

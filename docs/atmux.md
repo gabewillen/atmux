@@ -57,11 +57,17 @@ When `atmux` runs, it ensures this home layout exists:
   1) Team session/name
   2) Agent session/name
 
-### `./bin/atmux.sh schedule --to <name|session> [--reply-required] (--interval <duration> | --once <duration>) "message"`
-- Schedules a one-shot or repeating message using the same target matching as `send`.
-- Resolution order for `--to`:
+### `./bin/atmux.sh schedule [--to <name|session>] (--interval <duration> | --once <duration>) --notification "text"`
+### `./bin/atmux.sh schedule (--interval <duration> | --once <duration>) -- <command> [args...]`
+- Schedules either:
+  - a direct ATMUX notification via `--notification`
+  - or an arbitrary command via `-- <command...>`
+- Notification mode uses the same `--to` target matching as `send`:
   1) Team session/name
   2) Agent session/name
+- If `--to` is omitted in notification mode, the current session is targeted.
+- To schedule a message, schedule the command explicitly:
+  `atmux schedule --once 10m -- atmux send --to worker "status check"`
 - Duration suffixes:
   `ms`, `s`, `m`, `h`, `d`
 

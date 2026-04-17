@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPTS_DIR="$TESTS_DIR/scripts"
+
+wait_for_text_file() {
+  local file="$1"
+  local needle="$2"
+  local timeout="${3:-10}"
+  local deadline now contents
+  deadline=$(( $(date +%s) + timeout ))
+  while true; do
+    contents="$(cat "$file" 2>/dev/null || true)"
+    if printf '%s' "$contents" | grep -Fq "$needle"; then
+      return 0
+    fi
+    now="$(date +%s)"
+    if (( now >= deadline )); then
+      return 1
+    fi
+    sleep 0.1
+  done
+}
+
+eval "$("$SCRIPTS_DIR/setup")"
+
+marker="schedule-command-${RANDOM}"
+tmp_file="$(mktemp)"
+
+cleanup() {
+  rm -f "$tmp_file"
+  "$SCRIPTS_DIR/teardown" --team-session "$TEAM_SESSION" --agent1-session "$AGENT1_SESSION" --agent2-session "$AGENT2_SESSION"
+}
+trap cleanup EXIT
+
+out="$(ATMUX_REPO="$REPO_NAME" ATMUX_AGENT_NAME="sender" ATMUX_SESSION_NAME="$AGENT1_SESSION" \
+  "$ATMUX_BIN" schedule --once 1s -- /bin/sh -lc "printf '%s\n' '$marker' >> '$tmp_file'")"
+
+printf '%s\n' "$out" | grep -Fq '<schedule'
+printf '%s\n' "$out" | grep -Fq 'kind="command"'
+printf '%s\n' "$out" | grep -Fq 'command="/bin/sh -lc'
+
+if ! wait_for_text_file "$tmp_file" "$marker" 12; then
+  echo "scheduled command did not update output file" >&2
+  cat "$tmp_file" >&2 || true
+  exit 1
+fi
+
+echo "ok: schedule command mode runs delayed command"

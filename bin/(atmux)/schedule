@@ -9,15 +9,24 @@ source "$HERE/notify"
 usage() {
   cat <<'USAGE'
 Usage:
-  atmux schedule [--to <name|session>] [--reply-required] (--interval <duration> | --once <duration>) [--no-detach] "message"
+  atmux schedule [--to <name|session>] (--interval <duration> | --once <duration>) [--no-detach] --notification <text>
+  atmux schedule (--interval <duration> | --once <duration>) [--no-detach] -- <command> [args...]
 
 Description:
-  Schedule a future or repeating send using the same target matching as `atmux send`.
-  Runs detached by default so the agent is not blocked.
-  If --to is omitted, the current agent session is targeted.
-  Resolution order for --to:
-    1) Team session/name
-    2) Agent session/name
+  Schedule a future or repeating action. Use `--notification` to queue an
+  ATMUX notification to an agent/team/current session, or use `-- <command...>`
+  to run any command after the delay.
+
+  Notification mode:
+    - If --to is omitted, the current agent/session is targeted.
+    - Resolution order for --to:
+      1) Team session/name
+      2) Agent session/name
+
+  Command mode:
+    - Runs the provided command in the current environment.
+    - If you want to schedule a message, schedule the command directly:
+      `atmux schedule --once 10m -- atmux send --to worker "status check"`
 
   --no-detach  Run in the foreground (blocking). By default, the scheduled
                task runs in a detached tmux window and the command returns
@@ -33,10 +42,9 @@ Durations:
   If no suffix is provided, seconds are assumed.
 
 Examples:
-  atmux schedule --to planner --once 10m "status check"
-  atmux schedule --to platform --interval 30m --reply-required "heartbeat"
-  atmux schedule --once 10m "remind myself"
-  atmux schedule "follow up" --to atmux-myrepo-worker --once 45s
+  atmux schedule --to planner --once 10m --notification "status check"
+  atmux schedule --interval 30m --notification "check on long-running jobs"
+  atmux schedule --once 45s -- atmux send --to atmux-myrepo-worker "follow up"
 USAGE
 }
 
@@ -88,19 +96,6 @@ sleep_for_duration() {
   sleep "$duration_seconds"
 }
 
-default_target_name() {
-  if [[ -n "${ATMUX_AGENT_NAME:-}" ]]; then
-    printf '%s\n' "$ATMUX_AGENT_NAME"
-    return 0
-  fi
-  if [[ -n "${ATMUX_SESSION_NAME:-}" ]]; then
-    printf '%s\n' "$ATMUX_SESSION_NAME"
-    return 0
-  fi
-  echo "unable to infer self target; set ATMUX_AGENT_NAME or use --to" >&2
-  exit 2
-}
-
 current_session_name() {
   if [[ -n "${ATMUX_SESSION_NAME:-}" ]]; then
     printf '%s\n' "$ATMUX_SESSION_NAME"
@@ -117,39 +112,101 @@ current_session_name() {
   printf '\n'
 }
 
-validate_not_self_target() {
+default_notification_target() {
+  local self_session=""
+  self_session="$(current_session_name)"
+  if [[ -n "$self_session" ]]; then
+    printf '%s\n' "$self_session"
+    return 0
+  fi
+  if [[ -n "${ATMUX_AGENT_NAME:-}" ]]; then
+    printf '%s\n' "$ATMUX_AGENT_NAME"
+    return 0
+  fi
+  echo "unable to infer notification target; use --to" >&2
+  exit 2
+}
+
+notification_sender() {
+  local from=""
+  from="$(current_session_name)"
+  if [[ -n "$from" ]]; then
+    printf '%s\n' "$from"
+    return 0
+  fi
+  printf 'schedule\n'
+}
+
+resolve_notification_targets() {
   local target="$1"
   local repo_name="$2"
-  local self_session="" team_session="" target_session="" member
-
-  self_session="$(current_session_name)"
-
-  if [[ -n "${ATMUX_AGENT_NAME:-}" && "$target" == "${ATMUX_AGENT_NAME}" ]]; then
-    echo "cannot send to yourself" >&2
-    exit 2
-  fi
-  if [[ -n "$self_session" && "$target" == "$self_session" ]]; then
-    echo "cannot send to yourself" >&2
-    exit 2
-  fi
+  local team_session="" target_session="" member=""
 
   team_session="$("$HERE/team" resolve "$target" "$repo_name" || true)"
-  if [[ -n "$team_session" && -n "$self_session" ]]; then
+  if [[ -n "$team_session" ]]; then
     while IFS= read -r member; do
       [[ -n "$member" ]] || continue
-      if [[ "$member" != "$self_session" ]]; then
-        return 0
-      fi
+      printf '%s\n' "$member"
     done < <(tmux list-panes -t "${team_session}:0" -F '#{@atmux_agent_session}' 2>/dev/null | awk 'NF' | sort -u)
-    echo "cannot send to yourself" >&2
-    exit 2
+    return 0
   fi
 
   target_session="$("$HERE/agent" resolve "$target" "$repo_name" || true)"
-  if [[ -n "$self_session" && "$target_session" == "$self_session" ]]; then
-    echo "cannot send to yourself" >&2
-    exit 2
+  if [[ -n "$target_session" ]]; then
+    printf '%s\n' "$target_session"
+    return 0
   fi
+
+  if tmux has-session -t "$target" 2>/dev/null; then
+    printf '%s\n' "$target"
+    return 0
+  fi
+
+  return 1
+}
+
+send_scheduled_notification() {
+  local target_name="$1"
+  local notification_text="$2"
+  local repo_name="" from_session="" payload="" target_session="" target_pane=""
+  local targets=()
+
+  repo_name="$(repo_name_from_context)"
+  from_session="$(notification_sender)"
+  payload="$(build_notification "scheduled" "$from_session" "" "text=$notification_text")"
+
+  while IFS= read -r target_session; do
+    [[ -n "$target_session" ]] || continue
+    targets+=("$target_session")
+  done < <(resolve_notification_targets "$target_name" "$repo_name" || true)
+
+  if [[ "${#targets[@]}" -eq 0 ]]; then
+    echo "notification target not found: $target_name" >&2
+    exit 1
+  fi
+
+  for target_session in "${targets[@]}"; do
+    target_pane="$(primary_pane_for_session "$target_session")"
+    if [[ -z "$target_pane" ]]; then
+      echo "failed to locate pane for session: $target_session" >&2
+      exit 1
+    fi
+    send_payload_to_pane "$target_pane" "$payload"
+  done
+}
+
+describe_command() {
+  local cmd=("$@")
+  local joined=""
+  local part=""
+  for part in "${cmd[@]}"; do
+    if [[ -n "$joined" ]]; then
+      joined+=" "
+    fi
+    printf -v part '%q' "$part"
+    joined+="$part"
+  done
+  printf '%s\n' "$joined"
 }
 
 target_name=""
@@ -157,7 +214,8 @@ reply_required=0
 interval_raw=""
 once_raw=""
 no_detach=0
-message=""
+notification_text=""
+command_args=()
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -168,6 +226,10 @@ while [[ $# -gt 0 ]]; do
     --reply-required)
       reply_required=1
       shift
+      ;;
+    --notification)
+      notification_text="${2:-}"
+      shift 2
       ;;
     --interval)
       interval_raw="${2:-}"
@@ -187,24 +249,17 @@ while [[ $# -gt 0 ]]; do
       ;;
     --)
       shift
-      message="$*"
+      command_args=("$@")
       break
       ;;
     *)
-      if [[ -z "$message" ]]; then
-        message="$1"
-      else
-        message+=" $1"
-      fi
-      shift
+      echo "unknown argument: $1" >&2
+      usage >&2
+      exit 2
       ;;
   esac
 done
 
-if [[ -z "$message" ]]; then
-  echo "missing message" >&2
-  exit 2
-fi
 if [[ -n "$interval_raw" && -n "$once_raw" ]]; then
   echo "use exactly one of --interval or --once" >&2
   exit 2
@@ -213,31 +268,48 @@ if [[ -z "$interval_raw" && -z "$once_raw" ]]; then
   echo "missing required flag: --interval <duration> or --once <duration>" >&2
   exit 2
 fi
-if [[ -z "$target_name" ]]; then
-  target_name="$(default_target_name)"
+if [[ -n "$notification_text" && ${#command_args[@]} -gt 0 ]]; then
+  echo "use either --notification or -- <command...>, not both" >&2
+  exit 2
+fi
+if [[ -z "$notification_text" && ${#command_args[@]} -eq 0 ]]; then
+  echo "missing scheduled action: use --notification <text> or -- <command...>" >&2
+  exit 2
+fi
+if [[ "$reply_required" -eq 1 ]]; then
+  echo "schedule no longer accepts --reply-required; schedule the send command instead" >&2
+  exit 2
 fi
 
-repo_name="$(repo_name_from_context)"
-validate_not_self_target "$target_name" "$repo_name"
+mode_kind="command"
+if [[ -n "$notification_text" ]]; then
+  mode_kind="notification"
+  if [[ -z "$target_name" ]]; then
+    target_name="$(default_notification_target)"
+  fi
+else
+  if [[ -n "$target_name" ]]; then
+    echo "--to is only valid with --notification; schedule a command like 'atmux send --to ...' instead" >&2
+    exit 2
+  fi
+fi
 
 atmux_bin="$(resolve_atmux_bin)"
 
-# --- Detach by default ---
 if [[ "$no_detach" -eq 0 ]]; then
-  # Build args for the inner (blocking) schedule call
-  inner_args=(schedule --no-detach --to "$target_name")
-  if [[ "$reply_required" -eq 1 ]]; then
-    inner_args+=(--reply-required)
-  fi
+  inner_args=(schedule --no-detach)
   if [[ -n "$once_raw" ]]; then
     inner_args+=(--once "$once_raw")
-  elif [[ -n "$interval_raw" ]]; then
+  else
     inner_args+=(--interval "$interval_raw")
   fi
-  inner_args+=(-- "$message")
+  if [[ "$mode_kind" == "notification" ]]; then
+    inner_args+=(--to "$target_name" --notification "$notification_text")
+  else
+    inner_args+=(-- "${command_args[@]}")
+  fi
 
   detach_out="$("$atmux_bin" exec --detach -- "$atmux_bin" "${inner_args[@]}")"
-
   pid="$(printf '%s' "$detach_out" | sed -n 's/.*pid="\([^"]*\)".*/\1/p')"
   pane="$(printf '%s' "$detach_out" | sed -n 's/.*pane="\([^"]*\)".*/\1/p')"
 
@@ -248,26 +320,32 @@ if [[ "$no_detach" -eq 0 ]]; then
     duration="$interval_raw"
   fi
 
-  printf '<schedule to="%s" mode="%s" duration="%s" pid="%s" pane="%s" />\n' \
-    "$(xml_escape "$target_name")" \
-    "$(xml_escape "$mode")" \
-    "$(xml_escape "$duration")" \
-    "$(xml_escape "$pid")" \
-    "$(xml_escape "$pane")"
+  if [[ "$mode_kind" == "notification" ]]; then
+    printf '<schedule kind="notification" to="%s" mode="%s" duration="%s" pid="%s" pane="%s" />\n' \
+      "$(xml_escape "$target_name")" \
+      "$(xml_escape "$mode")" \
+      "$(xml_escape "$duration")" \
+      "$(xml_escape "$pid")" \
+      "$(xml_escape "$pane")"
+  else
+    printf '<schedule kind="command" mode="%s" duration="%s" pid="%s" pane="%s" command="%s" />\n' \
+      "$(xml_escape "$mode")" \
+      "$(xml_escape "$duration")" \
+      "$(xml_escape "$pid")" \
+      "$(xml_escape "$pane")" \
+      "$(xml_escape "$(describe_command "${command_args[@]}")")"
+  fi
   exit 0
 fi
-
-# --- Foreground (--no-detach) ---
-send_args=(send --to "$target_name")
-if [[ "$reply_required" -eq 1 ]]; then
-  send_args+=(--reply-required)
-fi
-send_args+=("$message")
 
 if [[ -n "$once_raw" ]]; then
   once_seconds="$(parse_duration_seconds "$once_raw")"
   sleep_for_duration "$once_seconds"
-  exec "$atmux_bin" "${send_args[@]}"
+  if [[ "$mode_kind" == "notification" ]]; then
+    send_scheduled_notification "$target_name" "$notification_text"
+    exit 0
+  fi
+  exec "${command_args[@]}"
 fi
 
 interval_seconds="$(parse_duration_seconds "$interval_raw")"
@@ -275,10 +353,26 @@ count=0
 
 while true; do
   sleep_for_duration "$interval_seconds"
-  "$atmux_bin" "${send_args[@]}" >/dev/null
+  if [[ "$mode_kind" == "notification" ]]; then
+    send_scheduled_notification "$target_name" "$notification_text"
+    count=$((count + 1))
+    printf '<schedule kind="notification" to="%s" mode="interval" duration="%s" iteration="%s" />\n' \
+      "$(xml_escape "$target_name")" \
+      "$(xml_escape "$interval_raw")" \
+      "$(xml_escape "$count")"
+    continue
+  fi
+
+  rc=0
+  if "${command_args[@]}"; then
+    rc=0
+  else
+    rc=$?
+  fi
   count=$((count + 1))
-  printf '<schedule to="%s" mode="interval" duration="%s" iteration="%s" />\n' \
-    "$(xml_escape "$target_name")" \
+  printf '<schedule kind="command" mode="interval" duration="%s" iteration="%s" exit_code="%s" command="%s" />\n' \
     "$(xml_escape "$interval_raw")" \
-    "$(xml_escape "$count")"
+    "$(xml_escape "$count")" \
+    "$(xml_escape "$rc")" \
+    "$(xml_escape "$(describe_command "${command_args[@]}")")"
 done

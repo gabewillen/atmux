@@ -161,11 +161,12 @@ atmux watch --agent <name> [--idle <seconds>] [--timeout <seconds>]
 
 ### `schedule`
 
-Schedule a future or repeating send. Runs detached by default.
+Schedule a future or repeating action. Runs detached by default.
 
 ```sh
-atmux schedule --to <name> --once <duration> "message"
-atmux schedule --to <name> --interval <duration> "message"
+atmux schedule [--to <name>] --once <duration> --notification "check on training"
+atmux schedule [--to <name>] --interval <duration> --notification "heartbeat"
+atmux schedule --once <duration> -- atmux send --to <name> "message"
 ```
 
 `--no-detach` runs in the foreground (blocking). Duration suffixes: `ms`, `s`, `m`, `h`, `d`.

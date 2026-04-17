@@ -27,12 +27,23 @@ wait_for_text() {
 eval "$("$SCRIPTS_DIR/setup")"
 trap "$SCRIPTS_DIR/teardown --team-session \"$TEAM_SESSION\" --agent1-session \"$AGENT1_SESSION\" --agent2-session \"$AGENT2_SESSION\"" EXIT
 
-if out="$(ATMUX_REPO="$REPO_NAME" ATMUX_AGENT_NAME="sender" ATMUX_SESSION_NAME="$AGENT1_SESSION" "$ATMUX_BIN" schedule --once 1s "ping" 2>&1)"; then
-  echo "schedule unexpectedly allowed self-target" >&2
-  printf '%s\n' "$out" >&2
+sender_pane="$(tmux list-panes -t "$AGENT1_SESSION" -F '#{pane_id}' 2>/dev/null | head -n1)"
+[[ -n "$sender_pane" ]] || { echo "sender pane missing" >&2; exit 1; }
+
+out="$(ATMUX_REPO="$REPO_NAME" ATMUX_AGENT_NAME="sender" ATMUX_SESSION_NAME="$AGENT1_SESSION" "$ATMUX_BIN" schedule --once 1s --notification "ping")"
+printf '%s\n' "$out" | grep -Fq '<schedule'
+printf '%s\n' "$out" | grep -Fq 'kind="notification"'
+printf '%s\n' "$out" | grep -Fq 'to="atmux-'
+
+if ! wait_for_text "$sender_pane" 'type="scheduled"' 15; then
+  echo "scheduled self-notification not found in sender pane" >&2
+  tmux capture-pane -p -t "$sender_pane" -S -120 >&2 || true
+  exit 1
+fi
+if ! wait_for_text "$sender_pane" 'text="ping"' 15; then
+  echo "scheduled self-notification text not found in sender pane" >&2
+  tmux capture-pane -p -t "$sender_pane" -S -120 >&2 || true
   exit 1
 fi
 
-printf '%s\n' "$out" | grep -Fq 'cannot send to yourself'
-
-echo "ok: schedule rejects self target"
+echo "ok: schedule defaults notification target to self"

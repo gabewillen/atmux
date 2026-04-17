@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPTS_DIR="$TESTS_DIR/scripts"
+
+eval "$("$SCRIPTS_DIR/setup")"
+trap "$SCRIPTS_DIR/teardown --team-session \"$TEAM_SESSION\" --agent1-session \"$AGENT1_SESSION\" --agent2-session \"$AGENT2_SESSION\"" EXIT
+
+send_out="$(ATMUX_REPO="$REPO_NAME" ATMUX_AGENT_NAME="sender" ATMUX_SESSION_NAME="$AGENT1_SESSION" \
+  "$ATMUX_BIN" send --to receiver "scoped-read-${RANDOM}")"
+message_id="$(printf '%s\n' "$send_out" | sed -n 's/.*message_id="\([^"]*\)".*/\1/p' | head -n1)"
+[[ -n "$message_id" ]] || { echo "failed to parse message id" >&2; exit 1; }
+
+receiver_out="$(ATMUX_REPO="$REPO_NAME" ATMUX_AGENT_NAME="receiver" ATMUX_SESSION_NAME="$AGENT2_SESSION" \
+  "$ATMUX_BIN" message read "$message_id")"
+printf '%s\n' "$receiver_out" | grep -Fq '<message '
+printf '%s\n' "$receiver_out" | grep -Fq 'to="receiver"'
+
+if sender_read_out="$(
+  ATMUX_REPO="$REPO_NAME" ATMUX_AGENT_NAME="sender" ATMUX_SESSION_NAME="$AGENT1_SESSION" \
+    "$ATMUX_BIN" message read "$message_id" 2>&1
+)"; then
+  echo "sender unexpectedly read receiver-scoped message" >&2
+  printf '%s\n' "$sender_read_out" >&2
+  exit 1
+fi
+printf '%s\n' "$sender_read_out" | grep -Fq 'message not found'
+
+echo "ok: message read is scoped to the addressed agent"

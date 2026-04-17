@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPTS_DIR="$TESTS_DIR/scripts"
+
+eval "$("$SCRIPTS_DIR/setup")"
+trap "$SCRIPTS_DIR/teardown --team-session \"$TEAM_SESSION\" --agent1-session \"$AGENT1_SESSION\" --agent2-session \"$AGENT2_SESSION\"" EXIT
+
+send_out_1="$(ATMUX_REPO="$REPO_NAME" ATMUX_AGENT_NAME="sender" ATMUX_SESSION_NAME="$AGENT1_SESSION" \
+  "$ATMUX_BIN" send --to receiver "first-${RANDOM}")"
+id_1="$(printf '%s\n' "$send_out_1" | sed -n 's/.*message_id="\([^"]*\)".*/\1/p' | head -n1)"
+[[ -n "$id_1" ]] || { echo "failed to parse first message id" >&2; exit 1; }
+
+send_out_2="$(ATMUX_REPO="$REPO_NAME" ATMUX_AGENT_NAME="sender" ATMUX_SESSION_NAME="$AGENT1_SESSION" \
+  "$ATMUX_BIN" send --to receiver "second-${RANDOM}")"
+id_2="$(printf '%s\n' "$send_out_2" | sed -n 's/.*message_id="\([^"]*\)".*/\1/p' | head -n1)"
+[[ -n "$id_2" ]] || { echo "failed to parse second message id" >&2; exit 1; }
+
+ATMUX_REPO="$REPO_NAME" ATMUX_AGENT_NAME="receiver" ATMUX_SESSION_NAME="$AGENT2_SESSION" \
+  "$ATMUX_BIN" message read "$id_1" >/dev/null
+
+unread_list="$(ATMUX_REPO="$REPO_NAME" ATMUX_AGENT_NAME="receiver" ATMUX_SESSION_NAME="$AGENT2_SESSION" \
+  "$ATMUX_BIN" message list --unread)"
+
+printf '%s\n' "$unread_list" | grep -Fq "$id_2"
+if printf '%s\n' "$unread_list" | grep -Fq "$id_1"; then
+  echo "read message leaked into unread-only list" >&2
+  printf '%s\n' "$unread_list" >&2
+  exit 1
+fi
+
+echo "ok: message list --unread only shows unread messages"

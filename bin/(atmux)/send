@@ -40,6 +40,37 @@ sender_session() {
   printf '%s\n' "$from"
 }
 
+sender_pane() {
+  local pane=""
+  pane="$(current_pane)"
+  if [[ -n "$pane" ]]; then
+    printf '%s\n' "$pane"
+    return 0
+  fi
+  if [[ -n "${from_session:-}" ]]; then
+    pane="$(primary_pane_for_session "$from_session")"
+    if [[ -n "$pane" ]]; then
+      printf '%s\n' "$pane"
+      return 0
+    fi
+  fi
+  return 1
+}
+
+notify_sender_failed_send() {
+  local target="$1"
+  local reason="$2"
+  local pane="" payload=""
+
+  pane="$(sender_pane 2>/dev/null || true)"
+  [[ -n "$pane" ]] || return 0
+
+  payload="$(build_notification "send_failed" "send" "" \
+    "target=$target" \
+    "reason=$reason")"
+  send_payload_to_pane "$pane" "$payload" || true
+}
+
 filter_nonself_members() {
   local sender="$1"
   shift
@@ -101,10 +132,15 @@ send_to_session() {
   local target_pane=""
 
   if ! tmux has-session -t "$target_session" 2>/dev/null; then
+    debug_notify "send:target_session_missing session=$(printf '%q' "$target_session")"
     return 1
   fi
   target_pane="$(primary_pane_for_session "$target_session")"
-  [[ -n "$target_pane" ]] || return 1
+  if [[ -z "$target_pane" ]]; then
+    debug_notify "send:target_pane_missing session=$(printf '%q' "$target_session")"
+    return 1
+  fi
+  debug_notify "send:target_resolved session=$(printf '%q' "$target_session") pane=$(printf '%q' "$target_pane") submit_keys=$(printf '%q' "${submit_keys[*]:-Enter}") $(payload_debug_summary "$payload")"
   send_payload_to_pane "$target_pane" "$payload" ${submit_keys[@]+"${submit_keys[@]}"}
 }
 
@@ -164,10 +200,12 @@ fi
 
 repo_name="$(repo_name_from_context)"
 from_session="$(sender_session)"
+debug_notify "send:start from=$(printf '%q' "$from_session") to=$(printf '%q' "$target_name") repo=$(printf '%q' "$repo_name") interrupt=$interrupt reply_required=$reply_required"
 
 team_session="$("$HERE/team" resolve "$target_name" "$repo_name" || true)"
 
 if [[ -n "$team_session" ]]; then
+  debug_notify "send:team_resolved target=$(printf '%q' "$target_name") session=$(printf '%q' "$team_session")"
   members=()
   while IFS= read -r s; do
     [[ -n "$s" ]] || continue
@@ -218,6 +256,7 @@ if [[ -n "$team_session" ]]; then
     "$results"
 
   if (( failed > 0 )); then
+    notify_sender_failed_send "$target_name" "failed to queue for ${failed} team target(s)"
     exit 1
   fi
   exit 0
@@ -225,9 +264,12 @@ fi
 
 target_session="$("$HERE/agent" resolve "$target_name" "$repo_name" || true)"
 if [[ -z "$target_session" ]]; then
+  notify_sender_failed_send "$target_name" "target not found"
+  debug_notify "send:agent_resolve_failed target=$(printf '%q' "$target_name") repo=$(printf '%q' "$repo_name")"
   echo "target not found as team or agent: $target_name" >&2
   exit 1
 fi
+debug_notify "send:agent_resolved target=$(printf '%q' "$target_name") session=$(printf '%q' "$target_session")"
 if [[ "$target_session" == "$from_session" ]]; then
   echo "cannot send to yourself" >&2
   exit 2
@@ -240,6 +282,7 @@ if [[ "$interrupt" -eq 1 ]]; then
   mapfile -t submit_keys < <(resolve_interrupt_keys "$target_session")
 fi
 if ! send_to_session "$target_session" "$payload" ${submit_keys[@]+"${submit_keys[@]}"}; then
+  notify_sender_failed_send "$target_session" "failed to queue notification"
   echo "failed to queue for session: $target_session" >&2
   exit 1
 fi

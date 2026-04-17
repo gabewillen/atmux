@@ -257,7 +257,7 @@ render_managed_block() {
       echo "# Managed Agent Rules"
       echo "- ALWAYS acknowledge manager messages quickly with a short plan."
       echo "- ALWAYS send a message to your manager when stuck or after completing any task."
-      echo "- ALWAYS message your manager with \`atmux manager send \"...\"\`."
+      echo "- ALWAYS message your manager with \`atmux send --to ${manager_value} \"...\"\`."
       echo "- ALWAYS coordinate with peer agents using \`atmux send --to <agent> \"...\"\`."
       echo "- ALWAYS check \`atmux list agents --all --status\` before creating new agents."
       echo "- ALWAYS reuse idle capable agents before creating new ones."

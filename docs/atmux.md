@@ -46,11 +46,6 @@ When `atmux` runs, it ensures this home layout exists:
 ### `./bin/atmux.sh create --issue --title <title> [--description "..."] [--todo "..."]`
 - Creates a filesystem issue in `~/.atmux/issues/{{repo}}/`.
 
-### `./bin/atmux.sh manager send [--reply-required] "message"`
-- Sends a message to your manager session.
-- Message XML includes:
-  `<message ... reply_required="true|false">`.
-
 ### `./bin/atmux.sh send --to <name|session> [--reply-required] "message"`
 - Sends a message to a specific agent session or every agent in a team.
 - Resolution order for `--to`:
@@ -99,7 +94,6 @@ When `atmux` runs, it ensures this home layout exists:
 - Examples:
   - `atmux env`
   - `atmux agent`
-  - `atmux manager`
 
 ## Environment
 When `atmux session start` creates a session, it sets:

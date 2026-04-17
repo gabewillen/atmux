@@ -10,7 +10,7 @@ usage() {
   cat <<'USAGE'
 Usage:
   atmux message read <id> [--repo <repo>]
-  atmux message list [--repo <repo>]
+  atmux message list [--unread]
 
 Description:
   Read or list filesystem-backed messages.
@@ -45,6 +45,56 @@ resolve_repo_name() {
 message_root_for_repo() {
   local repo="$1"
   printf '%s/messages/%s\n' "$ATMUX_HOME" "$repo"
+}
+
+current_session_name() {
+  if [[ -n "${ATMUX_SESSION_NAME:-}" ]]; then
+    printf '%s\n' "$ATMUX_SESSION_NAME"
+    return 0
+  fi
+  if [[ -n "${TMUX:-}" ]]; then
+    tmux display-message -p '#S' 2>/dev/null || true
+  fi
+}
+
+current_message_recipients() {
+  local repo="$1"
+  local session="" short=""
+  local -a recipients=()
+
+  if [[ -n "${ATMUX_AGENT_NAME:-}" ]]; then
+    recipients+=("${ATMUX_AGENT_NAME}")
+    recipients+=("atmux-${repo}-${ATMUX_AGENT_NAME}")
+  fi
+
+  session="$(current_session_name)"
+  if [[ -n "$session" ]]; then
+    recipients+=("$session")
+    short="$(session_short_name "$session" "$repo")"
+    if [[ -n "$short" ]]; then
+      recipients+=("$short")
+      recipients+=("atmux-${repo}-${short}")
+    fi
+  fi
+
+  printf '%s\n' "${recipients[@]}" | awk 'NF && !seen[$0]++'
+}
+
+message_is_for_current_agent() {
+  local to="$1"
+  local repo="$2"
+  local candidate=""
+  local any=1
+
+  while IFS= read -r candidate; do
+    [[ -n "$candidate" ]] || continue
+    any=0
+    [[ "$to" == "$candidate" ]] && return 0
+  done < <(current_message_recipients "$repo")
+
+  # Outside an agent/session context, keep the old broad view.
+  (( any == 1 )) && return 0
+  return 1
 }
 
 read_message() {
@@ -88,6 +138,11 @@ read_message() {
   timestamp="$(cat "$dir/timestamp" 2>/dev/null || true)"
   stopped="$(cat "$dir/stopped" 2>/dev/null || true)"
 
+  if ! message_is_for_current_agent "$to" "$repo"; then
+    echo "message not found: $id" >&2
+    exit 1
+  fi
+
   local stopped_attr=""
   [[ -n "$stopped" ]] && stopped_attr=" stopped=\"$(xml_escape "$stopped")\""
 
@@ -109,12 +164,17 @@ read_message() {
 
 list_messages() {
   local explicit_repo=""
+  local unread_only=0
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --repo)
         explicit_repo="${2:-}"
         shift 2
+        ;;
+      --unread)
+        unread_only=1
+        shift
         ;;
       *)
         echo "unknown flag: $1" >&2
@@ -135,6 +195,12 @@ list_messages() {
       id="$(basename "$dir")"
       from="$(cat "$dir/from" 2>/dev/null || true)"
       to="$(cat "$dir/to" 2>/dev/null || true)"
+      if ! message_is_for_current_agent "$to" "$repo"; then
+        continue
+      fi
+      if [[ "$unread_only" -eq 1 && -f "$dir/read_at" ]]; then
+        continue
+      fi
       reply_required="$(cat "$dir/reply_required" 2>/dev/null || true)"
       timestamp="$(cat "$dir/timestamp" 2>/dev/null || true)"
       printf '  <message id="%s" from="%s" to="%s" reply_required="%s" timestamp="%s" />\n' \

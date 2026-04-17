@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPTS_DIR="$TESTS_DIR/scripts"
+
+eval "$("$SCRIPTS_DIR/setup")"
+trap "$SCRIPTS_DIR/teardown --team-session \"$TEAM_SESSION\" --agent1-session \"$AGENT1_SESSION\" --agent2-session \"$AGENT2_SESSION\"" EXIT
+
+send_to_receiver="$(ATMUX_REPO="$REPO_NAME" ATMUX_AGENT_NAME="sender" ATMUX_SESSION_NAME="$AGENT1_SESSION" \
+  "$ATMUX_BIN" send --to receiver "for-receiver-${RANDOM}")"
+id_receiver="$(printf '%s\n' "$send_to_receiver" | sed -n 's/.*message_id="\([^"]*\)".*/\1/p' | head -n1)"
+[[ -n "$id_receiver" ]] || { echo "failed to parse receiver message id" >&2; exit 1; }
+
+send_to_sender="$(ATMUX_REPO="$REPO_NAME" ATMUX_AGENT_NAME="receiver" ATMUX_SESSION_NAME="$AGENT2_SESSION" \
+  "$ATMUX_BIN" send --to sender "for-sender-${RANDOM}")"
+id_sender="$(printf '%s\n' "$send_to_sender" | sed -n 's/.*message_id="\([^"]*\)".*/\1/p' | head -n1)"
+[[ -n "$id_sender" ]] || { echo "failed to parse sender message id" >&2; exit 1; }
+
+receiver_list="$(ATMUX_REPO="$REPO_NAME" ATMUX_AGENT_NAME="receiver" ATMUX_SESSION_NAME="$AGENT2_SESSION" \
+  "$ATMUX_BIN" message list)"
+printf '%s\n' "$receiver_list" | grep -Fq "$id_receiver"
+if printf '%s\n' "$receiver_list" | grep -Fq "$id_sender"; then
+  echo "receiver list leaked sender-scoped message" >&2
+  printf '%s\n' "$receiver_list" >&2
+  exit 1
+fi
+
+sender_list="$(ATMUX_REPO="$REPO_NAME" ATMUX_AGENT_NAME="sender" ATMUX_SESSION_NAME="$AGENT1_SESSION" \
+  "$ATMUX_BIN" message list)"
+printf '%s\n' "$sender_list" | grep -Fq "$id_sender"
+if printf '%s\n' "$sender_list" | grep -Fq "$id_receiver"; then
+  echo "sender list leaked receiver-scoped message" >&2
+  printf '%s\n' "$sender_list" >&2
+  exit 1
+fi
+
+echo "ok: message list is scoped to the current agent"

@@ -11,6 +11,7 @@ Usage:
   atmux list sessions
   atmux list agents [--all] [--status]
   atmux list issues [--repo <repo>]
+  atmux list messages [--unread]
 
 Description:
   Listings are implemented by scripts under bin/(atmux)/(list)/.
@@ -32,6 +33,9 @@ case "${sub:-}" in
     ;;
   issues)
     exec "$LIST_ROOT/issues" "$@"
+    ;;
+  messages)
+    exec "$HERE/message" list "$@"
     ;;
   -h|--help|help|"")
     usage

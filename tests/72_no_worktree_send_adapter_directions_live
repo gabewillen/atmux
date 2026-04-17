@@ -1,0 +1,179 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+ATMUX_BIN="$REPO_ROOT/bin/atmux"
+
+wait_for_text() {
+  local target="$1"
+  local needle="$2"
+  local timeout="${3:-30}"
+  local deadline now snap
+  deadline=$(( $(date +%s) + timeout ))
+  while true; do
+    snap="$(tmux capture-pane -p -t "$target" -S -1600 2>/dev/null | tr -d '\r' || true)"
+    if printf '%s' "$snap" | grep -Fq "$needle"; then
+      return 0
+    fi
+    now="$(date +%s)"
+    if (( now >= deadline )); then
+      return 1
+    fi
+    sleep 0.2
+  done
+}
+
+cleanup_adapter_session() {
+  local session="$1"
+  tmux kill-session -t "$session" >/dev/null 2>&1 || true
+}
+
+wait_for_adapter_ready() {
+  local pane="$1"
+  local adapter="$2"
+  case "$adapter" in
+    codex)
+      wait_for_text "$pane" 'OpenAI Codex' 60
+      ;;
+    claude-code)
+      wait_for_text "$pane" 'Claude Code v' 60
+      ;;
+    gemini)
+      wait_for_text "$pane" 'Type your message' 90
+      ;;
+    cursor-agent)
+      wait_for_text "$pane" 'Cursor Agent' 90
+      ;;
+    *)
+      echo "unknown adapter: $adapter" >&2
+      exit 2
+      ;;
+  esac
+}
+
+session_pane() {
+  local session="$1"
+  tmux list-panes -t "$session" -F '#{pane_id}' 2>/dev/null | head -n1
+}
+
+session_env() {
+  local session="$1"
+  local key="$2"
+  tmux show-environment -t "$session" "$key" 2>/dev/null | sed -n "s/^${key}=//p"
+}
+
+run_adapter_case() {
+  local adapter="$1"
+  local repo="nw-${adapter//[^A-Za-z0-9]/-}-${RANDOM}"
+  local atmux_home manager_session worker_session manager_pane worker_pane create_out
+
+  echo "--- $adapter ---" >&2
+
+  atmux_home="$(mktemp -d "${TMPDIR:-/tmp}/atmux-no-worktree-${adapter}.XXXXXX")"
+  TMP_DIRS+=("$atmux_home")
+
+  manager_session="$(ATMUX_ALLOW_OUTSIDE_TMUX=1 ATMUX_HOME="$atmux_home" ATMUX_SOURCE_ROOT="$REPO_ROOT" ATMUX_REPO="$repo" \
+    "$ATMUX_BIN" session start --name manager --adapter "$adapter" --no-worktree)"
+  [[ -n "$manager_session" ]] || { echo "failed to create manager session for $adapter" >&2; exit 1; }
+  SESSIONS+=("$manager_session")
+
+  manager_pane="$(session_pane "$manager_session")"
+  [[ -n "$manager_pane" ]] || { echo "missing manager pane for $adapter" >&2; exit 1; }
+  if ! wait_for_adapter_ready "$manager_pane" "$adapter"; then
+    tmux capture-pane -p -t "$manager_pane" -S -220 >&2 || true
+    echo "manager session did not become ready for $adapter" >&2
+    exit 1
+  fi
+
+  create_out="$(ATMUX_ALLOW_OUTSIDE_TMUX=1 ATMUX_HOME="$atmux_home" ATMUX_SOURCE_ROOT="$REPO_ROOT" ATMUX_REPO="$repo" \
+    ATMUX_AGENT_NAME="manager" ATMUX_SESSION_NAME="$manager_session" \
+    "$ATMUX_BIN" create --agent worker --role implementer --adapter "$adapter" --intelligence 50 --no-worktree)"
+  worker_session="$(printf '%s\n' "$create_out" | sed -n 's/.*session="\([^"]*\)".*/\1/p' | head -n1)"
+  [[ -n "$worker_session" ]] || {
+    echo "failed to parse worker session for $adapter" >&2
+    printf '%s\n' "$create_out" >&2
+    exit 1
+  }
+  SESSIONS+=("$worker_session")
+
+  worker_pane="$(session_pane "$worker_session")"
+  [[ -n "$worker_pane" ]] || { echo "missing worker pane for $adapter" >&2; exit 1; }
+  if ! wait_for_adapter_ready "$worker_pane" "$adapter"; then
+    tmux capture-pane -p -t "$worker_pane" -S -220 >&2 || true
+    echo "worker session did not become ready for $adapter" >&2
+    exit 1
+  fi
+
+  if [[ "$(session_env "$manager_session" ATMUX_WORKTREE)" != "$REPO_ROOT" ]]; then
+    echo "manager session is not using repo root worktree for $adapter" >&2
+    exit 1
+  fi
+  if [[ "$(session_env "$worker_session" ATMUX_WORKTREE)" != "$REPO_ROOT" ]]; then
+    echo "worker session is not using repo root worktree for $adapter" >&2
+    exit 1
+  fi
+
+  if [[ "$(session_env "$worker_session" ATMUX_MANAGER)" != "manager" ]]; then
+    echo "worker manager env missing for $adapter" >&2
+    exit 1
+  fi
+
+  ATMUX_ALLOW_OUTSIDE_TMUX=1 ATMUX_HOME="$atmux_home" ATMUX_SOURCE_ROOT="$REPO_ROOT" ATMUX_REPO="$repo" \
+    ATMUX_AGENT_NAME="manager" ATMUX_SESSION_NAME="$manager_session" \
+    "$ATMUX_BIN" send --to worker "no-worktree manager to worker ${adapter} ${RANDOM}" >/dev/null
+
+  if ! wait_for_text "$worker_pane" '<notification type="message"' 30; then
+    echo "worker did not receive manager notification for $adapter" >&2
+    echo "--- manager pane ---" >&2
+    tmux capture-pane -p -t "$manager_pane" -S -220 >&2 || true
+    echo "--- worker pane ---" >&2
+    tmux capture-pane -p -t "$worker_pane" -S -220 >&2 || true
+    exit 1
+  fi
+
+  ATMUX_ALLOW_OUTSIDE_TMUX=1 ATMUX_HOME="$atmux_home" ATMUX_SOURCE_ROOT="$REPO_ROOT" ATMUX_REPO="$repo" \
+    ATMUX_AGENT_NAME="worker" ATMUX_SESSION_NAME="$worker_session" ATMUX_MANAGER="manager" \
+    "$ATMUX_BIN" send --to manager "no-worktree worker to manager ${adapter} ${RANDOM}" >/dev/null
+
+  if ! wait_for_text "$manager_pane" '<notification type="message"' 30; then
+    echo "manager did not receive worker notification for $adapter" >&2
+    echo "--- manager pane ---" >&2
+    tmux capture-pane -p -t "$manager_pane" -S -220 >&2 || true
+    echo "--- worker pane ---" >&2
+    tmux capture-pane -p -t "$worker_pane" -S -220 >&2 || true
+    exit 1
+  fi
+
+  cleanup_adapter_session "$worker_session"
+  cleanup_adapter_session "$manager_session"
+}
+
+TMP_DIRS=()
+SESSIONS=()
+
+cleanup() {
+  local session tmp_dir
+  for session in "${SESSIONS[@]:-}"; do
+    [[ -n "$session" ]] || continue
+    cleanup_adapter_session "$session"
+  done
+  for tmp_dir in "${TMP_DIRS[@]:-}"; do
+    [[ -n "$tmp_dir" ]] || continue
+    rm -rf "$tmp_dir"
+  done
+  rm -rf "$REPO_ROOT/.gemini"
+}
+trap cleanup EXIT
+
+run_selected_adapters() {
+  local adapters="${ATMUX_TEST_ADAPTERS:-codex claude-code gemini cursor-agent}"
+  local adapter
+  for adapter in $adapters; do
+    run_adapter_case "$adapter"
+  done
+}
+
+run_selected_adapters
+
+echo "ok: --no-worktree manager/worker sessions exchange live adapter notifications in both directions"

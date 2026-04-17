@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPTS_DIR="$TESTS_DIR/scripts"
+
+wait_for_text() {
+  local target="$1"
+  local needle="$2"
+  local timeout="${3:-8}"
+  local deadline now snap compact
+  deadline=$(( $(date +%s) + timeout ))
+  while true; do
+    snap="$(tmux capture-pane -p -t "$target" -S -300 2>/dev/null || true)"
+    compact="$(printf '%s' "$snap" | tr -d '\r\n')"
+    if printf '%s' "$compact" | grep -Fq "$needle"; then
+      return 0
+    fi
+    now="$(date +%s)"
+    if (( now >= deadline )); then
+      return 1
+    fi
+    sleep 0.1
+  done
+}
+
+eval "$("$SCRIPTS_DIR/setup")"
+trap "$SCRIPTS_DIR/teardown --team-session \"$TEAM_SESSION\" --agent1-session \"$AGENT1_SESSION\" --agent2-session \"$AGENT2_SESSION\"" EXIT
+
+sender_pane="$(tmux list-panes -t "$AGENT1_SESSION" -F '#{pane_id}' 2>/dev/null | head -n1)"
+[[ -n "$sender_pane" ]] || { echo "sender pane missing" >&2; exit 1; }
+
+tmux kill-session -t "$AGENT2_SESSION" >/dev/null 2>&1 || true
+
+if send_out="$(
+  ATMUX_REPO="$REPO_NAME" ATMUX_AGENT_NAME="sender" ATMUX_SESSION_NAME="$AGENT1_SESSION" \
+    "$ATMUX_BIN" send --to receiver "hello" 2>&1
+)"; then
+  echo "send unexpectedly succeeded to missing receiver" >&2
+  printf '%s\n' "$send_out" >&2
+  exit 1
+fi
+
+if ! wait_for_text "$sender_pane" 'type="send_failed"' 10; then
+  echo "sender did not receive send_failed notification" >&2
+  tmux capture-pane -p -t "$sender_pane" -S -120 >&2 || true
+  exit 1
+fi
+
+if ! wait_for_text "$sender_pane" 'target="receiver"' 10; then
+  echo "send_failed notification missing target context" >&2
+  tmux capture-pane -p -t "$sender_pane" -S -120 >&2 || true
+  exit 1
+fi
+
+printf '%s\n' "$send_out" | grep -Fq 'target not found as team or agent: receiver'
+
+echo "ok: send failure notifies sender when target cannot be reached"

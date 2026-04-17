@@ -258,7 +258,11 @@ if [[ "$no_detach" -eq 0 ]]; then
     inner_args+=(-- "${command_args[@]}")
   fi
 
-  detach_out="$("$atmux_bin" exec --detach -- "$atmux_bin" "${inner_args[@]}")"
+  if [[ "$mode_kind" == "notification" ]]; then
+    detach_out="$(ATMUX_EXEC_SUPPRESS_NOTIFY=1 "$atmux_bin" exec --detach -- "$atmux_bin" "${inner_args[@]}")"
+  else
+    detach_out="$("$atmux_bin" exec --detach -- "$atmux_bin" "${inner_args[@]}")"
+  fi
   pid="$(printf '%s' "$detach_out" | sed -n 's/.*pid="\([^"]*\)".*/\1/p')"
   pane="$(printf '%s' "$detach_out" | sed -n 's/.*pane="\([^"]*\)".*/\1/p')"
 

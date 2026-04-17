@@ -24,6 +24,15 @@ wait_for_text() {
   done
 }
 
+pane_contains_text() {
+  local target="$1"
+  local needle="$2"
+  local snap compact
+  snap="$(tmux capture-pane -p -t "$target" -S -300 2>/dev/null || true)"
+  compact="$(printf '%s' "$snap" | tr -d '\r\n')"
+  printf '%s' "$compact" | grep -Fq "$needle"
+}
+
 eval "$("$SCRIPTS_DIR/setup")"
 trap "$SCRIPTS_DIR/teardown --team-session \"$TEAM_SESSION\" --agent1-session \"$AGENT1_SESSION\" --agent2-session \"$AGENT2_SESSION\"" EXIT
 
@@ -47,8 +56,9 @@ if ! wait_for_text "$sender_pane" 'text="hello there"' 15; then
   tmux capture-pane -p -t "$sender_pane" -S -120 >&2 || true
   exit 1
 fi
-if ! wait_for_text "$sender_pane" 'type="exec"' 15; then
-  echo "schedule completion exec notification not found in sender pane" >&2
+sleep 2
+if pane_contains_text "$sender_pane" 'type="exec"'; then
+  echo "schedule notification should not emit redundant exec completion notification" >&2
   tmux capture-pane -p -t "$sender_pane" -S -120 >&2 || true
   exit 1
 fi

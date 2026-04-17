@@ -48,7 +48,7 @@ control_text="$(cat "$tmp_repo/AGENTS.md")"
 
 printf '%s\n' "$control_text" | grep -Fq '# atmux Rules'
 printf '%s\n' "$control_text" | grep -Fq 'Use plain `atmux ...` commands; do not prefix them with inherited session environment.'
-printf '%s\n' "$control_text" | grep -Fq 'atmux manager send "..."'
+printf '%s\n' "$control_text" | grep -Fq "atmux send --to boss \"...\""
 
 if printf '%s\n' "$control_text" | grep -Fq '# Agent TMUX env'; then
   echo "managed block still prints inherited env heading" >&2

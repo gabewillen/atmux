@@ -5,6 +5,38 @@
 
 ATMUX_NOTIFY_SCRIPT_PATH="${BASH_SOURCE[0]}"
 
+debug_notify_enabled() {
+  case "${ATMUX_DEBUG_NOTIFY:-0}" in
+    1|true|TRUE|yes|YES)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+debug_notify_log_file() {
+  printf '%s/logs/notify-debug.log\n' "$ATMUX_HOME"
+}
+
+payload_debug_summary() {
+  local payload="${1:-}"
+  local compact type from cmd
+  compact="$(printf '%s' "$payload" | tr '\n' ' ' | tr -s ' ')"
+  type="$(printf '%s' "$compact" | sed -n 's/.*type="\([^"]*\)".*/\1/p' | head -n1)"
+  from="$(printf '%s' "$compact" | sed -n 's/.*from="\([^"]*\)".*/\1/p' | head -n1)"
+  cmd="$(printf '%s' "$compact" | sed -n 's/.*cmd="\([^"]*\)".*/\1/p' | head -n1)"
+  compact="${compact:0:220}"
+  printf 'type=%q from=%q cmd=%q payload=%q' "${type:-}" "${from:-}" "${cmd:-}" "$compact"
+}
+
+debug_notify() {
+  debug_notify_enabled || return 0
+  local log_file
+  log_file="$(debug_notify_log_file)"
+  mkdir -p "$(dirname "$log_file")"
+  printf '%s pid=%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$$" "$*" >>"$log_file"
+}
+
 normalize_name() {
   local raw="${1:-}"
   local normalized=""
@@ -346,14 +378,26 @@ deliver_notification_to_pane() {
   settle="${ATMUX_SEND_SETTLE_SECONDS:-0.4}"
   submit_wait="${ATMUX_SEND_SUBMIT_WAIT_SECONDS:-0.3}"
 
-  tmux send-keys -t "$pane" C-u >/dev/null 2>&1 || return 0
+  debug_notify "deliver:start pane=$(printf '%q' "$pane") submit_keys=$(printf '%q' "$submit_keys") $(payload_debug_summary "$payload")"
+
+  tmux send-keys -t "$pane" C-u >/dev/null 2>&1 || {
+    debug_notify "deliver:clear_failed pane=$(printf '%q' "$pane")"
+    return 1
+  }
   sleep "$settle"
-  tmux send-keys -t "$pane" -l "$payload" >/dev/null 2>&1 || return 0
+  tmux send-keys -t "$pane" -l "$payload" >/dev/null 2>&1 || {
+    debug_notify "deliver:payload_failed pane=$(printf '%q' "$pane")"
+    return 1
+  }
   sleep "$settle"
   for sk in $submit_keys; do
-    tmux send-keys -t "$pane" "$sk" >/dev/null 2>&1 || return 0
+    tmux send-keys -t "$pane" "$sk" >/dev/null 2>&1 || {
+      debug_notify "deliver:submit_failed pane=$(printf '%q' "$pane") key=$(printf '%q' "$sk")"
+      return 1
+    }
   done
   sleep "$submit_wait"
+  debug_notify "deliver:done pane=$(printf '%q' "$pane")"
 }
 
 next_notification_queue_id() {
@@ -393,6 +437,7 @@ queue_notification_payload() {
   mkdir -p "$item_dir"
   write_field "$item_dir/payload" "$payload"
   write_field "$item_dir/submit_keys" "$submit_key_str"
+  debug_notify "queue:enqueued pane=$(printf '%q' "$pane") qdir=$(printf '%q' "$qdir") queue_id=$(printf '%q' "$queue_id") submit_keys=$(printf '%q' "$submit_key_str") $(payload_debug_summary "$payload")"
 }
 
 acquire_notification_worker_lock() {
@@ -403,6 +448,7 @@ acquire_notification_worker_lock() {
 
   if mkdir "$lock_dir" 2>/dev/null; then
     printf '%s\n' "$$" > "$pid_file"
+    debug_notify "worker:lock_acquired qdir=$(printf '%q' "$qdir")"
     return 0
   fi
 
@@ -410,12 +456,14 @@ acquire_notification_worker_lock() {
     pid="$(tr -d '\r\n' < "$pid_file" 2>/dev/null || true)"
   fi
   if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+    debug_notify "worker:lock_busy qdir=$(printf '%q' "$qdir") existing_pid=$(printf '%q' "$pid")"
     return 1
   fi
 
   rm -rf "$lock_dir" "$pid_file"
   if mkdir "$lock_dir" 2>/dev/null; then
     printf '%s\n' "$$" > "$pid_file"
+    debug_notify "worker:stale_lock_recovered qdir=$(printf '%q' "$qdir")"
     return 0
   fi
   return 1
@@ -437,11 +485,13 @@ drain_notification_queue() {
   acquire_notification_worker_lock "$qdir" || return 0
 
   trap 'rm -rf "$qdir/lock" "$qdir/worker.pid"' EXIT
+  debug_notify "worker:start pane=$(printf '%q' "$pane") qdir=$(printf '%q' "$qdir") source_root=$(printf '%q' "$source_root")"
 
   prompt_prefix="$(resolve_prompt_prefix_for_pane "$pane" "$source_root" 2>/dev/null || true)"
   if [[ -n "$prompt_prefix" ]]; then
     saved_input="$(extract_prompt_input "$pane" "$prompt_prefix")"
   fi
+  debug_notify "worker:prompt pane=$(printf '%q' "$pane") prompt_prefix=$(printf '%q' "$prompt_prefix") saved_input_len=${#saved_input}"
 
   while true; do
     items=()
@@ -463,18 +513,23 @@ drain_notification_queue() {
       [[ -d "$item_dir" ]] || continue
       payload="$(cat "$item_dir/payload" 2>/dev/null || true)"
       submit_keys="$(cat "$item_dir/submit_keys" 2>/dev/null || printf 'Enter')"
-      deliver_notification_to_pane "$pane" "$payload" "$submit_keys"
+      debug_notify "worker:item pane=$(printf '%q' "$pane") item_dir=$(printf '%q' "$item_dir") submit_keys=$(printf '%q' "$submit_keys") $(payload_debug_summary "$payload")"
+      if ! deliver_notification_to_pane "$pane" "$payload" "$submit_keys"; then
+        debug_notify "worker:item_failed pane=$(printf '%q' "$pane") item_dir=$(printf '%q' "$item_dir")"
+      fi
       rm -rf "$item_dir"
     done
   done
 
   restore_prompt_input "$pane" "$prompt_prefix" "$saved_input"
+  debug_notify "worker:restore pane=$(printf '%q' "$pane") saved_input_len=${#saved_input}"
 
   rm -rf "$qdir/lock" "$qdir/worker.pid"
   trap - EXIT
   rmdir "$payload_dir" >/dev/null 2>&1 || true
   rm -f "$qdir/next_id"
   rmdir "$qdir" >/dev/null 2>&1 || true
+  debug_notify "worker:done pane=$(printf '%q' "$pane")"
 }
 
 # Send a notification to a pane in the background. Delivery is serialized per
@@ -484,18 +539,27 @@ send_notification() {
   local payload="$2"
   shift 2
   local submit_key_str="${*:-Enter}"
-  [[ -n "$pane" ]] || return 0
+  [[ -n "$pane" ]] || {
+    debug_notify "send_notification:missing_pane $(payload_debug_summary "$payload")"
+    return 1
+  }
+  if ! tmux display-message -t "$pane" -p '#{pane_id}' >/dev/null 2>&1; then
+    debug_notify "send_notification:invalid_pane pane=$(printf '%q' "$pane") $(payload_debug_summary "$payload")"
+    return 1
+  fi
 
   local source_root="${ATMUX_SOURCE_ROOT:-${ATMUX_HOME:-$HOME/.atmux}/src/atmux}"
   local notify_script
   notify_script="$(resolve_notify_script_path "$source_root")"
+  debug_notify "send_notification:start pane=$(printf '%q' "$pane") source_root=$(printf '%q' "$source_root") submit_keys=$(printf '%q' "$submit_key_str") $(payload_debug_summary "$payload")"
 
-  queue_notification_payload "$pane" "$payload" "$submit_key_str"
+  queue_notification_payload "$pane" "$payload" "$submit_key_str" || return 1
 
   nohup env \
     ATMUX_HOME="$ATMUX_HOME" \
     ATMUX_SOURCE_ROOT="$source_root" \
     "$notify_script" __drain-queue --pane "$pane" --source-root "$source_root" >/dev/null 2>&1 &
+  debug_notify "send_notification:worker_spawned pane=$(printf '%q' "$pane")"
 }
 
 # Unified notification builder.

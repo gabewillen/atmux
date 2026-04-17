@@ -121,4 +121,22 @@ while true; do
   sleep 1
 done
 
+# Wait for the detached exec to finish so cleanup does not race an active runner.
+deadline=$(( $(date +%s) + 30 ))
+while true; do
+  st="$(tr -d '\r\n' < "$exec_entry/state" 2>/dev/null || true)"
+  [[ "$st" != "exited" ]] || break
+  now="$(date +%s)"
+  if (( now >= deadline )); then
+    echo "timeout waiting for process to exit" >&2
+    exit 1
+  fi
+  sleep 0.5
+done
+
+# The stdio watcher should unregister itself once the process exits.
+sleep 1
+wcount="$(find "$exec_root/$pid/watchers" -mindepth 1 -maxdepth 1 -type f 2>/dev/null | wc -l | tr -d ' ')"
+[[ "${wcount:-0}" -eq 0 ]] || { echo "expected no watcher files left, found $wcount" >&2; exit 1; }
+
 echo "ok: watch --stdio sends multiple exec_output notifications for distinct output waves"

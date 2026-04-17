@@ -10,11 +10,33 @@ log() {
   printf '[atmux-tests] %s\n' "$*"
 }
 
+should_skip_test() {
+  local test_name="$1"
+
+  case "${ATMUX_RUN_LIVE_ADAPTER_TESTS:-0}" in
+    1|true|TRUE|yes|YES)
+      return 1
+      ;;
+  esac
+
+  case "$test_name" in
+    68_managed_send_adapter_directions_live|72_no_worktree_send_adapter_directions_live)
+      return 0
+      ;;
+  esac
+
+  return 1
+}
+
 main() {
   local test_script
   for test_script in "$TESTS_DIR"/[0-9][0-9]_*; do
     [[ -f "$test_script" ]] || continue
     [[ -x "$test_script" ]] || chmod +x "$test_script"
+    if should_skip_test "$(basename "$test_script")"; then
+      log "skipping $(basename "$test_script") (set ATMUX_RUN_LIVE_ADAPTER_TESTS=1 to include live adapter tests)"
+      continue
+    fi
     log "running $(basename "$test_script")"
     "$test_script"
   done
@@ -22,4 +44,3 @@ main() {
 }
 
 main "$@"
-

@@ -76,6 +76,16 @@ record_exec_finish() {
   write_field "$exec_dir/state" "exited"
 }
 
+notify_exec_completion() {
+  local exec_dir="$1"
+  local notify_pane="$2"
+  local notification_xml="$3"
+
+  send_notification "$notify_pane" "$notification_xml" || true
+  notify_exec_watchers "$exec_dir" "$notify_pane" "$notification_xml" || true
+  write_field "$exec_dir/notified" "$(timestamp_utc)"
+}
+
 terminate_child_with_signal() {
   local signal="$1"
   if [[ -n "${child_pid:-}" ]]; then
@@ -100,13 +110,13 @@ exec_foreground() {
   exit_code=$?
   set -e
 
-  record_exec_finish "$(timestamp_utc)" "$exit_code"
+  write_field "$exec_dir/finished_at" "$(timestamp_utc)"
+  write_field "$exec_dir/exit_code" "$exit_code"
   if ! exec_notifications_suppressed; then
     notification_xml="$(build_notification "exec" "$command_text" "atmux capture --agent ${ATMUX_AGENT_NAME:-unknown}" "exit_code=$exit_code")"
-    send_notification "$notify_pane" "$notification_xml"
-    notify_exec_watchers "$exec_dir" "$notify_pane" "$notification_xml"
-    write_field "$exec_dir/notified" "$(timestamp_utc)"
+    notify_exec_completion "$exec_dir" "$notify_pane" "$notification_xml"
   fi
+  write_field "$exec_dir/state" "exited"
 
   exit "$exit_code"
 }
@@ -208,9 +218,7 @@ _run_detached() {
   if ! exec_notifications_suppressed; then
     local notification_xml
     notification_xml="$(build_notification "exec" "$command_text" "atmux capture --agent ${agent_name:-unknown}" "exit_code=$exit_code")"
-    send_notification "$notify_pane" "$notification_xml"
-    notify_exec_watchers "$exec_dir" "" "$notification_xml"
-    write_field "$exec_dir/notified" "$(timestamp_utc)"
+    notify_exec_completion "$exec_dir" "$notify_pane" "$notification_xml"
   fi
 
   write_field "$exec_dir/state" "exited"

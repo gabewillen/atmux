@@ -76,10 +76,10 @@ current_pane() {
 
 pane_queue_key() {
   local pane="$1"
-  local pane_pid=""
-  pane_pid="$(tmux display-message -t "$pane" -p "#{pane_pid}" 2>/dev/null || true)"
-  if [[ -n "$pane_pid" ]]; then
-    pane="${pane}-${pane_pid}"
+  local session=""
+  session="$(tmux display-message -t "$pane" -p "#{session_name}" 2>/dev/null || true)"
+  if [[ -n "$session" ]]; then
+    pane="${session}-${pane}"
   fi
   printf '%s\n' "${pane//[^A-Za-z0-9_.-]/_}"
 }
@@ -441,10 +441,34 @@ queue_notification_payload() {
   debug_notify "queue:enqueued pane=$(printf '%q' "$pane") qdir=$(printf '%q' "$qdir") queue_id=$(printf '%q' "$queue_id") submit_keys=$(printf '%q' "$submit_key_str") $(payload_debug_summary "$payload")"
 }
 
+notification_worker_pid_file() {
+  local qdir="$1"
+  printf '%s/worker.pid\n' "$qdir"
+}
+
+notification_wake_fifo() {
+  local qdir="$1"
+  printf '%s/wake.fifo\n' "$qdir"
+}
+
+notification_worker_running() {
+  local qdir="$1"
+  local pid=""
+
+  if [[ -f "$(notification_worker_pid_file "$qdir")" ]]; then
+    pid="$(tr -d '\r\n' < "$(notification_worker_pid_file "$qdir")" 2>/dev/null || true)"
+  fi
+  if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+    return 0
+  fi
+  return 1
+}
+
 acquire_notification_worker_lock() {
   local qdir="$1"
   local lock_dir="$qdir/lock"
-  local pid_file="$qdir/worker.pid"
+  local pid_file
+  pid_file="$(notification_worker_pid_file "$qdir")"
   local pid=""
 
   if mkdir "$lock_dir" 2>/dev/null; then
@@ -470,45 +494,149 @@ acquire_notification_worker_lock() {
   return 1
 }
 
-drain_notification_queue() {
+cleanup_notification_worker() {
+  local qdir="$1"
+  local payload_dir="$qdir/payloads"
+
+  rm -f "$(notification_wake_fifo "$qdir")"
+  rm -rf "$qdir/lock" "$(notification_worker_pid_file "$qdir")"
+  rmdir "$payload_dir" >/dev/null 2>&1 || true
+  rm -f "$qdir/next_id"
+  rmdir "$qdir" >/dev/null 2>&1 || true
+}
+
+open_notification_wake_fifo() {
+  local qdir="$1"
+  local fifo
+
+  fifo="$(notification_wake_fifo "$qdir")"
+  if [[ -e "$fifo" && ! -p "$fifo" ]]; then
+    rm -f "$fifo"
+  fi
+  if [[ ! -p "$fifo" ]]; then
+    mkfifo "$fifo" || return 1
+  fi
+}
+
+signal_notification_worker() {
+  local pane="$1"
+  local qdir fifo
+
+  qdir="$(notify_queue_dir "$pane")"
+  fifo="$(notification_wake_fifo "$qdir")"
+  [[ -p "$fifo" ]] || return 0
+
+  if command -v perl >/dev/null 2>&1; then
+    perl -MFcntl=:DEFAULT -e '
+      my $fifo = shift;
+      exit 0 unless sysopen(my $fh, $fifo, O_WRONLY | O_NONBLOCK);
+      syswrite($fh, "wake\n");
+      close $fh;
+    ' "$fifo" >/dev/null 2>&1 || true
+  fi
+}
+
+wait_for_notification_wake() {
+  local qdir="$1"
+  local timeout="$2"
+  local fifo
+
+  fifo="$(notification_wake_fifo "$qdir")"
+  [[ -p "$fifo" ]] || return 0
+
+  if command -v perl >/dev/null 2>&1; then
+    perl -e '
+      use strict;
+      use warnings;
+      my ($fifo, $timeout) = @ARGV;
+      local $SIG{ALRM} = sub { exit 124 };
+      alarm($timeout) if defined($timeout) && $timeout =~ /^\d+$/ && $timeout > 0;
+      open(my $fh, "<", $fifo) or exit 0;
+      scalar(<$fh>);
+      close($fh);
+      alarm(0);
+    ' "$fifo" "$timeout" >/dev/null 2>&1 || true
+  fi
+}
+
+serve_notification_queue() {
   local pane="$1"
   local source_root="$2"
   local qdir payload_dir item_dir payload submit_keys
   local prompt_prefix="" saved_input=""
-  local idle_polls=0
-  local max_idle_polls=5
+  local batch_active=0
+  local poll_interval="${ATMUX_NOTIFY_WORKER_POLL_SECONDS:-0.05}"
+  local idle_timeout="${ATMUX_NOTIFY_WORKER_IDLE_TIMEOUT_SECONDS:-0}"
+  local last_activity
+  local wake_timeout="${ATMUX_NOTIFY_WORKER_WAKE_TIMEOUT_SECONDS:-1}"
   local -a items=()
 
   qdir="$(notify_queue_dir "$pane")"
   payload_dir="$qdir/payloads"
+  mkdir -p "$payload_dir"
 
-  [[ -d "$payload_dir" ]] || return 0
   acquire_notification_worker_lock "$qdir" || return 0
 
-  trap 'rm -rf "$qdir/lock" "$qdir/worker.pid"' EXIT
+  trap 'cleanup_notification_worker "$qdir"' EXIT
   debug_notify "worker:start pane=$(printf '%q' "$pane") qdir=$(printf '%q' "$qdir") source_root=$(printf '%q' "$source_root")"
-
-  prompt_prefix="$(resolve_prompt_prefix_for_pane "$pane" "$source_root" 2>/dev/null || true)"
-  if [[ -n "$prompt_prefix" ]]; then
-    saved_input="$(extract_prompt_input "$pane" "$prompt_prefix")"
+  last_activity="$(date +%s)"
+  if open_notification_wake_fifo "$qdir"; then
+    debug_notify "worker:wake_fifo_ready pane=$(printf '%q' "$pane") fifo=$(printf '%q' "$(notification_wake_fifo "$qdir")")"
+  else
+    debug_notify "worker:wake_fifo_unavailable pane=$(printf '%q' "$pane") fifo=$(printf '%q' "$(notification_wake_fifo "$qdir")")"
   fi
-  debug_notify "worker:prompt pane=$(printf '%q' "$pane") prompt_prefix=$(printf '%q' "$prompt_prefix") saved_input_len=${#saved_input}"
 
   while true; do
+    if ! tmux display-message -t "$pane" -p '#{pane_id}' >/dev/null 2>&1; then
+      debug_notify "worker:pane_gone pane=$(printf '%q' "$pane")"
+      break
+    fi
+
     items=()
     while IFS= read -r item_dir; do
       [[ -n "$item_dir" ]] || continue
       items+=("$item_dir")
     done < <(find "$payload_dir" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort)
+
     if [[ ${#items[@]} -eq 0 ]]; then
-      idle_polls=$((idle_polls + 1))
-      if (( idle_polls >= max_idle_polls )); then
-        break
+      if (( batch_active == 1 )); then
+        restore_prompt_input "$pane" "$prompt_prefix" "$saved_input"
+        debug_notify "worker:restore pane=$(printf '%q' "$pane") saved_input_len=${#saved_input}"
+        prompt_prefix=""
+        saved_input=""
+        batch_active=0
+        last_activity="$(date +%s)"
+        continue
       fi
-      sleep 0.05
+
+      if [[ "$idle_timeout" =~ ^[0-9]+$ ]] && (( idle_timeout > 0 )); then
+        local now
+        now="$(date +%s)"
+        if (( now - last_activity >= idle_timeout )); then
+          debug_notify "worker:idle_timeout pane=$(printf '%q' "$pane") idle_timeout=$idle_timeout"
+          break
+        fi
+      fi
+
+      if [[ -p "$(notification_wake_fifo "$qdir")" ]]; then
+        wait_for_notification_wake "$qdir" "$wake_timeout"
+      else
+        sleep "$poll_interval"
+      fi
       continue
     fi
-    idle_polls=0
+
+    if (( batch_active == 0 )); then
+      prompt_prefix="$(resolve_prompt_prefix_for_pane "$pane" "$source_root" 2>/dev/null || true)"
+      if [[ -n "$prompt_prefix" ]]; then
+        saved_input="$(extract_prompt_input "$pane" "$prompt_prefix")"
+      else
+        saved_input=""
+      fi
+      batch_active=1
+      debug_notify "worker:prompt pane=$(printf '%q' "$pane") prompt_prefix=$(printf '%q' "$prompt_prefix") saved_input_len=${#saved_input}"
+    fi
+    last_activity="$(date +%s)"
 
     for item_dir in "${items[@]}"; do
       [[ -d "$item_dir" ]] || continue
@@ -519,18 +647,44 @@ drain_notification_queue() {
         debug_notify "worker:item_failed pane=$(printf '%q' "$pane") item_dir=$(printf '%q' "$item_dir")"
       fi
       rm -rf "$item_dir"
+      last_activity="$(date +%s)"
     done
   done
 
-  restore_prompt_input "$pane" "$prompt_prefix" "$saved_input"
-  debug_notify "worker:restore pane=$(printf '%q' "$pane") saved_input_len=${#saved_input}"
-
-  rm -rf "$qdir/lock" "$qdir/worker.pid"
   trap - EXIT
-  rmdir "$payload_dir" >/dev/null 2>&1 || true
-  rm -f "$qdir/next_id"
-  rmdir "$qdir" >/dev/null 2>&1 || true
+  cleanup_notification_worker "$qdir"
   debug_notify "worker:done pane=$(printf '%q' "$pane")"
+}
+
+ensure_notification_worker() {
+  local pane="$1"
+  local source_root="$2"
+  local qdir
+  local notify_script
+  local attempt
+
+  qdir="$(notify_queue_dir "$pane")"
+  mkdir -p "$qdir/payloads"
+
+  if notification_worker_running "$qdir"; then
+    return 0
+  fi
+
+  notify_script="$(resolve_notify_script_path "$source_root")"
+  debug_notify "worker:spawn pane=$(printf '%q' "$pane") qdir=$(printf '%q' "$qdir")"
+  nohup env \
+    ATMUX_HOME="$ATMUX_HOME" \
+    ATMUX_SOURCE_ROOT="$source_root" \
+    "$notify_script" __serve-queue --pane "$pane" --source-root "$source_root" >/dev/null 2>&1 &
+
+  for (( attempt=0; attempt<20; attempt++ )); do
+    if notification_worker_running "$qdir"; then
+      return 0
+    fi
+    sleep 0.05
+  done
+
+  return 0
 }
 
 # Send a notification to a pane in the background. Delivery is serialized per
@@ -555,12 +709,9 @@ send_notification() {
   debug_notify "send_notification:start pane=$(printf '%q' "$pane") source_root=$(printf '%q' "$source_root") submit_keys=$(printf '%q' "$submit_key_str") $(payload_debug_summary "$payload")"
 
   queue_notification_payload "$pane" "$payload" "$submit_key_str" || return 1
-
-  nohup env \
-    ATMUX_HOME="$ATMUX_HOME" \
-    ATMUX_SOURCE_ROOT="$source_root" \
-    "$notify_script" __drain-queue --pane "$pane" --source-root "$source_root" >/dev/null 2>&1 &
-  debug_notify "send_notification:worker_spawned pane=$(printf '%q' "$pane")"
+  ensure_notification_worker "$pane" "$source_root"
+  signal_notification_worker "$pane"
+  debug_notify "send_notification:worker_ready pane=$(printf '%q' "$pane")"
 }
 
 # Unified notification builder.
@@ -833,7 +984,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   set -euo pipefail
   ATMUX_HOME="${ATMUX_HOME:-$HOME/.atmux}"
   case "${1:-}" in
-    __drain-queue)
+    __drain-queue|__serve-queue)
       shift
       pane=""
       source_root="${ATMUX_SOURCE_ROOT:-${ATMUX_HOME}/src/atmux}"
@@ -854,7 +1005,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
         esac
       done
       [[ -n "$pane" ]] || { echo "missing --pane" >&2; exit 2; }
-      drain_notification_queue "$pane" "$source_root"
+      serve_notification_queue "$pane" "$source_root"
       ;;
     build)
       shift

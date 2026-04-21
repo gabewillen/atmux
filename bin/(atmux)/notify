@@ -383,12 +383,130 @@ wait_for_pane_ready() {
   done
 }
 
+wait_for_prompt_input_settled() {
+  local pane="$1"
+  local prompt_prefix="$2"
+  local fallback_wait="$3"
+  local timeout="${ATMUX_SEND_PASTE_READY_TIMEOUT_SECONDS:-12}"
+  local deadline now input cursor_info
+  local last_input="" last_cursor="" stable_count=0
+
+  if [[ -z "$prompt_prefix" ]]; then
+    sleep "$fallback_wait"
+    return 0
+  fi
+
+  deadline=$(( $(date +%s) + timeout ))
+  while true; do
+    input="$(extract_prompt_input "$pane" "$prompt_prefix" 2>/dev/null || true)"
+    cursor_info="$(pane_cursor_position "$pane" 2>/dev/null || true)"
+
+    if [[ -n "$input" && "$input" == "$last_input" && "$cursor_info" == "$last_cursor" ]]; then
+      stable_count=$((stable_count + 1))
+      if (( stable_count >= 2 )); then
+        debug_notify "deliver:paste_ready pane=$(printf '%q' "$pane") input_len=${#input} cursor=$(printf '%q' "$cursor_info")"
+        return 0
+      fi
+    else
+      stable_count=0
+    fi
+
+    last_input="$input"
+    last_cursor="$cursor_info"
+    now="$(date +%s)"
+    if (( now >= deadline )); then
+      debug_notify "deliver:paste_ready_timeout pane=$(printf '%q' "$pane") input_len=${#input} cursor=$(printf '%q' "$cursor_info")"
+      return 0
+    fi
+    sleep 0.1
+  done
+}
+
+submit_notification_input() {
+  local pane="$1"
+  local prompt_prefix="$2"
+  local submit_keys="$3"
+  local submit_wait="$4"
+  local attempts="${ATMUX_SEND_SUBMIT_RETRY_ATTEMPTS:-4}"
+  local attempt sk
+  local before_input before_cursor before_y
+  local after_input after_cursor after_y
+  local deadline now
+  local submit_verify_timeout="${ATMUX_SEND_SUBMIT_VERIFY_SECONDS:-2}"
+
+  [[ "$attempts" =~ ^[0-9]+$ ]] || attempts=4
+  (( attempts > 0 )) || attempts=1
+  [[ "$submit_verify_timeout" =~ ^[0-9]+$ ]] || submit_verify_timeout=2
+
+  for (( attempt=1; attempt<=attempts; attempt++ )); do
+    before_input=""
+    before_cursor=""
+    before_y=""
+    if [[ -n "$prompt_prefix" ]]; then
+      before_input="$(extract_prompt_input "$pane" "$prompt_prefix" 2>/dev/null || true)"
+      before_cursor="$(pane_cursor_position "$pane" 2>/dev/null || true)"
+      before_y="${before_cursor##* }"
+    fi
+
+    debug_notify "deliver:submit_attempt pane=$(printf '%q' "$pane") attempt=$attempt input_len=${#before_input} cursor=$(printf '%q' "$before_cursor")"
+    for sk in $submit_keys; do
+      tmux send-keys -t "$pane" "$sk" >/dev/null 2>&1 || {
+        debug_notify "deliver:submit_failed pane=$(printf '%q' "$pane") key=$(printf '%q' "$sk")"
+        return 1
+      }
+    done
+
+    if [[ -z "$prompt_prefix" ]]; then
+      sleep "$submit_wait"
+      return 0
+    fi
+
+    deadline=$(( $(date +%s) + submit_verify_timeout ))
+    while true; do
+      after_input="$(extract_prompt_input "$pane" "$prompt_prefix" 2>/dev/null || true)"
+      after_cursor="$(pane_cursor_position "$pane" 2>/dev/null || true)"
+      after_y="${after_cursor##* }"
+
+      if [[ -n "$before_y" && -n "$after_y" && "$before_y" =~ ^[0-9]+$ && "$after_y" =~ ^[0-9]+$ && "$after_y" -gt "$before_y" ]]; then
+        sleep "$submit_wait"
+        debug_notify "deliver:submit_accepted pane=$(printf '%q' "$pane") attempt=$attempt reason=cursor_advanced before=$(printf '%q' "$before_cursor") after=$(printf '%q' "$after_cursor")"
+        return 0
+      fi
+      if [[ -n "$before_input" && -z "$after_input" ]]; then
+        sleep "$submit_wait"
+        debug_notify "deliver:submit_accepted pane=$(printf '%q' "$pane") attempt=$attempt reason=input_cleared"
+        return 0
+      fi
+      if [[ -n "$before_input" ]] && ! pane_has_prompt_line "$pane" "$prompt_prefix"; then
+        sleep "$submit_wait"
+        debug_notify "deliver:submit_accepted pane=$(printf '%q' "$pane") attempt=$attempt reason=prompt_gone"
+        return 0
+      fi
+
+      now="$(date +%s)"
+      if (( now >= deadline )); then
+        break
+      fi
+      sleep 0.1
+    done
+
+    if (( attempt < attempts )); then
+      debug_notify "deliver:submit_retry pane=$(printf '%q' "$pane") attempt=$attempt before_len=${#before_input} after_len=${#after_input} before_cursor=$(printf '%q' "$before_cursor") after_cursor=$(printf '%q' "$after_cursor")"
+      wait_for_prompt_input_settled "$pane" "$prompt_prefix" "$submit_wait"
+    fi
+  done
+
+  debug_notify "deliver:submit_unverified pane=$(printf '%q' "$pane") attempts=$attempts"
+  sleep "$submit_wait"
+  return 0
+}
+
 deliver_notification_to_pane() {
   local pane="$1"
   local payload="$2"
   local submit_keys="$3"
+  local prompt_prefix="${4:-}"
   local settle paste_submit_wait submit_wait
-  local sk
 
   settle="${ATMUX_SEND_SETTLE_SECONDS:-0.4}"
   paste_submit_wait="${ATMUX_SEND_PASTE_TO_SUBMIT_WAIT_SECONDS:-0.8}"
@@ -405,14 +523,8 @@ deliver_notification_to_pane() {
     debug_notify "deliver:payload_failed pane=$(printf '%q' "$pane")"
     return 1
   }
-  sleep "$paste_submit_wait"
-  for sk in $submit_keys; do
-    tmux send-keys -t "$pane" "$sk" >/dev/null 2>&1 || {
-      debug_notify "deliver:submit_failed pane=$(printf '%q' "$pane") key=$(printf '%q' "$sk")"
-      return 1
-    }
-  done
-  sleep "$submit_wait"
+  wait_for_prompt_input_settled "$pane" "$prompt_prefix" "$paste_submit_wait"
+  submit_notification_input "$pane" "$prompt_prefix" "$submit_keys" "$submit_wait" || return 1
   debug_notify "deliver:done pane=$(printf '%q' "$pane")"
 }
 
@@ -667,7 +779,7 @@ serve_notification_queue() {
       payload="$(cat "$item_dir/payload" 2>/dev/null || true)"
       submit_keys="$(cat "$item_dir/submit_keys" 2>/dev/null || printf 'Enter')"
       debug_notify "worker:item pane=$(printf '%q' "$pane") item_dir=$(printf '%q' "$item_dir") submit_keys=$(printf '%q' "$submit_keys") $(payload_debug_summary "$payload")"
-      if ! deliver_notification_to_pane "$pane" "$payload" "$submit_keys"; then
+      if ! deliver_notification_to_pane "$pane" "$payload" "$submit_keys" "$prompt_prefix"; then
         debug_notify "worker:item_failed pane=$(printf '%q' "$pane") item_dir=$(printf '%q' "$item_dir")"
       fi
       rm -rf "$item_dir"

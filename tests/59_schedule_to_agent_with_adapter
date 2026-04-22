@@ -68,7 +68,7 @@ sleep 0.5
 # Manager schedules a delayed send command to the agent.
 echo "--- scheduling from manager context ---" >&2
 sched_out="$(ATMUX_REPO="$repo_name" ATMUX_AGENT_NAME="mgr" ATMUX_SESSION_NAME="$session_mgr" \
-  "$ATMUX_BIN" schedule --interval 2s -- /Users/gabrielwillen/VSCode/amux.sh/bin/atmux send --to worker "check in" 2>&1)" || {
+  "$ATMUX_BIN" schedule --interval 2s -- "$ATMUX_BIN" send --to worker "check in" 2>&1)" || {
     echo "schedule command failed: $sched_out" >&2
     exit 1
   }

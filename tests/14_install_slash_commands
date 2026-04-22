@@ -6,25 +6,57 @@ REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
 ATMUX_BIN="$REPO_ROOT/bin/atmux"
 
 tmp_home="$(mktemp -d "${TMPDIR:-/tmp}/atmux-install-test-home.XXXXXX")"
+tmp_home_system="$(mktemp -d "${TMPDIR:-/tmp}/atmux-install-test-home-system.XXXXXX")"
+tmp_home_system_from_project="$(mktemp -d "${TMPDIR:-/tmp}/atmux-install-test-home-system-from-project.XXXXXX")"
 tmp_home_no_slash="$(mktemp -d "${TMPDIR:-/tmp}/atmux-install-test-home-noslash.XXXXXX")"
+tmp_project="$(mktemp -d "${TMPDIR:-/tmp}/atmux-install-test-project.XXXXXX")"
+tmp_project_no_slash="$(mktemp -d "${TMPDIR:-/tmp}/atmux-install-test-project-noslash.XXXXXX")"
+tmp_project_real="$(cd "$tmp_project" && pwd)"
 
 cleanup() {
-  rm -rf "$tmp_home" "$tmp_home_no_slash"
+  rm -rf "$tmp_home" "$tmp_home_system" "$tmp_home_system_from_project" "$tmp_home_no_slash" "$tmp_project" "$tmp_project_no_slash"
 }
 trap cleanup EXIT
 
-HOME="$tmp_home" "$ATMUX_BIN" install >/dev/null
+HOME="$tmp_home" ATMUX_ALLOW_OUTSIDE_TMUX=1 "$ATMUX_BIN" install --project-root "$tmp_project" >/dev/null
 
-[[ -x "$tmp_home/.atmux/bin/atmux" ]] || { echo "launcher missing after atmux install" >&2; exit 1; }
-[[ -f "$tmp_home/.claude/skills/atmux-send/SKILL.md" ]] || { echo "claude atmux-send skill missing" >&2; exit 1; }
-[[ -f "$tmp_home/.gemini/commands/atmux-send.toml" ]] || { echo "gemini atmux-send command missing" >&2; exit 1; }
-[[ -f "$tmp_home/.codex/prompts/atmux-send.md" ]] || { echo "codex atmux-send prompt missing" >&2; exit 1; }
+[[ -x "$tmp_project/.atmux/bin/atmux" ]] || { echo "project launcher missing after atmux install" >&2; exit 1; }
+[[ -f "$tmp_project/.atmux/.gitignore" ]] || { echo "project .atmux gitignore missing" >&2; exit 1; }
+grep -Fx "config/install/project-root" "$tmp_project/.atmux/.gitignore" >/dev/null || { echo "project .atmux gitignore should ignore local project-root metadata" >&2; exit 1; }
+[[ "$(cat "$tmp_project/.atmux/config/install/scope")" == "project" ]] || { echo "project install scope metadata missing" >&2; exit 1; }
+[[ "$(cat "$tmp_project/.atmux/config/install/project-root")" == "$tmp_project_real" ]] || { echo "project install root metadata missing" >&2; exit 1; }
+[[ -x "$tmp_project/.atmux/src/atmux/bin/atmux" ]] || { echo "project source install missing" >&2; exit 1; }
+[[ -f "$tmp_project/.claude/skills/atmux-send/SKILL.md" ]] || { echo "project claude atmux-send skill missing" >&2; exit 1; }
+[[ -f "$tmp_project/.gemini/commands/atmux-send.toml" ]] || { echo "project gemini atmux-send command missing" >&2; exit 1; }
+[[ -f "$tmp_project/.codex/prompts/atmux-send.md" ]] || { echo "project codex atmux-send prompt missing" >&2; exit 1; }
+[[ ! -e "$tmp_home/.claude/skills/atmux-send/SKILL.md" ]] || { echo "project install polluted home claude commands" >&2; exit 1; }
+[[ ! -e "$tmp_home/.gemini/commands/atmux-send.toml" ]] || { echo "project install polluted home gemini commands" >&2; exit 1; }
+[[ ! -e "$tmp_home/.codex/prompts/atmux-send.md" ]] || { echo "project install polluted home codex prompts" >&2; exit 1; }
 
-HOME="$tmp_home_no_slash" "$ATMUX_BIN" install --no-slash-commands >/dev/null
+launcher_help="$(cd "$tmp_project" && HOME="$tmp_home" ATMUX_ALLOW_OUTSIDE_TMUX=1 "$tmp_project/.atmux/bin/atmux" help)"
+printf '%s\n' "$launcher_help" | grep -F "Available subcommands:" >/dev/null || {
+  echo "project launcher did not execute installed atmux source" >&2
+  exit 1
+}
 
-[[ -x "$tmp_home_no_slash/.atmux/bin/atmux" ]] || { echo "launcher missing after atmux install --no-slash-commands" >&2; exit 1; }
-[[ ! -e "$tmp_home_no_slash/.claude/skills/atmux-send/SKILL.md" ]] || { echo "claude slash commands should be skipped" >&2; exit 1; }
-[[ ! -e "$tmp_home_no_slash/.gemini/commands/atmux-send.toml" ]] || { echo "gemini slash commands should be skipped" >&2; exit 1; }
-[[ ! -e "$tmp_home_no_slash/.codex/prompts/atmux-send.md" ]] || { echo "codex slash commands should be skipped" >&2; exit 1; }
+HOME="$tmp_home_system" ATMUX_ALLOW_OUTSIDE_TMUX=1 "$ATMUX_BIN" install --system >/dev/null
 
-echo "ok: install manages harness-specific slash commands"
+[[ -x "$tmp_home_system/.atmux/bin/atmux" ]] || { echo "system launcher missing after atmux install --system" >&2; exit 1; }
+[[ "$(cat "$tmp_home_system/.atmux/config/install/scope")" == "system" ]] || { echo "system install scope metadata missing" >&2; exit 1; }
+[[ ! -e "$tmp_home_system/.atmux/config/install/project-root" ]] || { echo "system install should not write project root metadata" >&2; exit 1; }
+[[ -f "$tmp_home_system/.claude/skills/atmux-send/SKILL.md" ]] || { echo "system claude atmux-send skill missing" >&2; exit 1; }
+[[ -f "$tmp_home_system/.gemini/commands/atmux-send.toml" ]] || { echo "system gemini atmux-send command missing" >&2; exit 1; }
+[[ -f "$tmp_home_system/.codex/prompts/atmux-send.md" ]] || { echo "system codex atmux-send prompt missing" >&2; exit 1; }
+
+(cd "$tmp_project" && HOME="$tmp_home_system_from_project" ATMUX_ALLOW_OUTSIDE_TMUX=1 "$tmp_project/.atmux/bin/atmux" install --system --no-slash-commands >/dev/null)
+[[ -x "$tmp_home_system_from_project/.atmux/bin/atmux" ]] || { echo "system install from project launcher should use home .atmux" >&2; exit 1; }
+[[ "$(cat "$tmp_home_system_from_project/.atmux/config/install/scope")" == "system" ]] || { echo "system install from project launcher scope metadata missing" >&2; exit 1; }
+
+HOME="$tmp_home_no_slash" ATMUX_ALLOW_OUTSIDE_TMUX=1 "$ATMUX_BIN" install --project-root "$tmp_project_no_slash" --no-slash-commands >/dev/null
+
+[[ -x "$tmp_project_no_slash/.atmux/bin/atmux" ]] || { echo "launcher missing after atmux install --no-slash-commands" >&2; exit 1; }
+[[ ! -e "$tmp_project_no_slash/.claude/skills/atmux-send/SKILL.md" ]] || { echo "project claude slash commands should be skipped" >&2; exit 1; }
+[[ ! -e "$tmp_project_no_slash/.gemini/commands/atmux-send.toml" ]] || { echo "project gemini slash commands should be skipped" >&2; exit 1; }
+[[ ! -e "$tmp_project_no_slash/.codex/prompts/atmux-send.md" ]] || { echo "project codex slash commands should be skipped" >&2; exit 1; }
+
+echo "ok: install manages project and system harness-specific slash commands"

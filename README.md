@@ -7,17 +7,17 @@
 - **No build step.** Pure shell scripts — nothing to compile, bundle, or transpile. `git clone` and run.
 - **No runtime.** No Node, Python, Go, or Rust toolchain required. No package manager, no lockfiles, no `node_modules`.
 - **No dependencies** beyond what's already on every Unix box you'd run an agent on: `bash`, `git`, and `tmux`. That's it.
-- **No daemon, no server, no database.** State lives in plain files under `~/.atmux/`. Inspect it with `ls` and `cat`.
+- **No daemon, no server, no database.** State lives in plain files under `ATMUX_HOME` (`<project>/.atmux` by default). Inspect it with `ls` and `cat`.
 - **No frills.** One shell script per command. Read the source, patch it in place, move on.
 
-Install by piping `curl` into `sh`, or clone the repo and run `./install.sh`. Uninstall by deleting a directory.
+Install by piping `curl` into `sh`, or clone the repo and run `./install.sh`. The installer defaults to a project-local install so it does not modify system-level agent config unless you choose `--system`. Uninstall by deleting the install directory.
 
 ## What makes it different
 
 - **CLI-agnostic via adapters.** Run Claude Code, Gemini, Codex, and Cursor side-by-side in the same session. Swap vendors without rewriting your workflow. Third-party adapters install with `atmux adapter install owner/repo`.
 - **Intelligence scale, not model names.** Say `--intelligence 80` and the adapter picks the right model and reasoning level. Portable across vendors, survives model renames — no more hardcoding `claude-opus-4-7` or `gpt-5-codex` across your scripts.
 - **You can actually see the agents work.** It's just tmux. Attach to any session, watch the agent think in real time, detach and come back later. No custom TUI, no web dashboard, no log tailing.
-- **Git worktree per agent.** Each agent gets its own branch and working directory under `~/.atmux/agents/`. Parallel agents can't stomp each other's changes, and cleanup is a single `atmux kill --agent`.
+- **Git worktree per agent.** Each agent gets its own branch and working directory under `ATMUX_HOME/agents/`. Parallel agents can't stomp each other's changes, and cleanup is a single `atmux kill --agent`.
 
 > **Experimental** — this project is under active development. APIs, commands, and behavior may change without notice. Use at your own risk.
 
@@ -33,7 +33,13 @@ Or from a local checkout:
 ./install.sh
 ```
 
-This installs `atmux` to `~/.atmux/bin` and adds it to your shell `PATH`. Slash commands for Claude Code, Gemini CLI, and Codex are installed by default (pass `--no-slash-commands` to skip).
+By default this installs `atmux` into `<project>/.atmux`, installs Claude Code/Gemini/Codex commands under the project-local `.claude`, `.gemini`, and `.codex` directories, and leaves shell profiles untouched. The project `.atmux/.gitignore` keeps runtime state out of git while allowing the launcher and installed source to be committed. Add the project launcher to your shell when you want to use it:
+
+```sh
+export PATH="$PWD/.atmux/bin:$PATH"
+```
+
+Use `./install.sh --system` for the legacy user-level install into `~/.atmux` and user-level CLI command directories. Slash commands are installed by default in either scope; pass `--no-slash-commands` to skip them.
 
 Then launch a tmux session with `atmux` on the path:
 
@@ -64,7 +70,7 @@ atmux assign --to planner --title "stabilize parser" \
 
 ### Sessions and agents
 
-Each agent runs in a named tmux session: `atmux-<repo>-<agent>`. By default, agents get their own git worktree at `~/.atmux/agents/<repo>-<name>`, keeping their changes isolated. Pass `--no-worktree` to skip worktree creation and run in the repo root instead.
+Each agent runs in a named tmux session: `atmux-<repo>-<agent>`. By default, agents get their own git worktree at `ATMUX_HOME/agents/<repo>-<name>`, keeping their changes isolated. Worktree creation initializes submodules with `git submodule update --init --recursive`. Pass `--no-worktree` to skip worktree creation and run in the repo root instead.
 
 ### Teams
 
@@ -80,12 +86,24 @@ atmux create --agent tester   --role tester   --team platform --intelligence 55
 
 The `--intelligence 0–100` flag selects a model and reasoning level automatically via the adapter's manifest. Higher values use more capable (and slower/costlier) models.
 
-| Range  | Example mapping (Claude Code)  |
-|--------|-------------------------------|
-| 0–39   | sonnet + low reasoning        |
-| 40–74  | sonnet + medium reasoning     |
-| 75–89  | sonnet + high reasoning       |
-| 90–100 | opus + high reasoning         |
+| Adapter        | Intelligence | Model                  | Reasoning level |
+|----------------|--------------|------------------------|-----------------|
+| `claude-code`  | 0–39         | `sonnet`               | `low`           |
+| `claude-code`  | 40–74        | `sonnet`               | `medium`        |
+| `claude-code`  | 75–89        | `sonnet`               | `high`          |
+| `claude-code`  | 90–100       | `opus`                 | `high`          |
+| `codex`        | 0–29         | `gpt-5.4`              | `low`           |
+| `codex`        | 30–59        | `gpt-5.4`              | `medium`        |
+| `codex`        | 60–84        | `gpt-5.4`              | `high`          |
+| `codex`        | 85–100       | `gpt-5.4`              | `extra-high`    |
+| `cursor-agent` | 0–39         | `composer-2-fast`      | `low`           |
+| `cursor-agent` | 40–74        | `composer-2`           | `medium`        |
+| `cursor-agent` | 75–89        | `gpt-5.3-codex-high`  | `high`          |
+| `cursor-agent` | 90–100       | `gpt-5.3-codex-xhigh` | `extra-high`    |
+| `gemini`       | 0–39         | `gemini-2.5-flash`     | `low`           |
+| `gemini`       | 40–74        | `gemini-2.5-flash`     | `medium`        |
+| `gemini`       | 75–89        | `gemini-2.5-pro`       | `medium`        |
+| `gemini`       | 90–100       | `gemini-2.5-pro`       | `high`          |
 
 ### Adapters
 
@@ -229,7 +247,7 @@ atmux env get <key>  # get a single variable
 
 | Variable           | Description                                   |
 |--------------------|-----------------------------------------------|
-| `ATMUX_HOME`       | Installation root (default: `~/.atmux`)       |
+| `ATMUX_HOME`       | Installation/state root (default: `<project>/.atmux` for project installs, `~/.atmux` for system installs) |
 | `ATMUX_REPO`       | Repository name for the current session       |
 | `ATMUX_AGENT_NAME` | Current agent's name                          |
 | `ATMUX_MANAGER`    | Parent manager agent name                     |

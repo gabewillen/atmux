@@ -1,0 +1,85 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+ATMUX_BIN="$REPO_ROOT/bin/atmux"
+SESSION_BIN="$REPO_ROOT/bin/(atmux)/session"
+
+tmp_root="$(mktemp -d "${TMPDIR:-/tmp}/atmux-submodule-test.XXXXXX")"
+tmp_home="$tmp_root/home"
+atmux_home="$tmp_home/.atmux"
+sub_repo="$tmp_root/submodule"
+main_repo="$tmp_root/mainrepo"
+session="atmux-mainrepo-worker"
+
+cleanup() {
+  tmux kill-session -t "$session" >/dev/null 2>&1 || true
+  rm -rf "$tmp_root"
+}
+trap cleanup EXIT
+
+git_init_commit() {
+  local repo="$1"
+  shift
+  git -C "$repo" add "$@"
+  git -C "$repo" commit -m "initial" >/dev/null
+}
+
+mkdir -p "$tmp_home" "$sub_repo" "$main_repo"
+
+git -C "$sub_repo" init -q
+git -C "$sub_repo" config user.email test@example.com
+git -C "$sub_repo" config user.name "Test User"
+printf 'submodule content\n' > "$sub_repo/content.txt"
+git_init_commit "$sub_repo" content.txt
+
+git -C "$main_repo" init -q
+git -C "$main_repo" config user.email test@example.com
+git -C "$main_repo" config user.name "Test User"
+printf 'main content\n' > "$main_repo/README.md"
+mkdir -p "$main_repo/adapter/noop"
+cat > "$main_repo/adapter/noop/cmd" <<'ADAPTER'
+#!/usr/bin/env bash
+set -euo pipefail
+
+case "${1:-}" in
+  control-file)
+    printf 'AGENTS.md\n'
+    ;;
+  start)
+    sleep 30
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+ADAPTER
+chmod +x "$main_repo/adapter/noop/cmd"
+git -C "$main_repo" add README.md adapter/noop/cmd
+git -C "$main_repo" commit -m "initial" >/dev/null
+git -C "$main_repo" -c protocol.file.allow=always submodule add "$sub_repo" vendor/sub >/dev/null 2>&1
+git -C "$main_repo" commit -m "add submodule" >/dev/null
+
+tmux kill-session -t "$session" >/dev/null 2>&1 || true
+
+(
+  cd "$main_repo"
+  HOME="$tmp_home" \
+    ATMUX_HOME="$atmux_home" \
+    ATMUX_SOURCE_ROOT="$REPO_ROOT" \
+    ATMUX_ALLOW_OUTSIDE_TMUX=1 \
+    GIT_ALLOW_PROTOCOL=file \
+    "$SESSION_BIN" start --name worker --adapter noop >/dev/null
+)
+
+worktree="$atmux_home/agents/mainrepo-worker"
+[[ -d "$worktree" ]] || { echo "worktree missing: $worktree" >&2; exit 1; }
+[[ -f "$worktree/vendor/sub/content.txt" ]] || {
+  echo "submodule content missing from worktree" >&2
+  find "$worktree/vendor" -maxdepth 3 -print >&2 2>/dev/null || true
+  exit 1
+}
+grep -Fq "submodule content" "$worktree/vendor/sub/content.txt"
+
+echo "ok: default worktree initializes submodules recursively"

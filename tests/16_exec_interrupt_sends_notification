@@ -25,6 +25,24 @@ wait_for_text() {
   done
 }
 
+wait_for_exec_running() {
+  local repo="$1"
+  local timeout="${2:-10}"
+  local deadline now state_file
+  deadline=$(( $(date +%s) + timeout ))
+  while true; do
+    state_file="$(find "$HOME/.atmux/exec/$repo" -mindepth 2 -maxdepth 2 -name state 2>/dev/null | head -n1 || true)"
+    if [[ -n "$state_file" ]] && [[ "$(tr -d '\r\n' < "$state_file" 2>/dev/null || true)" == "running" ]]; then
+      return 0
+    fi
+    now="$(date +%s)"
+    if (( now >= deadline )); then
+      return 1
+    fi
+    sleep 0.1
+  done
+}
+
 repo_name="e$RANDOM"
 session="atmux-${repo_name}-sender"
 
@@ -44,7 +62,11 @@ pane="$(tmux list-panes -t "$session" -F '#{pane_id}' 2>/dev/null | head -n1)"
 [[ -n "$pane" ]] || { echo "exec interrupt pane missing" >&2; exit 1; }
 
 tmux send-keys -t "$pane" "ATMUX_REPO=\"$repo_name\" ATMUX_AGENT_NAME=\"sender\" ATMUX_SESSION_NAME=\"$session\" \"$ATMUX_BIN\" exec -- sleep 30" C-m
-sleep 1.5
+if ! wait_for_exec_running "$repo_name" 15; then
+  echo "exec did not start before interrupt" >&2
+  tmux capture-pane -p -t "$pane" -S -220 >&2 || true
+  exit 1
+fi
 tmux send-keys -t "$pane" C-c
 
 if ! wait_for_text "$pane" 'type="exec"' 10; then

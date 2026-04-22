@@ -4,10 +4,12 @@
 
 ## Install Layout
 When `atmux` runs, it ensures this home layout exists:
-- `~/.atmux/`
-- `~/.atmux/bin/`
-- `~/.atmux/agents/`
-- `~/.atmux/adapters/`
+- `<ATMUX_HOME>/`
+- `<ATMUX_HOME>/bin/`
+- `<ATMUX_HOME>/agents/`
+- `<ATMUX_HOME>/adapters/`
+
+For project installs, `ATMUX_HOME` defaults to `<project>/.atmux`. For system installs, it defaults to `~/.atmux`.
 
 ## Session Model
 - Session name: `atmux-{{repo}}-{{name}}`
@@ -19,7 +21,7 @@ When `atmux` runs, it ensures this home layout exists:
 - Must run inside a git repo.
 - Reuses an existing repo session if one already exists (`atmux-{{repo}}-*`).
 - Otherwise creates `atmux-{{repo}}-{{name}}` (default `name=manager`).
-- Creates a git worktree at `~/.atmux/agents/{{repo}}-{{name}}` on branch `atmux-{{repo}}-{{name}}`.
+- Creates a git worktree at `<ATMUX_HOME>/agents/{{repo}}-{{name}}` on branch `atmux-{{repo}}-{{name}}`, then initializes submodules recursively.
 - Starts the selected adapter in that session (`--adapter`, default `codex`).
 
 ### `./bin/atmux.sh session list`
@@ -44,7 +46,7 @@ When `atmux` runs, it ensures this home layout exists:
 - Creates a team session `atmux-{{repo}}-team-{{name}}`.
 
 ### `./bin/atmux.sh create --issue --title <title> [--description "..."] [--todo "..."]`
-- Creates a filesystem issue in `~/.atmux/issues/{{repo}}/`.
+- Creates a filesystem issue in `<ATMUX_HOME>/issues/{{repo}}/`.
 
 ### `./bin/atmux.sh send --to <name|session> [--reply-required] "message"`
 - Sends a message to a specific agent session or every agent in a team.
@@ -67,11 +69,11 @@ When `atmux` runs, it ensures this home layout exists:
 - Executes a command with passthrough stdio and the wrapped command's original exit code.
 - After the command exits or is interrupted, sends an ATMUX notification back to the current agent pane:
   `<notification from="exec ..." timestamp="..." exitcode="..." />`
-- Tracks each launched child process under `~/.atmux/exec/<repo>/<pid>/`.
+- Tracks each launched child process under `<ATMUX_HOME>/exec/<repo>/<pid>/`.
 
 ### `./bin/atmux.sh kill --pid <pid> [--timeout <seconds>] [--signal <NAME>]`
 - Stops the tracked child for this repo (same `exec` metadata as `watch --pid`).
-- After the executor finishes notifications (including watcher fan-out), removes `~/.atmux/exec/<repo>/<pid>/`.
+- After the executor finishes notifications (including watcher fan-out), removes `<ATMUX_HOME>/exec/<repo>/<pid>/`.
 - Default `TERM` and `--timeout` 60s; escalates to `KILL` if the process is still alive after the timeout.
 
 ### `./bin/atmux.sh assign --to <agent> --title <title> [--description "..."] [--todo "..."]`
@@ -80,16 +82,18 @@ When `atmux` runs, it ensures this home layout exists:
 ### `./bin/atmux.sh assign --issue <id> --to <agent>`
 - Assigns an existing filesystem issue id to the target agent/session.
 
-### `./bin/atmux.sh install [--no-slash-commands]`
-- Installs atmux into `~/.atmux`.
-- By default also installs harness-specific slash/custom commands for Claude Code, Gemini CLI, and Codex.
+### `./bin/atmux.sh install [--project|--system] [--project-root <dir>] [--no-slash-commands]`
+- Installs atmux into `<project>/.atmux` by default. The installer prompts for project vs system scope when interactive, defaulting to project.
+- Project installs write Claude Code, Gemini CLI, and Codex commands under project-local `.claude/`, `.gemini/`, and `.codex/` directories and do not modify shell profiles.
+- Project installs include `.atmux/.gitignore` so the launcher and source can be committed while runtime state stays ignored.
+- System installs use `~/.atmux` and user-level CLI command directories.
 - Use `--no-slash-commands` to skip that step.
 
 ### `./bin/atmux.sh adapter install <owner/repo|github-url>`
-- Installs (or updates) adapter repos under `~/.atmux/adapters/<adapter>`.
+- Installs (or updates) adapter repos under `<ATMUX_HOME>/adapters/<adapter>`.
 
 ### Script Subcommands
-- Any executable in `~/.atmux/bin/scripts/<name>` is available as:
+- Any executable in `<ATMUX_HOME>/bin/scripts/<name>` is available as:
   `atmux <name>`
 - Examples:
   - `atmux env`

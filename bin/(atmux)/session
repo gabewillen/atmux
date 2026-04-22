@@ -89,6 +89,19 @@ ensure_tmux_scroll_enabled() {
   done < <(tmux list-windows -a -F '#{window_id}' 2>/dev/null || true)
 }
 
+initialize_worktree_submodules() {
+  local worktree="$1"
+  local submodule_err=""
+
+  [[ -f "$worktree/.gitmodules" ]] || return 0
+
+  git -C "$worktree" submodule sync --recursive >/dev/null
+  submodule_err="$(git -C "$worktree" submodule update --init --recursive 2>&1)" || {
+    printf '%s\n' "$submodule_err" >&2
+    exit 1
+  }
+}
+
 bootstrap_unlock_pid_matches_session() {
   local pid="$1"
   local session="$2"
@@ -595,6 +608,7 @@ start_session() {
   fi
 
   local work_dir="$worktree"
+  local worktree_created=0
 
   if [[ "$no_worktree" -eq 1 ]]; then
     work_dir="$repo_root"
@@ -613,11 +627,16 @@ start_session() {
         if printf '%s\n' "$worktree_err" | grep -Eq 'cannot lock ref|Operation not permitted|Permission denied'; then
           echo "branch creation failed; retrying detached worktree for $worktree" >&2
           git -C "$repo_root" worktree add "$worktree" HEAD >/dev/null
+          worktree_created=1
         else
           printf '%s\n' "$worktree_err" >&2
           exit 1
         fi
       }
+      worktree_created=1
+    fi
+    if [[ "$worktree_created" -eq 1 ]]; then
+      initialize_worktree_submodules "$worktree"
     fi
   fi
 

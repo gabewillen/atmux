@@ -10,4 +10,6 @@ Current example:
 
 ## Worktree Convention
 - When an agent starts in a repo, it uses a git worktree at:
-  `~/.atmux/agents/{{repo}}-{{name}}`
+  `<ATMUX_HOME>/agents/{{repo}}-{{name}}`
+- Default worktree creation initializes submodules with:
+  `git submodule update --init --recursive`

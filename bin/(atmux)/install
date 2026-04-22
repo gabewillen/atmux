@@ -4,17 +4,23 @@ set -euo pipefail
 usage() {
   cat <<'USAGE'
 Usage:
-  atmux install [--no-slash-commands]
+  atmux install [--project|--system] [--project-root <dir>] [--no-slash-commands]
 
 Description:
-  Install atmux into ~/.atmux and, by default, install harness-specific slash/custom
-  commands for supported adapters.
+  Install atmux for a project by default, or system-wide when requested. Project
+  installs write to <project>/.atmux and project-local CLI command directories.
 
 Options:
+  --project            Install into <project>/.atmux and project-local CLI command dirs.
+  --system             Install into ~/.atmux and user-level CLI command dirs.
+  --scope <scope>      Same as --project or --system. Values: project, system.
+  --project-root <dir> Project directory for --project (default: git root or cwd).
   --no-slash-commands  Skip installing Claude/Gemini/Codex slash commands.
 
 Examples:
   atmux install
+  atmux install --project
+  atmux install --system
   atmux install --no-slash-commands
 USAGE
 }
@@ -22,7 +28,11 @@ USAGE
 main() {
   local script_dir repo_root
   script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-  repo_root="$(cd -- "$script_dir/../.." && pwd)"
+  if [[ -n "${ATMUX_SOURCE_ROOT:-}" && -f "$ATMUX_SOURCE_ROOT/install.sh" ]]; then
+    repo_root="$ATMUX_SOURCE_ROOT"
+  else
+    repo_root="$(cd -- "$script_dir/../.." && pwd)"
+  fi
 
   case "${1:-}" in
     -h|--help|help)

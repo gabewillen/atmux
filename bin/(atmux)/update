@@ -40,6 +40,34 @@ installed_version() {
   fi
 }
 
+install_scope() {
+  local f="$ATMUX_HOME/config/install/scope"
+  if [[ -f "$f" ]]; then
+    case "$(tr -d '[:space:]' < "$f")" in
+      project) echo "project"; return ;;
+      system) echo "system"; return ;;
+    esac
+  fi
+  echo "system"
+}
+
+install_project_root() {
+  local f="$ATMUX_HOME/config/install/project-root"
+  if [[ -f "$f" ]]; then
+    tr -d '\n' < "$f"
+    return
+  fi
+
+  case "$ATMUX_HOME" in
+    */.atmux)
+      dirname "$ATMUX_HOME"
+      ;;
+    *)
+      pwd
+      ;;
+  esac
+}
+
 # Returns 0 if $1 > $2 (semver comparison)
 semver_gt() {
   [[ "$1" == "$2" ]] && return 1
@@ -154,7 +182,13 @@ main() {
   fi
   chmod +x "$install_script"
 
-  ATMUX_HOME="$ATMUX_HOME" "$install_script" --no-slash-commands
+  local scope
+  scope="$(install_scope)"
+  if [[ "$scope" == "project" ]]; then
+    ATMUX_HOME="$ATMUX_HOME" "$install_script" --project --project-root "$(install_project_root)" --no-slash-commands
+  else
+    ATMUX_HOME="$ATMUX_HOME" "$install_script" --system --no-slash-commands
+  fi
   echo ""
   echo "updated to ${latest_version}"
 }

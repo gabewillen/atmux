@@ -86,6 +86,16 @@ notify_exec_completion() {
   write_field "$exec_dir/notified" "$(timestamp_utc)"
 }
 
+notify_exec_completion_inline() {
+  local exec_dir="$1"
+  local notify_pane="$2"
+  local notification_xml="$3"
+
+  printf '%s\n' "$notification_xml"
+  notify_exec_watchers "$exec_dir" "$notify_pane" "$notification_xml" || true
+  write_field "$exec_dir/notified" "$(timestamp_utc)"
+}
+
 terminate_child_with_signal() {
   local signal="$1"
   if [[ -n "${child_pid:-}" ]]; then
@@ -93,12 +103,74 @@ terminate_child_with_signal() {
   fi
 }
 
+finish_foreground_exec() {
+  local exit_code="$1"
+
+  foreground_finished=1
+  write_field "$exec_dir/finished_at" "$(timestamp_utc)"
+  write_field "$exec_dir/exit_code" "$exit_code"
+  if ! exec_notifications_suppressed; then
+    notification_xml="$(build_notification "exec" "$command_text" "atmux capture --agent ${ATMUX_AGENT_NAME:-unknown}" "exit_code=$exit_code")"
+    notify_exec_completion_inline "$exec_dir" "$notify_pane" "$notification_xml"
+  fi
+  write_field "$exec_dir/state" "exited"
+}
+
+foreground_exit_trap() {
+  local exit_code="$1"
+
+  if [[ "${foreground_finished:-0}" -eq 0 && -n "${exec_dir:-}" ]]; then
+    trap - INT TERM HUP QUIT EXIT
+    terminate_child_with_signal TERM
+    if [[ -n "${child_pid:-}" ]]; then
+      wait "$child_pid" >/dev/null 2>&1 || true
+    fi
+    finish_foreground_exec "$exit_code"
+  fi
+}
+
+handle_foreground_signal() {
+  local signal="$1"
+  local exit_code="$2"
+
+  trap - INT TERM HUP QUIT
+  terminate_child_with_signal "$signal"
+  if [[ -n "${child_pid:-}" ]]; then
+    wait "$child_pid" >/dev/null 2>&1 || true
+  fi
+  finish_foreground_exec "$exit_code"
+  exit "$exit_code"
+}
+
 exec_foreground() {
   child_pid=""
-  trap 'terminate_child_with_signal INT' INT
-  trap 'terminate_child_with_signal TERM' TERM
-  trap 'terminate_child_with_signal HUP' HUP
-  trap 'terminate_child_with_signal QUIT' QUIT
+
+  if [[ -t 0 && -t 1 ]]; then
+    exec_dir=""
+    child_pid="$$"
+    record_exec_start "$child_pid" "$repo_name" "$command_text" "$(timestamp_utc)" "$notify_pane"
+
+    interrupted=0
+    trap 'interrupted=1' INT
+    set +e
+    "${cmd[@]}"
+    exit_code=$?
+    set -e
+    trap - INT
+    if [[ "${interrupted:-0}" -eq 1 && "$exit_code" -eq 0 ]]; then
+      exit_code=130
+    fi
+
+    finish_foreground_exec "$exit_code"
+    exit "$exit_code"
+  fi
+
+  foreground_finished=0
+  trap 'foreground_exit_trap "$?"' EXIT
+  trap 'handle_foreground_signal INT 130' INT
+  trap 'handle_foreground_signal TERM 143' TERM
+  trap 'handle_foreground_signal HUP 129' HUP
+  trap 'handle_foreground_signal QUIT 131' QUIT
 
   "${cmd[@]}" &
   child_pid=$!
@@ -109,14 +181,10 @@ exec_foreground() {
   wait "$child_pid"
   exit_code=$?
   set -e
+  trap - INT TERM HUP QUIT
 
-  write_field "$exec_dir/finished_at" "$(timestamp_utc)"
-  write_field "$exec_dir/exit_code" "$exit_code"
-  if ! exec_notifications_suppressed; then
-    notification_xml="$(build_notification "exec" "$command_text" "atmux capture --agent ${ATMUX_AGENT_NAME:-unknown}" "exit_code=$exit_code")"
-    notify_exec_completion "$exec_dir" "$notify_pane" "$notification_xml"
-  fi
-  write_field "$exec_dir/state" "exited"
+  finish_foreground_exec "$exit_code"
+  trap - EXIT
 
   exit "$exit_code"
 }

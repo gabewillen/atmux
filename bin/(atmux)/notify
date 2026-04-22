@@ -396,6 +396,12 @@ wait_for_prompt_input_settled() {
     return 0
   fi
 
+  if ! pane_has_prompt_line "$pane" "$prompt_prefix"; then
+    debug_notify "deliver:paste_ready_no_prompt pane=$(printf '%q' "$pane")"
+    sleep "$fallback_wait"
+    return 0
+  fi
+
   deadline=$(( $(date +%s) + timeout ))
   while true; do
     input="$(extract_prompt_input "$pane" "$prompt_prefix" 2>/dev/null || true)"
@@ -456,8 +462,9 @@ submit_notification_input() {
       }
     done
 
-    if [[ -z "$prompt_prefix" ]]; then
+    if [[ -z "$prompt_prefix" ]] || ! pane_has_prompt_line "$pane" "$prompt_prefix"; then
       sleep "$submit_wait"
+      debug_notify "deliver:submit_unverified_no_prompt pane=$(printf '%q' "$pane") attempt=$attempt"
       return 0
     fi
 
@@ -506,13 +513,18 @@ deliver_notification_to_pane() {
   local payload="$2"
   local submit_keys="$3"
   local prompt_prefix="${4:-}"
-  local settle paste_submit_wait submit_wait
+  local settle paste_submit_wait submit_wait no_prompt_ready_wait
 
   settle="${ATMUX_SEND_SETTLE_SECONDS:-0.4}"
   paste_submit_wait="${ATMUX_SEND_PASTE_TO_SUBMIT_WAIT_SECONDS:-0.8}"
   submit_wait="${ATMUX_SEND_SUBMIT_WAIT_SECONDS:-0.3}"
+  no_prompt_ready_wait="${ATMUX_SEND_NO_PROMPT_READY_SECONDS:-0.6}"
 
   debug_notify "deliver:start pane=$(printf '%q' "$pane") submit_keys=$(printf '%q' "$submit_keys") $(payload_debug_summary "$payload")"
+
+  if [[ -z "$prompt_prefix" ]]; then
+    sleep "$no_prompt_ready_wait"
+  fi
 
   tmux send-keys -t "$pane" C-u >/dev/null 2>&1 || {
     debug_notify "deliver:clear_failed pane=$(printf '%q' "$pane")"

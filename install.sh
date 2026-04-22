@@ -1,9 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ATMUX_HOME="${ATMUX_HOME:-$HOME/.atmux}"
-ATMUX_BIN_DIR="$ATMUX_HOME/bin"
-ATMUX_SRC_DIR="$ATMUX_HOME/src/atmux"
 ATMUX_REPO_URL="${ATMUX_REPO_URL:-https://github.com/gabrielwillen/atmux.git}"
 # ATMUX_VERSION takes precedence over ATMUX_REPO_REF when set (e.g. ATMUX_VERSION=0.2.0)
 if [[ -n "${ATMUX_VERSION:-}" ]]; then
@@ -12,6 +9,11 @@ else
   ATMUX_REPO_REF="${ATMUX_REPO_REF:-main}"
 fi
 INSTALL_SLASH_COMMANDS=1
+INSTALL_SCOPE="${ATMUX_INSTALL_SCOPE:-}"
+PROJECT_ROOT="${ATMUX_PROJECT_ROOT:-}"
+ATMUX_HOME="${ATMUX_HOME:-}"
+ATMUX_BIN_DIR=""
+ATMUX_SRC_DIR=""
 
 say() {
   printf '%s\n' "$*"
@@ -32,9 +34,14 @@ install_slash_commands() {
   local templates_root="$ATMUX_SRC_DIR/templates/slash-commands"
   [[ -d "$templates_root" ]] || return 0
 
-  local claude_root="$HOME/.claude/skills"
-  local gemini_root="$HOME/.gemini/commands"
-  local codex_root="$HOME/.codex/prompts"
+  local commands_root="$HOME"
+  if [[ "$INSTALL_SCOPE" == "project" ]]; then
+    commands_root="$PROJECT_ROOT"
+  fi
+
+  local claude_root="$commands_root/.claude/skills"
+  local gemini_root="$commands_root/.gemini/commands"
+  local codex_root="$commands_root/.codex/prompts"
 
   mkdir -p "$claude_root" "$gemini_root" "$codex_root"
 
@@ -49,7 +56,7 @@ install_slash_commands() {
   write_file "$codex_root/atmux-assign.md" "$(cat "$templates_root/codex/atmux-assign.md")"
   write_file "$codex_root/atmux-capture.md" "$(cat "$templates_root/codex/atmux-capture.md")"
 
-  say "Installed slash/custom commands for Claude Code, Gemini CLI, and Codex."
+  say "Installed slash/custom commands for Claude Code, Gemini CLI, and Codex under $commands_root."
 }
 
 install_from_local() {
@@ -58,11 +65,24 @@ install_from_local() {
   mkdir -p "$(dirname "$ATMUX_SRC_DIR")"
 
   if command -v rsync >/dev/null 2>&1; then
-    rsync -a --delete --exclude '.git' --exclude '/tests' "$src_root"/ "$ATMUX_SRC_DIR"/
+    rsync -a --delete \
+      --exclude '.git' \
+      --exclude '/.atmux' \
+      --exclude '/.claude' \
+      --exclude '/.codex' \
+      --exclude '/.cursor' \
+      --exclude '/.gemini' \
+      --exclude '/tests' \
+      "$src_root"/ "$ATMUX_SRC_DIR"/
   else
     mkdir -p "$ATMUX_SRC_DIR"
     cp -R "$src_root"/. "$ATMUX_SRC_DIR"/
     rm -rf "$ATMUX_SRC_DIR/.git"
+    rm -rf "$ATMUX_SRC_DIR/.atmux"
+    rm -rf "$ATMUX_SRC_DIR/.claude"
+    rm -rf "$ATMUX_SRC_DIR/.codex"
+    rm -rf "$ATMUX_SRC_DIR/.cursor"
+    rm -rf "$ATMUX_SRC_DIR/.gemini"
     rm -rf "$ATMUX_SRC_DIR/tests"
   fi
 }
@@ -75,12 +95,26 @@ install_from_remote() {
 }
 
 write_launcher() {
-  cat > "$ATMUX_BIN_DIR/atmux" <<'LAUNCHER'
+  if [[ "$INSTALL_SCOPE" == "project" ]]; then
+    local quoted_project_root
+    printf -v quoted_project_root '%q' "$PROJECT_ROOT"
+    cat > "$ATMUX_BIN_DIR/atmux" <<LAUNCHER
+#!/usr/bin/env bash
+set -euo pipefail
+ATMUX_PROJECT_ROOT=$quoted_project_root
+ATMUX_HOME="\$ATMUX_PROJECT_ROOT/.atmux"
+ATMUX_SOURCE_ROOT="\$ATMUX_HOME/src/atmux"
+export ATMUX_HOME ATMUX_SOURCE_ROOT
+exec "\$ATMUX_SOURCE_ROOT/bin/atmux" "\$@"
+LAUNCHER
+  else
+    cat > "$ATMUX_BIN_DIR/atmux" <<'LAUNCHER'
 #!/usr/bin/env bash
 set -euo pipefail
 ATMUX_HOME="${ATMUX_HOME:-$HOME/.atmux}"
 exec "$ATMUX_HOME/src/atmux/bin/atmux" "$@"
 LAUNCHER
+  fi
   chmod +x "$ATMUX_BIN_DIR/atmux"
 }
 
@@ -101,6 +135,17 @@ add_path_hint() {
   local export_line='export PATH="$HOME/.atmux/bin:$PATH"'
   local changed=0
   local file
+
+  if [[ "$INSTALL_SCOPE" == "project" ]]; then
+    case ":$PATH:" in
+      *":$ATMUX_BIN_DIR:"*) ;;
+      *)
+        say "Project install does not modify shell profiles."
+        say "Run from this project with: export PATH=\"$ATMUX_BIN_DIR:\$PATH\""
+        ;;
+    esac
+    return 0
+  fi
 
   for file in "$HOME/.zshrc" "$HOME/.bashrc" "$HOME/.bash_profile" "$HOME/.profile"; do
     [[ -f "$file" ]] || continue
@@ -123,6 +168,98 @@ add_path_hint() {
   esac
 }
 
+default_project_root() {
+  if [[ -n "$PROJECT_ROOT" ]]; then
+    (cd "$PROJECT_ROOT" && pwd)
+    return 0
+  fi
+
+  if git_root="$(git rev-parse --show-toplevel 2>/dev/null)"; then
+    printf '%s\n' "$git_root"
+  else
+    pwd
+  fi
+}
+
+choose_install_scope() {
+  case "$INSTALL_SCOPE" in
+    "" ) ;;
+    project|system) return 0 ;;
+    *)
+      echo "invalid install scope: $INSTALL_SCOPE" >&2
+      echo "expected: project or system" >&2
+      exit 2
+      ;;
+  esac
+
+  if [[ -t 0 && -t 1 ]]; then
+    local answer=""
+    printf 'Install atmux for this project or system-wide? [project/system] (project): '
+    IFS= read -r answer || true
+    case "$answer" in
+      ""|p|P|project|PROJECT) INSTALL_SCOPE="project" ;;
+      s|S|system|SYSTEM) INSTALL_SCOPE="system" ;;
+      *)
+        echo "invalid install scope: $answer" >&2
+        exit 2
+        ;;
+    esac
+  else
+    INSTALL_SCOPE="project"
+  fi
+}
+
+configure_paths() {
+  choose_install_scope
+  local requested_home="$ATMUX_HOME"
+
+  if [[ "$INSTALL_SCOPE" == "project" ]]; then
+    PROJECT_ROOT="$(default_project_root)"
+    ATMUX_HOME="$PROJECT_ROOT/.atmux"
+    if [[ -n "$requested_home" && "$requested_home" != "$ATMUX_HOME" ]]; then
+      say "Ignoring ATMUX_HOME=$requested_home for project install; using $ATMUX_HOME."
+    fi
+  else
+    if [[ -n "$requested_home" && -f "$requested_home/config/install/scope" && "$(tr -d '[:space:]' < "$requested_home/config/install/scope")" == "project" ]]; then
+      say "Ignoring project ATMUX_HOME=$requested_home for system install; using $HOME/.atmux."
+      ATMUX_HOME="$HOME/.atmux"
+    else
+      ATMUX_HOME="${requested_home:-$HOME/.atmux}"
+    fi
+  fi
+
+  ATMUX_BIN_DIR="$ATMUX_HOME/bin"
+  ATMUX_SRC_DIR="$ATMUX_HOME/src/atmux"
+}
+
+write_install_metadata() {
+  mkdir -p "$ATMUX_HOME/config/install"
+  printf '%s\n' "$INSTALL_SCOPE" > "$ATMUX_HOME/config/install/scope"
+  if [[ "$INSTALL_SCOPE" == "project" ]]; then
+    printf '%s\n' "$PROJECT_ROOT" > "$ATMUX_HOME/config/install/project-root"
+  else
+    rm -f "$ATMUX_HOME/config/install/project-root"
+  fi
+}
+
+write_project_gitignore() {
+  [[ "$INSTALL_SCOPE" == "project" ]] || return 0
+
+  cat > "$ATMUX_HOME/.gitignore" <<'GITIGNORE'
+*
+!.gitignore
+!bin/
+!bin/**
+!src/
+!src/**
+!adapters/
+!adapters/**
+!config/
+!config/**
+config/install/project-root
+GITIGNORE
+}
+
 main() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -130,12 +267,42 @@ main() {
         INSTALL_SLASH_COMMANDS=0
         shift
         ;;
+      --project)
+        INSTALL_SCOPE="project"
+        shift
+        ;;
+      --system)
+        INSTALL_SCOPE="system"
+        shift
+        ;;
+      --scope)
+        [[ $# -ge 2 ]] || { echo "--scope requires project or system" >&2; exit 2; }
+        INSTALL_SCOPE="$2"
+        shift 2
+        ;;
+      --scope=*)
+        INSTALL_SCOPE="${1#--scope=}"
+        shift
+        ;;
+      --project-root)
+        [[ $# -ge 2 ]] || { echo "--project-root requires a path" >&2; exit 2; }
+        PROJECT_ROOT="$2"
+        shift 2
+        ;;
+      --project-root=*)
+        PROJECT_ROOT="${1#--project-root=}"
+        shift
+        ;;
       -h|--help|help)
         cat <<'USAGE'
 Usage:
-  ./install.sh [--no-slash-commands]
+  ./install.sh [--project|--system] [--project-root <dir>] [--no-slash-commands]
 
 Options:
+  --project            Install into <project>/.atmux and project-local CLI command dirs.
+  --system             Install into ~/.atmux and user-level CLI command dirs.
+  --scope <scope>      Same as --project or --system. Values: project, system.
+  --project-root <dir> Project directory for --project (default: git root or cwd).
   --no-slash-commands  Skip installing Claude/Gemini/Codex slash commands.
 USAGE
         exit 0
@@ -147,7 +314,10 @@ USAGE
     esac
   done
 
+  configure_paths
   ensure_dirs
+  write_install_metadata
+  write_project_gitignore
 
   local script_dir src_root
   script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -175,6 +345,8 @@ USAGE
 
   say ""
   say "atmux installed"
+  say "  scope:    $INSTALL_SCOPE"
+  [[ "$INSTALL_SCOPE" == "project" ]] && say "  project:  $PROJECT_ROOT"
   say "  home:     $ATMUX_HOME"
   say "  launcher: $ATMUX_BIN_DIR/atmux"
   [[ -n "$installed_version" ]] && say "  version:  $installed_version"

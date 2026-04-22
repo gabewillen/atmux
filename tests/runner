@@ -20,7 +20,7 @@ should_skip_test() {
   esac
 
   case "$test_name" in
-    68_managed_send_adapter_directions_live|72_no_worktree_send_adapter_directions_live)
+    68_managed_send_adapter_directions_live|72_no_worktree_send_adapter_directions_live|78_codex_to_claude_gemini_subagent_notifications_live)
       return 0
       ;;
   esac

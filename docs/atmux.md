@@ -17,45 +17,67 @@ For project installs, `ATMUX_HOME` defaults to `<project>/.atmux`. For system in
 
 ## Commands
 
-### `./bin/atmux.sh session start`
+### `atmux session start`
 - Must run inside a git repo.
 - Reuses an existing repo session if one already exists (`atmux-{{repo}}-*`).
 - Otherwise creates `atmux-{{repo}}-{{name}}` (default `name=manager`).
 - Creates a git worktree at `<ATMUX_HOME>/agents/{{repo}}-{{name}}` on branch `atmux-{{repo}}-{{name}}`, then initializes submodules recursively.
 - Starts the selected adapter in that session (`--adapter`, default `codex`).
 
-### `./bin/atmux.sh session list`
+### `atmux session list`
 - Lists atmux sessions (`atmux-*`), one per line.
 
-### `./bin/atmux.sh agent list`
+### `atmux agent list`
 - Lists agents owned by this agent (`ATMUX_AGENT_NAME`) via `ATMUX_MANAGER`.
 - Outputs XML:
   `<atmux><agents><agent ... /></agents></atmux>`
 
-### `./bin/atmux.sh agent list -a`
+### `atmux agent list -a`
 - Lists all agents in the org (`atmux-{{repo}}-{{name}}` sessions).
 
-### `./bin/atmux.sh agent list --status`
+### `atmux agent list --status`
 - Includes nested status per agent:
   `<agent ...><status ... /></agent>`
 
-### `./bin/atmux.sh create --agent <name> --role <role> --intelligence <0-100> [--team <team>]`
+### `atmux create --agent <name> --role <role> --intelligence <0-100> [--team <team>]`
 - Creates a new agent session/worktree.
+- `--intelligence` is adapter-portable and maps to a model plus reasoning level via the adapter manifest.
 
-### `./bin/atmux.sh create --team <name>`
+Current built-in mapping:
+
+| Adapter | Intelligence | Model | Reasoning |
+|---------|--------------|-------|-----------|
+| `claude-code` | 0-39 | `sonnet` | `low` |
+| `claude-code` | 40-74 | `sonnet` | `medium` |
+| `claude-code` | 75-89 | `sonnet` | `high` |
+| `claude-code` | 90-100 | `opus` | `high` |
+| `codex` | 0-29 | `gpt-5.4` | `low` |
+| `codex` | 30-59 | `gpt-5.4` | `medium` |
+| `codex` | 60-84 | `gpt-5.4` | `high` |
+| `codex` | 85-100 | `gpt-5.4` | `extra-high` |
+| `cursor-agent` | 0-39 | `composer-2-fast` | `low` |
+| `cursor-agent` | 40-74 | `composer-2` | `medium` |
+| `cursor-agent` | 75-89 | `gpt-5.3-codex-high` | `high` |
+| `cursor-agent` | 90-100 | `gpt-5.3-codex-xhigh` | `extra-high` |
+| `gemini` | 0-39 | `gemini-3.1-flash-lite-preview` | `low` |
+| `gemini` | 40-74 | `gemini-3-flash-preview` | `medium` |
+| `gemini` | 75-89 | `gemini-3.1-pro-preview` | `medium` |
+| `gemini` | 90-100 | `gemini-3.1-pro-preview` | `high` |
+
+### `atmux create --team <name>`
 - Creates a team session `atmux-{{repo}}-team-{{name}}`.
 
-### `./bin/atmux.sh create --issue --title <title> [--description "..."] [--todo "..."]`
+### `atmux create --issue --title <title> [--description "..."] [--todo "..."]`
 - Creates a filesystem issue in `<ATMUX_HOME>/issues/{{repo}}/`.
 
-### `./bin/atmux.sh send --to <name|session> [--reply-required] "message"`
+### `atmux send --to <name|session> [--reply-required] "message"`
 - Sends a message to a specific agent session or every agent in a team.
 - Resolution order for `--to`:
   1) Team session/name
   2) Agent session/name
 
-### `./bin/atmux.sh schedule (--interval <duration> | --once <duration>) --notification "text"`
-### `./bin/atmux.sh schedule (--interval <duration> | --once <duration>) -- <command> [args...]`
+### `atmux schedule (--interval <duration> | --once <duration>) --notification "text"`
+### `atmux schedule (--interval <duration> | --once <duration>) -- <command> [args...]`
 - Schedules either:
   - a direct ATMUX notification via `--notification`
   - or an arbitrary command via `-- <command...>`
@@ -65,31 +87,31 @@ For project installs, `ATMUX_HOME` defaults to `<project>/.atmux`. For system in
 - Duration suffixes:
   `ms`, `s`, `m`, `h`, `d`
 
-### `./bin/atmux.sh exec [--] <command> [args...]`
+### `atmux exec [--] <command> [args...]`
 - Executes a command with passthrough stdio and the wrapped command's original exit code.
 - After the command exits or is interrupted, sends an ATMUX notification back to the current agent pane:
-  `<notification from="exec ..." timestamp="..." exitcode="..." />`
+  `<notification type="exec" from="..." cmd="..." exit_code="..." />`
 - Tracks each launched child process under `<ATMUX_HOME>/exec/<repo>/<pid>/`.
 
-### `./bin/atmux.sh kill --pid <pid> [--timeout <seconds>] [--signal <NAME>]`
+### `atmux kill --pid <pid> [--timeout <seconds>] [--signal <NAME>]`
 - Stops the tracked child for this repo (same `exec` metadata as `watch --pid`).
 - After the executor finishes notifications (including watcher fan-out), removes `<ATMUX_HOME>/exec/<repo>/<pid>/`.
 - Default `TERM` and `--timeout` 60s; escalates to `KILL` if the process is still alive after the timeout.
 
-### `./bin/atmux.sh assign --to <agent> --title <title> [--description "..."] [--todo "..."]`
+### `atmux assign --to <agent> --title <title> [--description "..."] [--todo "..."]`
 - Creates a filesystem issue and assigns it to the target agent/session.
 
-### `./bin/atmux.sh assign --issue <id> --to <agent>`
+### `atmux assign --issue <id> --to <agent>`
 - Assigns an existing filesystem issue id to the target agent/session.
 
-### `./bin/atmux.sh install [--project|--system] [--project-root <dir>] [--no-slash-commands]`
+### `atmux install [--project|--system] [--project-root <dir>] [--no-slash-commands]`
 - Installs atmux into `<project>/.atmux` by default. The installer prompts for project vs system scope when interactive, defaulting to project.
 - Project installs write Claude Code, Gemini CLI, and Codex commands under project-local `.claude/`, `.gemini/`, and `.codex/` directories and do not modify shell profiles.
 - Project installs include `.atmux/.gitignore` so the launcher and source can be committed while runtime state stays ignored.
 - System installs use `~/.atmux` and user-level CLI command directories.
 - Use `--no-slash-commands` to skip that step.
 
-### `./bin/atmux.sh adapter install <owner/repo|github-url>`
+### `atmux adapter install <owner/repo|github-url>`
 - Installs (or updates) adapter repos under `<ATMUX_HOME>/adapters/<adapter>`.
 
 ### Script Subcommands

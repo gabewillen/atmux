@@ -59,6 +59,19 @@ wait_for_completion_or_timeout() {
   done
 }
 
+process_group_signal_target() {
+  local pid="$1"
+  local pgid
+
+  pgid="$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d '[:space:]' || true)"
+  if [[ -n "$pgid" && "$pgid" == "$pid" ]]; then
+    printf -- '-%s\n' "$pgid"
+    return 0
+  fi
+
+  printf '%s\n' "$pid"
+}
+
 kill_pid() {
   local pid="$1"
   local timeout_sec="$2"
@@ -79,13 +92,15 @@ kill_pid() {
 
   if [[ "$st" != "exited" ]]; then
     if kill -0 "$pid" 2>/dev/null; then
-      kill "-${signal_name}" "$pid" 2>/dev/null || true
+      local signal_target
+      signal_target="$(process_group_signal_target "$pid")"
+      kill "-${signal_name}" "$signal_target" 2>/dev/null || true
       local deadline now
       deadline=$(( $(date +%s) + timeout_sec ))
       while kill -0 "$pid" 2>/dev/null; do
         now="$(date +%s)"
         if (( now >= deadline )); then
-          kill -KILL "$pid" 2>/dev/null || true
+          kill -KILL "$signal_target" 2>/dev/null || true
           sleep 0.05
           break
         fi

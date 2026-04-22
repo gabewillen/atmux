@@ -142,26 +142,49 @@ handle_foreground_signal() {
   exit "$exit_code"
 }
 
+direct_foreground_exit_trap() {
+  local exit_code="$1"
+
+  if [[ "${foreground_finished:-0}" -eq 0 && -n "${exec_dir:-}" ]]; then
+    trap - INT TERM HUP QUIT EXIT
+    finish_foreground_exec "$exit_code"
+  fi
+}
+
+handle_direct_foreground_signal() {
+  local exit_code="$1"
+
+  trap - INT TERM HUP QUIT EXIT
+  finish_foreground_exec "$exit_code"
+  exit "$exit_code"
+}
+
 exec_foreground() {
   child_pid=""
 
   if [[ -t 0 && -t 1 ]]; then
     exec_dir=""
+    foreground_finished=0
     child_pid="$$"
     record_exec_start "$child_pid" "$repo_name" "$command_text" "$(timestamp_utc)" "$notify_pane"
 
     interrupted=0
+    trap 'direct_foreground_exit_trap "$?"' EXIT
     trap 'interrupted=1' INT
+    trap 'handle_direct_foreground_signal 143' TERM
+    trap 'handle_direct_foreground_signal 129' HUP
+    trap 'handle_direct_foreground_signal 131' QUIT
     set +e
     "${cmd[@]}"
     exit_code=$?
     set -e
-    trap - INT
+    trap - INT TERM HUP QUIT
     if [[ "${interrupted:-0}" -eq 1 && "$exit_code" -eq 0 ]]; then
       exit_code=130
     fi
 
     finish_foreground_exec "$exit_code"
+    trap - EXIT
     exit "$exit_code"
   fi
 

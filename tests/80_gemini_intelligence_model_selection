@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+START_SCRIPT="$REPO_ROOT/adapter/gemini/scripts/start"
+
+tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/atmux-gemini-intelligence.XXXXXX")"
+cleanup() {
+  rm -rf "$tmp_dir"
+}
+trap cleanup EXIT
+
+mkdir -p "$tmp_dir/bin" "$tmp_dir/work"
+cat > "$tmp_dir/bin/gemini" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$@" > "$ATMUX_FAKE_ARGS"
+SH
+chmod +x "$tmp_dir/bin/gemini"
+
+assert_selected_model() {
+  local intelligence="$1"
+  local expected_model="$2"
+  local args_file="$tmp_dir/args-$intelligence"
+  local home_dir="$tmp_dir/home-$intelligence"
+  local worktree="$tmp_dir/work-$intelligence"
+
+  mkdir -p "$worktree"
+  (
+    cd "$worktree"
+    PATH="$tmp_dir/bin:$PATH" \
+      ATMUX_HOME="$home_dir" \
+      ATMUX_FAKE_ARGS="$args_file" \
+      ATMUX_INTELLIGENCE="$intelligence" \
+      "$START_SCRIPT" >/dev/null
+  )
+
+  grep -Fx -- "--model" "$args_file" >/dev/null || {
+    echo "missing --model for intelligence $intelligence" >&2
+    cat "$args_file" >&2
+    exit 1
+  }
+  grep -Fx "$expected_model" "$args_file" >/dev/null || {
+    echo "expected $expected_model for intelligence $intelligence" >&2
+    cat "$args_file" >&2
+    exit 1
+  }
+}
+
+assert_selected_model 0 gemini-3.1-flash-lite-preview
+assert_selected_model 50 gemini-3-flash-preview
+assert_selected_model 95 gemini-3.1-pro-preview
+
+echo "ok: gemini intelligence selects lite, flash, and pro tiers"

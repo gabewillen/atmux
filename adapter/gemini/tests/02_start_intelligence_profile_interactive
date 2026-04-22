@@ -30,12 +30,12 @@ echo "$status_out" | grep -F '<status ' >/dev/null
 echo "$status_out" | grep -F 'adapter="gemini"' >/dev/null
 echo "$status_out" | grep -F 'owner="agent"' >/dev/null
 echo "$status_out" | grep -F 'state="idle"' >/dev/null
-echo "$status_out" | grep -F 'model="gemini-2.5-pro"' >/dev/null
+echo "$status_out" | grep -F 'model="gemini-3.1-pro-preview"' >/dev/null
 echo "$status_out" | grep -F 'control_file="GEMINI.md"' >/dev/null
 
 state_file="$atmux_home/adapters/gemini/state.env"
 [[ -f "$state_file" ]] || { echo "state file missing: $state_file" >&2; exit 1; }
-grep -Fx 'MODEL=gemini-2.5-pro' "$state_file" >/dev/null
+grep -Fx 'MODEL=gemini-3.1-pro-preview' "$state_file" >/dev/null
 grep -Fx 'REASONING_LEVEL=high' "$state_file" >/dev/null
 
 echo "PASS 02_start_intelligence_profile_interactive"

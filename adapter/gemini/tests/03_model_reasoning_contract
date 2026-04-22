@@ -22,10 +22,10 @@ if [[ -z "$session_name" || -z "$pane_id" ]]; then
 fi
 
 model_list="$(ATMUX_HOME="$atmux_home" "$ADAPTER_DIR/scripts/model" list)"
-[[ "$model_list" == $'gemini-2.5-flash\ngemini-2.5-pro' ]] || { echo "unexpected model list: $model_list" >&2; exit 1; }
+[[ "$model_list" == $'gemini-3.1-pro-preview\ngemini-3-flash-preview\ngemini-3.1-flash-lite-preview' ]] || { echo "unexpected model list: $model_list" >&2; exit 1; }
 
-ATMUX_HOME="$atmux_home" "$ADAPTER_DIR/scripts/model" set gemini-2.5-pro high >/dev/null
-[[ "$(ATMUX_HOME="$atmux_home" "$ADAPTER_DIR/scripts/model" get)" == "gemini-2.5-pro" ]] || { echo "unexpected model get" >&2; exit 1; }
+ATMUX_HOME="$atmux_home" "$ADAPTER_DIR/scripts/model" set gemini-3.1-pro-preview high >/dev/null
+[[ "$(ATMUX_HOME="$atmux_home" "$ADAPTER_DIR/scripts/model" get)" == "gemini-3.1-pro-preview" ]] || { echo "unexpected model get" >&2; exit 1; }
 [[ "$(ATMUX_HOME="$atmux_home" "$ADAPTER_DIR/scripts/reasoning-level" get)" == "high" ]] || { echo "unexpected reasoning get after model set" >&2; exit 1; }
 
 ATMUX_HOME="$atmux_home" "$ADAPTER_DIR/scripts/reasoning-level" set medium >/dev/null

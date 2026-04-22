@@ -19,7 +19,7 @@ set_bootstrap_state() {
 state_dir="${ATMUX_HOME:-$HOME/.atmux}/adapters/gemini"
 state_file="$state_dir/state.env"
 mkdir -p "$state_dir"
-[[ -f "$state_file" ]] || printf 'MODEL=%s\nREASONING_LEVEL=%s\n' 'gemini-2.5-flash' 'medium' > "$state_file"
+[[ -f "$state_file" ]] || printf 'MODEL=%s\nREASONING_LEVEL=%s\n' 'gemini-3-flash-preview' 'medium' > "$state_file"
 # shellcheck disable=SC1090
 source "$state_file"
 
@@ -63,7 +63,7 @@ arg_present() {
 
 normalize_model() {
   case "${1:-}" in
-    gemini-2.5-flash|gemini-2.5-pro) printf '%s\n' "$1" ;;
+    gemini-3.1-flash-lite-preview|gemini-3-flash-preview|gemini-3.1-pro-preview) printf '%s\n' "$1" ;;
     *) return 1 ;;
   esac
 }

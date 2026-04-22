@@ -100,10 +100,10 @@ The `--intelligence 0–100` flag selects a model and reasoning level automatica
 | `cursor-agent` | 40–74        | `composer-2`           | `medium`        |
 | `cursor-agent` | 75–89        | `gpt-5.3-codex-high`  | `high`          |
 | `cursor-agent` | 90–100       | `gpt-5.3-codex-xhigh` | `extra-high`    |
-| `gemini`       | 0–39         | `gemini-2.5-flash`     | `low`           |
-| `gemini`       | 40–74        | `gemini-2.5-flash`     | `medium`        |
-| `gemini`       | 75–89        | `gemini-2.5-pro`       | `medium`        |
-| `gemini`       | 90–100       | `gemini-2.5-pro`       | `high`          |
+| `gemini`       | 0–39         | `gemini-3.1-flash-lite-preview` | `low`  |
+| `gemini`       | 40–74        | `gemini-3-flash-preview` | `medium`      |
+| `gemini`       | 75–89        | `gemini-3.1-pro-preview` | `medium`     |
+| `gemini`       | 90–100       | `gemini-3.1-pro-preview` | `high`       |
 
 ### Adapters
 

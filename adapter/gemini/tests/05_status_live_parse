@@ -20,7 +20,7 @@ fi
 
 setup_out="$(
   "$SCRIPTS_DIR/setup" \
-    --command "gemini -m gemini-2.5-flash -p 'reply with ok only' --output-format stream-json" \
+    --command "gemini -m gemini-3-flash-preview -p 'reply with ok only' --output-format stream-json" \
     --wait-text '"type":"init"'
 )"
 session_name="$(printf '%s\n' "$setup_out" | sed -n 's/^SESSION_NAME=//p' | tail -n 1)"
@@ -40,7 +40,7 @@ echo "$status_out" | grep -F '<status ' >/dev/null
 echo "$status_out" | grep -F 'adapter="gemini"' >/dev/null
 echo "$status_out" | grep -F 'owner="agent"' >/dev/null
 echo "$status_out" | grep -F 'state="idle"' >/dev/null
-echo "$status_out" | grep -F 'model="gemini-2.5-flash"' >/dev/null
+echo "$status_out" | grep -F 'model="gemini-3-flash-preview"' >/dev/null
 echo "$status_out" | grep -F 'reasoning_level="medium"' >/dev/null
 echo "$status_out" | grep -F 'control_file="GEMINI.md"' >/dev/null
 

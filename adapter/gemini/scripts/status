@@ -4,7 +4,7 @@ state_dir="${ATMUX_HOME:-$HOME/.atmux}/adapters/gemini"
 state_file="$state_dir/state.env"
 roles_dir="${ATMUX_HOME:-$HOME/.atmux}/roles"
 mkdir -p "$state_dir"
-[[ -f "$state_file" ]] || printf 'MODEL=%s\nREASONING_LEVEL=%s\n' 'gemini-2.5-flash' 'medium' > "$state_file"
+[[ -f "$state_file" ]] || printf 'MODEL=%s\nREASONING_LEVEL=%s\n' 'gemini-3-flash-preview' 'medium' > "$state_file"
 # shellcheck disable=SC1090
 source "$state_file"
 
@@ -51,7 +51,7 @@ parse_model_and_reasoning() {
   fi
   if [[ -n "$parsed_model" ]]; then
     case "$parsed_model" in
-      gemini-2.5-flash|gemini-2.5-pro) MODEL="$parsed_model" ;;
+      gemini-3.1-flash-lite-preview|gemini-3-flash-preview|gemini-3.1-pro-preview) MODEL="$parsed_model" ;;
     esac
   fi
 
@@ -60,16 +60,16 @@ parse_model_and_reasoning() {
   if [[ -n "$line" ]]; then
     parsed_model="$(printf '%s\n' "$line" | sed -nE 's/.*[Mm]odel:[[:space:]]*([^[:space:]]+).*/\1/p')"
     case "$parsed_model" in
-      gemini-2.5-flash|gemini-2.5-pro) MODEL="$parsed_model" ;;
+      gemini-3.1-flash-lite-preview|gemini-3-flash-preview|gemini-3.1-pro-preview) MODEL="$parsed_model" ;;
     esac
   fi
 
-  # Interactive footer format: "... gemini-2.5-pro /model"
+  # Interactive footer format: "... gemini-3.1-pro-preview /model"
   line="$(printf '%s\n' "$snapshot" | awk '/\/model/ { l=$0 } END { print l }')"
   if [[ -n "$line" ]]; then
     parsed_model="$(printf '%s\n' "$line" | sed -nE 's/.*(gemini-[0-9][^[:space:]]*)[[:space:]]+\/model.*/\1/p')"
     case "$parsed_model" in
-      gemini-2.5-flash|gemini-2.5-pro) MODEL="$parsed_model" ;;
+      gemini-3.1-flash-lite-preview|gemini-3-flash-preview|gemini-3.1-pro-preview) MODEL="$parsed_model" ;;
     esac
   fi
 

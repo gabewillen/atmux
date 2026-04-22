@@ -13,7 +13,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-start_cmd="ATMUX_HOME='$atmux_home' ATMUX_GEMINI_MODEL=gemini-2.5-pro ATMUX_GEMINI_REASONING_LEVEL=high '$ADAPTER_DIR/scripts/start'"
+start_cmd="ATMUX_HOME='$atmux_home' ATMUX_GEMINI_MODEL=gemini-3.1-pro-preview ATMUX_GEMINI_REASONING_LEVEL=high '$ADAPTER_DIR/scripts/start'"
 setup_out="$("$SCRIPTS_DIR/setup" --command "$start_cmd" --wait-text 'Type your message')"
 session_name="$(printf '%s\n' "$setup_out" | sed -n 's/^SESSION_NAME=//p' | tail -n 1)"
 pane_id="$(printf '%s\n' "$setup_out" | sed -n 's/^PANE_ID=//p' | tail -n 1)"
@@ -47,7 +47,7 @@ case "$state" in
     exit 1
     ;;
 esac
-echo "$status_out" | grep -F 'model="gemini-2.5-pro"' >/dev/null
+echo "$status_out" | grep -F 'model="gemini-3.1-pro-preview"' >/dev/null
 echo "$status_out" | grep -F 'reasoning_level="high"' >/dev/null
 
 echo "PASS 06_status_usage_limit_detection"

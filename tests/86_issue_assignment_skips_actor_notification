@@ -1,0 +1,94 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPTS_DIR="$TESTS_DIR/scripts"
+
+wait_for_text() {
+  local target="$1"
+  local needle="$2"
+  local timeout="${3:-10}"
+  local deadline now snap compact
+  deadline=$(( $(date +%s) + timeout ))
+  while true; do
+    snap="$(tmux capture-pane -p -t "$target" -S -300 2>/dev/null || true)"
+    compact="$(printf '%s' "$snap" | tr -d '\r\n')"
+    if printf '%s' "$compact" | grep -Fq "$needle"; then
+      return 0
+    fi
+    now="$(date +%s)"
+    if (( now >= deadline )); then
+      return 1
+    fi
+    sleep 0.1
+  done
+}
+
+wait_for_absence() {
+  local target="$1"
+  local needle="$2"
+  local duration="${3:-2}"
+  local deadline now snap compact
+  deadline=$(( $(date +%s) + duration ))
+  while true; do
+    snap="$(tmux capture-pane -p -t "$target" -S -300 2>/dev/null || true)"
+    compact="$(printf '%s' "$snap" | tr -d '\r\n')"
+    if printf '%s' "$compact" | grep -Fq "$needle"; then
+      return 1
+    fi
+    now="$(date +%s)"
+    if (( now >= deadline )); then
+      return 0
+    fi
+    sleep 0.1
+  done
+}
+
+eval "$("$SCRIPTS_DIR/setup")"
+atmux_home_tmp="$(mktemp -d)"
+cleanup() {
+  "$SCRIPTS_DIR/teardown" --team-session "$TEAM_SESSION" --agent1-session "$AGENT1_SESSION" --agent2-session "$AGENT2_SESSION"
+  rm -rf "$atmux_home_tmp"
+}
+trap cleanup EXIT
+
+sender_pane="$(tmux list-panes -t "$AGENT1_SESSION" -F '#{pane_id}' 2>/dev/null | head -n1)"
+receiver_pane="$(tmux list-panes -t "$AGENT2_SESSION" -F '#{pane_id}' 2>/dev/null | head -n1)"
+[[ -n "$sender_pane" && -n "$receiver_pane" ]] || { echo "missing agent panes" >&2; exit 1; }
+
+assign_out="$(
+  ATMUX_HOME="$atmux_home_tmp" ATMUX_REPO="$REPO_NAME" ATMUX_AGENT_NAME="sender" ATMUX_SESSION_NAME="$AGENT1_SESSION" \
+    "$ATMUX_BIN" assign --to receiver --title "skip-creator-notification-$RANDOM"
+)"
+issue_id="$(printf '%s\n' "$assign_out" | sed -n 's/.*issue_id="\([^"]*\)".*/\1/p' | head -n1)"
+[[ -n "$issue_id" ]] || { echo "failed to parse issue id from assign output" >&2; exit 1; }
+
+if ! wait_for_text "$receiver_pane" '<notification type="issue"' 10; then
+  echo "receiver did not receive issue assignment notification" >&2
+  tmux capture-pane -p -t "$receiver_pane" -S -120 >&2 || true
+  exit 1
+fi
+
+if ! wait_for_absence "$sender_pane" '<notification type="issue"' 2; then
+  echo "creator received redundant issue assignment notification" >&2
+  tmux capture-pane -p -t "$sender_pane" -S -120 >&2 || true
+  exit 1
+fi
+
+self_issue_out="$(ATMUX_HOME="$atmux_home_tmp" ATMUX_REPO="$REPO_NAME" "$ATMUX_BIN" issue create --title "self-assign-notification-$RANDOM")"
+self_issue_id="$(printf '%s\n' "$self_issue_out" | sed -n 's/.*id="\([^"]*\)".*/\1/p' | head -n1)"
+[[ -n "$self_issue_id" ]] || { echo "failed to parse self issue id" >&2; exit 1; }
+
+self_assign_out="$(
+  ATMUX_HOME="$atmux_home_tmp" ATMUX_REPO="$REPO_NAME" ATMUX_AGENT_NAME="sender" ATMUX_SESSION_NAME="$AGENT1_SESSION" \
+    "$ATMUX_BIN" issue assign "$self_issue_id" --to sender
+)"
+printf '%s\n' "$self_assign_out" | grep -Fq 'state="assigned"'
+
+if ! wait_for_absence "$sender_pane" '<notification type="issue"' 2; then
+  echo "self-assigning agent received redundant issue notification" >&2
+  tmux capture-pane -p -t "$sender_pane" -S -120 >&2 || true
+  exit 1
+fi
+
+echo "ok: issue assignment skips creator and self-assignment actor notifications"

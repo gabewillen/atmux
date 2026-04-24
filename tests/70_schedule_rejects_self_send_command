@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPTS_DIR="$TESTS_DIR/scripts"
+
+eval "$("$SCRIPTS_DIR/setup")"
+cleanup() {
+  "$SCRIPTS_DIR/teardown" --team-session "$TEAM_SESSION" --agent1-session "$AGENT1_SESSION" --agent2-session "$AGENT2_SESSION"
+}
+trap cleanup EXIT
+
+if out="$(ATMUX_REPO="$REPO_NAME" ATMUX_AGENT_NAME="sender" ATMUX_SESSION_NAME="$AGENT1_SESSION" \
+  "$ATMUX_BIN" schedule --once 1s -- "$ATMUX_BIN" send --to sender "tick" 2>&1)"; then
+  echo "schedule unexpectedly allowed delayed self-send by agent name" >&2
+  printf '%s\n' "$out" >&2
+  exit 1
+fi
+printf '%s\n' "$out" | grep -Fq 'cannot schedule atmux send to yourself'
+printf '%s\n' "$out" | grep -Fq 'self reminders/ticks'
+printf '%s\n' "$out" | grep -Fq -- '--notification'
+
+if out="$(ATMUX_REPO="$REPO_NAME" ATMUX_AGENT_NAME="sender" ATMUX_SESSION_NAME="$AGENT1_SESSION" \
+  "$ATMUX_BIN" schedule --once 1s -- "$ATMUX_BIN" send --to "$AGENT1_SESSION" "tick" 2>&1)"; then
+  echo "schedule unexpectedly allowed delayed self-send by session name" >&2
+  printf '%s\n' "$out" >&2
+  exit 1
+fi
+printf '%s\n' "$out" | grep -Fq 'cannot schedule atmux send to yourself'
+printf '%s\n' "$out" | grep -Fq 'self reminders/ticks'
+printf '%s\n' "$out" | grep -Fq -- '--notification'
+
+echo "ok: schedule rejects delayed self-send commands"

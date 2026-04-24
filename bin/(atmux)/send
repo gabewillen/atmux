@@ -71,6 +71,10 @@ notify_sender_failed_send() {
   send_payload_to_pane "$pane" "$payload" || true
 }
 
+self_send_error() {
+  echo "cannot send to yourself; for self reminders/ticks use: atmux schedule --once <duration> --notification \"<text>\"" >&2
+}
+
 filter_nonself_members() {
   local sender="$1"
   shift
@@ -219,7 +223,7 @@ if [[ -n "$team_session" ]]; then
   members=("${filtered_members[@]}")
 
   if [[ "${#members[@]}" -eq 0 ]]; then
-    echo "cannot send to yourself" >&2
+    self_send_error
     exit 2
   fi
 
@@ -271,7 +275,7 @@ if [[ -z "$target_session" ]]; then
 fi
 debug_notify "send:agent_resolved target=$(printf '%q' "$target_name") session=$(printf '%q' "$target_session")"
 if [[ "$target_session" == "$from_session" ]]; then
-  echo "cannot send to yourself" >&2
+  self_send_error
   exit 2
 fi
 msg_id="$(store_message "$repo_name" "$from_session" "$target_name" "$message" "$reply_required_value")"

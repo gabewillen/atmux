@@ -25,6 +25,26 @@ wait_for_text() {
   done
 }
 
+wait_for_absence() {
+  local target="$1"
+  local needle="$2"
+  local duration="${3:-1}"
+  local deadline snap compact now
+  deadline=$(( $(date +%s) + duration ))
+  while true; do
+    snap="$(tmux capture-pane -p -t "$target" -S -400 2>/dev/null || true)"
+    compact="$(printf '%s' "$snap" | tr -d '\r\n')"
+    if printf '%s' "$compact" | grep -Fq "$needle"; then
+      return 1
+    fi
+    now="$(date +%s)"
+    if (( now >= deadline )); then
+      return 0
+    fi
+    sleep 0.1
+  done
+}
+
 tmp_home="$(mktemp -d "${TMPDIR:-/tmp}/atmux-watch-issue.XXXXXX")"
 repo_name="is$RANDOM"
 session_a="atmux-${repo_name}-boss"
@@ -88,8 +108,8 @@ done
 
 tmux send-keys -t "$pane_a" "ATMUX_HOME=\"$atmux_home\" ATMUX_REPO=\"$repo_name\" ATMUX_AGENT_NAME=\"boss\" ATMUX_SESSION_NAME=\"$session_a\" \"$ATMUX_BIN\" issue assign \"$issue_id\" --to watcher" C-m
 
-if ! wait_for_text "$pane_a" 'type="issue"' 35; then
-  echo "assign pane missing issue notification" >&2
+if ! wait_for_absence "$pane_a" '<notification type="issue"' 2; then
+  echo "assigner pane unexpectedly received issue notification" >&2
   tmux capture-pane -p -t "$pane_a" -S -200 >&2 || true
   exit 1
 fi
@@ -117,4 +137,4 @@ while true; do
   sleep 0.1
 done
 
-echo "ok: watch --issue validates, issue assign fans out to watcher, watchers cleaned up"
+echo "ok: watch --issue validates, issue assign fans out to watcher without notifying assigner, watchers cleaned up"

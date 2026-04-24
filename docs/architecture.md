@@ -98,6 +98,7 @@ Delivery is serialized by a background worker per pane. The worker:
 
 - Watches a FIFO wake file for new payloads.
 - Preserves existing prompt input where possible.
+- Holds queued notifications until the adapter input prompt is visible during startup.
 - Uses adapter prompt/status hints to avoid submitting into busy panes.
 - Handles large pasted content by waiting for prompt input to settle before submitting.
 

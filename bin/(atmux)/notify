@@ -176,7 +176,7 @@ truncate_line_to_cursor() {
 }
 
 split_prompt_line() {
-  local line normalized_line prompt normalized_prompt leading_trimmed rest
+  local line prompt leading_trimmed rest
 
   line="$(normalize_prompt_text "${1:-}")"
   prompt="$(normalize_prompt_text "${2:-}")"
@@ -349,9 +349,10 @@ wait_for_pane_ready() {
   local pane="$1"
   local source_root="$2"
   local prompt_prefix="${3:-}"
-  local timeout="${4:-45}"
+  local timeout="${4:-${ATMUX_SEND_READY_TIMEOUT_SECONDS:-45}}"
   local deadline now adapter status_script status_xml state
 
+  [[ "$timeout" =~ ^[0-9]+$ ]] || timeout=45
   deadline=$(( $(date +%s) + timeout ))
   adapter="$(resolve_adapter_for_pane "$pane" 2>/dev/null || true)"
   status_script=""
@@ -377,6 +378,7 @@ wait_for_pane_ready() {
 
     now="$(date +%s)"
     if (( now >= deadline )); then
+      debug_notify "ready:timeout pane=$(printf '%q' "$pane") prompt_prefix=$(printf '%q' "$prompt_prefix") adapter=$(printf '%q' "$adapter")"
       return 1
     fi
     sleep 0.2
@@ -771,8 +773,14 @@ serve_notification_queue() {
       continue
     fi
 
+    prompt_prefix="$(resolve_prompt_prefix_for_pane "$pane" "$source_root" 2>/dev/null || true)"
+    if [[ -n "$prompt_prefix" ]] && ! wait_for_pane_ready "$pane" "$source_root" "$prompt_prefix"; then
+      debug_notify "worker:not_ready pane=$(printf '%q' "$pane") prompt_prefix=$(printf '%q' "$prompt_prefix")"
+      sleep "$mode_poll_interval"
+      continue
+    fi
+
     if (( batch_active == 0 )); then
-      prompt_prefix="$(resolve_prompt_prefix_for_pane "$pane" "$source_root" 2>/dev/null || true)"
       if [[ -n "$prompt_prefix" ]]; then
         saved_input="$(extract_prompt_input "$pane" "$prompt_prefix")"
       else

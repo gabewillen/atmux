@@ -89,11 +89,13 @@ Description:
 
   Notification mode:
     - Always targets the current agent/session.
+    - Use this for self reminders, ticks, and status checks.
 
   Command mode:
     - Runs the provided command in the current environment.
-    - If you want to schedule a message, schedule the command directly:
+    - Only schedule `atmux send` when the target is another agent or team:
       `atmux schedule --once 10m -- atmux send --to worker "status check"`
+    - Never schedule `atmux send --to <self>`; use `--notification` instead.
 
   --no-detach  Run in the foreground (blocking). By default, the scheduled
                task runs in a detached tmux window and the command returns
@@ -110,6 +112,7 @@ Durations:
 
 Examples:
   atmux schedule --interval 30m --notification "check on long-running jobs"
+  atmux schedule --once 45s --notification "tick"
   atmux schedule --once 45s -- atmux send --to atmux-myrepo-worker "follow up"
 
 ## assign
@@ -224,4 +227,3 @@ Examples:
   atmux env get repo
   atmux env get ATMUX_WORKTREE
 </atmux>
-

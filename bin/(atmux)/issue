@@ -400,7 +400,6 @@ assign_issue() {
     assignee_pane="$(primary_pane_for_session "$assignee_session")"
   fi
   notification_xml="$(build_notification "issue" "assign" "atmux issue get $id" "state=assigned")"
-  send_notification "$actor_pane" "$notification_xml"
   if [[ -n "$assignee_pane" && "$assignee_pane" != "$actor_pane" ]]; then
     send_notification "$assignee_pane" "$notification_xml"
   fi
@@ -488,7 +487,6 @@ claim_issue() {
   local actor_pane notification_xml
   actor_pane="$(current_pane)"
   notification_xml="$(build_notification "issue" "claim" "atmux issue get $id" "state=in_progress")"
-  send_notification "$actor_pane" "$notification_xml"
   notify_issue_watchers "$dir" "$actor_pane" "$notification_xml"
 }
 

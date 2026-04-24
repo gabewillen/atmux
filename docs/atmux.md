@@ -51,10 +51,10 @@ Current built-in mapping:
 | `claude-code` | 40-74 | `sonnet` | `medium` |
 | `claude-code` | 75-89 | `sonnet` | `high` |
 | `claude-code` | 90-100 | `opus` | `high` |
-| `codex` | 0-29 | `gpt-5.4` | `low` |
-| `codex` | 30-59 | `gpt-5.4` | `medium` |
-| `codex` | 60-84 | `gpt-5.4` | `high` |
-| `codex` | 85-100 | `gpt-5.4` | `extra-high` |
+| `codex` | 0-29 | `gpt-5.5` | `low` |
+| `codex` | 30-59 | `gpt-5.5` | `medium` |
+| `codex` | 60-84 | `gpt-5.5` | `high` |
+| `codex` | 85-100 | `gpt-5.5` | `extra-high` |
 | `cursor-agent` | 0-39 | `composer-2-fast` | `low` |
 | `cursor-agent` | 40-74 | `composer-2` | `medium` |
 | `cursor-agent` | 75-89 | `gpt-5.3-codex-high` | `high` |
@@ -81,8 +81,8 @@ Current built-in mapping:
 - Schedules either:
   - a direct ATMUX notification via `--notification`
   - or an arbitrary command via `-- <command...>`
-- Notification mode always targets the current session.
-- To schedule a message, schedule the command explicitly:
+- Notification mode always targets the current session; use it for self reminders, ticks, and status checks.
+- Only schedule `atmux send` when the target is another agent or team:
   `atmux schedule --once 10m -- atmux send --to worker "status check"`
 - Duration suffixes:
   `ms`, `s`, `m`, `h`, `d`
@@ -93,10 +93,21 @@ Current built-in mapping:
   `<notification type="exec" from="..." cmd="..." exit_code="..." />`
 - Tracks each launched child process under `<ATMUX_HOME>/exec/<repo>/<pid>/`.
 
+### `atmux watch`
+- Wait until text appears, a tracked process exits, an issue updates, new GitHub issues appear, a PR discussion updates, or an agent goes idle.
+- `atmux watch --issues <repo|url>` polls a GitHub repository for newly created issues and queues notifications to the current pane until the watcher is stopped.
+- `watch --issues` registration output includes a `watcher_id`, which can be removed via `atmux kill --watcher <id>`.
+- `atmux watch --pr <url>` polls GitHub PR comments/reviews and queues notifications to the current pane until the PR closes/merges or the watcher is stopped.
+- `watch --pr` registration output includes a `watcher_id`, which can be removed via `atmux kill --watcher <id>`.
+
 ### `atmux kill --pid <pid> [--timeout <seconds>] [--signal <NAME>]`
 - Stops the tracked child for this repo (same `exec` metadata as `watch --pid`).
 - After the executor finishes notifications (including watcher fan-out), removes `<ATMUX_HOME>/exec/<repo>/<pid>/`.
 - Default `TERM` and `--timeout` 60s; escalates to `KILL` if the process is still alive after the timeout.
+
+### `atmux kill --watcher <id> [--timeout <seconds>]`
+- Removes a watcher registration by id.
+- Supports watcher ids emitted by `atmux watch --pr` and `atmux watch --issues`.
 
 ### `atmux assign --to <agent> --title <title> [--description "..."] [--todo "..."]`
 - Creates a filesystem issue and assigns it to the target agent/session.

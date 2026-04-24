@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+MODEL_SCRIPT="$REPO_ROOT/adapter/codex/scripts/model"
+REASONING_SCRIPT="$REPO_ROOT/adapter/codex/scripts/reasoning-level"
+MANIFEST="$REPO_ROOT/adapter/codex/manifest.json"
+
+tmp_home="$(mktemp -d "${TMPDIR:-/tmp}/atmux-codex-default.XXXXXX")"
+trap 'rm -rf "$tmp_home"' EXIT
+
+model="$(ATMUX_HOME="$tmp_home" "$MODEL_SCRIPT" get)"
+[[ "$model" == "gpt-5.5" ]] || {
+  echo "expected default codex model gpt-5.5, got $model" >&2
+  exit 1
+}
+
+first_listed_model="$(ATMUX_HOME="$tmp_home" "$MODEL_SCRIPT" list | head -n1)"
+[[ "$first_listed_model" == "gpt-5.5" ]] || {
+  echo "expected first listed codex model gpt-5.5, got $first_listed_model" >&2
+  exit 1
+}
+
+reasoning_default_model="$(
+  grep -E "^MODEL='[^']+'" "$REASONING_SCRIPT" | sed -n "s/^MODEL='\([^']*\)'/\\1/p" | head -n1
+)"
+[[ "$reasoning_default_model" == "gpt-5.5" ]] || {
+  echo "expected reasoning-level default model gpt-5.5, got $reasoning_default_model" >&2
+  exit 1
+}
+
+if grep -Fq '"model": "gpt-5.4"' "$MANIFEST"; then
+  echo "codex intelligence manifest still references gpt-5.4" >&2
+  exit 1
+fi
+
+model_count="$(grep -Fc '"model": "gpt-5.5"' "$MANIFEST")"
+[[ "$model_count" -eq 4 ]] || {
+  echo "expected 4 codex intelligence entries for gpt-5.5, got $model_count" >&2
+  exit 1
+}
+
+echo "ok: codex adapter defaults to gpt-5.5"

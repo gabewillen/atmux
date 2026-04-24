@@ -11,6 +11,8 @@ Usage:
   atmux watch --pid <pid> [--timeout <seconds>] [--interval <seconds>]
   atmux watch --pid <pid> --stdio [--duration <seconds>] [--timeout <seconds>] [--interval <seconds>] [--lines <n>]
   atmux watch --issue <id> [--repo <repo>] [--timeout <seconds>] [--interval <seconds>]
+  atmux watch --issues <repo|url> [--timeout <seconds>] [--interval <seconds>]
+  atmux watch --pr <url> [--timeout <seconds>] [--interval <seconds>]
   atmux watch --agent <name|session> [--idle <seconds>] [--timeout <seconds>] [--interval <seconds>] [--lines <n>]
 
 Description:
@@ -22,10 +24,16 @@ Description:
   expires, --timeout (no new output) expires, or the process exits.
   Issue mode: wait for the next filesystem issue update and receive the same
   notification XML as issue assign/claim fan-out.
+  Issues mode: keep watching a GitHub repository for newly created issues and
+  queue notifications to the current pane until the watcher is stopped.
+  PR mode: keep watching a GitHub pull request and queue notifications to the
+  current pane for new comments/reviews until the watcher is stopped or the PR
+  is closed or merged.
   Agent mode: wait until an agent's pane output has been stable for --idle
   seconds (default 30). Exits 0 when idle, 124 on timeout.
 
-  Implementations: bin/(atmux)/[watch]/text, [watch]/pid, [watch]/stdio, [watch]/issue, [watch]/agent.
+  Implementations: bin/(atmux)/[watch]/text, [watch]/pid, [watch]/stdio,
+  [watch]/issue, [watch]/issues, [watch]/pr, [watch]/agent.
 USAGE
 }
 
@@ -43,20 +51,24 @@ fi
 
 has_pid=0
 has_issue=0
+has_issues=0
+has_pr=0
 has_agent=0
 has_stdio=0
 for a in "$@"; do
   case "$a" in
     --pid) has_pid=1 ;;
     --issue) has_issue=1 ;;
+    --issues) has_issues=1 ;;
+    --pr) has_pr=1 ;;
     --agent) has_agent=1 ;;
     --stdio) has_stdio=1 ;;
   esac
 done
 
-mode_count=$(( has_pid + has_issue + has_agent ))
+mode_count=$(( has_pid + has_issue + has_issues + has_pr + has_agent ))
 if (( mode_count > 1 )); then
-  echo "atmux watch: cannot combine --pid, --issue, and --agent" >&2
+  echo "atmux watch: cannot combine --pid, --issue, --issues, --pr, and --agent" >&2
   exit 2
 fi
 
@@ -70,6 +82,14 @@ fi
 
 if [[ "$has_issue" -eq 1 ]]; then
   exec "$WATCH_ROOT/issue" "$@"
+fi
+
+if [[ "$has_issues" -eq 1 ]]; then
+  exec "$WATCH_ROOT/issues" "$@"
+fi
+
+if [[ "$has_pr" -eq 1 ]]; then
+  exec "$WATCH_ROOT/pr" "$@"
 fi
 
 if [[ "$has_agent" -eq 1 ]]; then

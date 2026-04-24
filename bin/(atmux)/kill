@@ -11,6 +11,7 @@ usage() {
   cat <<'USAGE'
 Usage:
   atmux kill --pid <pid> [--timeout <seconds>] [--signal <NAME>]
+  atmux kill --watcher <id> [--timeout <seconds>]
   atmux kill --agent <name|pattern> [name|pattern...]
   atmux kill --all [--yes]
 
@@ -18,6 +19,8 @@ Description:
   --pid    Stop an atmux exec-tracked child process for this repo, wait for
            executor notifications (including watcher fan-out) to finish, then
            remove metadata under ~/.atmux/exec/<repo>/<pid>/.
+  --watcher  Remove a watcher registration by id. Supports watcher ids emitted
+             by `atmux watch --pr` and `atmux watch --issues`.
   --agent  Kill agent sessions and clean up their worktrees and branches.
            Accepts agent names, session names, or glob patterns.
   --all    Kill every atmux session, worktree, and branch for this repo.
@@ -27,6 +30,8 @@ Description:
 Examples:
   atmux kill --pid 12345
   atmux kill --pid 12345 --timeout 30 --signal TERM
+  atmux kill --watcher pr:owner_repo_pr_123:atmux-myrepo-worker-_12
+  atmux kill --watcher issues:owner_repo_issues:atmux-myrepo-worker-_12
   atmux kill --agent worker
   atmux kill --agent 'agent-*'
   atmux kill --agent worker planner
@@ -120,6 +125,145 @@ kill_pid() {
   exit 0
 }
 
+# --- Watcher mode helpers ---
+
+pr_watch_dir() {
+  local key="$1"
+  printf '%s/watch-pr/%s\n' "$ATMUX_HOME" "$key"
+}
+
+issues_watch_dir() {
+  local key="$1"
+  printf '%s/watch-issues/%s\n' "$ATMUX_HOME" "$key"
+}
+
+pr_watch_watchers_dir() {
+  local key="$1"
+  printf '%s/watchers\n' "$(pr_watch_dir "$key")"
+}
+
+issues_watch_watchers_dir() {
+  local key="$1"
+  printf '%s/watchers\n' "$(issues_watch_dir "$key")"
+}
+
+pr_watch_pid_file() {
+  local key="$1"
+  printf '%s/worker.pid\n' "$(pr_watch_dir "$key")"
+}
+
+issues_watch_pid_file() {
+  local key="$1"
+  printf '%s/worker.pid\n' "$(issues_watch_dir "$key")"
+}
+
+read_trimmed_file() {
+  local file="$1"
+  [[ -f "$file" ]] || return 0
+  tr -d '\r\n' < "$file" 2>/dev/null || true
+}
+
+pr_worker_running_for_key() {
+  local key="$1" pid=""
+  pid="$(read_trimmed_file "$(pr_watch_pid_file "$key")")"
+  [[ -n "$pid" ]] || return 1
+  kill -0 "$pid" 2>/dev/null
+}
+
+issues_worker_running_for_key() {
+  local key="$1" pid=""
+  pid="$(read_trimmed_file "$(issues_watch_pid_file "$key")")"
+  [[ -n "$pid" ]] || return 1
+  kill -0 "$pid" 2>/dev/null
+}
+
+wait_for_pr_worker_exit() {
+  local key="$1"
+  local timeout_sec="$2"
+  local deadline now
+
+  deadline=$(( $(date +%s) + timeout_sec ))
+  while pr_worker_running_for_key "$key" || [[ -f "$(pr_watch_pid_file "$key")" ]]; do
+    now="$(date +%s)"
+    if (( now >= deadline )); then
+      return 1
+    fi
+    sleep 0.1
+  done
+  return 0
+}
+
+wait_for_issues_worker_exit() {
+  local key="$1"
+  local timeout_sec="$2"
+  local deadline now
+
+  deadline=$(( $(date +%s) + timeout_sec ))
+  while issues_worker_running_for_key "$key" || [[ -f "$(issues_watch_pid_file "$key")" ]]; do
+    now="$(date +%s)"
+    if (( now >= deadline )); then
+      return 1
+    fi
+    sleep 0.1
+  done
+  return 0
+}
+
+kill_watcher() {
+  local watcher_id="$1"
+  local timeout_sec="$2"
+  local kind="" key="" watcher_name="" extra=""
+
+  IFS=':' read -r kind key watcher_name extra <<< "$watcher_id"
+  if [[ -z "$kind" || -z "$key" || -z "$watcher_name" || -n "$extra" ]]; then
+    echo "atmux kill: invalid watcher id: $watcher_id" >&2
+    exit 2
+  fi
+
+  case "$kind" in
+    pr)
+      local watcher_file watchers_dir remaining=0
+      watcher_file="$(pr_watch_watchers_dir "$key")/$watcher_name"
+      if [[ ! -f "$watcher_file" ]]; then
+        echo "atmux kill: watcher not found: $watcher_id" >&2
+        exit 2
+      fi
+
+      rm -f "$watcher_file"
+      watchers_dir="$(pr_watch_watchers_dir "$key")"
+      if [[ -d "$watchers_dir" ]]; then
+        remaining="$(find "$watchers_dir" -mindepth 1 -maxdepth 1 -type f 2>/dev/null | wc -l | tr -d ' ')"
+      fi
+
+      if [[ "${remaining:-0}" -eq 0 ]] && pr_worker_running_for_key "$key"; then
+        wait_for_pr_worker_exit "$key" "$timeout_sec" || true
+      fi
+      ;;
+    issues)
+      local watcher_file watchers_dir remaining=0
+      watcher_file="$(issues_watch_watchers_dir "$key")/$watcher_name"
+      if [[ ! -f "$watcher_file" ]]; then
+        echo "atmux kill: watcher not found: $watcher_id" >&2
+        exit 2
+      fi
+
+      rm -f "$watcher_file"
+      watchers_dir="$(issues_watch_watchers_dir "$key")"
+      if [[ -d "$watchers_dir" ]]; then
+        remaining="$(find "$watchers_dir" -mindepth 1 -maxdepth 1 -type f 2>/dev/null | wc -l | tr -d ' ')"
+      fi
+
+      if [[ "${remaining:-0}" -eq 0 ]] && issues_worker_running_for_key "$key"; then
+        wait_for_issues_worker_exit "$key" "$timeout_sec" || true
+      fi
+      ;;
+    *)
+      echo "atmux kill: unsupported watcher type: $kind" >&2
+      exit 2
+      ;;
+  esac
+}
+
 # --- Agent mode helpers ---
 
 normalize_repo_name() {
@@ -154,9 +298,10 @@ matches_any_pattern() {
   shift || true
   local pattern
   for pattern in "$@"; do
-    case "$value" in
-      $pattern) return 0 ;;
-    esac
+    # shellcheck disable=SC2053
+    if [[ "$value" == $pattern ]]; then
+      return 0
+    fi
   done
   return 1
 }
@@ -239,7 +384,7 @@ kill_agents() {
       fi
     fi
 
-    local agent_name="${session#atmux-${repo_name}-}"
+    local agent_name="${session#atmux-"${repo_name}"-}"
     if [[ "$agent_name" == "$session" ]]; then
       agent_name="$session"
     fi
@@ -295,8 +440,10 @@ confirm_kill_all() {
 
 main() {
   local pid=""
+  local watcher_id=""
   local timeout_sec="60"
   local signal_name="TERM"
+  local watcher_mode=0
   local agent_mode=0
   local all_mode=0
   local assume_yes=0
@@ -306,6 +453,11 @@ main() {
     case "$1" in
       --pid)
         pid="${2:-}"
+        shift 2
+        ;;
+      --watcher)
+        watcher_mode=1
+        watcher_id="${2:-}"
         shift 2
         ;;
       --agent)
@@ -357,8 +509,8 @@ main() {
   done
 
   if [[ "$all_mode" -eq 1 ]]; then
-    if [[ "$agent_mode" -eq 1 || -n "$pid" ]]; then
-      echo "--all cannot be combined with --agent or --pid" >&2
+    if [[ "$agent_mode" -eq 1 || "$watcher_mode" -eq 1 || -n "$pid" ]]; then
+      echo "--all cannot be combined with --agent, --watcher, or --pid" >&2
       exit 2
     fi
     if inside_atmux_session; then
@@ -377,6 +529,20 @@ main() {
     exit $?
   fi
 
+  if [[ "$watcher_mode" -eq 1 ]]; then
+    if [[ -z "$watcher_id" ]]; then
+      echo "missing watcher id" >&2
+      usage >&2
+      exit 2
+    fi
+    if [[ "$agent_mode" -eq 1 || -n "$pid" ]]; then
+      echo "--watcher cannot be combined with --agent or --pid" >&2
+      exit 2
+    fi
+    kill_watcher "$watcher_id" "$timeout_sec"
+    exit $?
+  fi
+
   if [[ "$agent_mode" -eq 1 ]]; then
     if [[ "${#agent_targets[@]}" -eq 0 ]]; then
       echo "missing agent name or pattern" >&2
@@ -389,10 +555,9 @@ main() {
 
   if [[ -n "$pid" ]]; then
     kill_pid "$pid" "$timeout_sec" "$signal_name"
-    exit $?
   fi
 
-  echo "missing --pid, --agent, or --all" >&2
+  echo "missing --pid, --watcher, --agent, or --all" >&2
   usage >&2
   exit 2
 }

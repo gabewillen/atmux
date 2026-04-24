@@ -1,0 +1,148 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+ATMUX_BIN="$REPO_ROOT/bin/atmux"
+
+wait_for_text() {
+  local target="$1"
+  local needle="$2"
+  local timeout="${3:-20}"
+  local deadline now snap compact
+  deadline=$(( $(date +%s) + timeout ))
+  while true; do
+    snap="$(tmux capture-pane -p -t "$target" -S -400 2>/dev/null || true)"
+    compact="$(printf '%s' "$snap" | tr -d '\r\n')"
+    if printf '%s' "$compact" | grep -Fq "$needle"; then
+      return 0
+    fi
+    now="$(date +%s)"
+    if (( now >= deadline )); then
+      return 1
+    fi
+    sleep 0.1
+  done
+}
+
+wait_for_absence() {
+  local target="$1"
+  local needle="$2"
+  local duration="${3:-2}"
+  local end now
+  end=$(( $(date +%s) + duration ))
+  while true; do
+    if wait_for_text "$target" "$needle" 1; then
+      return 1
+    fi
+    now="$(date +%s)"
+    if (( now >= end )); then
+      return 0
+    fi
+  done
+}
+
+tmp_root="$(mktemp -d "${TMPDIR:-/tmp}/atmux-kill-issues-watch.XXXXXX")"
+atmux_home="$tmp_root/.atmux"
+repo_name="killissues$RANDOM"
+session="atmux-${repo_name}-watcher"
+trigger_file="$tmp_root/trigger-1"
+count_file="$tmp_root/count"
+stub_dir="$tmp_root/bin"
+watchers_dir="$atmux_home/watch-issues/octo_example_issues/watchers"
+
+cleanup() {
+  tmux kill-session -t "$session" >/dev/null 2>&1 || true
+  rm -rf "$tmp_root"
+}
+trap cleanup EXIT
+
+mkdir -p "$stub_dir"
+cat > "$stub_dir/gh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+count_file="${ATMUX_TEST_ISSUES_COUNT_FILE:?}"
+current=0
+if [[ -f "$count_file" ]]; then
+  current="$(cat "$count_file")"
+fi
+current=$((current + 1))
+printf '%s\n' "$current" > "$count_file"
+
+if [[ -f "${ATMUX_TEST_ISSUES_TRIGGER:-}" ]]; then
+  printf '%s\n' '2026-04-24T00:00:00Z|I_kw_kill|101|octocat|OPEN|watch-issues-kill-marker|https://github.com/octo/example/issues/101'
+else
+  printf ''
+fi
+EOF
+chmod +x "$stub_dir/gh"
+
+tmux kill-session -t "$session" >/dev/null 2>&1 || true
+tmux new-session -d -s "$session" -n "$session" -x 160 -y 40 -c "$REPO_ROOT" "/bin/bash" -l
+tmux set-environment -t "$session" ATMUX_REPO "$repo_name"
+tmux set-environment -t "$session" ATMUX_AGENT_NAME "watcher"
+tmux set-environment -t "$session" ATMUX_SESSION_NAME "$session"
+
+pane="$(tmux list-panes -t "$session" -F '#{pane_id}' 2>/dev/null | head -n1)"
+[[ -n "$pane" ]] || { echo "missing watcher pane" >&2; exit 1; }
+
+tmux send-keys -t "$pane" \
+  "ATMUX_HOME=\"$atmux_home\" ATMUX_GH_BIN=\"$stub_dir/gh\" ATMUX_TEST_ISSUES_TRIGGER=\"$trigger_file\" ATMUX_TEST_ISSUES_COUNT_FILE=\"$count_file\" ATMUX_REPO=\"$repo_name\" ATMUX_AGENT_NAME=\"watcher\" ATMUX_SESSION_NAME=\"$session\" \"$ATMUX_BIN\" watch --issues \"https://github.com/octo/example\" --interval 0.2 --timeout 30" \
+  C-m
+
+if ! wait_for_text "$pane" 'watcher_id="issues:octo_example_issues:' 10; then
+  echo "watch --issues missing watcher_id registration output" >&2
+  tmux capture-pane -p -t "$pane" -S -200 >&2 || true
+  exit 1
+fi
+
+deadline=$(( $(date +%s) + 10 ))
+while true; do
+  wcount=0
+  if [[ -d "$watchers_dir" ]]; then
+    wcount="$(find "$watchers_dir" -mindepth 1 -maxdepth 1 -type f 2>/dev/null | wc -l | tr -d ' ')"
+  fi
+  if [[ "${wcount:-0}" -ge 1 ]]; then
+    break
+  fi
+  now="$(date +%s)"
+  if (( now >= deadline )); then
+    echo "watch --issues did not leave watcher registration" >&2
+    exit 1
+  fi
+  sleep 0.1
+done
+
+watcher_name="$(find "$watchers_dir" -mindepth 1 -maxdepth 1 -type f -exec basename {} \; 2>/dev/null | head -n1)"
+[[ -n "$watcher_name" ]] || { echo "missing watcher file" >&2; exit 1; }
+watcher_id="issues:octo_example_issues:$watcher_name"
+
+ATMUX_HOME="$atmux_home" ATMUX_ALLOW_OUTSIDE_TMUX=1 "$ATMUX_BIN" kill --watcher "$watcher_id" --timeout 10
+
+deadline=$(( $(date +%s) + 10 ))
+while true; do
+  wcount=0
+  if [[ -d "$watchers_dir" ]]; then
+    wcount="$(find "$watchers_dir" -mindepth 1 -maxdepth 1 -type f 2>/dev/null | wc -l | tr -d ' ')"
+  fi
+  if [[ "${wcount:-0}" -eq 0 ]]; then
+    break
+  fi
+  now="$(date +%s)"
+  if (( now >= deadline )); then
+    echo "kill --watcher did not remove issue watcher registration" >&2
+    exit 1
+  fi
+  sleep 0.1
+done
+
+touch "$trigger_file"
+
+if ! wait_for_absence "$pane" 'watch-issues-kill-marker' 3; then
+  echo "killed issue watcher still received notification" >&2
+  tmux capture-pane -p -t "$pane" -S -200 >&2 || true
+  exit 1
+fi
+
+echo "ok: kill --watcher removes issue watcher registration"

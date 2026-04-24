@@ -3,7 +3,7 @@ set -euo pipefail
 state_dir="${ATMUX_HOME:-$HOME/.atmux}/adapters/codex"
 state_file="$state_dir/state.env"
 mkdir -p "$state_dir"
-MODEL='gpt-5.4'
+MODEL='gpt-5.5'
 REASONING_LEVEL='medium'
 
 load_state() {

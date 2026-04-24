@@ -92,10 +92,10 @@ The `--intelligence 0–100` flag selects a model and reasoning level automatica
 | `claude-code`  | 40–74        | `sonnet`               | `medium`        |
 | `claude-code`  | 75–89        | `sonnet`               | `high`          |
 | `claude-code`  | 90–100       | `opus`                 | `high`          |
-| `codex`        | 0–29         | `gpt-5.4`              | `low`           |
-| `codex`        | 30–59        | `gpt-5.4`              | `medium`        |
-| `codex`        | 60–84        | `gpt-5.4`              | `high`          |
-| `codex`        | 85–100       | `gpt-5.4`              | `extra-high`    |
+| `codex`        | 0–29         | `gpt-5.5`              | `low`           |
+| `codex`        | 30–59        | `gpt-5.5`              | `medium`        |
+| `codex`        | 60–84        | `gpt-5.5`              | `high`          |
+| `codex`        | 85–100       | `gpt-5.5`              | `extra-high`    |
 | `cursor-agent` | 0–39         | `composer-2-fast`      | `low`           |
 | `cursor-agent` | 40–74        | `composer-2`           | `medium`        |
 | `cursor-agent` | 75–89        | `gpt-5.3-codex-high`  | `high`          |
@@ -182,15 +182,23 @@ atmux exec [--detach] -- <command> [args...]
 
 ### `watch`
 
-Wait for a condition: process exit, pane text, output changes, issue updates, or agent idle state.
+Wait for a condition: process exit, pane text, output changes, issue updates, new GitHub issues, PR discussion updates, or agent idle state.
 
 ```sh
 atmux watch --pid <pid> [--timeout <seconds>]
 atmux watch --pid <pid> --stdio [--duration <seconds>] [--timeout <seconds>]
 atmux watch --target <tmux-target> --text <needle> [--scope pane|window|session]
 atmux watch --issue <id> [--timeout <seconds>]
+atmux watch --issues <repo|url> [--timeout <seconds>] [--interval <seconds>]
+atmux watch --pr <url> [--timeout <seconds>] [--interval <seconds>]
 atmux watch --agent <name> [--idle <seconds>] [--timeout <seconds>]
 ```
+
+`watch --issues` keeps notifying on newly created GitHub issues in a repository until you stop it.
+Its registration output includes `watcher_id="..."`, which you can remove with `atmux kill --watcher <id>`.
+
+`watch --pr` keeps running and notifies on new PR discussion until you stop it or the PR closes/merges.
+Its registration output includes `watcher_id="..."`, which you can remove with `atmux kill --watcher <id>`.
 
 ### `schedule`
 
@@ -202,6 +210,9 @@ atmux schedule --interval <duration> --notification "heartbeat"
 atmux schedule --once <duration> -- atmux send --to <name> "message"
 ```
 
+Use `--notification` for self reminders, ticks, and status checks. Only schedule
+`atmux send` when the target is another agent or team.
+
 `--no-detach` runs in the foreground (blocking). Duration suffixes: `ms`, `s`, `m`, `h`, `d`.
 
 ### `kill`
@@ -210,10 +221,12 @@ Stop exec-tracked processes or remove agent sessions.
 
 ```sh
 atmux kill --pid <pid> [--timeout <seconds>] [--signal <NAME>]
+atmux kill --watcher <id> [--timeout <seconds>]
 atmux kill --agent <name|pattern> [name|pattern...]
 ```
 
 `--pid` stops an exec process, notifies watchers, and cleans up metadata.
+`--watcher` removes a watcher registration by id, including watcher ids emitted by `watch --pr` and `watch --issues`.
 `--agent` kills agent sessions and removes their worktrees and branches.
 
 ### `session`

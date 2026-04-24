@@ -5,7 +5,10 @@ TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPTS_DIR="$TESTS_DIR/scripts"
 
 eval "$("$SCRIPTS_DIR/setup")"
-trap "$SCRIPTS_DIR/teardown --team-session \"$TEAM_SESSION\" --agent1-session \"$AGENT1_SESSION\" --agent2-session \"$AGENT2_SESSION\"" EXIT
+cleanup() {
+  "$SCRIPTS_DIR/teardown" --team-session "$TEAM_SESSION" --agent1-session "$AGENT1_SESSION" --agent2-session "$AGENT2_SESSION"
+}
+trap cleanup EXIT
 
 if out="$(ATMUX_REPO="$REPO_NAME" ATMUX_AGENT_NAME="sender" ATMUX_SESSION_NAME="$AGENT1_SESSION" \
   "$ATMUX_BIN" schedule --to receiver --once 1s --notification "hello" 2>&1)"; then
@@ -15,5 +18,7 @@ if out="$(ATMUX_REPO="$REPO_NAME" ATMUX_AGENT_NAME="sender" ATMUX_SESSION_NAME="
 fi
 
 printf '%s\n' "$out" | grep -Fq -- "--to is not valid for schedule"
+printf '%s\n' "$out" | grep -Fq 'self reminders/ticks'
+printf '%s\n' "$out" | grep -Fq -- '--notification'
 
 echo "ok: schedule rejects --to"

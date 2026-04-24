@@ -1,0 +1,452 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ATMUX_HOME="${ATMUX_HOME:-$HOME/.atmux}"
+
+HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=bin/(atmux)/notify
+source "$HERE/../notify"
+
+usage() {
+  cat <<'USAGE'
+Usage:
+  atmux watch --issues <repo|url> [--timeout <seconds>] [--interval <seconds>]
+
+Description:
+  Register the current pane to watch a GitHub repository for newly created
+  issues. A shared background worker polls for new issues and queues ATMUX
+  notifications into the pane until you stop the watch.
+
+  Multiple local watchers for the same repository share a single polling worker
+  so only one process polls GitHub at a time.
+
+  Requires GitHub CLI (`gh`) with API access to the target repository.
+
+Examples:
+  atmux watch --issues owner/repo
+  atmux watch --issues https://github.com/owner/repo/issues --timeout 600
+USAGE
+}
+
+resolve_gh_bin() {
+  if [[ -n "${ATMUX_GH_BIN:-}" ]]; then
+    printf '%s\n' "$ATMUX_GH_BIN"
+    return 0
+  fi
+  command -v gh 2>/dev/null || true
+}
+
+parse_repo_spec() {
+  local spec="${1:-}" stripped path owner repo
+
+  if [[ "$spec" == https://github.com/* || "$spec" == http://github.com/* ]]; then
+    stripped="${spec#http://}"
+    stripped="${stripped#https://}"
+    stripped="${stripped#github.com/}"
+    stripped="${stripped%%\?*}"
+    stripped="${stripped%%#*}"
+    path="${stripped#/}"
+    owner="$(printf '%s\n' "$path" | cut -d/ -f1)"
+    repo="$(printf '%s\n' "$path" | cut -d/ -f2)"
+  else
+    owner="$(printf '%s\n' "$spec" | cut -d/ -f1)"
+    repo="$(printf '%s\n' "$spec" | cut -d/ -f2)"
+    if [[ "$(printf '%s\n' "$spec" | cut -d/ -f3)" != "" ]]; then
+      return 1
+    fi
+  fi
+
+  [[ -n "$owner" && -n "$repo" ]] || return 1
+  printf '%s\n%s\n' "$owner" "$repo"
+}
+
+issues_watch_key() {
+  local owner="$1" repo="$2"
+  normalize_name "${owner}_${repo}_issues"
+}
+
+issues_watch_dir() {
+  local key="$1"
+  printf '%s/watch-issues/%s\n' "$ATMUX_HOME" "$key"
+}
+
+issues_watch_watchers_dir() {
+  local key="$1"
+  printf '%s/watchers\n' "$(issues_watch_dir "$key")"
+}
+
+issues_watch_watcher_file() {
+  local key="$1" pane="$2"
+  printf '%s/%s\n' "$(issues_watch_watchers_dir "$key")" "$(pane_queue_key "$pane")"
+}
+
+issues_watch_watcher_id() {
+  local key="$1" pane="$2"
+  printf 'issues:%s:%s\n' "$key" "$(pane_queue_key "$pane")"
+}
+
+issues_watch_pid_file() {
+  local key="$1"
+  printf '%s/worker.pid\n' "$(issues_watch_dir "$key")"
+}
+
+issues_watch_lock_dir() {
+  local key="$1"
+  printf '%s/lock\n' "$(issues_watch_dir "$key")"
+}
+
+issues_watch_snapshot_file() {
+  local key="$1"
+  printf '%s/snapshot\n' "$(issues_watch_dir "$key")"
+}
+
+issues_watch_event_file() {
+  local key="$1"
+  printf '%s/event\n' "$(issues_watch_dir "$key")"
+}
+
+read_trimmed_file() {
+  local file="$1"
+  [[ -f "$file" ]] || return 0
+  tr -d '\r\n' < "$file" 2>/dev/null || true
+}
+
+watcher_deadline_from_file() {
+  local file="$1" raw=""
+  raw="$(read_trimmed_file "$file")"
+  printf '%s\n' "${raw##*|}"
+}
+
+watcher_pane_from_file() {
+  local file="$1" raw=""
+  raw="$(read_trimmed_file "$file")"
+  printf '%s\n' "${raw%%|*}"
+}
+
+fetch_issues_poll_data() {
+  local gh_bin="$1" owner="$2" repo="$3"
+  local query
+
+  # shellcheck disable=SC2016
+  query='
+    query($owner: String!, $repo: String!) {
+      repository(owner: $owner, name: $repo) {
+        issues(first: 50, states: OPEN, orderBy: { field: CREATED_AT, direction: ASC }) {
+          nodes {
+            id
+            number
+            title
+            url
+            createdAt
+            state
+            author { login }
+          }
+        }
+      }
+    }
+  '
+
+  # shellcheck disable=SC2016
+  "$gh_bin" api graphql \
+    -f query="$query" \
+    -F owner="$owner" \
+    -F repo="$repo" \
+    --jq '
+      .data.repository.issues.nodes
+      | sort_by(.createdAt, .id)
+      | .[]
+      | "\(.createdAt)|\(.id)|\(.number)|\(.author.login // \"unknown\")|\(.state // \"\")|\((.title // \"\" | gsub(\"[\\r\\n]+\"; \" \") | .[0:160]))|\(.url // \"\")"
+    ' 2>/dev/null || return 1
+}
+
+issue_notification_payload_for_line() {
+  local owner="$1" repo="$2" line="$3"
+  local created_at event_id issue_number author state text issue_url
+
+  IFS='|' read -r created_at event_id issue_number author state text issue_url <<< "$line"
+  build_notification "issue" "github" "gh issue view $issue_number --repo $owner/$repo --comments" \
+    "url=$issue_url" \
+    "repo=$owner/$repo" \
+    "number=$issue_number" \
+    "kind=created" \
+    "event_id=$event_id" \
+    "author=$author" \
+    "state=$state" \
+    "created_at=$created_at" \
+    "text=$text"
+}
+
+notify_issues_watchers() {
+  local key="$1" payload="$2"
+  local watchers_dir watcher_file pane
+
+  watchers_dir="$(issues_watch_watchers_dir "$key")"
+  [[ -d "$watchers_dir" ]] || return 0
+
+  while IFS= read -r watcher_file; do
+    [[ -f "$watcher_file" ]] || continue
+    pane="$(watcher_pane_from_file "$watcher_file")"
+    [[ -n "$pane" ]] || continue
+    send_payload_to_pane "$pane" "$payload"
+  done < <(find "$watchers_dir" -mindepth 1 -maxdepth 1 -type f 2>/dev/null | sort)
+}
+
+issues_watchers_present() {
+  local key="$1"
+  local watchers_dir watcher_file pane expires_at now count=0
+
+  watchers_dir="$(issues_watch_watchers_dir "$key")"
+  [[ -d "$watchers_dir" ]] || return 1
+
+  now="$(date +%s)"
+  while IFS= read -r watcher_file; do
+    [[ -f "$watcher_file" ]] || continue
+    pane="$(watcher_pane_from_file "$watcher_file")"
+    expires_at="$(watcher_deadline_from_file "$watcher_file")"
+    if [[ -n "$expires_at" && "$expires_at" != "0" && "$expires_at" =~ ^[0-9]+$ ]] && (( now >= expires_at )); then
+      rm -f "$watcher_file"
+      continue
+    fi
+    if [[ -z "$pane" ]] || ! tmux display-message -t "$pane" -p '#{pane_id}' >/dev/null 2>&1; then
+      rm -f "$watcher_file"
+      continue
+    fi
+    count=$((count + 1))
+  done < <(find "$watchers_dir" -mindepth 1 -maxdepth 1 -type f 2>/dev/null | sort)
+
+  (( count > 0 ))
+}
+
+issues_worker_running() {
+  local key="$1" pid=""
+
+  pid="$(read_trimmed_file "$(issues_watch_pid_file "$key")")"
+  [[ -n "$pid" ]] || return 1
+  kill -0 "$pid" 2>/dev/null
+}
+
+acquire_issues_worker_lock() {
+  local key="$1" lock_dir pid_file pid
+  lock_dir="$(issues_watch_lock_dir "$key")"
+  pid_file="$(issues_watch_pid_file "$key")"
+  mkdir -p "$(issues_watch_dir "$key")"
+
+  if mkdir "$lock_dir" 2>/dev/null; then
+    printf '%s\n' "$$" > "$pid_file"
+    return 0
+  fi
+
+  pid="$(read_trimmed_file "$pid_file")"
+  if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+    return 1
+  fi
+
+  rm -rf "$lock_dir" "$pid_file"
+  if mkdir "$lock_dir" 2>/dev/null; then
+    printf '%s\n' "$$" > "$pid_file"
+    return 0
+  fi
+
+  return 1
+}
+
+cleanup_issues_worker() {
+  local key="$1"
+  rm -rf "$(issues_watch_lock_dir "$key")"
+  rm -f "$(issues_watch_pid_file "$key")"
+}
+
+ensure_issues_watch_worker() {
+  local key="$1" owner="$2" repo="$3" interval="$4"
+
+  mkdir -p "$(issues_watch_watchers_dir "$key")"
+  if issues_worker_running "$key"; then
+    return 0
+  fi
+
+  nohup env \
+    ATMUX_HOME="$ATMUX_HOME" \
+    ATMUX_SOURCE_ROOT="${ATMUX_SOURCE_ROOT:-${ATMUX_HOME}/src/atmux}" \
+    ATMUX_GH_BIN="${ATMUX_GH_BIN:-}" \
+    "$0" __serve-issues-watch \
+      --key "$key" \
+      --owner "$owner" \
+      --repo "$repo" \
+      --interval "$interval" >/dev/null 2>&1 &
+}
+
+notify_new_issues_since_baseline() {
+  local owner="$1" repo="$2" baseline_snapshot="$3" snapshot="$4" key="$5"
+  local added_lines="" line payload
+
+  added_lines="$(
+    comm -13 \
+      <(printf '%s\n' "$baseline_snapshot" | awk 'NF' | sort) \
+      <(printf '%s\n' "$snapshot" | awk 'NF' | sort)
+  )"
+
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
+    payload="$(issue_notification_payload_for_line "$owner" "$repo" "$line")"
+    notify_issues_watchers "$key" "$payload"
+  done <<< "$added_lines"
+}
+
+serve_issues_watch() {
+  local key="" owner="" repo="" interval="30"
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --key)
+        key="${2:-}"
+        shift 2
+        ;;
+      --owner)
+        owner="${2:-}"
+        shift 2
+        ;;
+      --repo)
+        repo="${2:-}"
+        shift 2
+        ;;
+      --interval)
+        interval="${2:-}"
+        shift 2
+        ;;
+      *)
+        echo "unknown flag: $1" >&2
+        exit 2
+        ;;
+    esac
+  done
+
+  [[ -n "$key" && -n "$owner" && -n "$repo" ]] || exit 2
+
+  local gh_bin snapshot_file event_file watchers_dir
+  gh_bin="$(resolve_gh_bin)"
+  [[ -n "$gh_bin" && -x "$gh_bin" ]] || exit 1
+
+  if ! acquire_issues_worker_lock "$key"; then
+    exit 0
+  fi
+  trap 'cleanup_issues_worker "$key"' EXIT
+
+  snapshot_file="$(issues_watch_snapshot_file "$key")"
+  event_file="$(issues_watch_event_file "$key")"
+  watchers_dir="$(issues_watch_watchers_dir "$key")"
+  mkdir -p "$watchers_dir"
+
+  local snapshot="" baseline_snapshot="" baseline_initialized=0 poll_data="" latest_line=""
+  snapshot="$(read_trimmed_file "$snapshot_file")"
+
+  while true; do
+    if ! issues_watchers_present "$key"; then
+      break
+    fi
+
+    if ! poll_data="$(fetch_issues_poll_data "$gh_bin" "$owner" "$repo")"; then
+      sleep "$interval"
+      continue
+    fi
+
+    snapshot="$(printf '%s\n' "$poll_data" | awk 'NF')"
+    printf '%s\n' "$snapshot" > "$snapshot_file"
+
+    if (( baseline_initialized == 0 )); then
+      baseline_snapshot="$snapshot"
+      baseline_initialized=1
+    elif [[ "$snapshot" != "$baseline_snapshot" ]]; then
+      notify_new_issues_since_baseline "$owner" "$repo" "$baseline_snapshot" "$snapshot" "$key"
+      latest_line="$(printf '%s\n' "$snapshot" | tail -n 1)"
+      printf '%s\n' "$latest_line" > "$event_file"
+      baseline_snapshot="$snapshot"
+    fi
+
+    sleep "$interval"
+  done
+
+  if [[ -d "$watchers_dir" ]]; then
+    find "$watchers_dir" -mindepth 1 -maxdepth 1 -type f -delete 2>/dev/null || true
+  fi
+}
+
+main() {
+  local repo_spec=""
+  local timeout_sec="0"
+  local interval="30"
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --issues)
+        repo_spec="${2:-}"
+        shift 2
+        ;;
+      --timeout)
+        timeout_sec="${2:-}"
+        shift 2
+        ;;
+      --interval)
+        interval="${2:-}"
+        shift 2
+        ;;
+      -h|--help|help)
+        usage
+        exit 0
+        ;;
+      *)
+        echo "unknown flag: $1" >&2
+        usage >&2
+        exit 2
+        ;;
+    esac
+  done
+
+  [[ -n "$repo_spec" ]] || { echo "missing --issues" >&2; exit 2; }
+
+  local gh_bin=""
+  gh_bin="$(resolve_gh_bin)"
+  if [[ -z "$gh_bin" || ! -x "$gh_bin" ]]; then
+    echo "atmux watch --issues: GitHub CLI not found; install gh or set ATMUX_GH_BIN" >&2
+    exit 1
+  fi
+
+  local owner repo
+  {
+    IFS= read -r owner
+    IFS= read -r repo
+  } < <(parse_repo_spec "$repo_spec" || true)
+  if [[ -z "${owner:-}" || -z "${repo:-}" ]]; then
+    echo "atmux watch --issues: invalid GitHub repository spec: $repo_spec" >&2
+    exit 2
+  fi
+
+  local pane="" key="" watcher_file="" expires_at="0"
+  pane="$(current_pane)"
+  [[ -n "$pane" ]] || { echo "atmux watch --issues: unable to resolve current pane" >&2; exit 2; }
+
+  key="$(issues_watch_key "$owner" "$repo")"
+  mkdir -p "$(issues_watch_watchers_dir "$key")"
+  watcher_file="$(issues_watch_watcher_file "$key" "$pane")"
+  if [[ -n "$timeout_sec" && "$timeout_sec" != "0" ]]; then
+    expires_at="$(( $(date +%s) + timeout_sec ))"
+  fi
+  write_field "$watcher_file" "${pane}|${expires_at}"
+
+  ensure_issues_watch_worker "$key" "$owner" "$repo" "$interval"
+  printf '<watch type="issues" repo="%s/%s" pane="%s" timeout="%s" watcher_id="%s" />\n' \
+    "$(xml_escape "$owner")" \
+    "$(xml_escape "$repo")" \
+    "$(xml_escape "$pane")" \
+    "$(xml_escape "$timeout_sec")" \
+    "$(xml_escape "$(issues_watch_watcher_id "$key" "$pane")")"
+}
+
+case "${1:-}" in
+  __serve-issues-watch)
+    shift
+    serve_issues_watch "$@"
+    ;;
+  *)
+    main "$@"
+    ;;
+esac

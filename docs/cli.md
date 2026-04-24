@@ -29,7 +29,9 @@ Creates and assigns a filesystem-backed issue.
 ### `atmux schedule (--interval <duration> | --once <duration>) --notification <text>`
 ### `atmux schedule (--interval <duration> | --once <duration>) -- <command> [args...]`
 
-Schedules a notification or command. To schedule a future message, schedule `atmux send` directly:
+Schedules a notification or command. Use `--notification` for self reminders,
+ticks, and status checks. Only schedule `atmux send` when the target is another
+agent or team:
 
 ```sh
 atmux schedule --once 10m -- atmux send --to worker "status check"
@@ -41,19 +43,29 @@ Runs a command and sends an exec notification when it exits. Detached execs run 
 
 ### `atmux watch`
 
-Waits for text, process completion, issue updates, stdio output, or agent idleness.
+Waits for text, process completion, issue updates, new GitHub issues, PR discussion updates, stdio output, or agent idleness.
 
 Examples:
 
 ```sh
 atmux watch --agent worker --idle 20 --timeout 120
 atmux watch --pid 12345 --timeout 60
+atmux watch --issues owner/repo --timeout 600
+atmux watch --pr https://github.com/owner/repo/pull/123 --timeout 600
 atmux watch --target %1 --text "ready" --timeout 30
 ```
+
+`watch --issues` is long-lived: it keeps notifying on newly created GitHub issues until stopped. Its registration output includes `watcher_id="..."` for use with `atmux kill --watcher <id>`.
+
+`watch --pr` is long-lived: it keeps notifying on new discussion until stopped or the PR closes/merges. Its registration output includes `watcher_id="..."` for use with `atmux kill --watcher <id>`.
 
 ### `atmux kill --pid <pid> [--timeout <seconds>] [--signal <NAME>]`
 
 Stops an `atmux exec` tracked process, waits for completion notifications and watcher fan-out, then clears metadata.
+
+### `atmux kill --watcher <id> [--timeout <seconds>]`
+
+Removes a watcher registration by id. Supports watcher ids emitted by `watch --pr` and `watch --issues`.
 
 ### `atmux install [--project|--system] [--project-root <dir>] [--no-slash-commands]`
 
@@ -69,10 +81,10 @@ The `--intelligence 0-100` flag selects a model and reasoning level through the 
 | `claude-code` | 40-74 | `sonnet` | `medium` |
 | `claude-code` | 75-89 | `sonnet` | `high` |
 | `claude-code` | 90-100 | `opus` | `high` |
-| `codex` | 0-29 | `gpt-5.4` | `low` |
-| `codex` | 30-59 | `gpt-5.4` | `medium` |
-| `codex` | 60-84 | `gpt-5.4` | `high` |
-| `codex` | 85-100 | `gpt-5.4` | `extra-high` |
+| `codex` | 0-29 | `gpt-5.5` | `low` |
+| `codex` | 30-59 | `gpt-5.5` | `medium` |
+| `codex` | 60-84 | `gpt-5.5` | `high` |
+| `codex` | 85-100 | `gpt-5.5` | `extra-high` |
 | `cursor-agent` | 0-39 | `composer-2-fast` | `low` |
 | `cursor-agent` | 40-74 | `composer-2` | `medium` |
 | `cursor-agent` | 75-89 | `gpt-5.3-codex-high` | `high` |

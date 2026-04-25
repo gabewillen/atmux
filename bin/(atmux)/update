@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ATMUX_HOME="${ATMUX_HOME:-$HOME/.atmux}"
-ATMUX_GITHUB_REPO="${ATMUX_GITHUB_REPO:-gabrielwillen/atmux}"
+ATMUX_GITHUB_REPO="${ATMUX_GITHUB_REPO:-gabewillen/atmux}"
 ATMUX_API_BASE="https://api.github.com/repos/${ATMUX_GITHUB_REPO}"
 
 CHECK_ONLY=0

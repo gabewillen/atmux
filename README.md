@@ -24,7 +24,7 @@ Install by piping `curl` into `sh`, or clone the repo and run `./install.sh`. Th
 ## Install
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/gabrielwillen/atmux/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/gabewillen/atmux/main/install.sh | sh
 ```
 
 Or from a local checkout:

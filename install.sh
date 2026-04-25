@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ATMUX_REPO_URL="${ATMUX_REPO_URL:-https://github.com/gabrielwillen/atmux.git}"
+ATMUX_REPO_URL="${ATMUX_REPO_URL:-https://github.com/gabewillen/atmux.git}"
 # ATMUX_VERSION takes precedence over ATMUX_REPO_REF when set (e.g. ATMUX_VERSION=0.2.0)
 if [[ -n "${ATMUX_VERSION:-}" ]]; then
   ATMUX_REPO_REF="v${ATMUX_VERSION}"

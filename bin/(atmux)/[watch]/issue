@@ -120,16 +120,25 @@ main() {
 
   mkdir -p "$issue_dir/watchers"
   watcher_file="$(mktemp "$issue_dir/watchers/watcher.XXXXXX")"
-  write_field "$watcher_file" "$(current_pane)"
+  event_fifo="${watcher_file}.fifo"
+  mkfifo "$event_fifo"
+  exec 9<>"$event_fifo"
+  write_field "$watcher_file" "$(current_pane)|${event_fifo}"
 
   cleanup_watcher() {
+    exec 9>&- 9<&- || true
     [[ -n "${watcher_file:-}" ]] && rm -f "$watcher_file"
+    [[ -n "${event_fifo:-}" ]] && rm -f "$event_fifo"
   }
   trap cleanup_watcher EXIT INT TERM HUP
 
   local deadline=0
   if [[ -n "$timeout_sec" && "$timeout_sec" != "0" ]]; then
     deadline=$(( $(date +%s) + timeout_sec ))
+  fi
+
+  if [[ "$(issue_snapshot)" != "$snapshot" ]]; then
+    exit 0
   fi
 
   while true; do
@@ -143,9 +152,15 @@ main() {
       if (( now >= deadline )); then
         exit 124
       fi
+      if ! read -r -t "$(( deadline - now ))" _ <&9; then
+        if [[ "$(issue_snapshot)" != "$snapshot" ]]; then
+          break
+        fi
+        exit 124
+      fi
+    else
+      read -r _ <&9 || true
     fi
-
-    sleep "$interval"
   done
 
   exit 0

@@ -55,6 +55,14 @@ main() {
   tmux set-environment -t "$agent2" ATMUX_SESSION_NAME "$agent2"
 
   ATMUX_REPO="$repo_name" "$ATMUX_BIN" create --team "$team_name" >/dev/null
+  deadline=$(( $(date +%s) + 5 ))
+  until tmux has-session -t "$team_session" 2>/dev/null; do
+    if (( $(date +%s) >= deadline )); then
+      echo "timeout waiting for team session: $team_session" >&2
+      exit 1
+    fi
+    sleep 0.05
+  done
 
   tmux send-keys -t "${team_session}:0.0" C-c >/dev/null 2>&1 || true
   tmux send-keys -t "${team_session}:0.0" C-u >/dev/null 2>&1 || true

@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+NOTIFY_BIN="$REPO_ROOT/bin/(atmux)/notify"
+
+tmp_home="$(mktemp -d "${TMPDIR:-/tmp}/atmux-notify-stale-pane.XXXXXX")"
+cleanup() {
+  if [[ -n "${worker_pid:-}" ]] && kill -0 "$worker_pid" >/dev/null 2>&1; then
+    kill "$worker_pid" >/dev/null 2>&1 || true
+    wait "$worker_pid" >/dev/null 2>&1 || true
+  fi
+  rm -rf "$tmp_home"
+}
+trap cleanup EXIT
+
+stale_pane="%999999"
+ATMUX_HOME="$tmp_home/.atmux" "$NOTIFY_BIN" __serve-queue --pane "$stale_pane" --source-root "$REPO_ROOT" &
+worker_pid=$!
+
+deadline=$(( $(date +%s) + 5 ))
+while kill -0 "$worker_pid" >/dev/null 2>&1; do
+  if (( $(date +%s) >= deadline )); then
+    echo "notify worker did not exit for stale pane id" >&2
+    exit 1
+  fi
+  sleep 0.1
+done
+wait "$worker_pid" || true
+
+echo "ok: notify worker exits for stale pane id"

@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Test sessions are intentionally short-lived. If a test fails or is interrupted,
+# notify workers can outlive their target panes unless cleaned up explicitly.
+ps -axo pid=,command= | awk '
+  index($0, "notify __serve-queue") {
+    pid=$1
+    pane=""
+    for (i = 2; i <= NF; i++) {
+      if ($i == "--pane" && i < NF) {
+        pane=$(i + 1)
+      }
+    }
+    if (pane != "") {
+      print pid, pane
+    }
+  }
+' | while read -r pid pane; do
+  resolved="$(tmux display-message -t "$pane" -p '#{pane_id}' 2>/dev/null || true)"
+  if [[ -z "$resolved" ]]; then
+    kill "$pid" >/dev/null 2>&1 || true
+  fi
+done

@@ -113,7 +113,9 @@ finish_foreground_exec() {
     notification_xml="$(build_notification "exec" "$command_text" "atmux capture --agent ${ATMUX_AGENT_NAME:-unknown}" "exit_code=$exit_code")"
     notify_exec_completion_inline "$exec_dir" "$notify_pane" "$notification_xml"
   fi
+  signal_exec_watchers "$exec_dir" || true
   write_field "$exec_dir/state" "exited"
+  signal_exec_watchers "$exec_dir" || true
 }
 
 foreground_exit_trap() {
@@ -312,7 +314,9 @@ _run_detached() {
     notify_exec_completion "$exec_dir" "$notify_pane" "$notification_xml"
   fi
 
+  signal_exec_watchers "$exec_dir" || true
   write_field "$exec_dir/state" "exited"
+  signal_exec_watchers "$exec_dir" || true
 
   exit "$exit_code"
 }

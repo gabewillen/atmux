@@ -70,6 +70,8 @@ for idx in $(seq 1 80); do
   tmux send-keys -t "$pane" -l "history-line-$idx"
   tmux send-keys -t "$pane" Enter
 done
+tmux send-keys -t "$pane" -l "❯ "
+tmux send-keys -t "$pane" Enter
 
 tmux copy-mode -t "$pane"
 tmux send-keys -t "$pane" -X page-up

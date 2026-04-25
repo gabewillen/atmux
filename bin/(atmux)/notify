@@ -133,6 +133,12 @@ pane_cursor_position() {
   printf '%s %s\n' "$cursor_x" "$cursor_y"
 }
 
+pane_exists() {
+  local pane="$1" resolved=""
+  resolved="$(tmux display-message -t "$pane" -p '#{pane_id}' 2>/dev/null || true)"
+  [[ -n "$resolved" ]]
+}
+
 pane_notification_blocked() {
   local pane="$1"
   local in_mode mode scroll_position
@@ -700,17 +706,23 @@ wait_for_notification_wake() {
   fi
 }
 
+wait_for_notification_wake_fd() {
+  local timeout="$1"
+  read -r -t "$timeout" _ <&8 || true
+}
+
 serve_notification_queue() {
   local pane="$1"
   local source_root="$2"
   local qdir payload_dir item_dir payload submit_keys
   local prompt_prefix="" saved_input=""
   local batch_active=0
-  local poll_interval="${ATMUX_NOTIFY_WORKER_POLL_SECONDS:-0.05}"
-  local idle_timeout="${ATMUX_NOTIFY_WORKER_IDLE_TIMEOUT_SECONDS:-0}"
+  local poll_interval="${ATMUX_NOTIFY_WORKER_POLL_SECONDS:-1}"
+  local idle_timeout="${ATMUX_NOTIFY_WORKER_IDLE_TIMEOUT_SECONDS:-300}"
   local mode_poll_interval="${ATMUX_NOTIFY_WORKER_MODE_POLL_SECONDS:-0.2}"
   local last_activity
   local wake_timeout="${ATMUX_NOTIFY_WORKER_WAKE_TIMEOUT_SECONDS:-1}"
+  local wake_fd_open=0
   local -a items=()
 
   qdir="$(notify_queue_dir "$pane")"
@@ -722,14 +734,15 @@ serve_notification_queue() {
   trap 'cleanup_notification_worker "$qdir"' EXIT
   debug_notify "worker:start pane=$(printf '%q' "$pane") qdir=$(printf '%q' "$qdir") source_root=$(printf '%q' "$source_root")"
   last_activity="$(date +%s)"
-  if open_notification_wake_fifo "$qdir"; then
+  if open_notification_wake_fifo "$qdir" && exec 8<>"$(notification_wake_fifo "$qdir")"; then
+    wake_fd_open=1
     debug_notify "worker:wake_fifo_ready pane=$(printf '%q' "$pane") fifo=$(printf '%q' "$(notification_wake_fifo "$qdir")")"
   else
     debug_notify "worker:wake_fifo_unavailable pane=$(printf '%q' "$pane") fifo=$(printf '%q' "$(notification_wake_fifo "$qdir")")"
   fi
 
   while true; do
-    if ! tmux display-message -t "$pane" -p '#{pane_id}' >/dev/null 2>&1; then
+    if ! pane_exists "$pane"; then
       debug_notify "worker:pane_gone pane=$(printf '%q' "$pane")"
       break
     fi
@@ -760,7 +773,9 @@ serve_notification_queue() {
         fi
       fi
 
-      if [[ -p "$(notification_wake_fifo "$qdir")" ]]; then
+      if (( wake_fd_open == 1 )); then
+        wait_for_notification_wake_fd "$wake_timeout"
+      elif [[ -p "$(notification_wake_fifo "$qdir")" ]]; then
         wait_for_notification_wake "$qdir" "$wake_timeout"
       else
         sleep "$poll_interval"
@@ -854,7 +869,7 @@ send_notification() {
     debug_notify "send_notification:missing_pane $(payload_debug_summary "$payload")"
     return 1
   }
-  if ! tmux display-message -t "$pane" -p '#{pane_id}' >/dev/null 2>&1; then
+  if ! pane_exists "$pane"; then
     debug_notify "send_notification:invalid_pane pane=$(printf '%q' "$pane") $(payload_debug_summary "$payload")"
     return 1
   fi
@@ -1045,7 +1060,8 @@ notify_exec_watchers() {
   while IFS= read -r f; do
     [[ -n "$f" ]] || continue
     [[ -f "$f" ]] || continue
-    pane="$(tr -d '\r\n' <"$f" 2>/dev/null || true)"
+    signal_watcher_event_file "$f"
+    pane="$(watcher_record_pane "$f")"
     [[ -n "$pane" ]] || continue
     [[ "$pane" == "$skip_pane" ]] && continue
     send_notification "$pane" "$payload"
@@ -1062,10 +1078,54 @@ notify_issue_watchers() {
   while IFS= read -r f; do
     [[ -n "$f" ]] || continue
     [[ -f "$f" ]] || continue
-    pane="$(tr -d '\r\n' <"$f" 2>/dev/null || true)"
+    signal_watcher_event_file "$f"
+    pane="$(watcher_record_pane "$f")"
     [[ -n "$pane" ]] || continue
     [[ "$pane" == "$skip_pane" ]] && continue
     send_notification "$pane" "$payload"
+  done < <(find "$wdir" -maxdepth 1 -type f 2>/dev/null)
+}
+
+watcher_record_pane() {
+  local file="$1" raw=""
+  raw="$(tr -d '\r\n' <"$file" 2>/dev/null || true)"
+  printf '%s\n' "${raw%%|*}"
+}
+
+watcher_record_signal_path() {
+  local file="$1" raw="" rest=""
+  raw="$(tr -d '\r\n' <"$file" 2>/dev/null || true)"
+  [[ "$raw" == *"|"* ]] || return 0
+  rest="${raw#*|}"
+  printf '%s\n' "${rest%%|*}"
+}
+
+signal_watcher_event_file() {
+  local file="$1" signal_path=""
+  signal_path="$(watcher_record_signal_path "$file")"
+  [[ -n "$signal_path" && -p "$signal_path" ]] || return 0
+
+  if command -v perl >/dev/null 2>&1; then
+    perl -MFcntl=:DEFAULT -e '
+      my $fifo = shift;
+      exit 0 unless sysopen(my $fh, $fifo, O_WRONLY | O_NONBLOCK);
+      syswrite($fh, "event\n");
+      close $fh;
+    ' "$signal_path" >/dev/null 2>&1 || true
+    return 0
+  fi
+
+  printf 'event\n' > "$signal_path" 2>/dev/null || true
+}
+
+signal_exec_watchers() {
+  local exec_dir="$1"
+  local wdir="$exec_dir/watchers"
+  [[ -d "$wdir" ]] || return 0
+  local f
+  while IFS= read -r f; do
+    [[ -n "$f" && -f "$f" ]] || continue
+    signal_watcher_event_file "$f"
   done < <(find "$wdir" -maxdepth 1 -type f 2>/dev/null)
 }
 

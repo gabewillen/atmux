@@ -5,6 +5,7 @@ set -euo pipefail
 export ATMUX_ALLOW_OUTSIDE_TMUX="${ATMUX_ALLOW_OUTSIDE_TMUX:-1}"
 
 TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+CLEANUP_ORPHANS="$TESTS_DIR/scripts/cleanup-orphans"
 
 log() {
   printf '[atmux-tests] %s\n' "$*"
@@ -33,12 +34,17 @@ main() {
   for test_script in "$TESTS_DIR"/[0-9][0-9]_*; do
     [[ -f "$test_script" ]] || continue
     [[ -x "$test_script" ]] || chmod +x "$test_script"
+    [[ ! -x "$CLEANUP_ORPHANS" ]] || "$CLEANUP_ORPHANS" || true
     if should_skip_test "$(basename "$test_script")"; then
       log "skipping $(basename "$test_script") (set ATMUX_RUN_LIVE_ADAPTER_TESTS=1 to include live adapter tests)"
       continue
     fi
     log "running $(basename "$test_script")"
-    "$test_script"
+    if ! "$test_script"; then
+      [[ ! -x "$CLEANUP_ORPHANS" ]] || "$CLEANUP_ORPHANS" || true
+      return 1
+    fi
+    [[ ! -x "$CLEANUP_ORPHANS" ]] || "$CLEANUP_ORPHANS" || true
   done
   log "suite complete"
 }

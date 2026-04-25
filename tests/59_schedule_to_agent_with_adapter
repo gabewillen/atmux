@@ -35,10 +35,14 @@ wait_for_count() {
 repo_name="sched${RANDOM}"
 session_mgr="atmux-${repo_name}-mgr"
 session_agent="atmux-${repo_name}-worker"
+tmp_home="$(mktemp -d "${TMPDIR:-/tmp}/atmux-schedule-adapter.XXXXXX")"
+atmux_home="$tmp_home/.atmux"
 
 cleanup() {
   tmux kill-session -t "$session_mgr" >/dev/null 2>&1 || true
   tmux kill-session -t "$session_agent" >/dev/null 2>&1 || true
+  "$TESTS_DIR/scripts/cleanup-orphans" >/dev/null 2>&1 || true
+  rm -rf "$tmp_home"
 }
 trap cleanup EXIT
 
@@ -51,6 +55,8 @@ tmux set-environment -t "$session_mgr" ATMUX_REPO "$repo_name"
 tmux set-environment -t "$session_mgr" ATMUX_AGENT_NAME "mgr"
 tmux set-environment -t "$session_mgr" ATMUX_SESSION_NAME "$session_mgr"
 tmux set-environment -t "$session_mgr" ATMUX_ADAPTER "claude-code"
+tmux set-environment -t "$session_mgr" ATMUX_HOME "$atmux_home"
+tmux set-environment -t "$session_mgr" ATMUX_SOURCE_ROOT "$REPO_ROOT"
 
 # Child agent: running cat (simulates adapter CLI), has ATMUX_MANAGER + ATMUX_ADAPTER
 tmux new-session -d -s "$session_agent" -n "$session_agent" -x 160 -y 40 -c "$REPO_ROOT" "cat"
@@ -59,15 +65,20 @@ tmux set-environment -t "$session_agent" ATMUX_AGENT_NAME "worker"
 tmux set-environment -t "$session_agent" ATMUX_SESSION_NAME "$session_agent"
 tmux set-environment -t "$session_agent" ATMUX_MANAGER "mgr"
 tmux set-environment -t "$session_agent" ATMUX_ADAPTER "claude-code"
+tmux set-environment -t "$session_agent" ATMUX_HOME "$atmux_home"
+tmux set-environment -t "$session_agent" ATMUX_SOURCE_ROOT "$REPO_ROOT"
 
 pane_agent="$(tmux list-panes -t "$session_agent" -F '#{pane_id}' 2>/dev/null | head -n1)"
 [[ -n "$pane_agent" ]] || { echo "agent pane missing" >&2; exit 1; }
 
 sleep 0.5
+tmux send-keys -t "$pane_agent" -l "❯ "
+tmux send-keys -t "$pane_agent" Enter
 
 # Manager schedules a delayed send command to the agent.
 echo "--- scheduling from manager context ---" >&2
 sched_out="$(ATMUX_REPO="$repo_name" ATMUX_AGENT_NAME="mgr" ATMUX_SESSION_NAME="$session_mgr" \
+  ATMUX_HOME="$atmux_home" ATMUX_SOURCE_ROOT="$REPO_ROOT" \
   "$ATMUX_BIN" schedule --interval 2s -- "$ATMUX_BIN" send --to worker "check in" 2>&1)" || {
     echo "schedule command failed: $sched_out" >&2
     exit 1

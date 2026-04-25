@@ -76,10 +76,15 @@ main() {
   watcher_file="$(mktemp "$exec_dir/watchers/watcher.XXXXXX")"
   local pane
   pane="$(current_pane)"
-  write_field "$watcher_file" "$pane"
+  event_fifo="${watcher_file}.fifo"
+  mkfifo "$event_fifo"
+  exec 9<>"$event_fifo"
+  write_field "$watcher_file" "${pane}|${event_fifo}"
 
   cleanup_watcher() {
+    exec 9>&- 9<&- || true
     [[ -n "${watcher_file:-}" ]] && rm -f "$watcher_file"
+    [[ -n "${event_fifo:-}" ]] && rm -f "$event_fifo"
   }
   trap cleanup_watcher EXIT INT TERM HUP
 
@@ -88,17 +93,15 @@ main() {
     deadline=$(( $(date +%s) + timeout_sec ))
   fi
 
+  st="$(read_state_field "$exec_dir/state" || true)"
+  if [[ "$st" == "exited" ]]; then
+    exit 0
+  fi
+
   while true; do
     st="$(read_state_field "$exec_dir/state" || true)"
     if [[ "$st" == "exited" ]]; then
       break
-    fi
-    if ! kill -0 "$pid" 2>/dev/null; then
-      sleep 0.05
-      st="$(read_state_field "$exec_dir/state" || true)"
-      if [[ "$st" == "exited" ]]; then
-        break
-      fi
     fi
 
     if [[ "$deadline" -gt 0 ]]; then
@@ -107,9 +110,14 @@ main() {
       if (( now >= deadline )); then
         exit 124
       fi
+      if ! read -r -t "$(( deadline - now ))" _ <&9; then
+        st="$(read_state_field "$exec_dir/state" || true)"
+        [[ "$st" == "exited" ]] && break
+        exit 124
+      fi
+    else
+      read -r _ <&9 || true
     fi
-
-    sleep "$interval"
   done
 
   exit 0

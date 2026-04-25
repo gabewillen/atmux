@@ -33,3 +33,7 @@ for s in "$team_session" "$agent1_session" "$agent2_session"; do
   fi
 done
 
+cleanup_orphans="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/cleanup-orphans"
+if [[ -x "$cleanup_orphans" ]]; then
+  "$cleanup_orphans" >/dev/null 2>&1 || true
+fi

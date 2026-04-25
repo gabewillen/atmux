@@ -271,7 +271,7 @@ pr_watchers_present() {
       rm -f "$watcher_file"
       continue
     fi
-    if [[ -z "$pane" ]] || ! tmux display-message -t "$pane" -p '#{pane_id}' >/dev/null 2>&1; then
+    if [[ -z "$pane" || -z "$(tmux display-message -t "$pane" -p '#{pane_id}' 2>/dev/null || true)" ]]; then
       rm -f "$watcher_file"
       continue
     fi

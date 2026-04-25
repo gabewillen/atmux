@@ -50,12 +50,15 @@ Examples:
 ```sh
 atmux watch --agent worker --idle 20 --timeout 120
 atmux watch --pid 12345 --timeout 60
+atmux watch --path 'src/**/*.sh' --timeout 60
 atmux watch --issues owner/repo --timeout 600
 atmux watch --pr https://github.com/owner/repo/pull/123 --timeout 600
 atmux watch --target %1 --text "ready" --timeout 30
 ```
 
 `watch --issues` is long-lived: it keeps notifying on newly created GitHub issues until stopped. Its registration output includes `watcher_id="..."` for use with `atmux kill --watcher <id>`.
+
+`watch --path` exits when a filesystem glob's matched set or file metadata changes. It uses `fswatch` or `inotifywait` when available, otherwise it falls back to polling.
 
 `watch --pr` is long-lived: it keeps notifying on new discussion until stopped or the PR closes/merges. Its registration output includes `watcher_id="..."` for use with `atmux kill --watcher <id>`.
 

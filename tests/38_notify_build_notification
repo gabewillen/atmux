@@ -43,4 +43,12 @@ if ! printf '%s' "$out4" | grep -Fq 'id="abc123"'; then
   echo "missing id attribute" >&2; exit 1
 fi
 
+# Test text payload is emitted as escaped element content, not as an attribute.
+out5="$(ATMUX_HOME="${TMPDIR:-/tmp}" "$NOTIFY_SCRIPT" build "scheduled" "sender" "" "text=hello <there> & goodbye")"
+expected5='<notification type="scheduled" from="sender">hello &lt;there&gt; &amp; goodbye</notification>'
+[[ "$out5" == "$expected5" ]] || { echo "text notification mismatch" >&2; echo "got:      $out5" >&2; echo "expected: $expected5" >&2; exit 1; }
+if printf '%s' "$out5" | grep -Fq 'text='; then
+  echo "text should not be emitted as an attribute" >&2; exit 1
+fi
+
 echo "ok: build_notification produces correct XML with escaping"

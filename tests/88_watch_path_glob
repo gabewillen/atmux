@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+ATMUX_BIN="$REPO_ROOT/bin/atmux"
+
+tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/atmux-watch-path.XXXXXX")"
+cleanup() {
+  rm -rf "$tmp_dir"
+}
+trap cleanup EXIT
+
+mkdir -p "$tmp_dir/src"
+
+(
+  sleep 1
+  printf 'changed\n' > "$tmp_dir/src/created.txt"
+) &
+writer_pid=$!
+
+set +e
+watch_out="$(
+  ATMUX_ALLOW_OUTSIDE_TMUX=1 "$ATMUX_BIN" watch --path "$tmp_dir/src/*.txt" --timeout 10 --interval 0.1
+)"
+rc=$?
+set -e
+
+wait "$writer_pid"
+
+[[ "$rc" -eq 0 ]] || { echo "expected watch --path to exit 0, got $rc" >&2; exit 1; }
+printf '%s\n' "$watch_out" | grep -Fq '<watch type="path"'
+printf '%s\n' "$watch_out" | grep -Fq 'changed="true"'
+
+set +e
+ATMUX_ALLOW_OUTSIDE_TMUX=1 "$ATMUX_BIN" watch --path "$tmp_dir/src/*.missing" --timeout 1 --interval 0.1 >/dev/null
+timeout_rc=$?
+set -e
+
+[[ "$timeout_rc" -eq 124 ]] || { echo "expected watch --path timeout 124, got $timeout_rc" >&2; exit 1; }
+
+echo "ok: watch --path detects glob changes and times out"

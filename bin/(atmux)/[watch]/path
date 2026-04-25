@@ -1,0 +1,367 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<'USAGE'
+Usage:
+  atmux watch --path <glob> [--timeout <seconds>] [--interval <seconds>]
+
+Description:
+  Watch filesystem paths matching a glob and exit 0 when the matched set or
+  file metadata changes. Uses fswatch or inotifywait when available and falls
+  back to polling. Exits 124 on timeout.
+
+Examples:
+  atmux watch --path 'src/**/*.sh'
+  atmux watch --path '/tmp/build/*.log' --timeout 60
+USAGE
+}
+
+xml_escape() {
+  printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g' -e "s/'/\&apos;/g"
+}
+
+has_glob_chars() {
+  case "$1" in
+    *'*'*|*'?'*|*'['*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+static_prefix() {
+  local pattern="$1"
+  local i char prefix=""
+
+  for ((i=0; i<${#pattern}; i++)); do
+    char="${pattern:i:1}"
+    case "$char" in
+      '*'|'?'|'[') break ;;
+      *) prefix+="$char" ;;
+    esac
+  done
+
+  printf '%s\n' "$prefix"
+}
+
+find_root_for_pattern() {
+  local pattern="$1"
+  local prefix root
+
+  if ! has_glob_chars "$pattern"; then
+    if [[ -d "$pattern" ]]; then
+      printf '%s\n' "$pattern"
+    else
+      dirname -- "$pattern"
+    fi
+    return 0
+  fi
+
+  prefix="$(static_prefix "$pattern")"
+  if [[ "$prefix" == */* ]]; then
+    root="${prefix%/*}"
+    [[ -n "$root" ]] || root="/"
+  else
+    root="."
+  fi
+
+  printf '%s\n' "$root"
+}
+
+nearest_existing_dir() {
+  local path="$1"
+
+  while [[ -n "$path" && "$path" != "." && "$path" != "/" ]]; do
+    if [[ -d "$path" ]]; then
+      printf '%s\n' "$path"
+      return 0
+    fi
+    path="$(dirname -- "$path")"
+  done
+
+  if [[ "$path" == "/" ]]; then
+    printf '/\n'
+  else
+    printf '.\n'
+  fi
+}
+
+watch_roots() {
+  local pattern root
+
+  for pattern in "$@"; do
+    root="$(find_root_for_pattern "$pattern")"
+    nearest_existing_dir "$root"
+  done | sort -u
+}
+
+stat_entry() {
+  local path="$1"
+  local kind mtime size
+
+  if [[ -d "$path" ]]; then
+    kind="dir"
+  elif [[ -L "$path" ]]; then
+    kind="link"
+  elif [[ -f "$path" ]]; then
+    kind="file"
+  else
+    kind="other"
+  fi
+
+  if stat -c '%Y %s' "$path" >/dev/null 2>&1; then
+    read -r mtime size < <(stat -c '%Y %s' "$path")
+  else
+    read -r mtime size < <(stat -f '%m %z' "$path")
+  fi
+
+  printf '%s\t%s\t%s\t%s\n' "$path" "$kind" "$mtime" "$size"
+}
+
+path_matches() {
+  local pattern="$1"
+  local root="$2"
+  local rel_pattern="$pattern"
+  local dot_pattern="$pattern"
+
+  if ! has_glob_chars "$pattern"; then
+    [[ -e "$pattern" ]] && printf '%s\n' "$pattern"
+    return 0
+  fi
+
+  [[ -d "$root" ]] || return 0
+
+  if [[ "$pattern" != /* && "$pattern" != ./* ]]; then
+    dot_pattern="./$pattern"
+  fi
+
+  find "$root" \( -path "$rel_pattern" -o -path "$dot_pattern" \) -print 2>/dev/null | sort
+}
+
+snapshot_paths() {
+  local pattern
+  local root
+  local path
+
+  for pattern in "$@"; do
+    root="$(find_root_for_pattern "$pattern")"
+    while IFS= read -r path; do
+      [[ -n "$path" ]] || continue
+      [[ -e "$path" || -L "$path" ]] || continue
+      stat_entry "$path"
+    done < <(path_matches "$pattern" "$root")
+  done | sort -u
+}
+
+emit_change() {
+  local backend="$1"
+  shift
+  printf '<watch type="path" path="%s" changed="true" backend="%s" />\n' \
+    "$(xml_escape "$*")" \
+    "$(xml_escape "$backend")"
+}
+
+wait_for_process_exit_or_timeout() {
+  local pid="$1"
+  local deadline="$2"
+  local interval="$3"
+  local now
+
+  while kill -0 "$pid" >/dev/null 2>&1; do
+    if [[ "$deadline" -gt 0 ]]; then
+      now="$(date +%s)"
+      if (( now >= deadline )); then
+        kill "$pid" >/dev/null 2>&1 || true
+        wait "$pid" >/dev/null 2>&1 || true
+        return 124
+      fi
+    fi
+    sleep "$interval"
+  done
+
+  wait "$pid" >/dev/null 2>&1 || true
+  return 0
+}
+
+wait_fswatch_event() {
+  local deadline="$1"
+  local interval="$2"
+  shift 2
+  local roots=("$@")
+  local pid
+
+  fswatch -1 "${roots[@]}" >/dev/null 2>&1 &
+  pid=$!
+  wait_for_process_exit_or_timeout "$pid" "$deadline" "$interval"
+}
+
+wait_inotifywait_event() {
+  local deadline="$1"
+  local interval="$2"
+  shift 2
+  local roots=("$@")
+  local pid
+
+  inotifywait -q -r -e create,modify,delete,move,attrib "${roots[@]}" >/dev/null 2>&1 &
+  pid=$!
+  wait_for_process_exit_or_timeout "$pid" "$deadline" "$interval"
+}
+
+watch_event_backend() {
+  local backend="$1"
+  local before="$2"
+  local deadline="$3"
+  local interval="$4"
+  shift 4
+  local paths=("$@")
+  local roots=()
+  local after rc
+
+  while IFS= read -r root; do
+    [[ -n "$root" ]] || continue
+    roots+=("$root")
+  done < <(watch_roots "${paths[@]}")
+
+  [[ "${#roots[@]}" -gt 0 ]] || return 1
+
+  while true; do
+    case "$backend" in
+      fswatch)
+        set +e
+        wait_fswatch_event "$deadline" "$interval" "${roots[@]}"
+        rc=$?
+        set -e
+        ;;
+      inotifywait)
+        set +e
+        wait_inotifywait_event "$deadline" "$interval" "${roots[@]}"
+        rc=$?
+        set -e
+        ;;
+      *)
+        return 1
+        ;;
+    esac
+
+    [[ "$rc" -ne 124 ]] || return 124
+
+    after="$(snapshot_paths "${paths[@]}")"
+    if [[ "$after" != "$before" ]]; then
+      emit_change "$backend" "${paths[@]}"
+      return 0
+    fi
+  done
+}
+
+watch_poll_backend() {
+  local before="$1"
+  local deadline="$2"
+  local interval="$3"
+  shift 3
+  local paths=("$@")
+  local after now
+
+  while true; do
+    after="$(snapshot_paths "${paths[@]}")"
+    if [[ "$after" != "$before" ]]; then
+      emit_change "poll" "${paths[@]}"
+      exit 0
+    fi
+
+    if [[ "$deadline" -gt 0 ]]; then
+      now="$(date +%s)"
+      if (( now >= deadline )); then
+        exit 124
+      fi
+    fi
+
+    sleep "$interval"
+  done
+}
+
+select_backend() {
+  local requested="${ATMUX_WATCH_PATH_BACKEND:-auto}"
+
+  case "$requested" in
+    auto|"")
+      if command -v fswatch >/dev/null 2>&1; then
+        printf '%s\n' fswatch
+      elif command -v inotifywait >/dev/null 2>&1; then
+        printf '%s\n' inotifywait
+      else
+        printf '%s\n' poll
+      fi
+      ;;
+    fswatch|inotifywait)
+      if ! command -v "$requested" >/dev/null 2>&1; then
+        echo "requested watch backend not found: $requested" >&2
+        exit 2
+      fi
+      printf '%s\n' "$requested"
+      ;;
+    poll)
+      printf '%s\n' "$requested"
+      ;;
+    *)
+      echo "invalid ATMUX_WATCH_PATH_BACKEND: $requested" >&2
+      exit 2
+      ;;
+  esac
+}
+
+main() {
+  local timeout_sec="0"
+  local interval="0.2"
+  local paths=()
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --path)
+        paths+=("${2:-}")
+        shift 2
+        ;;
+      --timeout)
+        timeout_sec="${2:-}"
+        shift 2
+        ;;
+      --interval)
+        interval="${2:-}"
+        shift 2
+        ;;
+      -h|--help|help)
+        usage
+        exit 0
+        ;;
+      *)
+        echo "unknown flag: $1" >&2
+        usage >&2
+        exit 2
+        ;;
+    esac
+  done
+
+  [[ "${#paths[@]}" -gt 0 ]] || { echo "missing --path" >&2; exit 2; }
+
+  local before deadline=0 backend rc
+  before="$(snapshot_paths "${paths[@]}")"
+
+  if [[ -n "$timeout_sec" && "$timeout_sec" != "0" ]]; then
+    deadline=$(( $(date +%s) + timeout_sec ))
+  fi
+
+  backend="$(select_backend)"
+  case "$backend" in
+    fswatch|inotifywait)
+      set +e
+      watch_event_backend "$backend" "$before" "$deadline" "$interval" "${paths[@]}"
+      rc=$?
+      set -e
+      [[ "$rc" -eq 1 ]] || exit "$rc"
+      watch_poll_backend "$before" "$deadline" "$interval" "${paths[@]}"
+      ;;
+    poll)
+      watch_poll_backend "$before" "$deadline" "$interval" "${paths[@]}"
+      ;;
+  esac
+}
+
+main "$@"

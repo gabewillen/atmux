@@ -872,26 +872,42 @@ send_notification() {
 
 # Unified notification builder.
 # Usage: build_notification <type> <from> <cmd> [key=value ...]
-# Output: <notification type="..." from="..." cmd="..." key="value" ... />
+# Output: <notification type="..." from="..." cmd="..." key="value" ...>text</notification>
 build_notification() {
   local type="$1" from="$2" cmd="$3"
   shift 3
   local attrs=""
+  local body=""
+  local has_body=0
   local kv k v
   for kv in "$@"; do
     k="${kv%%=*}"
     v="${kv#*=}"
+    if [[ "$k" == "text" ]]; then
+      body="$v"
+      has_body=1
+      continue
+    fi
     attrs+=" ${k}=\"$(xml_escape "$v")\""
   done
   local cmd_attr=""
   if [[ -n "$cmd" ]]; then
     cmd_attr=" cmd=\"$(xml_escape "$cmd")\""
   fi
-  printf '<notification type="%s" from="%s"%s%s />' \
-    "$(xml_escape "$type")" \
-    "$(xml_escape "$from")" \
-    "$cmd_attr" \
-    "$attrs"
+  if [[ "$has_body" -eq 1 ]]; then
+    printf '<notification type="%s" from="%s"%s%s>%s</notification>' \
+      "$(xml_escape "$type")" \
+      "$(xml_escape "$from")" \
+      "$cmd_attr" \
+      "$attrs" \
+      "$(xml_escape "$body")"
+  else
+    printf '<notification type="%s" from="%s"%s%s />' \
+      "$(xml_escape "$type")" \
+      "$(xml_escape "$from")" \
+      "$cmd_attr" \
+      "$attrs"
+  fi
 }
 
 get_session_env() {

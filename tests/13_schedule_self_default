@@ -40,7 +40,7 @@ if ! wait_for_text "$sender_pane" 'type="scheduled"' 15; then
   tmux capture-pane -p -t "$sender_pane" -S -120 >&2 || true
   exit 1
 fi
-if ! wait_for_text "$sender_pane" 'text="ping"' 15; then
+if ! wait_for_text "$sender_pane" '>ping</notification>' 15; then
   echo "scheduled self-notification text not found in sender pane" >&2
   tmux capture-pane -p -t "$sender_pane" -S -120 >&2 || true
   exit 1

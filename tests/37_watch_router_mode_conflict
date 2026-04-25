@@ -47,6 +47,13 @@ rc6=$?
 set -e
 [[ "$rc6" -eq 2 ]] || { echo "expected exit 2 for --issues + --agent, got $rc6" >&2; exit 1; }
 
+# Combining --path and --agent should fail
+set +e
+ATMUX_REPO="test" ATMUX_ALLOW_OUTSIDE_TMUX=1 "$ATMUX_BIN" watch --path '*.txt' --agent foo >/dev/null 2>&1
+rc_path=$?
+set -e
+[[ "$rc_path" -eq 2 ]] || { echo "expected exit 2 for --path + --agent, got $rc_path" >&2; exit 1; }
+
 # No arguments at all
 set +e
 ATMUX_REPO="test" ATMUX_ALLOW_OUTSIDE_TMUX=1 "$ATMUX_BIN" watch >/dev/null 2>&1

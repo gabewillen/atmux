@@ -187,6 +187,7 @@ Wait for a condition: process exit, pane text, output changes, issue updates, ne
 ```sh
 atmux watch --pid <pid> [--timeout <seconds>]
 atmux watch --pid <pid> --stdio [--duration <seconds>] [--timeout <seconds>]
+atmux watch --path <glob> [--timeout <seconds>] [--interval <seconds>]
 atmux watch --target <tmux-target> --text <needle> [--scope pane|window|session]
 atmux watch --issue <id> [--timeout <seconds>]
 atmux watch --issues <repo|url> [--timeout <seconds>] [--interval <seconds>]
@@ -196,6 +197,8 @@ atmux watch --agent <name> [--idle <seconds>] [--timeout <seconds>]
 
 `watch --issues` keeps notifying on newly created GitHub issues in a repository until you stop it.
 Its registration output includes `watcher_id="..."`, which you can remove with `atmux kill --watcher <id>`.
+
+`watch --path` watches paths matching a glob and exits when the matched set or file metadata changes. It uses `fswatch` or `inotifywait` when available, otherwise it falls back to polling.
 
 `watch --pr` keeps running and notifies on new PR discussion until you stop it or the PR closes/merges.
 Its registration output includes `watcher_id="..."`, which you can remove with `atmux kill --watcher <id>`.

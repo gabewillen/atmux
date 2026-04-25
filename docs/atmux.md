@@ -95,6 +95,7 @@ Current built-in mapping:
 
 ### `atmux watch`
 - Wait until text appears, a tracked process exits, an issue updates, new GitHub issues appear, a PR discussion updates, or an agent goes idle.
+- `atmux watch --path <glob>` watches filesystem paths matching a glob and exits when the matched set or file metadata changes. It uses `fswatch` or `inotifywait` when available, otherwise it falls back to polling.
 - `atmux watch --issues <repo|url>` polls a GitHub repository for newly created issues and queues notifications to the current pane until the watcher is stopped.
 - `watch --issues` registration output includes a `watcher_id`, which can be removed via `atmux kill --watcher <id>`.
 - `atmux watch --pr <url>` polls GitHub PR comments/reviews and queues notifications to the current pane until the PR closes/merges or the watcher is stopped.

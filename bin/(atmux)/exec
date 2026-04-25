@@ -226,6 +226,9 @@ exec_detached() {
   local argv_file
   argv_file="$(mktemp "${ATMUX_HOME}/tmp/argv.XXXXXX")"
   printf '%s\0' "${cmd[@]}" > "$argv_file"
+  local pid_fifo="$argv_file.pid"
+  mkfifo "$pid_fifo"
+  exec 8<>"$pid_fifo"
 
   # Pre-create exec_dir with a temp key; _run will update with real PID
   local detach_id="detach-$$-$RANDOM"
@@ -240,7 +243,7 @@ exec_detached() {
 #!/usr/bin/env bash
 export ATMUX_HOME='${ATMUX_HOME}'
 export ATMUX_EXEC_SUPPRESS_NOTIFY='${ATMUX_EXEC_SUPPRESS_NOTIFY:-}'
-exec '${self}' _run '${argv_file}' '${notify_pane}' '${repo_name}' '${exec_dir}'
+exec '${self}' _run '${argv_file}' '${notify_pane}' '${repo_name}' '${exec_dir}' '${pid_fifo}'
 RUNNER
   chmod +x "$runner"
 
@@ -253,17 +256,15 @@ RUNNER
   # Wait for _run to write its real PID
   local real_pid="" deadline
   deadline=$(( $(date +%s) + 5 ))
-  while true; do
+  if ! read -r -t 5 real_pid <&8; then
     real_pid="$(tr -d '\r\n' < "$exec_dir/pid" 2>/dev/null || true)"
-    if [[ -n "$real_pid" && "$real_pid" != "$detach_id" ]]; then
-      break
-    fi
-    if (( $(date +%s) >= deadline )); then
-      echo "timeout waiting for detached process PID" >&2
-      exit 1
-    fi
-    sleep 0.05
-  done
+  fi
+  exec 8>&- 8<&- || true
+  rm -f "$pid_fifo"
+  if [[ -z "$real_pid" || "$real_pid" == "$detach_id" ]]; then
+    echo "timeout waiting for detached process PID" >&2
+    exit 1
+  fi
 
   # Symlink from real PID so watch --pid <real_pid> resolves
   local real_dir
@@ -276,15 +277,19 @@ RUNNER
 }
 
 # Runs inside the detached tmux window.
-# Invoked as: exec _run <argv_file> <notify_pane> <repo_name> <exec_dir>
+# Invoked as: exec _run <argv_file> <notify_pane> <repo_name> <exec_dir> [pid_fifo]
 _run_detached() {
   local argv_file="$1"
   local notify_pane="$2"
   local repo_name="$3"
   exec_dir="$4"
+  local pid_fifo="${5:-}"
 
   # Write our real PID (parent polls for this)
   write_field "$exec_dir/pid" "$$"
+  if [[ -n "$pid_fifo" && -p "$pid_fifo" ]]; then
+    printf '%s\n' "$$" > "$pid_fifo" 2>/dev/null || true
+  fi
 
   # Read command from null-delimited argv file
   local -a run_cmd=()

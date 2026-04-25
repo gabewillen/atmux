@@ -22,3 +22,12 @@ ps -axo pid=,command= | awk '
     kill "$pid" >/dev/null 2>&1 || true
   fi
 done
+
+ps -axo pid=,command= | awk '
+  index($0, "pane-stream.") || index($0, "output.fifo") {
+    print $1
+  }
+' | while read -r pid; do
+  [[ -n "$pid" ]] || continue
+  kill "$pid" >/dev/null 2>&1 || true
+done

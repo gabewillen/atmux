@@ -1,0 +1,218 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ATMUX_HOME="${ATMUX_HOME:-$HOME/.atmux}"
+
+HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=bin/(atmux)/notify
+source "$HERE/../notify"
+
+usage() {
+  cat <<'USAGE'
+Usage:
+  atmux watch --pr <id|atmux-uri> [--repo <repo>] [--timeout <seconds>] [--interval <seconds>]
+  atmux watch --pull-request <id> [--repo <repo>] [--timeout <seconds>] [--interval <seconds>]
+
+Description:
+  Wait for the next update to an atmux filesystem pull request
+  (~/.atmux/pull-requests/<repo>/<id>/).
+  Registers this pane to receive the same notification XML as pull request
+  assign/claim/comment fan-out.
+
+Examples:
+  atmux watch --pr AbCdEfGhIjKlMnOp --repo myrepo
+  atmux watch --pr atmux://pull-request/myrepo/AbCdEfGhIjKlMnOp --timeout 120
+USAGE
+}
+
+read_field_trim() {
+  local file="$1"
+  if [[ ! -f "$file" ]]; then
+    printf ''
+    return 0
+  fi
+  tr -d '\r\n' <"$file" 2>/dev/null || printf ''
+}
+
+resolve_pr_repo() {
+  local explicit_repo="${1:-}"
+  local repo=""
+
+  if [[ -n "$explicit_repo" ]]; then
+    repo="$explicit_repo"
+  elif [[ -n "${ATMUX_REPO:-}" ]]; then
+    repo="${ATMUX_REPO}"
+  elif [[ -n "${TMUX:-}" ]]; then
+    repo="$(tmux show-environment ATMUX_REPO 2>/dev/null | sed -n 's/^ATMUX_REPO=//p' || true)"
+  fi
+
+  if [[ -z "$repo" ]]; then
+    local repo_root=""
+    repo_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+    if [[ -n "$repo_root" ]]; then
+      repo="$(basename "$repo_root")"
+    fi
+  fi
+
+  if [[ -z "$repo" ]]; then
+    echo "atmux watch --pull-request: unable to resolve repo; pass --repo <repo>" >&2
+    exit 2
+  fi
+
+  normalize_name "$repo"
+}
+
+parse_local_pr_ref() {
+  local ref="$1"
+  local explicit_repo="$2"
+  local uri_repo="" uri_id="" rest=""
+
+  case "$ref" in
+    atmux://pull-request/*)
+      rest="${ref#atmux://pull-request/}"
+      [[ "$rest" == */* ]] || { echo "atmux watch --pr: invalid local PR URI: $ref" >&2; exit 2; }
+      uri_repo="${rest%%/*}"
+      uri_id="${rest#*/}"
+      ;;
+    atmux://pr/*)
+      rest="${ref#atmux://pr/}"
+      [[ "$rest" == */* ]] || { echo "atmux watch --pr: invalid local PR URI: $ref" >&2; exit 2; }
+      uri_repo="${rest%%/*}"
+      uri_id="${rest#*/}"
+      ;;
+    *)
+      uri_id="$ref"
+      ;;
+  esac
+
+  if [[ -n "$uri_repo" ]]; then
+    [[ -n "$uri_id" && "$uri_id" != */* ]] || { echo "atmux watch --pr: invalid local PR URI: $ref" >&2; exit 2; }
+    uri_repo="$(normalize_name "$uri_repo")"
+    if [[ -n "$explicit_repo" && "$(normalize_name "$explicit_repo")" != "$uri_repo" ]]; then
+      echo "atmux watch --pr: URI repo '$uri_repo' does not match --repo '$(normalize_name "$explicit_repo")'" >&2
+      exit 2
+    fi
+    printf '%s\n%s\n' "$uri_repo" "$uri_id"
+    return 0
+  fi
+
+  printf '\n%s\n' "$uri_id"
+}
+
+main() {
+  local pr_id=""
+  local explicit_repo=""
+  local timeout_sec="0"
+  local interval="0.2"
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --pr|--pull-request)
+        pr_id="${2:-}"
+        shift 2
+        ;;
+      --repo)
+        explicit_repo="${2:-}"
+        shift 2
+        ;;
+      --timeout)
+        timeout_sec="${2:-}"
+        shift 2
+        ;;
+      --interval)
+        interval="${2:-}"
+        shift 2
+        ;;
+      -h|--help|help)
+        usage
+        exit 0
+        ;;
+      *)
+        echo "unknown flag: $1" >&2
+        usage >&2
+        exit 2
+        ;;
+    esac
+  done
+
+  [[ -n "$pr_id" ]] || { echo "missing --pr" >&2; exit 2; }
+
+  local repo root pr_dir snapshot event_fifo watcher_file parsed_repo parsed_id
+  {
+    IFS= read -r parsed_repo
+    IFS= read -r parsed_id
+  } < <(parse_local_pr_ref "$pr_id" "$explicit_repo")
+  pr_id="$parsed_id"
+  if [[ -n "$parsed_repo" ]]; then
+    repo="$parsed_repo"
+  else
+    repo="$(resolve_pr_repo "$explicit_repo")"
+  fi
+  root="$(pull_request_root_for_repo "$repo")"
+  pr_dir="$(pull_request_dir_for_id "$root" "$pr_id")"
+
+  if [[ ! -d "$pr_dir" ]]; then
+    echo "atmux watch --pr: pull request not found: $pr_id" >&2
+    exit 2
+  fi
+
+  pr_snapshot() {
+    printf '%s|%s|%s|%s|%s|%s\n' \
+      "$(read_field_trim "$pr_dir/state")" \
+      "$(read_field_trim "$pr_dir/updated_at")" \
+      "$(read_field_trim "$pr_dir/assigned_to")" \
+      "$(read_field_trim "$pr_dir/claimed_by")" \
+      "$(read_field_trim "$pr_dir/source")" \
+      "$(read_field_trim "$pr_dir/target")"
+  }
+  snapshot="$(pr_snapshot)"
+
+  mkdir -p "$pr_dir/watchers"
+  watcher_file="$(mktemp "$pr_dir/watchers/watcher.XXXXXX")"
+  event_fifo="${watcher_file}.fifo"
+  mkfifo "$event_fifo"
+  exec 9<>"$event_fifo"
+  write_field "$watcher_file" "$(current_pane)|${event_fifo}"
+
+  cleanup_watcher() {
+    exec 9>&- 9<&- || true
+    [[ -n "${watcher_file:-}" ]] && rm -f "$watcher_file"
+    [[ -n "${event_fifo:-}" ]] && rm -f "$event_fifo"
+  }
+  trap cleanup_watcher EXIT INT TERM HUP
+
+  local deadline=0
+  if [[ -n "$timeout_sec" && "$timeout_sec" != "0" ]]; then
+    deadline=$(( $(date +%s) + timeout_sec ))
+  fi
+
+  if [[ "$(pr_snapshot)" != "$snapshot" ]]; then
+    exit 0
+  fi
+
+  while true; do
+    if [[ "$(pr_snapshot)" != "$snapshot" ]]; then
+      break
+    fi
+
+    if [[ "$deadline" -gt 0 ]]; then
+      local now
+      now="$(date +%s)"
+      if (( now >= deadline )); then
+        exit 124
+      fi
+      if ! read -r -t "$(( deadline - now ))" _ <&9; then
+        if [[ "$(pr_snapshot)" != "$snapshot" ]]; then
+          break
+        fi
+        exit 124
+      fi
+    else
+      read -r _ <&9 || true
+    fi
+  done
+
+  exit 0
+}
+
+main "$@"

@@ -260,6 +260,11 @@ watch_poll_backend() {
   local paths=("$@")
   local after now
 
+  if [[ "${ATMUX_WATCH_PATH_POLL_WARNED:-0}" != "1" ]]; then
+    echo "atmux watch --path: using polling fallback; install fswatch or inotifywait for event-driven watching" >&2
+    export ATMUX_WATCH_PATH_POLL_WARNED=1
+  fi
+
   while true; do
     after="$(snapshot_paths "${paths[@]}")"
     if [[ "$after" != "$before" ]]; then
@@ -310,7 +315,7 @@ select_backend() {
 
 main() {
   local timeout_sec="0"
-  local interval="0.2"
+  local interval="2"
   local paths=()
 
   while [[ $# -gt 0 ]]; do

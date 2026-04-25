@@ -111,6 +111,20 @@ read_trimmed_file() {
   tr -d '\r\n' < "$file" 2>/dev/null || true
 }
 
+adaptive_poll_sleep() {
+  local interval="$1" failures="${2:-0}" max="${ATMUX_GITHUB_WATCH_MAX_INTERVAL:-300}"
+  awk -v base="$interval" -v failures="$failures" -v max="$max" 'BEGIN {
+    delay = base + 0
+    for (i = 0; i < failures; i++) delay *= 2
+    if (delay > max) delay = max
+    if (delay >= 1) {
+      srand()
+      delay += rand()
+    }
+    printf "%.3f\n", delay
+  }'
+}
+
 watcher_deadline_from_file() {
   local file="$1" raw=""
   raw="$(read_trimmed_file "$file")"
@@ -336,7 +350,7 @@ serve_issues_watch() {
   watchers_dir="$(issues_watch_watchers_dir "$key")"
   mkdir -p "$watchers_dir"
 
-  local snapshot="" baseline_snapshot="" baseline_initialized=0 poll_data="" latest_line=""
+  local snapshot="" baseline_snapshot="" baseline_initialized=0 poll_data="" latest_line="" failure_count=0
   snapshot="$(read_trimmed_file "$snapshot_file")"
 
   while true; do
@@ -345,9 +359,11 @@ serve_issues_watch() {
     fi
 
     if ! poll_data="$(fetch_issues_poll_data "$gh_bin" "$owner" "$repo")"; then
-      sleep "$interval"
+      failure_count=$((failure_count + 1))
+      sleep "$(adaptive_poll_sleep "$interval" "$failure_count")"
       continue
     fi
+    failure_count=0
 
     snapshot="$(printf '%s\n' "$poll_data" | awk 'NF')"
     printf '%s\n' "$snapshot" > "$snapshot_file"
@@ -362,7 +378,7 @@ serve_issues_watch() {
       baseline_snapshot="$snapshot"
     fi
 
-    sleep "$interval"
+    sleep "$(adaptive_poll_sleep "$interval" 0)"
   done
 
   if [[ -d "$watchers_dir" ]]; then

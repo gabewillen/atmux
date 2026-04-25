@@ -11,7 +11,7 @@ usage() {
 Usage:
   atmux session list
   atmux session ls
-  atmux session start [--name <name>] [--adapter <adapter>] [-- <adapter-args...>]
+  atmux session start [--name <name>] [--adapter <adapter>] [--adapters <list>] [-- <adapter-args...>]
   atmux session attach <name|session>
 
 Description:
@@ -24,6 +24,7 @@ Examples:
   atmux session list
   atmux session start
   atmux session start --name planner
+  atmux session start --adapters codex,gemini
   atmux session attach planner
   atmux session start --adapter claude-code -- --dangerously-skip-permissions
 USAGE
@@ -133,7 +134,7 @@ bootstrap_unlock_worker() {
   local session="$1"
   local interval timeout start_ts now state elapsed
 
-  interval="${ATMUX_BOOTSTRAP_UNLOCK_INTERVAL_SECONDS:-0.2}"
+  interval="${ATMUX_BOOTSTRAP_UNLOCK_INTERVAL_SECONDS:-1}"
   timeout="${ATMUX_BOOTSTRAP_UNLOCK_TIMEOUT_SECONDS:-120}"
   start_ts="$(date +%s)"
 
@@ -374,15 +375,71 @@ resolve_auto_candidates() {
   ATMUX_HOME="$ATMUX_HOME" ATMUX_SOURCE_ROOT="${ATMUX_SOURCE_ROOT:-${ATMUX_HOME}/src/atmux}" "$auto_cmd" select --all 2>/dev/null
 }
 
+split_adapter_list() {
+  local list="$1"
+  printf '%s\n' "$list" | tr ',' '\n' | awk '
+    {
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", $0)
+      if ($0 != "") print
+    }
+  '
+}
+
+adapter_name_valid() {
+  local adapter="$1"
+  [[ "$adapter" =~ ^[A-Za-z0-9_.-]+$ ]]
+}
+
+resolve_real_tmux_bin() {
+  local candidate=""
+
+  if [[ -n "${ATMUX_REAL_TMUX:-}" && -x "$ATMUX_REAL_TMUX" ]]; then
+    printf '%s\n' "$ATMUX_REAL_TMUX"
+    return 0
+  fi
+
+  for candidate in /opt/homebrew/bin/tmux /usr/local/bin/tmux /usr/bin/tmux /bin/tmux; do
+    if [[ -x "$candidate" ]]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+
+  candidate="$(command -v tmux 2>/dev/null || true)"
+  if [[ -n "$candidate" && -x "$candidate" && "$candidate" != "${ATMUX_SOURCE_ROOT:-}/bin/tmux" ]]; then
+    printf '%s\n' "$candidate"
+    return 0
+  fi
+
+  return 1
+}
+
+adapter_in_list() {
+  local needle="$1"
+  shift || true
+  local item
+  for item in "$@"; do
+    [[ "$item" == "$needle" ]] && return 0
+  done
+  return 1
+}
+
 run_adapter() {
   local adapter="codex"
   local requested_adapter=""
+  local adapters_list="${ATMUX_ADAPTERS_ALLOWED:-}"
   local -a adapter_args=()
+  local -a allowed_adapters=()
+  local real_tmux=""
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --adapter)
         adapter="${2:-}"
+        shift 2
+        ;;
+      --adapters)
+        adapters_list="${2:-}"
         shift 2
         ;;
       --)
@@ -397,8 +454,37 @@ run_adapter() {
     esac
   done
 
+  if [[ -n "$adapters_list" ]]; then
+    local allowed_adapter
+    while IFS= read -r allowed_adapter; do
+      [[ -n "$allowed_adapter" ]] || continue
+      if ! adapter_name_valid "$allowed_adapter"; then
+        echo "invalid adapter name in --adapters: $allowed_adapter" >&2
+        exit 2
+      fi
+      allowed_adapters+=("$allowed_adapter")
+    done < <(split_adapter_list "$adapters_list")
+    if ((${#allowed_adapters[@]} == 0)); then
+      echo "--adapters requires at least one adapter" >&2
+      exit 2
+    fi
+  fi
+
   requested_adapter="$adapter"
+  if [[ "$requested_adapter" != "auto" && ${#allowed_adapters[@]} -gt 0 ]]; then
+    if ! adapter_in_list "$requested_adapter" "${allowed_adapters[@]}"; then
+      echo "adapter not allowed by --adapters: $requested_adapter" >&2
+      exit 2
+    fi
+  fi
+
   export ATMUX_ADAPTER_REQUESTED="$requested_adapter"
+  export ATMUX_ADAPTERS_ALLOWED="$adapters_list"
+  real_tmux="$(resolve_real_tmux_bin || true)"
+  if [[ -n "$real_tmux" ]]; then
+    export ATMUX_REAL_TMUX="$real_tmux"
+  fi
+  export ATMUX_ALLOW_REAL_TMUX=1
 
   # Ensure source-root atmux commands win over stale worktree copies.
   if [[ -z "${ATMUX_SOURCE_ROOT:-}" ]]; then
@@ -409,14 +495,13 @@ run_adapter() {
     fi
     export ATMUX_SOURCE_ROOT
   fi
+  # Non-login tmux panes often lack user-local PATH (Cursor CLI, Homebrew, etc.).
+  export PATH="${HOME}/.local/bin:${HOME}/.cursor/bin:/opt/homebrew/bin:/usr/local/bin:${PATH}"
   if [[ -d "$ATMUX_SOURCE_ROOT/bin" ]]; then
     export PATH="$ATMUX_SOURCE_ROOT/bin:$(pwd)/bin:$PATH"
   else
     export PATH="$(pwd)/bin:$PATH"
   fi
-
-  # Non-login tmux panes often lack user-local PATH (Cursor CLI, Homebrew, etc.).
-  export PATH="${HOME}/.local/bin:${HOME}/.cursor/bin:/opt/homebrew/bin:/usr/local/bin:${PATH}"
 
   # tmux session env is authoritative; current shell env may be stale/missing.
   local current_session=""
@@ -434,10 +519,14 @@ run_adapter() {
 
   local -a candidates=()
   if [[ "$requested_adapter" == "auto" ]]; then
-    while IFS= read -r line; do
-      [[ -z "$line" ]] && continue
-      candidates+=("$line")
-    done < <(resolve_auto_candidates || true)
+    if ((${#allowed_adapters[@]} > 0)); then
+      candidates=("${allowed_adapters[@]}")
+    else
+      while IFS= read -r line; do
+        [[ -z "$line" ]] && continue
+        candidates+=("$line")
+      done < <(resolve_auto_candidates || true)
+    fi
   else
     candidates=("$requested_adapter")
   fi
@@ -468,16 +557,25 @@ run_adapter() {
       tmux set-environment -t "$current_session" ATMUX_ADAPTER "$selected_adapter"
       tmux set-environment -t "$current_session" ATMUX_ADAPTER_REQUESTED "$requested_adapter"
       tmux set-environment -t "$current_session" ATMUX_ADAPTER_SELECTED "$selected_adapter"
+      if [[ -n "$adapters_list" ]]; then
+        tmux set-environment -t "$current_session" ATMUX_ADAPTERS_ALLOWED "$adapters_list"
+      else
+        tmux set-environment -t "$current_session" -u ATMUX_ADAPTERS_ALLOWED >/dev/null 2>&1 || true
+      fi
     fi
 
     inject_control_file "$(pwd)"
 
     rc=0
-    if ((${#adapter_args[@]})); then
-      "$adapter_cmd" start "${adapter_args[@]}" || rc=$?
-    else
-      "$adapter_cmd" start || rc=$?
-    fi
+    (
+      unset ATMUX_ALLOW_REAL_TMUX
+      if ((${#adapter_args[@]})); then
+        "$adapter_cmd" start "${adapter_args[@]}"
+      else
+        "$adapter_cmd" start
+      fi
+    ) || rc=$?
+    export ATMUX_ALLOW_REAL_TMUX=1
 
     if [[ "$rc" -eq 0 ]]; then
       break
@@ -508,10 +606,13 @@ run_adapter() {
 start_session() {
   local name=""
   local adapter="codex"
+  local adapter_explicit=0
+  local adapters_list=""
   local team="${ATMUX_TEAM:-}"
   local intelligence="${ATMUX_INTELLIGENCE:-20}"
   local name_explicit=0
   local no_worktree=0
+  local real_tmux=""
   local -a forward_args=()
 
   while [[ $# -gt 0 ]]; do
@@ -523,6 +624,11 @@ start_session() {
         ;;
       --adapter)
         adapter="${2:-}"
+        adapter_explicit=1
+        shift 2
+        ;;
+      --adapters)
+        adapters_list="${2:-}"
         shift 2
         ;;
       --no-worktree)
@@ -540,6 +646,31 @@ start_session() {
         ;;
     esac
   done
+
+  if [[ -n "$adapters_list" && "$adapter_explicit" -eq 0 ]]; then
+    adapter="auto"
+  fi
+
+  local -a allowed_adapters=()
+  if [[ -n "$adapters_list" ]]; then
+    local allowed_adapter
+    while IFS= read -r allowed_adapter; do
+      [[ -n "$allowed_adapter" ]] || continue
+      if ! adapter_name_valid "$allowed_adapter"; then
+        echo "invalid adapter name in --adapters: $allowed_adapter" >&2
+        exit 2
+      fi
+      allowed_adapters+=("$allowed_adapter")
+    done < <(split_adapter_list "$adapters_list")
+    if ((${#allowed_adapters[@]} == 0)); then
+      echo "--adapters requires at least one adapter" >&2
+      exit 2
+    fi
+    if [[ "$adapter" != "auto" ]] && ! adapter_in_list "$adapter" "${allowed_adapters[@]}"; then
+      echo "adapter not allowed by --adapters: $adapter" >&2
+      exit 2
+    fi
+  fi
 
   local repo_root repo_name
   {
@@ -641,22 +772,27 @@ start_session() {
   fi
 
   local session_id
-  session_id="$(LC_ALL=C tr -dc 'a-z0-9' </dev/urandom | head -c 12 || true)"
-  if [[ -z "$session_id" ]]; then
-    session_id="$(date +%s)-$$"
-  fi
+  session_id="$(id)"
 
   tmux new-session -d -s "$session" -n "$session" -c "$work_dir"
   ensure_tmux_scroll_enabled
   tmux set-environment -t "$session" ATMUX_REPO "$repo_name"
+  tmux set-environment -t "$session" ATMUX_HOME "$ATMUX_HOME"
   tmux set-environment -t "$session" ATMUX_SESSION_ID "$session_id"
   tmux set-environment -t "$session" ATMUX_SESSION_NAME "$session"
   tmux set-environment -t "$session" ATMUX_WORKTREE "$work_dir"
   tmux set-environment -t "$session" ATMUX_SOURCE_ROOT "$source_root"
+  real_tmux="$(resolve_real_tmux_bin || true)"
+  if [[ -n "$real_tmux" ]]; then
+    tmux set-environment -t "$session" ATMUX_REAL_TMUX "$real_tmux"
+  fi
   tmux set-environment -t "$session" ATMUX_AGENT_NAME "$name"
   tmux set-environment -t "$session" ATMUX_ADAPTER "$adapter"
   tmux set-environment -t "$session" ATMUX_ADAPTER_REQUESTED "$adapter"
   tmux set-environment -t "$session" ATMUX_ADAPTER_SELECTED "$adapter"
+  if [[ -n "$adapters_list" ]]; then
+    tmux set-environment -t "$session" ATMUX_ADAPTERS_ALLOWED "$adapters_list"
+  fi
   tmux set-environment -t "$session" ATMUX_INTELLIGENCE "$intelligence"
   if [[ "$adapter" == "codex" || "$adapter" == "auto" ]]; then
     tmux set-environment -t "$session" ATMUX_BOOTSTRAP_STATE pending
@@ -674,6 +810,9 @@ start_session() {
   fi
 
   local -a cmd=("$source_root/bin/(atmux)/session" "_run-adapter" "--adapter" "$adapter")
+  if [[ -n "$adapters_list" ]]; then
+    cmd+=("--adapters" "$adapters_list")
+  fi
   if ((${#forward_args[@]})); then
     cmd+=("--" "${forward_args[@]}")
   fi

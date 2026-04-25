@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+ATMUX_HOME="${ATMUX_HOME:-$HOME/.atmux}"
+
+HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=bin/(atmux)/notify
+source "$HERE/../notify"
+
 usage() {
   cat <<'USAGE'
 Usage:
@@ -31,6 +37,24 @@ capture_scope() {
             tmux capture-pane -p -t "$pane" -S "-$lines" 2>/dev/null || true
             printf '\n'
           done
+      ;;
+    *)
+      echo "invalid scope: $scope" >&2
+      exit 2
+      ;;
+  esac
+}
+
+scope_panes() {
+  local scope="$1"
+  local target="$2"
+
+  case "$scope" in
+    pane)
+      printf '%s\n' "$target"
+      ;;
+    window|session)
+      tmux list-panes -t "$target" -F '#{pane_id}' 2>/dev/null || true
       ;;
     *)
       echo "invalid scope: $scope" >&2
@@ -91,18 +115,80 @@ main() {
   local deadline now
   deadline=$(( $(date +%s) + timeout ))
 
-  while true; do
-    local snap
-    snap="$(capture_scope "$scope" "$target" "$lines")"
-    if printf '%s' "$snap" | grep -Fq "$needle"; then
-      exit 0
-    fi
+  local snap
+  snap="$(capture_scope "$scope" "$target" "$lines")"
+  if printf '%s' "$snap" | grep -Fq "$needle"; then
+    exit 0
+  fi
 
+  mkdir -p "$ATMUX_HOME/tmp"
+  event_fifo="$(mktemp "$ATMUX_HOME/tmp/watch-text.XXXXXX")"
+  rm -f "$event_fifo"
+  mkfifo "$event_fifo"
+  exec 8<>"$event_fifo"
+
+  local -a stream_panes=()
+  local -a stream_dirs=()
+  local -a stream_bridges=()
+  local -a forwarders=()
+
+  cleanup_streams() {
+    local idx
+    exec 8>&- 8<&- || true
+    for idx in "${!forwarders[@]}"; do
+      kill "${forwarders[idx]}" >/dev/null 2>&1 || true
+      wait "${forwarders[idx]}" >/dev/null 2>&1 || true
+    done
+    for idx in "${!stream_dirs[@]}"; do
+      stop_pane_event_stream "${stream_panes[idx]}" "${stream_dirs[idx]}" "${stream_bridges[idx]}"
+    done
+    rm -f "$event_fifo"
+  }
+  trap cleanup_streams EXIT INT TERM HUP
+
+  while IFS= read -r pane; do
+    [[ -n "$pane" ]] || continue
+    local stream_dir="" output_fifo="" pane_event_fifo="" bridge_pid="" stream_rc=0
+    set +e
+    {
+      IFS= read -r stream_dir
+      IFS= read -r output_fifo
+      IFS= read -r pane_event_fifo
+      IFS= read -r bridge_pid
+    } < <(start_pane_event_stream "$pane")
+    stream_rc=$?
+    set -e
+    if [[ "$stream_rc" -ne 0 ]]; then
+      cleanup_streams
+      echo "atmux watch --text: unable to attach event stream to pane $pane" >&2
+      exit 1
+    fi
+    stream_panes+=("$pane")
+    stream_dirs+=("$stream_dir")
+    stream_bridges+=("$bridge_pid")
+    (
+      exec 7<>"$pane_event_fifo"
+      while IFS= read -r _ <&7; do
+        printf 'event\n' > "$event_fifo" 2>/dev/null || exit 0
+      done
+    ) &
+    forwarders+=("$!")
+  done < <(scope_panes "$scope" "$target")
+
+  [[ "${#stream_panes[@]}" -gt 0 ]] || { echo "atmux watch --text: no panes matched target" >&2; exit 1; }
+
+  while true; do
     now="$(date +%s)"
     if (( now >= deadline )); then
       exit 1
     fi
-    sleep "$interval"
+    if ! read -r -t "$(( deadline - now ))" _ <&8; then
+      continue
+    fi
+    snap="$(capture_scope "$scope" "$target" "$lines")"
+    if printf '%s' "$snap" | grep -Fq "$needle"; then
+      exit 0
+    fi
   done
 }
 

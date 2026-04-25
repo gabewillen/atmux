@@ -10,9 +10,10 @@ usage() {
   cat <<'USAGE'
 Usage:
   atmux comment "message" --issue <id> [--repo <repo>]
+  atmux comment "message" --pr <id> [--repo <repo>]
 
 Description:
-  Add a comment to a filesystem issue.
+  Add a comment to a filesystem issue or pull request.
   Notifies watchers, assignee, and assigner.
 USAGE
 }
@@ -70,7 +71,11 @@ notify_agent_by_name() {
 
   [[ -n "$agent_name" ]] || return 0
 
-  local session="atmux-${repo}-${agent_name}"
+  local session=""
+  session="$("$HERE/agent" resolve "$agent_name" "$repo" 2>/dev/null || true)"
+  if [[ -z "$session" ]]; then
+    session="atmux-${repo}-${agent_name}"
+  fi
   local pane
   pane="$(primary_pane_for_session "$session" 2>/dev/null || true)"
   [[ -n "$pane" ]] || return 0
@@ -81,12 +86,17 @@ notify_agent_by_name() {
 
 message=""
 issue_id=""
+pr_id=""
 explicit_repo=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --issue)
       issue_id="${2:-}"
+      shift 2
+      ;;
+    --pr)
+      pr_id="${2:-}"
       shift 2
       ;;
     --repo)
@@ -118,45 +128,76 @@ if [[ -z "$message" ]]; then
   exit 2
 fi
 if [[ -z "$issue_id" ]]; then
-  echo "missing required flag: --issue <id>" >&2
+  if [[ -z "$pr_id" ]]; then
+    echo "missing required flag: --issue <id> or --pr <id>" >&2
+    exit 2
+  fi
+fi
+if [[ -n "$issue_id" && -n "$pr_id" ]]; then
+  echo "cannot combine --issue and --pr" >&2
   exit 2
 fi
 
 repo="$(resolve_repo_name "$explicit_repo")"
-issue_dir="$(issue_root_for_repo "$repo")/$issue_id"
+target_kind="issue"
+target_id="$issue_id"
+target_dir="$(issue_root_for_repo "$repo")/$issue_id"
+notification_type="issue"
+get_command="atmux issue get $issue_id"
+if [[ -n "$pr_id" ]]; then
+  target_kind="pull-request"
+  target_id="$pr_id"
+  target_dir="$(pull_request_root_for_repo "$repo")/$pr_id"
+  notification_type="pull-request"
+  get_command="atmux pr get $pr_id"
+fi
 
-if [[ ! -d "$issue_dir" ]]; then
-  echo "issue not found: $issue_id" >&2
+if [[ ! -d "$target_dir" ]]; then
+  echo "$target_kind not found: $target_id" >&2
   exit 1
 fi
 
 author="$(current_actor_name "$repo")"
 now="$(timestamp_utc)"
-comments_dir="$issue_dir/comments"
+comments_dir="$target_dir/comments"
 mkdir -p "$comments_dir"
 
 # Filename: timestamp + author for uniqueness and sort order
 comment_file="$comments_dir/${now//:/}-${author}"
 write_field "$comment_file" "$message"
-write_field "$issue_dir/updated_at" "$now"
+write_field "$target_dir/updated_at" "$now"
 
-printf '<comment issue_id="%s" repo="%s" author="%s" timestamp="%s">\n' \
-  "$(xml_escape "$issue_id")" \
-  "$(xml_escape "$repo")" \
-  "$(xml_escape "$author")" \
-  "$(xml_escape "$now")"
-printf '  <body>%s</body>\n' "$message"
+if [[ "$target_kind" == "issue" ]]; then
+  printf '<comment issue_id="%s" repo="%s" author="%s" timestamp="%s">\n' \
+    "$(xml_escape "$target_id")" \
+    "$(xml_escape "$repo")" \
+    "$(xml_escape "$author")" \
+    "$(xml_escape "$now")"
+else
+  printf '<comment pr_id="%s" repo="%s" author="%s" timestamp="%s">\n' \
+    "$(xml_escape "$target_id")" \
+    "$(xml_escape "$repo")" \
+    "$(xml_escape "$author")" \
+    "$(xml_escape "$now")"
+fi
+printf '  <body>%s</body>\n' "$(xml_escape "$message")"
 printf '</comment>\n'
 
 # Notify watchers, assignee, and assigner
 actor_pane="$(current_pane)"
-notification_xml="$(build_notification "issue" "comment" "atmux issue get $issue_id" "state=comment")"
+notification_xml="$(build_notification "$notification_type" "comment" "$get_command" "state=comment")"
 
-send_notification "$actor_pane" "$notification_xml"
-notify_issue_watchers "$issue_dir" "$actor_pane" "$notification_xml"
+if [[ -n "$actor_pane" ]]; then
+  send_notification "$actor_pane" "$notification_xml"
+fi
+if [[ "$target_kind" == "issue" ]]; then
+  notify_issue_watchers "$target_dir" "$actor_pane" "$notification_xml"
+else
+  notify_pull_request_watchers "$target_dir" "$actor_pane" "$notification_xml"
+fi
 
-assigned_to="$(cat "$issue_dir/assigned_to" 2>/dev/null || true)"
-assigned_by="$(cat "$issue_dir/assigned_by" 2>/dev/null || true)"
+assigned_to="$(cat "$target_dir/assigned_to" 2>/dev/null || true)"
+assigned_by="$(cat "$target_dir/assigned_by" 2>/dev/null || true)"
 
 notify_agent_by_name "$assigned_to" "$repo" "$actor_pane" "$notification_xml"
 if [[ -n "$assigned_by" && "$assigned_by" != "$assigned_to" && "$assigned_by" != "self-claim" ]]; then

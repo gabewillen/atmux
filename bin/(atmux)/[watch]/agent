@@ -114,31 +114,44 @@ main() {
     exit 1
   fi
 
-  local deadline last_hash last_change_ts
+  local deadline last_change_ts snap recent
   deadline=$(( $(date +%s) + timeout_sec ))
-  last_hash=""
   last_change_ts="$(date +%s)"
 
+  snap="$(tmux capture-pane -p -t "$pane" -S "-$lines" 2>/dev/null | tr -d '\r' || true)"
+  recent="$(printf '%s\n' "$snap" | tail -n 30)"
+  if detect_stuck_prompt "$recent"; then
+    exit 0
+  fi
+
+  local stream_dir="" output_fifo="" event_fifo="" bridge_pid="" stream_rc=0
+  set +e
+  {
+    IFS= read -r stream_dir
+    IFS= read -r output_fifo
+    IFS= read -r event_fifo
+    IFS= read -r bridge_pid
+  } < <(start_pane_event_stream "$pane")
+  stream_rc=$?
+  set -e
+  if [[ "$stream_rc" -ne 0 ]]; then
+    echo "atmux watch --agent: unable to attach event stream to pane $pane" >&2
+    exit 1
+  fi
+  exec 8<>"$event_fifo"
+
+  cleanup_stream() {
+    exec 8>&- 8<&- || true
+    stop_pane_event_stream "$pane" "$stream_dir" "$bridge_pid"
+  }
+  trap cleanup_stream EXIT INT TERM HUP
+
   while true; do
-    local snap hash now
-    snap="$(tmux capture-pane -p -t "$pane" -S "-$lines" 2>/dev/null | tr -d '\r' || true)"
-    hash="$(printf '%s' "$snap" | cksum | awk '{print $1 ":" $2}')"
+    local now idle_for next_deadline wait_for
     now="$(date +%s)"
 
-    if [[ "$hash" != "$last_hash" ]]; then
-      last_hash="$hash"
-      last_change_ts="$now"
-    fi
-
-    local idle_for=$(( now - last_change_ts ))
+    idle_for=$(( now - last_change_ts ))
     if (( idle_for >= idle_seconds )); then
-      exit 0
-    fi
-
-    # Stuck prompt — always checked
-    local recent
-    recent="$(printf '%s\n' "$snap" | tail -n 30)"
-    if detect_stuck_prompt "$recent"; then
       exit 0
     fi
 
@@ -146,7 +159,22 @@ main() {
       exit 124
     fi
 
-    sleep "$interval"
+    next_deadline="$deadline"
+    local idle_deadline=$(( last_change_ts + idle_seconds ))
+    if (( idle_deadline < next_deadline )); then
+      next_deadline="$idle_deadline"
+    fi
+    wait_for=$(( next_deadline - now ))
+    (( wait_for > 0 )) || wait_for=1
+    if ! read -r -t "$wait_for" _ <&8; then
+      continue
+    fi
+    last_change_ts="$(date +%s)"
+    snap="$(tmux capture-pane -p -t "$pane" -S "-$lines" 2>/dev/null | tr -d '\r' || true)"
+    recent="$(printf '%s\n' "$snap" | tail -n 30)"
+    if detect_stuck_prompt "$recent"; then
+      exit 0
+    fi
   done
 }
 

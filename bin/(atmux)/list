@@ -11,6 +11,7 @@ Usage:
   atmux list sessions
   atmux list agents [--all] [--status]
   atmux list issues [--repo <repo>]
+  atmux list prs [--repo <repo>]
   atmux list messages [--unread]
 
 Description:
@@ -33,6 +34,9 @@ case "${sub:-}" in
     ;;
   issues)
     exec "$LIST_ROOT/issues" "$@"
+    ;;
+  prs|pull-requests)
+    exec "$LIST_ROOT/prs" "$@"
     ;;
   messages)
     exec "$HERE/message" list "$@"

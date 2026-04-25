@@ -12,7 +12,7 @@ wait_for_text() {
   local deadline now snap
   deadline=$(( $(date +%s) + timeout ))
   while true; do
-    snap="$(tmux capture-pane -p -t "$target" -S -200 2>/dev/null | tr -d '\r' || true)"
+    snap="$(tmux capture-pane -J -p -t "$target" -S -200 2>/dev/null | tr -d '\r' || true)"
     if printf '%s' "$snap" | grep -Fq "$needle"; then
       return 0
     fi

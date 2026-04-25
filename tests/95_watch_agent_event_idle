@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+ATMUX_BIN="$REPO_ROOT/bin/atmux"
+
+repo_name="wae${RANDOM}"
+session="atmux-${repo_name}-worker"
+rc_file="${TMPDIR:-/tmp}/atmux-watch-agent-event-${RANDOM}.rc"
+
+cleanup() {
+  if [[ -n "${watch_pid:-}" ]] && kill -0 "$watch_pid" >/dev/null 2>&1; then
+    kill "$watch_pid" >/dev/null 2>&1 || true
+    wait "$watch_pid" >/dev/null 2>&1 || true
+  fi
+  tmux kill-session -t "$session" >/dev/null 2>&1 || true
+  rm -f "$rc_file"
+}
+trap cleanup EXIT
+
+tmux kill-session -t "$session" >/dev/null 2>&1 || true
+tmux new-session -d -s "$session" -n "$session" -x 120 -y 30 -c "$REPO_ROOT" "cat"
+tmux set-environment -t "$session" ATMUX_REPO "$repo_name"
+tmux set-environment -t "$session" ATMUX_AGENT_NAME "worker"
+tmux set-environment -t "$session" ATMUX_SESSION_NAME "$session"
+pane="$(tmux list-panes -t "$session" -F '#{pane_id}' 2>/dev/null | head -n1)"
+[[ -n "$pane" ]] || { echo "pane missing" >&2; exit 1; }
+
+(
+  set +e
+  ATMUX_REPO="$repo_name" ATMUX_ALLOW_OUTSIDE_TMUX=1 \
+    "$ATMUX_BIN" watch --agent "$session" --idle 2 --timeout 10 --interval 999
+  printf '%s\n' "$?" > "$rc_file"
+) &
+watch_pid=$!
+
+sleep 1.5
+if ! kill -0 "$watch_pid" >/dev/null 2>&1; then
+  echo "watch --agent exited before pane output event" >&2
+  exit 1
+fi
+
+tmux send-keys -t "$pane" -l "agent-output-${RANDOM}"
+tmux send-keys -t "$pane" Enter
+sleep 1
+if ! kill -0 "$watch_pid" >/dev/null 2>&1; then
+  echo "watch --agent did not reset idle timer from output event" >&2
+  exit 1
+fi
+
+deadline=$(( $(date +%s) + 5 ))
+while kill -0 "$watch_pid" >/dev/null 2>&1; do
+  if (( $(date +%s) >= deadline )); then
+    echo "watch --agent did not exit after event-driven idle window" >&2
+    exit 1
+  fi
+  sleep 0.1
+done
+wait "$watch_pid" || true
+
+watch_rc="$(tr -d '\r\n' < "$rc_file" 2>/dev/null || true)"
+[[ "$watch_rc" == "0" ]] || { echo "expected watch rc 0, got ${watch_rc:-missing}" >&2; exit 1; }
+
+echo "ok: watch --agent resets idle timer from pane output events"

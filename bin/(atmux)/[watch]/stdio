@@ -93,16 +93,35 @@ main() {
     exit 2
   fi
 
-  # Register as a watcher (also receives the exit notification)
+  local my_pane
+  my_pane="$(current_pane)"
+
+  local stream_dir="" output_fifo="" event_fifo="" bridge_pid="" stream_rc=0
+  set +e
+  {
+    IFS= read -r stream_dir
+    IFS= read -r output_fifo
+    IFS= read -r event_fifo
+    IFS= read -r bridge_pid
+  } < <(start_pane_event_stream "$executor_pane")
+  stream_rc=$?
+  set -e
+  if [[ "$stream_rc" -ne 0 ]]; then
+    echo "atmux watch --stdio: unable to attach event stream to pane $executor_pane" >&2
+    exit 1
+  fi
+  exec 8<>"$event_fifo"
+
+  # Register as a watcher (also receives the exit notification).
   mkdir -p "$exec_dir/watchers"
   local watcher_file
   watcher_file="$(mktemp "$exec_dir/watchers/watcher.XXXXXX")"
-  local my_pane
-  my_pane="$(current_pane)"
-  write_field "$watcher_file" "$my_pane"
+  write_field "$watcher_file" "${my_pane}|${event_fifo}"
 
   cleanup_watcher() {
+    exec 8>&- 8<&- || true
     [[ -n "${watcher_file:-}" ]] && rm -f "$watcher_file"
+    stop_pane_event_stream "$executor_pane" "$stream_dir" "$bridge_pid"
   }
   trap cleanup_watcher EXIT INT TERM HUP
 
@@ -118,31 +137,13 @@ main() {
     duration_deadline=0
   fi
 
-  local last_hash="" last_output_ts
+  local last_output_ts
   last_output_ts="$now"
 
   while true; do
-    local snap hash
-    snap="$(tmux capture-pane -p -t "$executor_pane" -S "-$lines" 2>/dev/null | tr -d '\r' || true)"
-    hash="$(printf '%s' "$snap" | cksum | awk '{print $1 ":" $2}')"
+    local st next_deadline wait_for event
     now="$(date +%s)"
 
-    if [[ -z "$last_hash" ]]; then
-      # First poll — record baseline, don't notify
-      last_hash="$hash"
-    elif [[ "$hash" != "$last_hash" ]]; then
-      last_hash="$hash"
-      last_output_ts="$now"
-      # New output — notify the calling agent
-      local notification_xml
-      notification_xml="$(build_notification "exec_output" "$command_text" \
-        "tmux capture-pane -p -t $executor_pane -S -$lines" \
-        "pid=$pid" "pane=$executor_pane")"
-      send_notification "$my_pane" "$notification_xml"
-    fi
-
-    # Check if process exited
-    local st
     st="$(read_state_field "$exec_dir/state" || true)"
     if [[ "$st" == "exited" ]]; then
       exit 0
@@ -153,7 +154,6 @@ main() {
       exit 124
     fi
 
-    # Idle timeout (no new output)
     if [[ "$timeout_sec" != "0" ]]; then
       local idle_for=$(( now - last_output_ts ))
       if (( idle_for >= timeout_sec )); then
@@ -161,7 +161,37 @@ main() {
       fi
     fi
 
-    sleep "$interval"
+    next_deadline=0
+    if [[ "$duration_deadline" -gt 0 ]]; then
+      next_deadline="$duration_deadline"
+    fi
+    if [[ "$timeout_sec" != "0" ]]; then
+      local idle_deadline=$(( last_output_ts + timeout_sec ))
+      if [[ "$next_deadline" -eq 0 || "$idle_deadline" -lt "$next_deadline" ]]; then
+        next_deadline="$idle_deadline"
+      fi
+    fi
+
+    if [[ "$next_deadline" -gt 0 ]]; then
+      wait_for=$(( next_deadline - now ))
+      (( wait_for > 0 )) || wait_for=1
+      if ! read -r -t "$wait_for" event <&8; then
+        continue
+      fi
+    else
+      read -r event <&8 || continue
+    fi
+
+    st="$(read_state_field "$exec_dir/state" || true)"
+    [[ "$st" == "exited" ]] && exit 0
+    if [[ "$event" == "output" ]]; then
+      last_output_ts="$(date +%s)"
+      local notification_xml
+      notification_xml="$(build_notification "exec_output" "$command_text" \
+        "tmux capture-pane -p -t $executor_pane -S -$lines" \
+        "pid=$pid" "pane=$executor_pane")"
+      send_notification "$my_pane" "$notification_xml"
+    fi
   done
 }
 

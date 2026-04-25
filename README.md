@@ -139,6 +139,7 @@ atmux create --agent <name> --role <role> --intelligence <0-100> \
 atmux create --team <name>
 
 atmux create --issue --title <title> [--description <desc>] [--todo <todo>]...
+atmux create --pr --title <title> [--description <desc>] [--source <branch>] [--target <branch>] [--todo <todo>]...
 ```
 
 ### `send`
@@ -157,7 +158,7 @@ Create and assign filesystem-tracked issues.
 
 ```sh
 atmux assign --to <agent> --title <title> [--description <desc>] [--todo <todo>]...
-atmux assign --issue <uuid> --to <agent>
+atmux assign --issue <id> --to <agent>
 ```
 
 ### `capture`
@@ -182,7 +183,7 @@ atmux exec [--detach] -- <command> [args...]
 
 ### `watch`
 
-Wait for a condition: process exit, pane text, output changes, issue updates, new GitHub issues, PR discussion updates, or agent idle state.
+Wait for a condition: process exit, pane text, output changes, issue updates, local PR updates, new GitHub issues, GitHub PR discussion updates, or agent idle state.
 
 ```sh
 atmux watch --pid <pid> [--timeout <seconds>]
@@ -191,7 +192,7 @@ atmux watch --path <glob> [--timeout <seconds>] [--interval <seconds>]
 atmux watch --target <tmux-target> --text <needle> [--scope pane|window|session]
 atmux watch --issue <id> [--timeout <seconds>]
 atmux watch --issues <repo|url> [--timeout <seconds>] [--interval <seconds>]
-atmux watch --pr <url> [--timeout <seconds>] [--interval <seconds>]
+atmux watch --pr <id|atmux-uri|github-url> [--timeout <seconds>] [--interval <seconds>]
 atmux watch --agent <name> [--idle <seconds>] [--timeout <seconds>]
 ```
 
@@ -200,8 +201,7 @@ Its registration output includes `watcher_id="..."`, which you can remove with `
 
 `watch --path` watches paths matching a glob and exits when the matched set or file metadata changes. It uses `fswatch` or `inotifywait` when available, otherwise it falls back to polling.
 
-`watch --pr` keeps running and notifies on new PR discussion until you stop it or the PR closes/merges.
-Its registration output includes `watcher_id="..."`, which you can remove with `atmux kill --watcher <id>`.
+`watch --pr` accepts both filesystem pull requests and GitHub PR URLs. Local PRs can be referenced by id with `--repo`, or by `atmux://pull-request/<repo>/<id>` URI. GitHub URLs keep running and notify on new PR discussion until you stop them or the PR closes/merges; their registration output includes `watcher_id="..."`, which you can remove with `atmux kill --watcher <id>`.
 
 ### `schedule`
 
@@ -249,6 +249,7 @@ atmux list agents
 atmux list sessions
 atmux list teams
 atmux list issues
+atmux list prs
 ```
 
 ### `env`

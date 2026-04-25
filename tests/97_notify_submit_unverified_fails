@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+NOTIFY_SCRIPT="$REPO_ROOT/bin/(atmux)/notify"
+
+ATMUX_HOME="${TMPDIR:-/tmp}/atmux-notify-unverified-${RANDOM}"
+ATMUX_SOURCE_ROOT="$REPO_ROOT"
+ATMUX_SEND_SUBMIT_RETRY_ATTEMPTS=2
+ATMUX_SEND_SUBMIT_VERIFY_SECONDS=1
+source "$NOTIFY_SCRIPT"
+
+prompt_prefix="›"
+prompt_input='<notification type="message" from="stuck" cmd="atmux message read abc --repo repo" />'
+cursor_y=1
+enter_count=0
+
+cleanup() {
+  rm -rf "$ATMUX_HOME"
+}
+trap cleanup EXIT
+
+cursor_x_for_input() {
+  printf '%s' "$prompt_prefix $prompt_input" | wc -m | tr -d ' '
+}
+
+tmux() {
+  if [[ "$1" == "capture-pane" ]]; then
+    printf '%s %s\n' "$prompt_prefix" "$prompt_input"
+    return 0
+  fi
+
+  if [[ "$1" == "display-message" ]]; then
+    local fmt="${@: -1}"
+    case "$fmt" in
+      "#{cursor_x}") cursor_x_for_input ;;
+      "#{cursor_y}") printf '%s\n' "$cursor_y" ;;
+      *) return 1 ;;
+    esac
+    return 0
+  fi
+
+  if [[ "$1" == "send-keys" ]]; then
+    local key="${@: -1}"
+    if [[ "$key" == "Enter" ]]; then
+      enter_count=$((enter_count + 1))
+    fi
+    return 0
+  fi
+
+  command tmux "$@"
+}
+
+set +e
+submit_notification_input "%mock" "$prompt_prefix" "Enter" "0"
+rc=$?
+set -e
+
+if [[ "$rc" -eq 0 ]]; then
+  echo "expected unverified submit to fail" >&2
+  exit 1
+fi
+
+if [[ "$enter_count" -ne 2 ]]; then
+  echo "expected submit retries before failure, got $enter_count" >&2
+  exit 1
+fi
+
+echo "ok: unverified notification submit fails after retries"

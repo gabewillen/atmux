@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+ATMUX_BIN="$REPO_ROOT/bin/atmux"
+
+tmp_root="$(mktemp -d "${TMPDIR:-/tmp}/atmux-tmux-shim.XXXXXX")"
+tmp_home="$tmp_root/home"
+atmux_home="$tmp_home/.atmux"
+repo_name="amux_sh"
+agent="shim-${RANDOM}"
+session="atmux-${repo_name}-${agent}"
+
+cleanup() {
+  tmux kill-session -t "$session" >/dev/null 2>&1 || true
+  rm -rf "$tmp_root"
+}
+trap cleanup EXIT
+
+mkdir -p "$tmp_home" "$atmux_home/adapters/probe"
+cat > "$atmux_home/adapters/probe/cmd" <<'ADAPTER'
+#!/usr/bin/env bash
+set -euo pipefail
+case "${1:-}" in
+  control-file)
+    ;;
+  start)
+    command -v tmux > "$ATMUX_HOME/tmux-path"
+    printf '%s\n' "${ATMUX_ALLOW_REAL_TMUX:-}" > "$ATMUX_HOME/tmux-allow"
+    if tmux list sessions > "$ATMUX_HOME/tmux-alias-out" 2>"$ATMUX_HOME/tmux-alias-err"; then
+      printf '0\n' > "$ATMUX_HOME/tmux-alias-rc"
+    else
+      printf '%s\n' "$?" > "$ATMUX_HOME/tmux-alias-rc"
+    fi
+    sleep 30
+    ;;
+  status)
+    printf '<adapter-state state="idle" />\n'
+    ;;
+  *)
+    ;;
+esac
+ADAPTER
+chmod +x "$atmux_home/adapters/probe/cmd"
+
+tmux kill-session -t "$session" >/dev/null 2>&1 || true
+
+(
+  cd "$REPO_ROOT"
+  HOME="$tmp_home" \
+    ATMUX_HOME="$atmux_home" \
+    ATMUX_SOURCE_ROOT="$REPO_ROOT" \
+    ATMUX_ALLOW_OUTSIDE_TMUX=1 \
+    "$ATMUX_BIN" start --name "$agent" --no-worktree --adapter probe >/dev/null
+)
+
+deadline=$(( $(date +%s) + 10 ))
+while [[ ! -f "$atmux_home/tmux-alias-rc" ]]; do
+  if (( $(date +%s) >= deadline )); then
+    echo "timed out waiting for probe adapter" >&2
+    exit 1
+  fi
+  sleep 0.1
+done
+
+tmux_path="$(tr -d '\r\n' < "$atmux_home/tmux-path")"
+[[ "$tmux_path" == "$REPO_ROOT/bin/tmux" ]] || { echo "expected tmux shim path, got ${tmux_path:-missing}" >&2; exit 1; }
+
+allow_value="$(tr -d '\r\n' < "$atmux_home/tmux-allow")"
+[[ -z "$allow_value" ]] || { echo "adapter inherited real tmux allowance: $allow_value" >&2; exit 1; }
+
+alias_rc="$(tr -d '\r\n' < "$atmux_home/tmux-alias-rc")"
+[[ "$alias_rc" == "0" ]] || {
+  echo "tmux alias command failed with rc $alias_rc" >&2
+  cat "$atmux_home/tmux-alias-err" >&2 || true
+  exit 1
+}
+
+if ! grep -Fq '<atmux command="list sessions"' "$atmux_home/tmux-alias-out"; then
+  echo "tmux command did not route through atmux list sessions" >&2
+  cat "$atmux_home/tmux-alias-out" >&2 || true
+  exit 1
+fi
+
+echo "ok: agent tmux command resolves to atmux shim while atmux internals keep real tmux"

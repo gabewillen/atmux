@@ -18,6 +18,10 @@ atmux create --agent planner --role planner --intelligence 80
 
 Creates a team session. Agents created while `ATMUX_TEAM` is set join that team.
 
+### `atmux create --pr --title <title> [--description <description>] [--source <branch>] [--target <branch>]`
+
+Creates a filesystem-backed pull request under `<ATMUX_HOME>/pull-requests/<repo>/`.
+
 ### `atmux send --to <agent|session|team> [--reply-required] [--interrupt] "message"`
 
 Queues a notification into another agent pane. Target resolution prefers teams, then agents/sessions. `--interrupt` uses the adapter interrupt submit key when available.
@@ -43,7 +47,7 @@ Runs a command and sends an exec notification when it exits. Detached execs run 
 
 ### `atmux watch`
 
-Waits for text, process completion, issue updates, new GitHub issues, PR discussion updates, stdio output, or agent idleness.
+Waits for text, process completion, issue updates, local PR updates, new GitHub issues, GitHub PR discussion updates, stdio output, or agent idleness.
 
 Examples:
 
@@ -52,6 +56,7 @@ atmux watch --agent worker --idle 20 --timeout 120
 atmux watch --pid 12345 --timeout 60
 atmux watch --path 'src/**/*.sh' --timeout 60
 atmux watch --issues owner/repo --timeout 600
+atmux watch --pr atmux://pull-request/myrepo/AbCdEfGhIjKlMnOp --timeout 120
 atmux watch --pr https://github.com/owner/repo/pull/123 --timeout 600
 atmux watch --target %1 --text "ready" --timeout 30
 ```
@@ -60,7 +65,7 @@ atmux watch --target %1 --text "ready" --timeout 30
 
 `watch --path` exits when a filesystem glob's matched set or file metadata changes. It uses `fswatch` or `inotifywait` when available, otherwise it falls back to polling.
 
-`watch --pr` is long-lived: it keeps notifying on new discussion until stopped or the PR closes/merges. Its registration output includes `watcher_id="..."` for use with `atmux kill --watcher <id>`.
+`watch --pr` accepts both local PR ids/URIs and GitHub PR URLs. For GitHub URLs it is long-lived: it keeps notifying on new discussion until stopped or the PR closes/merges. Its registration output includes `watcher_id="..."` for use with `atmux kill --watcher <id>`.
 
 ### `atmux kill --pid <pid> [--timeout <seconds>] [--signal <NAME>]`
 

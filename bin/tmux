@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "${ATMUX_ALLOW_REAL_TMUX:-}" == "1" ]]; then
+  if [[ -n "${ATMUX_REAL_TMUX:-}" && -x "$ATMUX_REAL_TMUX" ]]; then
+    exec "$ATMUX_REAL_TMUX" "$@"
+  fi
+  echo "atmux tmux shim: real tmux binary is unavailable" >&2
+  exit 127
+fi
+
+atmux_bin=""
+if [[ -n "${ATMUX_SOURCE_ROOT:-}" && -x "$ATMUX_SOURCE_ROOT/bin/atmux" ]]; then
+  atmux_bin="$ATMUX_SOURCE_ROOT/bin/atmux"
+elif command -v atmux >/dev/null 2>&1; then
+  atmux_bin="$(command -v atmux)"
+fi
+
+if [[ -z "$atmux_bin" ]]; then
+  echo "atmux tmux shim: atmux command is unavailable" >&2
+  exit 127
+fi
+
+exec "$atmux_bin" "$@"

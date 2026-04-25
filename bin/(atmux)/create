@@ -9,9 +9,10 @@ Usage:
   atmux create --agent <name> --role <role> --intelligence <0-100> [--team <team>] [--adapter <adapter>] [--no-worktree] [--task --description <desc> --todo <todo>...] [-- <adapter-args...>]
   atmux create --team <name>
   atmux create --issue --title <title> [--description <description>] [--todo <todo>...] [--repo <repo>]
+  atmux create --pr --title <title> [--description <description>] [--source <branch>] [--target <branch>] [--todo <todo>...] [--repo <repo>]
 
 Description:
-  Unified create entrypoint for agents, teams, and issues.
+  Unified create entrypoint for agents, teams, issues, and pull requests.
   For agents, --team defaults to ATMUX_TEAM when set (for example after `atmux create --team <name>` in a tmux session).
 USAGE
 }
@@ -64,6 +65,14 @@ issue_description=""
 issue_todos=()
 issue_repo=""
 
+pr_mode=0
+pr_title=""
+pr_description=""
+pr_source=""
+pr_target=""
+pr_todos=()
+pr_repo=""
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --agent)
@@ -97,6 +106,15 @@ while [[ $# -gt 0 ]]; do
       issue_mode=1
       shift
       ;;
+    --pr)
+      if [[ -n "$mode" && "$mode" != "pr" ]]; then
+        echo "cannot combine --pr with --${mode}" >&2
+        exit 2
+      fi
+      mode="pr"
+      pr_mode=1
+      shift
+      ;;
     --role)
       agent_role="${2:-}"
       shift 2
@@ -120,6 +138,8 @@ while [[ $# -gt 0 ]]; do
     --description)
       if [[ "$mode" == "issue" ]]; then
         issue_description="${2:-}"
+      elif [[ "$mode" == "pr" ]]; then
+        pr_description="${2:-}"
       else
         agent_task_description="${2:-}"
       fi
@@ -128,17 +148,35 @@ while [[ $# -gt 0 ]]; do
     --todo|--todos)
       if [[ "$mode" == "issue" ]]; then
         issue_todos+=("${2:-}")
+      elif [[ "$mode" == "pr" ]]; then
+        pr_todos+=("${2:-}")
       else
         agent_todos+=("${2:-}")
       fi
       shift 2
       ;;
     --title)
-      issue_title="${2:-}"
+      if [[ "$mode" == "pr" ]]; then
+        pr_title="${2:-}"
+      else
+        issue_title="${2:-}"
+      fi
+      shift 2
+      ;;
+    --source)
+      pr_source="${2:-}"
+      shift 2
+      ;;
+    --target)
+      pr_target="${2:-}"
       shift 2
       ;;
     --repo)
-      issue_repo="${2:-}"
+      if [[ "$mode" == "pr" ]]; then
+        pr_repo="${2:-}"
+      else
+        issue_repo="${2:-}"
+      fi
       shift 2
       ;;
     --)
@@ -252,8 +290,46 @@ case "$mode" in
     fi
     "${cmd[@]}"
     ;;
+  pr)
+    if [[ "$pr_mode" -ne 1 ]]; then
+      echo "missing required flag: --pr" >&2
+      exit 2
+    fi
+    if [[ -z "$pr_title" ]]; then
+      echo "missing required flag: --title <title>" >&2
+      exit 2
+    fi
+
+    pr_script="$(resolve_script pr || true)"
+    if [[ -z "$pr_script" ]]; then
+      echo "pr subcommand script not found" >&2
+      exit 127
+    fi
+
+    cmd=("$pr_script" create --title "$pr_title")
+    if [[ -n "$pr_description" ]]; then
+      cmd+=(--description "$pr_description")
+    fi
+    if [[ -n "$pr_source" ]]; then
+      cmd+=(--source "$pr_source")
+    fi
+    if [[ -n "$pr_target" ]]; then
+      cmd+=(--target "$pr_target")
+    fi
+    if [[ "${#pr_todos[@]}" -gt 0 ]]; then
+      todo=""
+      for todo in "${pr_todos[@]}"; do
+        [[ -n "$todo" ]] || continue
+        cmd+=(--todo "$todo")
+      done
+    fi
+    if [[ -n "$pr_repo" ]]; then
+      cmd+=(--repo "$pr_repo")
+    fi
+    "${cmd[@]}"
+    ;;
   *)
-    echo "missing mode: use one of --agent, --team, --issue" >&2
+    echo "missing mode: use one of --agent, --team, --issue, --pr" >&2
     usage >&2
     exit 2
     ;;

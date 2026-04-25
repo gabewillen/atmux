@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+ATMUX_BIN="$REPO_ROOT/bin/atmux"
+
+tmp_home="$(mktemp -d "${TMPDIR:-/tmp}/atmux-watch-pr-file.XXXXXX")"
+repo_name="wp${RANDOM}"
+atmux_home="$tmp_home/.atmux"
+rc_file="$tmp_home/watch.rc"
+
+cleanup() {
+  if [[ -n "${watch_pid:-}" ]] && kill -0 "$watch_pid" >/dev/null 2>&1; then
+    kill "$watch_pid" >/dev/null 2>&1 || true
+    wait "$watch_pid" >/dev/null 2>&1 || true
+  fi
+  rm -rf "$tmp_home"
+}
+trap cleanup EXIT
+
+set +e
+missing_out="$(
+  ATMUX_HOME="$atmux_home" ATMUX_REPO="$repo_name" ATMUX_ALLOW_OUTSIDE_TMUX=1 \
+    "$ATMUX_BIN" watch --pr missing --repo "$repo_name" 2>&1
+)"
+missing_rc=$?
+set -e
+[[ "$missing_rc" -eq 2 ]] || { echo "expected missing pull request rc 2, got $missing_rc: $missing_out" >&2; exit 1; }
+
+create_out="$(ATMUX_HOME="$atmux_home" ATMUX_REPO="$repo_name" ATMUX_ALLOW_OUTSIDE_TMUX=1 "$ATMUX_BIN" pr create --title "event-test" --repo "$repo_name")"
+pr_id="$(printf '%s\n' "$create_out" | sed -n 's/.*id="\([^"]*\)".*/\1/p')"
+pr_uri="$(printf '%s\n' "$create_out" | sed -n 's/.*uri="\([^"]*\)".*/\1/p')"
+[[ -n "$pr_id" ]] || { echo "failed to parse pr id" >&2; exit 1; }
+[[ -n "$pr_uri" ]] || { echo "failed to parse pr uri" >&2; exit 1; }
+
+(
+  set +e
+  ATMUX_HOME="$atmux_home" ATMUX_ALLOW_OUTSIDE_TMUX=1 \
+    "$ATMUX_BIN" watch --pr "$pr_uri" --interval 999 --timeout 30
+  printf '%s\n' "$?" > "$rc_file"
+) &
+watch_pid=$!
+
+sleep 0.2
+ATMUX_HOME="$atmux_home" ATMUX_REPO="$repo_name" ATMUX_ALLOW_OUTSIDE_TMUX=1 \
+  "$ATMUX_BIN" pr claim "$pr_id" --repo "$repo_name" --by worker >/dev/null
+
+deadline=$(( $(date +%s) + 5 ))
+while kill -0 "$watch_pid" >/dev/null 2>&1; do
+  if (( $(date +%s) >= deadline )); then
+    echo "watch --pr did not wake from local pull request event" >&2
+    exit 1
+  fi
+  sleep 0.1
+done
+wait "$watch_pid" || true
+
+watch_rc="$(tr -d '\r\n' < "$rc_file" 2>/dev/null || true)"
+[[ "$watch_rc" == "0" ]] || { echo "expected watch rc 0, got ${watch_rc:-missing}" >&2; exit 1; }
+
+timeout_out="$(ATMUX_HOME="$atmux_home" ATMUX_REPO="$repo_name" ATMUX_ALLOW_OUTSIDE_TMUX=1 "$ATMUX_BIN" pr create --title "timeout-test" --repo "$repo_name")"
+timeout_pr_id="$(printf '%s\n' "$timeout_out" | sed -n 's/.*id="\([^"]*\)".*/\1/p')"
+[[ -n "$timeout_pr_id" ]] || { echo "failed to parse timeout pr id" >&2; exit 1; }
+
+set +e
+ATMUX_HOME="$atmux_home" ATMUX_REPO="$repo_name" ATMUX_ALLOW_OUTSIDE_TMUX=1 \
+  "$ATMUX_BIN" watch --pr "$timeout_pr_id" --repo "$repo_name" --timeout 2 >/dev/null
+timeout_rc=$?
+set -e
+[[ "$timeout_rc" -eq 124 ]] || { echo "expected timeout rc 124, got $timeout_rc" >&2; exit 1; }
+
+echo "ok: watch --pr validates local pull requests, wakes from event, and times out"

@@ -321,6 +321,7 @@ main() {
         exit 1
       fi
 
+      export ATMUX_ALLOW_REAL_TMUX=1
       if should_wrap_command "$cmd" "$@"; then
         out_file="$(mktemp "${TMPDIR:-/tmp}/atmux-out.XXXXXX")"
         err_file="$(mktemp "${TMPDIR:-/tmp}/atmux-err.XXXXXX")"

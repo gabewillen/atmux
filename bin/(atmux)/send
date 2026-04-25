@@ -91,7 +91,7 @@ store_message() {
   local root id dir ts
   root="$ATMUX_HOME/messages/$repo"
   mkdir -p "$root"
-  id="$(uuidgen | tr '[:upper:]' '[:lower:]')"
+  id="$(id)"
   dir="$root/$id"
   mkdir -p "$dir"
   ts="$(timestamp_utc)"

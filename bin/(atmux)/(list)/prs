@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+PR="$HERE/../pr"
+
+if [[ ! -x "$PR" ]]; then
+  echo "atmux pr script not found: $PR" >&2
+  exit 1
+fi
+
+exec "$PR" list "$@"

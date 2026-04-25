@@ -47,6 +47,14 @@ rc6=$?
 set -e
 [[ "$rc6" -eq 2 ]] || { echo "expected exit 2 for --issues + --agent, got $rc6" >&2; exit 1; }
 
+# Combining --pull-request and --pr should fail because --pull-request is only
+# a compatibility alias for local PRs.
+set +e
+ATMUX_REPO="test" ATMUX_ALLOW_OUTSIDE_TMUX=1 "$ATMUX_BIN" watch --pull-request abc --pr https://github.com/o/r/pull/1 >/dev/null 2>&1
+rc_pr_file=$?
+set -e
+[[ "$rc_pr_file" -eq 2 ]] || { echo "expected exit 2 for --pull-request + --pr, got $rc_pr_file" >&2; exit 1; }
+
 # Combining --path and --agent should fail
 set +e
 ATMUX_REPO="test" ATMUX_ALLOW_OUTSIDE_TMUX=1 "$ATMUX_BIN" watch --path '*.txt' --agent foo >/dev/null 2>&1

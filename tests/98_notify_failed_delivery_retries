@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+NOTIFY_SCRIPT="$REPO_ROOT/bin/(atmux)/notify"
+
+ATMUX_HOME="${TMPDIR:-/tmp}/atmux-notify-retry-${RANDOM}"
+ATMUX_SOURCE_ROOT="$REPO_ROOT"
+ATMUX_NOTIFY_RETRY_BASE_SECONDS=1
+ATMUX_NOTIFY_RETRY_MAX_SECONDS=1
+ATMUX_NOTIFY_WORKER_IDLE_TIMEOUT_SECONDS=1
+ATMUX_NOTIFY_WORKER_WAKE_TIMEOUT_SECONDS=1
+source "$NOTIFY_SCRIPT"
+
+pane="%mock"
+deliver_attempts=0
+
+cleanup() {
+  rm -rf "$ATMUX_HOME"
+}
+trap cleanup EXIT
+
+tmux() {
+  if [[ "$1" == "display-message" ]]; then
+    local fmt="${@: -1}"
+    case "$fmt" in
+      "#{pane_id}") printf '%s\n' "$pane" ;;
+      "#{pane_in_mode} #{pane_mode} #{scroll_position}") printf '0 copy-mode 0\n' ;;
+      "#{session_name}") printf 'mock-session\n' ;;
+      *) return 1 ;;
+    esac
+    return 0
+  fi
+
+  if [[ "$1" == "set-hook" ]]; then
+    return 0
+  fi
+
+  if [[ "$1" == "send-keys" ]]; then
+    return 0
+  fi
+
+  command tmux "$@"
+}
+
+resolve_prompt_prefix_for_pane() {
+  printf ''
+}
+
+deliver_notification_to_pane() {
+  deliver_attempts=$((deliver_attempts + 1))
+  if (( deliver_attempts == 1 )); then
+    return 1
+  fi
+  return 0
+}
+
+payload="$(build_notification "test" "retry" "")"
+queue_notification_payload "$pane" "$payload" "Enter"
+qdir="$(notify_queue_dir "$pane")"
+
+serve_notification_queue "$pane" "$ATMUX_SOURCE_ROOT"
+
+if [[ "$deliver_attempts" -ne 2 ]]; then
+  echo "expected failed delivery to remain queued and retry once, got $deliver_attempts attempts" >&2
+  exit 1
+fi
+
+if [[ -d "$qdir/payloads" ]] && find "$qdir/payloads" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | grep -q .; then
+  echo "expected delivered retry item to be removed" >&2
+  exit 1
+fi
+
+echo "ok: failed notification delivery remains queued and retries"

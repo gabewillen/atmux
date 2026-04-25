@@ -6,33 +6,20 @@ HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=bin/(atmux)/notify
 source "$HERE/notify"
 
-TEMPLATE_DIR="$(cd -- "$HERE/../.." && pwd)/templates"
-
-render_issue_template() {
-  local given="$1" when="$2" then_="$3" todos="$4"
-  local tpl
-  tpl="$(cat "$TEMPLATE_DIR/issue.md")"
-  tpl="${tpl//%%GIVEN%%/$given}"
-  tpl="${tpl//%%WHEN%%/$when}"
-  tpl="${tpl//%%THEN%%/$then_}"
-  tpl="${tpl//%%TODOS%%/$todos}"
-  printf '%s\n' "$tpl"
-}
-
 usage() {
   cat <<'USAGE'
 Usage:
-  atmux issue create --title <title> [--description <description>] [--given <context>] [--when <action>] [--then <outcome>] [--todo <todo>]... [--repo <repo>]
-  atmux issue list [--repo <repo>]
-  atmux issue ls [--repo <repo>]
-  atmux issue get <id> [--repo <repo>]
-  atmux issue show <id> [--repo <repo>]
-  atmux issue assign <id> --to <agent|session> [--repo <repo>]
-  atmux issue claim <id> [--by <agent|session>] [--repo <repo>]
+  atmux pr create --title <title> [--description <description>] [--source <branch>] [--target <branch>] [--todo <todo>]... [--repo <repo>]
+  atmux pr list [--repo <repo>]
+  atmux pr ls [--repo <repo>]
+  atmux pr get <id> [--repo <repo>]
+  atmux pr show <id> [--repo <repo>]
+  atmux pr assign <id> --to <agent|session> [--repo <repo>]
+  atmux pr claim <id> [--by <agent|session>] [--repo <repo>]
 
 Description:
-  Repo-scoped issue tickets on filesystem.
-  Issues are stored at: ~/.atmux/issues/<repo>/<id>/
+  Repo-scoped pull request tickets on filesystem.
+  Pull requests are stored at: ~/.atmux/pull-requests/<repo>/<id>/
 USAGE
 }
 
@@ -117,17 +104,16 @@ ensure_can_assign() {
     manager="$(tmux show-environment ATMUX_MANAGER 2>/dev/null | sed -n 's/^ATMUX_MANAGER=//p' || true)"
   fi
   if [[ -n "$manager" ]]; then
-    echo "managed agents cannot assign issues; use 'atmux issue claim' instead" >&2
+    echo "managed agents cannot assign pull requests; use 'atmux pr claim' instead" >&2
     exit 1
   fi
 }
 
-create_issue() {
+create_pr() {
   local title=""
   local description=""
-  local given=""
-  local when=""
-  local then_=""
+  local source_branch=""
+  local target_branch=""
   local explicit_repo=""
   local todos=()
 
@@ -141,16 +127,12 @@ create_issue() {
         description="${2:-}"
         shift 2
         ;;
-      --given)
-        given="${2:-}"
+      --source)
+        source_branch="${2:-}"
         shift 2
         ;;
-      --when)
-        when="${2:-}"
-        shift 2
-        ;;
-      --then)
-        then_="${2:-}"
+      --target)
+        target_branch="${2:-}"
         shift 2
         ;;
       --todo|--todos)
@@ -173,41 +155,32 @@ create_issue() {
     exit 2
   fi
 
-  # Build description from template if structured flags were provided
-  local has_todos=0
-  (( ${#todos[@]} > 0 )) && has_todos=1
-  if [[ -n "$given" || -n "$when" || -n "$then_" || "$has_todos" -eq 1 ]]; then
-    local todos_text=""
-    local t
-    if [[ "$has_todos" -eq 1 ]]; then
-      for t in "${todos[@]}"; do
-        [[ -n "$t" ]] || continue
-        todos_text+="- $t"$'\n'
-      done
+  if [[ "${#todos[@]}" -gt 0 ]]; then
+    local t=""
+    if [[ -n "$description" ]]; then
+      description+=$'\n\n'
     fi
-    todos_text="${todos_text%$'\n'}"
-
-    if [[ -f "$TEMPLATE_DIR/issue.md" ]]; then
-      description="$(render_issue_template "$given" "$when" "$then_" "$todos_text")"
-    else
-      # Inline fallback if template file is missing
-      description="**Given** ${given}"$'\n'"**When** ${when}"$'\n'"**Then** ${then_}"
-      [[ -z "$todos_text" ]] || description+=$'\n\n'"## Tasks"$'\n'"$todos_text"
-    fi
+    description+="Todos:"
+    for t in "${todos[@]}"; do
+      [[ -n "$t" ]] || continue
+      description+=$'\n'"- $t"
+    done
   fi
 
   local repo root id dir created_at
   repo="$(resolve_repo_name "$explicit_repo")"
-  root="$(issue_root_for_repo "$repo")"
+  root="$(pull_request_root_for_repo "$repo")"
   mkdir -p "$root"
 
   id="$(id)"
-  dir="$(issue_dir_for_id "$root" "$id")"
+  dir="$(pull_request_dir_for_id "$root" "$id")"
   created_at="$(now_utc)"
 
   mkdir -p "$dir"
   write_field "$dir/title" "$title"
   write_field "$dir/description" "$description"
+  write_field "$dir/source" "$source_branch"
+  write_field "$dir/target" "$target_branch"
   write_field "$dir/state" "open"
   write_field "$dir/created_at" "$created_at"
   write_field "$dir/updated_at" "$created_at"
@@ -217,13 +190,14 @@ create_issue() {
   write_field "$dir/claimed_by" ""
   write_field "$dir/claimed_at" ""
 
-  printf '<issue id="%s" repo="%s" state="open" path="%s" />\n' \
+  printf '<pull-request id="%s" repo="%s" state="open" uri="%s" path="%s" />\n' \
     "$(xml_escape "$id")" \
     "$(xml_escape "$repo")" \
+    "$(xml_escape "atmux://pull-request/$repo/$id")" \
     "$(xml_escape "$dir")"
 }
 
-list_issues() {
+list_prs() {
   local explicit_repo=""
 
   while [[ $# -gt 0 ]]; do
@@ -239,11 +213,11 @@ list_issues() {
     esac
   done
 
-  local repo root dir id title state created_at updated_at assigned_to claimed_by
+  local repo root dir id title state created_at updated_at assigned_to claimed_by source_branch target_branch
   repo="$(resolve_repo_name "$explicit_repo")"
-  root="$(issue_root_for_repo "$repo")"
+  root="$(pull_request_root_for_repo "$repo")"
 
-  printf '<issues repo="%s">\n' "$(xml_escape "$repo")"
+  printf '<pull-requests repo="%s">\n' "$(xml_escape "$repo")"
   if [[ -d "$root" ]]; then
     while IFS= read -r dir; do
       [[ -d "$dir" ]] || continue
@@ -254,26 +228,31 @@ list_issues() {
       updated_at="$(read_field "$dir/updated_at")"
       assigned_to="$(read_field "$dir/assigned_to")"
       claimed_by="$(read_field "$dir/claimed_by")"
-      printf '  <issue id="%s" state="%s" created_at="%s" updated_at="%s" assigned_to="%s" claimed_by="%s" title="%s" />\n' \
+      source_branch="$(read_field "$dir/source")"
+      target_branch="$(read_field "$dir/target")"
+      printf '  <pull-request id="%s" state="%s" created_at="%s" updated_at="%s" assigned_to="%s" claimed_by="%s" source="%s" target="%s" uri="%s" title="%s" />\n' \
         "$(xml_escape "$id")" \
         "$(xml_escape "$state")" \
         "$(xml_escape "$created_at")" \
         "$(xml_escape "$updated_at")" \
         "$(xml_escape "$assigned_to")" \
         "$(xml_escape "$claimed_by")" \
+        "$(xml_escape "$source_branch")" \
+        "$(xml_escape "$target_branch")" \
+        "$(xml_escape "atmux://pull-request/$repo/$id")" \
         "$(xml_escape "$title")"
     done < <(find "$root" -mindepth 1 -maxdepth 1 -type d | sort)
   fi
-  printf '</issues>\n'
+  printf '</pull-requests>\n'
 }
 
-get_issue() {
+get_pr() {
   local id="${1:-}"
   shift || true
   local explicit_repo=""
 
   if [[ -z "$id" ]]; then
-    echo "usage: atmux issue get <id> [--repo <repo>]" >&2
+    echo "usage: atmux pr get <id> [--repo <repo>]" >&2
     exit 2
   fi
 
@@ -291,18 +270,20 @@ get_issue() {
   done
 
   local repo root dir title description state created_at updated_at
-  local assigned_to assigned_by assigned_at claimed_by claimed_at
+  local assigned_to assigned_by assigned_at claimed_by claimed_at source_branch target_branch
   repo="$(resolve_repo_name "$explicit_repo")"
-  root="$(issue_root_for_repo "$repo")"
-  dir="$(issue_dir_for_id "$root" "$id")"
+  root="$(pull_request_root_for_repo "$repo")"
+  dir="$(pull_request_dir_for_id "$root" "$id")"
 
   if [[ ! -d "$dir" ]]; then
-    echo "issue not found: $id" >&2
+    echo "pull request not found: $id" >&2
     exit 1
   fi
 
   title="$(read_field "$dir/title")"
   description="$(read_field "$dir/description")"
+  source_branch="$(read_field "$dir/source")"
+  target_branch="$(read_field "$dir/target")"
   state="$(read_field "$dir/state")"
   created_at="$(read_field "$dir/created_at")"
   updated_at="$(read_field "$dir/updated_at")"
@@ -312,14 +293,18 @@ get_issue() {
   claimed_by="$(read_field "$dir/claimed_by")"
   claimed_at="$(read_field "$dir/claimed_at")"
 
-  printf '<issue id="%s" repo="%s" state="%s" created_at="%s" updated_at="%s">\n' \
+  printf '<pull-request id="%s" repo="%s" state="%s" created_at="%s" updated_at="%s" uri="%s">\n' \
     "$(xml_escape "$id")" \
     "$(xml_escape "$repo")" \
     "$(xml_escape "$state")" \
     "$(xml_escape "$created_at")" \
-    "$(xml_escape "$updated_at")"
-  printf '  <title>%s</title>\n' "$title"
-  printf '  <description>%s</description>\n' "$description"
+    "$(xml_escape "$updated_at")" \
+    "$(xml_escape "atmux://pull-request/$repo/$id")"
+  printf '  <title>%s</title>\n' "$(xml_escape "$title")"
+  printf '  <description>%s</description>\n' "$(xml_escape "$description")"
+  printf '  <branches source="%s" target="%s" />\n' \
+    "$(xml_escape "$source_branch")" \
+    "$(xml_escape "$target_branch")"
   printf '  <assignment to="%s" by="%s" at="%s" />\n' \
     "$(xml_escape "$assigned_to")" \
     "$(xml_escape "$assigned_by")" \
@@ -327,17 +312,17 @@ get_issue() {
   printf '  <claim by="%s" at="%s" />\n' \
     "$(xml_escape "$claimed_by")" \
     "$(xml_escape "$claimed_at")"
-  printf '</issue>\n'
+  printf '</pull-request>\n'
 }
 
-assign_issue() {
+assign_pr() {
   local id="${1:-}"
   shift || true
   local explicit_repo=""
   local to=""
 
   if [[ -z "$id" ]]; then
-    echo "usage: atmux issue assign <id> --to <agent|session> [--repo <repo>]" >&2
+    echo "usage: atmux pr assign <id> --to <agent|session> [--repo <repo>]" >&2
     exit 2
   fi
 
@@ -367,11 +352,11 @@ assign_issue() {
 
   local repo root dir now assigned_by
   repo="$(resolve_repo_name "$explicit_repo")"
-  root="$(issue_root_for_repo "$repo")"
-  dir="$(issue_dir_for_id "$root" "$id")"
+  root="$(pull_request_root_for_repo "$repo")"
+  dir="$(pull_request_dir_for_id "$root" "$id")"
 
   if [[ ! -d "$dir" ]]; then
-    echo "issue not found: $id" >&2
+    echo "pull request not found: $id" >&2
     exit 1
   fi
 
@@ -386,7 +371,7 @@ assign_issue() {
   write_field "$dir/state" "assigned"
   write_field "$dir/updated_at" "$now"
 
-  printf '<issue id="%s" repo="%s" state="assigned" assigned_to="%s" assigned_by="%s" assigned_at="%s" claimed_by="" claimed_at="" />\n' \
+  printf '<pull-request id="%s" repo="%s" state="assigned" assigned_to="%s" assigned_by="%s" assigned_at="%s" claimed_by="" claimed_at="" />\n' \
     "$(xml_escape "$id")" \
     "$(xml_escape "$repo")" \
     "$(xml_escape "$to")" \
@@ -399,21 +384,21 @@ assign_issue() {
   if [[ -n "$assignee_session" ]]; then
     assignee_pane="$(primary_pane_for_session "$assignee_session")"
   fi
-  notification_xml="$(build_notification "issue" "assign" "atmux issue get $id" "state=assigned")"
-  if [[ -n "$assignee_pane" && "$assignee_pane" != "$actor_pane" ]]; then
+  notification_xml="$(build_notification "pull-request" "assign" "atmux pr get $id" "state=assigned")"
+  if [[ -n "${assignee_pane:-}" && "$assignee_pane" != "$actor_pane" ]]; then
     send_notification "$assignee_pane" "$notification_xml"
   fi
-  notify_issue_watchers "$dir" "$actor_pane" "$notification_xml"
+  notify_pull_request_watchers "$dir" "$actor_pane" "$notification_xml"
 }
 
-claim_issue() {
+claim_pr() {
   local id="${1:-}"
   shift || true
   local explicit_repo=""
   local by=""
 
   if [[ -z "$id" ]]; then
-    echo "usage: atmux issue claim <id> [--by <agent|session>] [--repo <repo>]" >&2
+    echo "usage: atmux pr claim <id> [--by <agent|session>] [--repo <repo>]" >&2
     exit 2
   fi
 
@@ -436,11 +421,11 @@ claim_issue() {
 
   local repo root dir assigned_to claimed_by now
   repo="$(resolve_repo_name "$explicit_repo")"
-  root="$(issue_root_for_repo "$repo")"
-  dir="$(issue_dir_for_id "$root" "$id")"
+  root="$(pull_request_root_for_repo "$repo")"
+  dir="$(pull_request_dir_for_id "$root" "$id")"
 
   if [[ ! -d "$dir" ]]; then
-    echo "issue not found: $id" >&2
+    echo "pull request not found: $id" >&2
     exit 1
   fi
 
@@ -455,13 +440,13 @@ claim_issue() {
 
   assigned_to="$(read_field "$dir/assigned_to")"
   if [[ -n "$assigned_to" ]] && ! identity_matches "$assigned_to" "$by" "$repo"; then
-    echo "issue is assigned to '$assigned_to'; '$by' cannot claim it" >&2
+    echo "pull request is assigned to '$assigned_to'; '$by' cannot claim it" >&2
     exit 1
   fi
 
   claimed_by="$(read_field "$dir/claimed_by")"
   if [[ -n "$claimed_by" ]] && ! identity_matches "$claimed_by" "$by" "$repo"; then
-    echo "issue already claimed by '$claimed_by'" >&2
+    echo "pull request already claimed by '$claimed_by'" >&2
     exit 1
   fi
 
@@ -477,7 +462,7 @@ claim_issue() {
   write_field "$dir/state" "in_progress"
   write_field "$dir/updated_at" "$now"
 
-  printf '<issue id="%s" repo="%s" state="in_progress" assigned_to="%s" claimed_by="%s" claimed_at="%s" />\n' \
+  printf '<pull-request id="%s" repo="%s" state="in_progress" assigned_to="%s" claimed_by="%s" claimed_at="%s" />\n' \
     "$(xml_escape "$id")" \
     "$(xml_escape "$repo")" \
     "$(xml_escape "$assigned_to")" \
@@ -486,8 +471,8 @@ claim_issue() {
 
   local actor_pane notification_xml
   actor_pane="$(current_pane)"
-  notification_xml="$(build_notification "issue" "claim" "atmux issue get $id" "state=in_progress")"
-  notify_issue_watchers "$dir" "$actor_pane" "$notification_xml"
+  notification_xml="$(build_notification "pull-request" "claim" "atmux pr get $id" "state=in_progress")"
+  notify_pull_request_watchers "$dir" "$actor_pane" "$notification_xml"
 }
 
 sub="${1:-}"
@@ -495,25 +480,25 @@ shift || true
 
 case "$sub" in
   create)
-    create_issue "$@"
+    create_pr "$@"
     ;;
   list|ls)
-    list_issues "$@"
+    list_prs "$@"
     ;;
   get|show)
-    get_issue "$@"
+    get_pr "$@"
     ;;
   assign)
-    assign_issue "$@"
+    assign_pr "$@"
     ;;
   claim)
-    claim_issue "$@"
+    claim_pr "$@"
     ;;
   -h|--help|help|"")
     usage
     ;;
   *)
-    echo "unknown issue command: $sub" >&2
+    echo "unknown pr command: $sub" >&2
     exit 2
     ;;
 esac

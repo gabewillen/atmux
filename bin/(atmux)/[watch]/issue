@@ -17,7 +17,7 @@ Description:
   Registers this pane to receive the same notification XML as issue assign/claim fan-out.
 
 Examples:
-  atmux watch --issue 123e4567-e89b-12d3-a456-426614174000
+  atmux watch --issue AbCdEfGhIjKlMnOp
   atmux watch --issue "$id" --repo myrepo --timeout 120
 USAGE
 }

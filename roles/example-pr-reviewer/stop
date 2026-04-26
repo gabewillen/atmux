@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Role stop hook. Tears down whatever start registered.
+set -euo pipefail
+
+state="${ATMUX_ROLE_STATE_DIR:-}"
+[[ -n "$state" && -d "$state" ]] || exit 0
+
+if [[ -f "$state/watcher-ids" ]]; then
+  while IFS= read -r wid; do
+    [[ -n "$wid" ]] || continue
+    atmux kill --watcher "$wid" >/dev/null 2>&1 || true
+  done < "$state/watcher-ids"
+fi
+
+rm -rf "$state"

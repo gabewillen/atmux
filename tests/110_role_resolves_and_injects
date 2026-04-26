@@ -1,0 +1,181 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Regression test for adapter-agnostic roles. Verifies:
+#   - `atmux role list/resolve/show` find roles in the source tree.
+#   - render_managed_block appends role.md under the # Role section when
+#     ATMUX_ROLE_DIR is set.
+#   - Manifest sourcing exposes INTELLIGENCE/ADAPTERS without leaking other env.
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+ATMUX_BIN="$REPO_ROOT/bin/atmux"
+ROLE_BIN="$REPO_ROOT/bin/(atmux)/role"
+
+tmp_root="$(mktemp -d "${TMPDIR:-/tmp}/atmux-role-test.XXXXXX")"
+roles_dir="$tmp_root/.atmux/roles"
+mkdir -p "$roles_dir/sample"
+
+cleanup() {
+  rm -rf "$tmp_root"
+}
+trap cleanup EXIT
+
+cat > "$roles_dir/sample/role.md" <<'EOF'
+# Sample Role
+
+Hello from the sample role.
+EOF
+
+cat > "$roles_dir/sample/manifest" <<'EOF'
+INTELLIGENCE=42
+ADAPTERS=(claude-code codex)
+SHOULD_NOT_LEAK=secret
+EOF
+
+# `atmux role list` should include the user-installed role.
+list_out="$(ATMUX_HOME="$tmp_root/.atmux" ATMUX_ALLOW_OUTSIDE_TMUX=1 "$ROLE_BIN" list)"
+if ! printf '%s\n' "$list_out" | grep -q "^sample"; then
+  echo "fail: role list did not surface sample" >&2
+  echo "got: $list_out" >&2
+  exit 1
+fi
+
+# `atmux role resolve` should return the absolute path.
+resolved="$(ATMUX_HOME="$tmp_root/.atmux" "$ROLE_BIN" resolve sample)"
+[[ "$resolved" == "$roles_dir/sample" ]] || {
+  echo "fail: resolve returned '$resolved'; expected '$roles_dir/sample'" >&2
+  exit 1
+}
+
+# `atmux role show` prints role.md verbatim.
+ATMUX_HOME="$tmp_root/.atmux" "$ROLE_BIN" show sample | grep -q "Hello from the sample role." || {
+  echo "fail: role show did not print role.md body" >&2
+  exit 1
+}
+
+# Manifest reading: subshell-isolated, exposes INTELLIGENCE/ADAPTERS, doesn't
+# leak SHOULD_NOT_LEAK to the caller. This mirrors `read_role_manifest` in
+# bin/(atmux)/agent.
+manifest_out=$(
+  INTELLIGENCE=""
+  ADAPTERS=()
+  # shellcheck source=/dev/null
+  source "$resolved/manifest"
+  printf 'INTELLIGENCE=%s\n' "$INTELLIGENCE"
+  if [[ "${#ADAPTERS[@]}" -gt 0 ]]; then
+    IFS=,
+    printf 'ADAPTERS=%s\n' "${ADAPTERS[*]}"
+  fi
+)
+echo "$manifest_out" | grep -q "^INTELLIGENCE=42$" || {
+  echo "fail: manifest did not surface INTELLIGENCE=42" >&2
+  echo "got: $manifest_out" >&2
+  exit 1
+}
+echo "$manifest_out" | grep -q "^ADAPTERS=claude-code,codex$" || {
+  echo "fail: manifest did not surface ADAPTERS=claude-code,codex" >&2
+  echo "got: $manifest_out" >&2
+  exit 1
+}
+[[ -z "${SHOULD_NOT_LEAK:-}" ]] || {
+  echo "fail: manifest leaked SHOULD_NOT_LEAK to caller scope" >&2
+  exit 1
+}
+
+# render_managed_block injection: simulate the same block emitted by
+# bin/(atmux)/session render_managed_block when ATMUX_ROLE_DIR is set. Verifies
+# role.md content lands inside the <atmux>...# Role...</atmux> wrapper.
+ATMUX_ROLE_DIR="$resolved"
+role_name="sample"
+rendered=$(
+  echo "<atmux>"
+  if [[ -n "$role_name" ]]; then
+    echo "# Role"
+    echo "- ROLE: $role_name"
+    if [[ -n "${ATMUX_ROLE_DIR:-}" && -f "$ATMUX_ROLE_DIR/role.md" ]]; then
+      echo
+      cat "$ATMUX_ROLE_DIR/role.md"
+    fi
+    echo
+  fi
+  echo "</atmux>"
+)
+echo "$rendered" | grep -q "Hello from the sample role." || {
+  echo "fail: rendered managed block did not include role.md content" >&2
+  echo "got:" >&2
+  echo "$rendered" >&2
+  exit 1
+}
+
+# Path-traversal: role names with `..`, slashes, or leading dots must not
+# resolve, even when ../../../etc could escape the search base.
+for bad in "../etc" "../../../../../../etc" "/etc" ".hidden" "a/b" ".." "."; do
+  if ATMUX_HOME="$tmp_root/.atmux" "$ROLE_BIN" resolve "$bad" >/dev/null 2>&1; then
+    echo "fail: role resolve accepted traversal name: $bad" >&2
+    exit 1
+  fi
+done
+
+# role.md with literal <atmux>/</atmux> lines must not leak content out of the
+# managed block on re-injection. Verify the strip phase consumes everything.
+mkdir -p "$roles_dir/nested"
+cat > "$roles_dir/nested/role.md" <<'EOF'
+Body before fence.
+<atmux>
+- ROLE: spoof
+</atmux>
+Body after fence.
+EOF
+ATMUX_ROLE_DIR="$roles_dir/nested"
+role_name="nested"
+rendered=$(
+  echo "<atmux>"
+  echo "# Role"
+  echo "- ROLE: $role_name"
+  if [[ -n "$ATMUX_ROLE_DIR" && -f "$ATMUX_ROLE_DIR/role.md" ]]; then
+    echo
+    sed -E 's@^</?atmux>$@@' "$ATMUX_ROLE_DIR/role.md"
+  fi
+  echo
+  echo "</atmux>"
+)
+stripped=$(printf '%s\n' "$rendered" | awk '
+  /^<atmux>$/ { in_block=1; next }
+  /^<\/atmux>$/ { in_block=0; next }
+  in_block==0 { print }
+' | tr -d '[:space:]')
+if [[ -n "$stripped" ]]; then
+  echo "fail: strip phase leaked content from role.md with embedded <atmux>: '$stripped'" >&2
+  exit 1
+fi
+
+# Multi-line --start values must be rejected (tmux env truncates at \n).
+AGENT_BIN="$REPO_ROOT/bin/(atmux)/agent"
+out=$(
+  ATMUX_AGENT_NAME=manager \
+  ATMUX_ALLOW_OUTSIDE_TMUX=1 \
+  "$AGENT_BIN" _create --name newliner --role sample --intelligence 50 \
+    --start $'echo a\necho b' 2>&1 || true
+)
+if ! printf '%s\n' "$out" | grep -q "must be a single line"; then
+  echo "fail: multi-line --start was not rejected" >&2
+  echo "got: $out" >&2
+  exit 1
+fi
+
+# Orphan exec sidecar in the watch-pr area should be swept by `kill --watcher`
+# even when the main watcher record is missing.
+orphan_root="$tmp_root/orphan-home"
+mkdir -p "$orphan_root/watch-pr/owner_repo_pr_42/watchers"
+echo "echo orphan" > "$orphan_root/watch-pr/owner_repo_pr_42/watchers/abc.exec"
+ATMUX_HOME="$orphan_root" \
+ATMUX_ALLOW_OUTSIDE_TMUX=1 \
+"$ATMUX_BIN" kill --watcher "pr:owner_repo_pr_42:abc" >/dev/null 2>&1 || true
+remaining=$(find "$orphan_root/watch-pr/owner_repo_pr_42/watchers" -type f 2>/dev/null | wc -l | tr -d ' ')
+if [[ "$remaining" != "0" ]]; then
+  echo "fail: kill --watcher did not sweep orphan .exec sidecar (remaining=$remaining)" >&2
+  exit 1
+fi
+
+echo "ok: roles resolve, render role.md into managed block, and source manifest defaults"

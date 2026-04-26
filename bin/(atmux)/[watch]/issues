@@ -10,7 +10,7 @@ source "$HERE/../notify"
 usage() {
   cat <<'USAGE'
 Usage:
-  atmux watch --issues <repo|url> [--timeout <seconds>] [--interval <seconds>]
+  atmux watch --issues <repo|url> [--timeout <seconds>] [--interval <seconds>] [--exec <cmd>]
 
 Description:
   Register the current pane to watch a GitHub repository for newly created
@@ -20,11 +20,15 @@ Description:
   Multiple local watchers for the same repository share a single polling worker
   so only one process polls GitHub at a time.
 
+  --exec  When supplied, the notification XML is also piped into <cmd> via
+          `bash -c <cmd>` on stdin every time the watcher fires.
+
   Requires GitHub CLI (`gh`) with API access to the target repository.
 
 Examples:
   atmux watch --issues owner/repo
   atmux watch --issues https://github.com/owner/repo/issues --timeout 600
+  atmux watch --issues owner/repo --exec ./on-new-issue
 USAGE
 }
 
@@ -192,7 +196,7 @@ issue_notification_payload_for_line() {
 
 notify_issues_watchers() {
   local key="$1" payload="$2"
-  local watchers_dir watcher_file pane
+  local watchers_dir watcher_file pane exec_cmd
 
   watchers_dir="$(issues_watch_watchers_dir "$key")"
   [[ -d "$watchers_dir" ]] || return 0
@@ -202,7 +206,13 @@ notify_issues_watchers() {
     pane="$(watcher_pane_from_file "$watcher_file")"
     [[ -n "$pane" ]] || continue
     send_payload_to_pane "$pane" "$payload"
-  done < <(find "$watchers_dir" -mindepth 1 -maxdepth 1 -type f 2>/dev/null | sort)
+    if [[ -f "${watcher_file}.exec" ]]; then
+      exec_cmd="$(cat "${watcher_file}.exec" 2>/dev/null || true)"
+      if [[ -n "$exec_cmd" ]]; then
+        printf '%s' "$payload" | bash -c "$exec_cmd" >/dev/null 2>&1 || true
+      fi
+    fi
+  done < <(find "$watchers_dir" -mindepth 1 -maxdepth 1 -type f ! -name '*.exec' 2>/dev/null | sort)
 }
 
 issues_watchers_present() {
@@ -218,15 +228,15 @@ issues_watchers_present() {
     pane="$(watcher_pane_from_file "$watcher_file")"
     expires_at="$(watcher_deadline_from_file "$watcher_file")"
     if [[ -n "$expires_at" && "$expires_at" != "0" && "$expires_at" =~ ^[0-9]+$ ]] && (( now >= expires_at )); then
-      rm -f "$watcher_file"
+      rm -f "$watcher_file" "${watcher_file}.exec"
       continue
     fi
     if [[ -z "$pane" || -z "$(tmux display-message -t "$pane" -p '#{pane_id}' 2>/dev/null || true)" ]]; then
-      rm -f "$watcher_file"
+      rm -f "$watcher_file" "${watcher_file}.exec"
       continue
     fi
     count=$((count + 1))
-  done < <(find "$watchers_dir" -mindepth 1 -maxdepth 1 -type f 2>/dev/null | sort)
+  done < <(find "$watchers_dir" -mindepth 1 -maxdepth 1 -type f ! -name '*.exec' 2>/dev/null | sort)
 
   (( count > 0 ))
 }
@@ -390,6 +400,7 @@ main() {
   local repo_spec=""
   local timeout_sec="0"
   local interval="30"
+  local exec_cmd=""
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -403,6 +414,10 @@ main() {
         ;;
       --interval)
         interval="${2:-}"
+        shift 2
+        ;;
+      --exec)
+        exec_cmd="${2:-}"
         shift 2
         ;;
       -h|--help|help)
@@ -447,6 +462,11 @@ main() {
     expires_at="$(( $(date +%s) + timeout_sec ))"
   fi
   write_field "$watcher_file" "${pane}|${expires_at}"
+  if [[ -n "$exec_cmd" ]]; then
+    printf '%s' "$exec_cmd" > "${watcher_file}.exec"
+  else
+    rm -f "${watcher_file}.exec" 2>/dev/null || true
+  fi
 
   ensure_issues_watch_worker "$key" "$owner" "$repo" "$interval"
   printf '<watch type="issues" repo="%s/%s" pane="%s" timeout="%s" watcher_id="%s" />\n' \

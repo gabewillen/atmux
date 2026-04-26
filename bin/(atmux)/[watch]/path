@@ -4,16 +4,20 @@ set -euo pipefail
 usage() {
   cat <<'USAGE'
 Usage:
-  atmux watch --path <glob> [--timeout <seconds>] [--interval <seconds>]
+  atmux watch --path <glob> [--timeout <seconds>] [--interval <seconds>] [--exec <cmd>]
 
 Description:
   Watch filesystem paths matching a glob and exit 0 when the matched set or
   file metadata changes. Uses fswatch or inotifywait when available and falls
   back to polling. Exits 124 on timeout.
 
+  --exec  When supplied, the change-event XML is also piped into <cmd> via
+          `bash -c <cmd>` on stdin in addition to being printed to stdout.
+
 Examples:
   atmux watch --path 'src/**/*.sh'
   atmux watch --path '/tmp/build/*.log' --timeout 60
+  atmux watch --path 'docs/**/*.md' --exec ./on-docs-changed
 USAGE
 }
 
@@ -152,12 +156,19 @@ snapshot_paths() {
   done | sort -u
 }
 
+EXEC_CMD=""
+
 emit_change() {
   local backend="$1"
   shift
-  printf '<watch type="path" path="%s" changed="true" backend="%s" />\n' \
+  local xml
+  xml="$(printf '<watch type="path" path="%s" changed="true" backend="%s" />' \
     "$(xml_escape "$*")" \
-    "$(xml_escape "$backend")"
+    "$(xml_escape "$backend")")"
+  printf '%s\n' "$xml"
+  if [[ -n "$EXEC_CMD" ]]; then
+    printf '%s' "$xml" | bash -c "$EXEC_CMD" >/dev/null 2>&1 || true
+  fi
 }
 
 wait_for_process_exit_or_timeout() {
@@ -330,6 +341,10 @@ main() {
         ;;
       --interval)
         interval="${2:-}"
+        shift 2
+        ;;
+      --exec)
+        EXEC_CMD="${2:-}"
         shift 2
         ;;
       -h|--help|help)

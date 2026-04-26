@@ -1,0 +1,182 @@
+#!/usr/bin/env bash
+# Full role lifecycle test using a mock adapter (no real LLM CLI required).
+#
+# Verifies end-to-end:
+#   - ATMUX_ROLE_DIR/START/STOP/STATE_DIR round-trip from agent _create
+#     through `tmux set-environment` into run_adapter's env.
+#   - role.md is rendered into the worktree's control file inside the
+#     <atmux>...</atmux> block.
+#   - role.start fires after inject_control_file, before the adapter execs,
+#     and sees the expected env.
+#   - atmux kill --agent runs role.stop while the session env is still
+#     readable, then tears the session/worktree/branch down.
+#
+# Mocks the adapter the same way 99_start_adapters_allowlist does so this
+# can run in CI without claude/codex/gemini installed.
+set -euo pipefail
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+ATMUX_BIN="$REPO_ROOT/bin/atmux"
+
+WORK_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/amux-role-lifecycle.XXXXXX")"
+ATMUX_HOME="$WORK_ROOT/atmux-home"
+mkdir -p "$ATMUX_HOME"
+export ATMUX_HOME
+
+MARKERS="$WORK_ROOT/markers"
+mkdir -p "$MARKERS"
+
+cleanup() {
+  set +e
+  if [[ -n "${session:-}" ]]; then
+    tmux kill-session -t "$session" >/dev/null 2>&1 || true
+  fi
+  rm -rf "$WORK_ROOT"
+}
+trap cleanup EXIT
+
+# Mock adapter that just sleeps until killed (mirrors the pattern in
+# 99_start_adapters_allowlist).
+adapter_dir="$ATMUX_HOME/adapters/mock"
+mkdir -p "$adapter_dir"
+cat > "$adapter_dir/cmd" <<'ADAPTER'
+#!/usr/bin/env bash
+set -euo pipefail
+case "${1:-}" in
+  control-file) printf 'AGENTS.md\n' ;;
+  start) sleep 600 ;;
+  status) printf '<status adapter="mock" owner="agent" state="idle" model="" reasoning_level="" control_file="AGENTS.md" />\n' ;;
+  model) printf 'mock\n' ;;
+  reasoning-level) printf 'medium\n' ;;
+  *) exit 2 ;;
+esac
+ADAPTER
+chmod +x "$adapter_dir/cmd"
+
+# Probe role with a start hook that dumps env to a marker file and a stop
+# hook that records that it ran with the expected state.
+roles_dir="$ATMUX_HOME/roles/probe"
+mkdir -p "$roles_dir"
+cat > "$roles_dir/role.md" <<'EOF'
+# Probe Role
+
+This is the probe role injected into the control file.
+EOF
+
+cat > "$roles_dir/manifest" <<EOF
+INTELLIGENCE=20
+ADAPTERS=(mock)
+EOF
+
+cat > "$roles_dir/start" <<EOF
+#!/usr/bin/env bash
+set -u
+{
+  echo "ATMUX_ROLE=\${ATMUX_ROLE:-}"
+  echo "ATMUX_ROLE_DIR=\${ATMUX_ROLE_DIR:-}"
+  echo "ATMUX_ROLE_START=\${ATMUX_ROLE_START:-}"
+  echo "ATMUX_ROLE_STOP=\${ATMUX_ROLE_STOP:-}"
+  echo "ATMUX_ROLE_STATE_DIR=\${ATMUX_ROLE_STATE_DIR:-}"
+  echo "ATMUX_AGENT_NAME=\${ATMUX_AGENT_NAME:-}"
+  echo "ATMUX_REPO=\${ATMUX_REPO:-}"
+  echo "ATMUX_ADAPTER=\${ATMUX_ADAPTER:-}"
+} > "$MARKERS/start.env"
+mkdir -p "\${ATMUX_ROLE_STATE_DIR:-/tmp/missing}"
+echo started > "\${ATMUX_ROLE_STATE_DIR:-/tmp/missing}/marker"
+echo started > "$MARKERS/started"
+EOF
+chmod +x "$roles_dir/start"
+
+cat > "$roles_dir/stop" <<EOF
+#!/usr/bin/env bash
+set -u
+{
+  echo "STATE_HAS_MARKER=\$( [[ -f \${ATMUX_ROLE_STATE_DIR:-/tmp/x}/marker ]] && echo yes || echo no )"
+} > "$MARKERS/stop.env"
+echo stopped > "$MARKERS/stopped"
+rm -rf "\${ATMUX_ROLE_STATE_DIR:-}"
+EOF
+chmod +x "$roles_dir/stop"
+
+cd "$REPO_ROOT"
+agent_name="lifecycleprobe$$"
+
+out="$(
+  ATMUX_ALLOW_OUTSIDE_TMUX=1 \
+  ATMUX_AGENT_NAME=test-manager \
+  "$ATMUX_BIN" create --agent "$agent_name" \
+    --role probe \
+    --intelligence 20 \
+    --adapter mock 2>&1 || true
+)"
+session="$(printf '%s\n' "$out" | sed -n 's/.*session="\([^"]*\)".*/\1/p' | head -1)"
+[[ -n "$session" ]] || { echo "fail: no session created" >&2; echo "$out" >&2; exit 1; }
+
+# Wait for start hook
+for i in $(seq 1 80); do
+  [[ -f "$MARKERS/started" ]] && break
+  sleep 0.1
+done
+[[ -f "$MARKERS/started" ]] || { echo "fail: start hook never ran" >&2; exit 1; }
+
+# Verify env round-trip
+required=(
+  "ATMUX_ROLE=probe"
+  "ATMUX_ROLE_DIR=$roles_dir"
+  "ATMUX_ROLE_START=$roles_dir/start"
+  "ATMUX_ROLE_STOP=$roles_dir/stop"
+)
+for kv in "${required[@]}"; do
+  if ! grep -Fxq "$kv" "$MARKERS/start.env"; then
+    echo "fail: start hook env missing or wrong: $kv" >&2
+    cat "$MARKERS/start.env" >&2
+    exit 1
+  fi
+done
+
+# State dir should have been created by start
+state_dir="$(grep '^ATMUX_ROLE_STATE_DIR=' "$MARKERS/start.env" | cut -d= -f2-)"
+[[ -n "$state_dir" && -f "$state_dir/marker" ]] || {
+  echo "fail: state dir or marker missing: $state_dir" >&2
+  exit 1
+}
+
+# Verify role.md injection
+repo_norm="$(basename "$REPO_ROOT" | sed -E 's/[^A-Za-z0-9_-]+/_/g; s/_+/_/g; s/^_+//; s/_+$//')"
+worktree="$ATMUX_HOME/agents/${repo_norm}-$agent_name"
+[[ -f "$worktree/AGENTS.md" ]] || { echo "fail: control file missing" >&2; exit 1; }
+grep -q "Probe Role" "$worktree/AGENTS.md" || { echo "fail: role.md not injected" >&2; exit 1; }
+awk '
+  /^<atmux>$/ { inb=1; next }
+  /^<\/atmux>$/ { inb=0; next }
+  inb==1 && /Probe Role/ { found=1 }
+  END { exit (found?0:1) }
+' "$worktree/AGENTS.md" || { echo "fail: role.md outside <atmux> block" >&2; exit 1; }
+
+# Verify all 5 ATMUX_ROLE_* vars persisted on session
+for var in ATMUX_ROLE ATMUX_ROLE_DIR ATMUX_ROLE_START ATMUX_ROLE_STOP ATMUX_ROLE_STATE_DIR; do
+  val="$(tmux show-environment -t "$session" "$var" 2>/dev/null | sed -n "s/^${var}=//p")"
+  [[ -n "$val" ]] || { echo "fail: $var not on session env" >&2; exit 1; }
+done
+
+# Kill and verify stop fired
+ATMUX_ALLOW_OUTSIDE_TMUX=1 "$ATMUX_BIN" kill --agent "$agent_name" >/dev/null 2>&1 || true
+
+for i in $(seq 1 80); do
+  [[ -f "$MARKERS/stopped" ]] && break
+  sleep 0.1
+done
+[[ -f "$MARKERS/stopped" ]] || { echo "fail: stop hook never ran" >&2; exit 1; }
+grep -Fxq "STATE_HAS_MARKER=yes" "$MARKERS/stop.env" || {
+  echo "fail: stop hook ran without seeing start's marker (lifecycle order wrong)" >&2
+  cat "$MARKERS/stop.env" >&2
+  exit 1
+}
+
+# Final cleanup checks
+[[ ! -d "$state_dir" ]] || { echo "fail: state dir not cleaned" >&2; exit 1; }
+tmux has-session -t "$session" 2>/dev/null && { echo "fail: session still alive" >&2; exit 1; }
+[[ ! -d "$worktree" ]] || { echo "fail: worktree not cleaned" >&2; exit 1; }
+
+echo "ok: full role lifecycle (start hook, env round-trip, role.md, kill, stop hook, cleanup)"

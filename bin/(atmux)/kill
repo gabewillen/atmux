@@ -225,14 +225,18 @@ kill_watcher() {
       local watcher_file watchers_dir remaining=0
       watcher_file="$(pr_watch_watchers_dir "$key")/$watcher_name"
       if [[ ! -f "$watcher_file" ]]; then
+        # Sweep an orphan exec sidecar if one was left behind by a prior crash.
+        if [[ -f "${watcher_file}.exec" ]]; then
+          rm -f "${watcher_file}.exec"
+        fi
         echo "atmux kill: watcher not found: $watcher_id" >&2
         exit 2
       fi
 
-      rm -f "$watcher_file"
+      rm -f "$watcher_file" "${watcher_file}.exec"
       watchers_dir="$(pr_watch_watchers_dir "$key")"
       if [[ -d "$watchers_dir" ]]; then
-        remaining="$(find "$watchers_dir" -mindepth 1 -maxdepth 1 -type f 2>/dev/null | wc -l | tr -d ' ')"
+        remaining="$(find "$watchers_dir" -mindepth 1 -maxdepth 1 -type f ! -name '*.exec' 2>/dev/null | wc -l | tr -d ' ')"
       fi
 
       if [[ "${remaining:-0}" -eq 0 ]] && pr_worker_running_for_key "$key"; then
@@ -243,14 +247,17 @@ kill_watcher() {
       local watcher_file watchers_dir remaining=0
       watcher_file="$(issues_watch_watchers_dir "$key")/$watcher_name"
       if [[ ! -f "$watcher_file" ]]; then
+        if [[ -f "${watcher_file}.exec" ]]; then
+          rm -f "${watcher_file}.exec"
+        fi
         echo "atmux kill: watcher not found: $watcher_id" >&2
         exit 2
       fi
 
-      rm -f "$watcher_file"
+      rm -f "$watcher_file" "${watcher_file}.exec"
       watchers_dir="$(issues_watch_watchers_dir "$key")"
       if [[ -d "$watchers_dir" ]]; then
-        remaining="$(find "$watchers_dir" -mindepth 1 -maxdepth 1 -type f 2>/dev/null | wc -l | tr -d ' ')"
+        remaining="$(find "$watchers_dir" -mindepth 1 -maxdepth 1 -type f ! -name '*.exec' 2>/dev/null | wc -l | tr -d ' ')"
       fi
 
       if [[ "${remaining:-0}" -eq 0 ]] && issues_worker_running_for_key "$key"; then
@@ -306,6 +313,63 @@ matches_any_pattern() {
   return 1
 }
 
+run_role_hook() {
+  local cmd="$1"
+  [[ -n "$cmd" ]] || return 0
+  if [[ -x "$cmd" && -f "$cmd" ]]; then
+    "$cmd"
+  else
+    bash -c "$cmd"
+  fi
+}
+
+run_role_hook_bounded() {
+  # Runs a role hook in the background and enforces a wall-clock budget so a
+  # misbehaving stop hook can never block kill_agents indefinitely. Returns
+  # 124 if the budget expires; otherwise the hook's own exit code.
+  local cmd="$1"
+  local budget_secs="${2:-30}"
+  local pid deadline now
+  [[ -n "$cmd" ]] || return 0
+  ( run_role_hook "$cmd" ) &
+  pid=$!
+  deadline=$(( $(date +%s) + budget_secs ))
+  while kill -0 "$pid" 2>/dev/null; do
+    now="$(date +%s)"
+    if (( now >= deadline )); then
+      kill -TERM "$pid" 2>/dev/null || true
+      sleep 0.5
+      kill -KILL "$pid" 2>/dev/null || true
+      wait "$pid" 2>/dev/null || true
+      return 124
+    fi
+    sleep 0.2
+  done
+  wait "$pid"
+}
+
+signal_adapter_pane() {
+  # Sends TERM to the adapter process running in a session's primary pane and
+  # waits up to wait_secs seconds for it to exit. Best-effort: returns 0 even
+  # when the process doesn't exit in time so the caller can proceed to kill
+  # the session anyway.
+  local session="$1"
+  local wait_secs="${2:-5}"
+  local pane pid i
+  pane="$(primary_pane_for_session "$session")"
+  [[ -n "$pane" ]] || return 0
+  pid="$(tmux display-message -t "$pane" -p '#{pane_pid}' 2>/dev/null || true)"
+  [[ -n "$pid" ]] || return 0
+  kill -TERM "$pid" 2>/dev/null || true
+  i=0
+  while (( i < wait_secs * 10 )); do
+    kill -0 "$pid" 2>/dev/null || return 0
+    sleep 0.1
+    i=$((i + 1))
+  done
+  return 0
+}
+
 kill_agents() {
   local repo_root="" repo_name=""
   {
@@ -349,6 +413,22 @@ kill_agents() {
     local note=""
 
     if tmux has-session -t "$session" 2>/dev/null; then
+      # Wind the adapter down first so the role.stop hook below sees the
+      # adapter process gone but the session env still readable.
+      signal_adapter_pane "$session" 5
+      role_stop="$(get_session_env "$session" ATMUX_ROLE_STOP)"
+      if [[ -n "$role_stop" ]]; then
+        role_dir="$(get_session_env "$session" ATMUX_ROLE_DIR)"
+        role_state_dir="$(get_session_env "$session" ATMUX_ROLE_STATE_DIR)"
+        role_name="$(get_session_env "$session" ATMUX_ROLE)"
+        ATMUX_AGENT_NAME="$short_name" \
+        ATMUX_AGENT_SESSION="$session" \
+        ATMUX_REPO="$repo_name" \
+        ATMUX_ROLE="$role_name" \
+        ATMUX_ROLE_DIR="$role_dir" \
+        ATMUX_ROLE_STATE_DIR="$role_state_dir" \
+        run_role_hook_bounded "$role_stop" "${ATMUX_ROLE_STOP_TIMEOUT:-30}" || true
+      fi
       tmux kill-session -t "$session"
       removed_session="true"
     fi

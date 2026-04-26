@@ -6,7 +6,7 @@ ATMUX_HOME="${ATMUX_HOME:-$HOME/.atmux}"
 usage() {
   cat <<'USAGE'
 Usage:
-  atmux create --agent <name> --role <role> --intelligence <0-100> [--team <team>] [--adapter <adapter>] [--no-worktree] [--task --description <desc> --todo <todo>...] [-- <adapter-args...>]
+  atmux create --agent <name> --role <role> --intelligence <0-100> [--team <team>] [--adapter <adapter>] [--no-worktree] [--start <cmd>] [--stop <cmd>] [--task --description <desc> --todo <todo>...] [-- <adapter-args...>]
   atmux create --team <name>
   atmux create --issue --title <title> [--description <description>] [--todo <todo>...] [--repo <repo>]
   atmux create --pr --title <title> [--description <description>] [--source <branch>] [--target <branch>] [--todo <todo>...] [--repo <repo>]
@@ -55,6 +55,8 @@ agent_no_worktree=0
 agent_task=0
 agent_task_description=""
 agent_todos=()
+agent_start=""
+agent_stop=""
 agent_forward=()
 
 team_name=""
@@ -134,6 +136,14 @@ while [[ $# -gt 0 ]]; do
     --task)
       agent_task=1
       shift
+      ;;
+    --start)
+      agent_start="${2:-}"
+      shift 2
+      ;;
+    --stop)
+      agent_stop="${2:-}"
+      shift 2
       ;;
     --description)
       if [[ "$mode" == "issue" ]]; then
@@ -234,6 +244,12 @@ case "$mode" in
       for todo in "${agent_todos[@]}"; do
         cmd+=(--todo "$todo")
       done
+    fi
+    if [[ -n "$agent_start" ]]; then
+      cmd+=(--start "$agent_start")
+    fi
+    if [[ -n "$agent_stop" ]]; then
+      cmd+=(--stop "$agent_stop")
     fi
     if [[ "${#agent_forward[@]}" -gt 0 ]]; then
       cmd+=(-- "${agent_forward[@]}")

@@ -1,0 +1,106 @@
+#!/usr/bin/env bash
+# Verifies that a non-zero exit from a role's start hook aborts agent
+# creation: agent _create returns non-zero, the tmux session is killed,
+# the worktree and branch are cleaned up, and the success XML is NOT
+# emitted.
+set -euo pipefail
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+ATMUX_BIN="$REPO_ROOT/bin/atmux"
+
+WORK_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/amux-role-fail.XXXXXX")"
+ATMUX_HOME="$WORK_ROOT/atmux-home"
+mkdir -p "$ATMUX_HOME"
+export ATMUX_HOME
+
+cleanup() {
+  set +e
+  rm -rf "$WORK_ROOT"
+}
+trap cleanup EXIT
+
+# Mock adapter: would just sleep if it ran. The start hook should fail
+# before the adapter even gets to run, so this never fires its `start`.
+adapter_dir="$ATMUX_HOME/adapters/mock"
+mkdir -p "$adapter_dir"
+cat > "$adapter_dir/cmd" <<'ADAPTER'
+#!/usr/bin/env bash
+set -euo pipefail
+case "${1:-}" in
+  control-file) printf 'AGENTS.md\n' ;;
+  start) sleep 600 ;;
+  status) printf '<status adapter="mock" owner="agent" state="idle" model="" reasoning_level="" control_file="AGENTS.md" />\n' ;;
+  model) printf 'mock\n' ;;
+  reasoning-level) printf 'medium\n' ;;
+  *) exit 2 ;;
+esac
+ADAPTER
+chmod +x "$adapter_dir/cmd"
+
+roles_dir="$ATMUX_HOME/roles/failing"
+mkdir -p "$roles_dir"
+echo "# failing" > "$roles_dir/role.md"
+cat > "$roles_dir/start" <<'EOF'
+#!/usr/bin/env bash
+echo "intentional failure" >&2
+exit 7
+EOF
+chmod +x "$roles_dir/start"
+
+cd "$REPO_ROOT"
+agent_name="failingprobe$$"
+repo_norm="$(basename "$REPO_ROOT" | sed -E 's/[^A-Za-z0-9_-]+/_/g; s/_+/_/g; s/^_+//; s/_+$//')"
+session="atmux-${repo_norm}-${agent_name}"
+worktree="$ATMUX_HOME/agents/${repo_norm}-${agent_name}"
+
+out="$(
+  ATMUX_ALLOW_OUTSIDE_TMUX=1 \
+  ATMUX_AGENT_NAME=test-manager \
+  "$ATMUX_BIN" create --agent "$agent_name" \
+    --role failing \
+    --intelligence 20 \
+    --adapter mock 2>&1 || true
+)"
+
+# atmux create's wrapper publishes the inner exit code as exit_code="N" in
+# its <atmux ...> envelope. A failed start hook must surface as non-zero.
+ec="$(printf '%s\n' "$out" | sed -n 's/.*exit_code="\([0-9]*\)".*/\1/p' | head -1)"
+if [[ "$ec" != "1" ]]; then
+  echo "fail: expected wrapper exit_code=1, got '$ec'" >&2
+  echo "$out" >&2
+  exit 1
+fi
+
+# The success <agent ...> XML must NOT have been printed.
+if printf '%s\n' "$out" | grep -q '^<agent name='; then
+  echo "fail: success <agent> XML was emitted despite start hook failure" >&2
+  echo "$out" >&2
+  exit 1
+fi
+
+# Cleanup must have happened: no leaked session/worktree/branch.
+# Allow up to 5s for the async cleanup in run_adapter's abort path to finish
+# (kill-session is sync but the worktree+branch cleanup runs after).
+for i in $(seq 1 50); do
+  has_session=0; has_worktree=0
+  tmux has-session -t "$session" 2>/dev/null && has_session=1
+  [[ -d "$worktree" ]] && has_worktree=1
+  if [[ "$has_session" == "0" && "$has_worktree" == "0" ]]; then
+    break
+  fi
+  sleep 0.1
+done
+if tmux has-session -t "$session" 2>/dev/null; then
+  echo "fail: tmux session leaked: $session" >&2
+  exit 1
+fi
+if [[ -d "$worktree" ]]; then
+  echo "fail: worktree leaked: $worktree" >&2
+  ls -la "$worktree" >&2 | head -5
+  exit 1
+fi
+git -C "$REPO_ROOT" worktree prune >/dev/null 2>&1 || true
+git -C "$REPO_ROOT" branch -D "$session" >/dev/null 2>&1 || true
+
+echo "ok: role start failure aborts agent and cleans up session/worktree"

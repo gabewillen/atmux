@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# Role start hook for example-pr-reviewer.
+#
+# Runs after the control file is rendered but before the AI CLI execs.
+# Registers a watcher for new PRs in the current repo and writes the
+# watcher id into the role state dir so `stop` can clean it up.
+#
+# Env provided by atmux:
+#   ATMUX_ROLE_STATE_DIR  - private state dir for this (agent, role) pair
+#   ATMUX_ROLE_DIR        - this role's directory
+#   ATMUX_AGENT_NAME      - the agent's short name
+#   ATMUX_REPO            - normalized repo name
+set -euo pipefail
+
+state="$ATMUX_ROLE_STATE_DIR"
+mkdir -p "$state"
+
+# Resolve the GitHub owner/repo for the current worktree. Best-effort: if
+# `gh` isn't configured we just skip the watcher and let the prompt-only
+# behavior remain.
+if ! command -v gh >/dev/null 2>&1; then
+  echo "example-pr-reviewer: gh not installed; skipping PR watcher" >&2
+  exit 0
+fi
+gh_repo="$(gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null || true)"
+if [[ -z "$gh_repo" ]]; then
+  echo "example-pr-reviewer: not a GitHub repo (gh repo view failed); skipping" >&2
+  exit 0
+fi
+
+# When a new issue/PR is filed, dispatch handler that lives next to this
+# script. The handler receives the notification XML on stdin.
+handler="$ATMUX_ROLE_DIR/on-pr-opened"
+
+# atmux watch --issues registers a watcher tied to the current pane and
+# returns a watcher id we record for teardown.
+watch_xml="$(atmux watch --issues "$gh_repo" --exec "$handler" 2>/dev/null || true)"
+watcher_id="$(printf '%s\n' "$watch_xml" | sed -n 's/.*watcher_id="\([^"]*\)".*/\1/p')"
+if [[ -n "$watcher_id" ]]; then
+  printf '%s\n' "$watcher_id" >> "$state/watcher-ids"
+fi

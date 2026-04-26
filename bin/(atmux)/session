@@ -252,6 +252,13 @@ render_managed_block() {
     if [[ -n "$role_name" ]]; then
       echo "# Role"
       echo "- ROLE: $role_name"
+      if [[ -n "${ATMUX_ROLE_DIR:-}" && -f "$ATMUX_ROLE_DIR/role.md" ]]; then
+        echo
+        # Neutralise any literal <atmux>/</atmux> fence lines in role.md so the
+        # next inject_control_file strip phase doesn't treat them as boundaries
+        # and leak content out of the managed block.
+        sed -E 's@^</?atmux>$@@' "$ATMUX_ROLE_DIR/role.md"
+      fi
       echo
     fi
     echo "# atmux Rules"
@@ -340,6 +347,43 @@ inject_control_file() {
   } > "$target_file"
 
   rm -f "$managed_file" "$stripped_file"
+}
+
+run_role_hook() {
+  # Runs a role start/stop hook. If $1 is an executable file path, exec it
+  # directly; otherwise treat as a bash -c string. Returns the hook's exit code.
+  local cmd="$1"
+  [[ -n "$cmd" ]] || return 0
+  if [[ -x "$cmd" && -f "$cmd" ]]; then
+    "$cmd"
+  else
+    bash -c "$cmd"
+  fi
+}
+
+run_role_hook_bounded() {
+  # Same as run_role_hook but enforces a wall-clock budget so a misbehaving
+  # hook can't block agent startup forever. Returns 124 on timeout, otherwise
+  # the hook's own exit code.
+  local cmd="$1"
+  local budget_secs="${2:-30}"
+  local pid deadline now
+  [[ -n "$cmd" ]] || return 0
+  ( run_role_hook "$cmd" ) &
+  pid=$!
+  deadline=$(( $(date +%s) + budget_secs ))
+  while kill -0 "$pid" 2>/dev/null; do
+    now="$(date +%s)"
+    if (( now >= deadline )); then
+      kill -TERM "$pid" 2>/dev/null || true
+      sleep 0.5
+      kill -KILL "$pid" 2>/dev/null || true
+      wait "$pid" 2>/dev/null || true
+      return 124
+    fi
+    sleep 0.2
+  done
+  wait "$pid"
 }
 
 resolve_adapter_cmd_path() {
@@ -565,6 +609,61 @@ run_adapter() {
     fi
 
     inject_control_file "$(pwd)"
+
+    # Role start hook — runs after the control file is rendered, before the
+    # adapter execs. Aborts the agent if the hook fails.
+    if [[ -n "${ATMUX_ROLE_START:-}" ]]; then
+      ATMUX_ROLE_STATE_DIR="${ATMUX_HOME}/agents/${ATMUX_REPO:-repo}/${ATMUX_AGENT_NAME:-agent}/role"
+      mkdir -p "$ATMUX_ROLE_STATE_DIR"
+      export ATMUX_ROLE_STATE_DIR
+      if [[ -n "$current_session" ]]; then
+        tmux set-environment -t "$current_session" ATMUX_ROLE_STATE_DIR "$ATMUX_ROLE_STATE_DIR" >/dev/null 2>&1 || true
+      fi
+      role_start_rc=0
+      run_role_hook_bounded "$ATMUX_ROLE_START" "${ATMUX_ROLE_START_TIMEOUT:-60}" || role_start_rc=$?
+      # Publish the outcome on the session env so agent _create can observe it
+      # without waiting for a fixed timeout. ready = hook succeeded, failed =
+      # hook failed (or timed out, handled below).
+      if [[ "$role_start_rc" -eq 0 && -n "$current_session" ]]; then
+        tmux set-environment -t "$current_session" ATMUX_ROLE_START_STATE ready >/dev/null 2>&1 || true
+      fi
+      if [[ "$role_start_rc" -ne 0 ]]; then
+        if [[ "$role_start_rc" -eq 124 ]]; then
+          echo "atmux: role start timed out after ${ATMUX_ROLE_START_TIMEOUT:-60}s; aborting agent" >&2
+        else
+          echo "atmux: role start failed (rc=$role_start_rc); aborting agent" >&2
+        fi
+        # Order matters here. tmux kill-session destroys the pane (and this
+        # script's bash process), so anything after it may not run. Strategy:
+        # 1) Signal the abort to the parent via ATMUX_ROLE_START_STATE=failed
+        #    (the parent's poll picks this up and exits 1).
+        # 2) Clean up worktree + branch while we're still alive.
+        # 3) Kill the session last (this kills us).
+        local fail_worktree="${ATMUX_WORKTREE:-}"
+        local fail_session="$current_session"
+        if [[ -n "$fail_session" ]] && tmux has-session -t "$fail_session" 2>/dev/null; then
+          tmux set-environment -t "$fail_session" ATMUX_ROLE_START_STATE failed >/dev/null 2>&1 || true
+          tmux set-environment -t "$fail_session" ATMUX_BOOTSTRAP_STATE failed >/dev/null 2>&1 || true
+        fi
+        if [[ -n "$fail_worktree" && -d "$fail_worktree" ]]; then
+          local repo_for_cleanup=""
+          repo_for_cleanup="$(git -C "$fail_worktree" rev-parse --show-toplevel 2>/dev/null || true)"
+          if [[ -n "$repo_for_cleanup" ]] && \
+             git -C "$repo_for_cleanup" worktree list --porcelain 2>/dev/null | grep -Fqx "worktree $fail_worktree"; then
+            git -C "$repo_for_cleanup" worktree remove -f "$fail_worktree" >/dev/null 2>&1 || rm -rf "$fail_worktree"
+          else
+            rm -rf "$fail_worktree"
+          fi
+          if [[ -n "$repo_for_cleanup" && -n "$fail_session" ]]; then
+            git -C "$repo_for_cleanup" branch -D "$fail_session" >/dev/null 2>&1 || true
+          fi
+        fi
+        if [[ -n "$fail_session" ]] && tmux has-session -t "$fail_session" 2>/dev/null; then
+          tmux kill-session -t "$fail_session" >/dev/null 2>&1 || true
+        fi
+        exit 1
+      fi
+    fi
 
     rc=0
     (
@@ -801,6 +900,15 @@ start_session() {
   fi
   if [[ -n "${ATMUX_ROLE:-}" ]]; then
     tmux set-environment -t "$session" ATMUX_ROLE "$ATMUX_ROLE"
+  fi
+  if [[ -n "${ATMUX_ROLE_DIR:-}" ]]; then
+    tmux set-environment -t "$session" ATMUX_ROLE_DIR "$ATMUX_ROLE_DIR"
+  fi
+  if [[ -n "${ATMUX_ROLE_START:-}" ]]; then
+    tmux set-environment -t "$session" ATMUX_ROLE_START "$ATMUX_ROLE_START"
+  fi
+  if [[ -n "${ATMUX_ROLE_STOP:-}" ]]; then
+    tmux set-environment -t "$session" ATMUX_ROLE_STOP "$ATMUX_ROLE_STOP"
   fi
   if [[ -n "${ATMUX_MANAGER:-}" ]]; then
     tmux set-environment -t "$session" ATMUX_MANAGER "$ATMUX_MANAGER"

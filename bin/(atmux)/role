@@ -1,0 +1,137 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ATMUX_HOME="${ATMUX_HOME:-$HOME/.atmux}"
+
+usage() {
+  cat <<'USAGE'
+Usage:
+  atmux role list
+  atmux role show <name>
+  atmux role resolve <name>
+
+Description:
+  Manage adapter-agnostic roles. A role is a directory containing any of:
+    role.md           prompt body, appended under "# Role" in the control file
+    manifest          optional, sourced bash: INTELLIGENCE, ADAPTERS=(name ...)
+    start             runs before the adapter starts (agent _create time)
+    stop              runs after the adapter exits (agent kill time)
+
+Resolution precedence (first match wins):
+    <repo>/.atmux/roles/<name>
+    ~/.atmux/roles/<name>
+    <source_root>/roles/<name>
+USAGE
+}
+
+source_root() {
+  if [[ -n "${ATMUX_SOURCE_ROOT:-}" && -d "$ATMUX_SOURCE_ROOT" ]]; then
+    printf '%s\n' "$ATMUX_SOURCE_ROOT"
+    return 0
+  fi
+  local self_root
+  self_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
+  if [[ -d "$self_root/roles" || -d "$self_root/bin/(atmux)" ]]; then
+    printf '%s\n' "$self_root"
+    return 0
+  fi
+  if [[ -d "$ATMUX_HOME/src/atmux" ]]; then
+    printf '%s\n' "$ATMUX_HOME/src/atmux"
+    return 0
+  fi
+  printf '%s\n' "$self_root"
+}
+
+role_search_paths() {
+  local repo_root="" sr
+  repo_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+  sr="$(source_root)"
+  if [[ -n "$repo_root" ]]; then
+    printf '%s\n' "$repo_root/.atmux/roles"
+  fi
+  printf '%s\n' "$ATMUX_HOME/roles"
+  printf '%s\n' "$sr/roles"
+}
+
+role_name_valid() {
+  # Role names live as flat directory names — no slashes, no relative path
+  # segments, no leading dot. This keeps `--role <name>` from escaping the
+  # search roots via `..` traversal.
+  local name="$1"
+  [[ -n "$name" ]] || return 1
+  case "$name" in
+    .|..|.*|*/*) return 1 ;;
+  esac
+  [[ "$name" =~ ^[A-Za-z0-9._-]+$ ]] || return 1
+  case "$name" in
+    *..*) return 1 ;;
+  esac
+  return 0
+}
+
+resolve_role_dir() {
+  local name="$1"
+  role_name_valid "$name" || return 1
+  local base
+  while IFS= read -r base; do
+    [[ -n "$base" ]] || continue
+    if [[ -d "$base/$name" ]]; then
+      printf '%s\n' "$base/$name"
+      return 0
+    fi
+  done < <(role_search_paths)
+  return 1
+}
+
+list_roles() {
+  local base name dir seen=""
+  while IFS= read -r base; do
+    [[ -d "$base" ]] || continue
+    while IFS= read -r dir; do
+      name="$(basename "$dir")"
+      case "$seen" in
+        *"|$name|"*) continue ;;
+      esac
+      seen="$seen|$name|"
+      printf '%s\t%s\n' "$name" "$dir"
+    done < <(find "$base" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | sort)
+  done < <(role_search_paths)
+}
+
+sub="${1:-}"
+shift || true
+
+case "$sub" in
+  list)
+    list_roles
+    ;;
+  show)
+    name="${1:-}"
+    [[ -n "$name" ]] || { echo "usage: atmux role show <name>" >&2; exit 2; }
+    if dir="$(resolve_role_dir "$name")"; then
+      if [[ -f "$dir/role.md" ]]; then
+        cat "$dir/role.md"
+      fi
+      exit 0
+    fi
+    echo "role not found: $name" >&2
+    exit 1
+    ;;
+  resolve)
+    name="${1:-}"
+    [[ -n "$name" ]] || { echo "usage: atmux role resolve <name>" >&2; exit 2; }
+    if dir="$(resolve_role_dir "$name")"; then
+      printf '%s\n' "$dir"
+      exit 0
+    fi
+    exit 1
+    ;;
+  -h|--help|help|"")
+    usage
+    ;;
+  *)
+    echo "unknown role command: $sub" >&2
+    usage >&2
+    exit 2
+    ;;
+esac

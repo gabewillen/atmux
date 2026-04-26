@@ -316,6 +316,46 @@ resolve_atmux_runner() {
   exit 127
 }
 
+resolve_role_runner() {
+  local here
+  here="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+  if [[ -x "$here/role" ]]; then
+    printf '%s\n' "$here/role"
+    return 0
+  fi
+  if [[ -n "${ATMUX_SOURCE_ROOT:-}" && -x "${ATMUX_SOURCE_ROOT}/bin/(atmux)/role" ]]; then
+    printf '%s\n' "${ATMUX_SOURCE_ROOT}/bin/(atmux)/role"
+    return 0
+  fi
+  local atmux_home="${ATMUX_HOME:-$HOME/.atmux}"
+  if [[ -x "$atmux_home/src/atmux/bin/(atmux)/role" ]]; then
+    printf '%s\n' "$atmux_home/src/atmux/bin/(atmux)/role"
+    return 0
+  fi
+  return 1
+}
+
+read_role_manifest() {
+  # Sources $1 in a subshell with a clean slate, then prints back any defaults
+  # the caller cares about. Output: lines of KEY=VALUE for INTELLIGENCE and
+  # ADAPTERS (joined with commas).
+  local manifest_path="$1"
+  [[ -f "$manifest_path" ]] || return 0
+  (
+    INTELLIGENCE=""
+    ADAPTERS=()
+    # shellcheck source=/dev/null
+    source "$manifest_path"
+    printf 'INTELLIGENCE=%s\n' "$INTELLIGENCE"
+    if [[ "${#ADAPTERS[@]}" -gt 0 ]]; then
+      local IFS=,
+      printf 'ADAPTERS=%s\n' "${ADAPTERS[*]}"
+    else
+      printf 'ADAPTERS=\n'
+    fi
+  )
+}
+
 resolve_session_runner() {
   if [[ -n "${ATMUX_SOURCE_ROOT:-}" && -x "${ATMUX_SOURCE_ROOT}/bin/(atmux)/session" ]]; then
     printf '%s\n' "${ATMUX_SOURCE_ROOT}/bin/(atmux)/session"
@@ -671,6 +711,8 @@ case "$sub" in
     task_mode=0
     task_description=""
     task_todos_blob=""
+    start_cmd=""
+    stop_cmd=""
     forward=()
     while [[ $# -gt 0 ]]; do
       case "$1" in
@@ -710,6 +752,14 @@ case "$sub" in
           task_todos_blob+="${2:-}"$'\n'
           shift 2
           ;;
+        --start)
+          start_cmd="${2:-}"
+          shift 2
+          ;;
+        --stop)
+          stop_cmd="${2:-}"
+          shift 2
+          ;;
         --)
           shift
           forward=("$@")
@@ -726,6 +776,45 @@ case "$sub" in
       echo "missing required flag: --role" >&2
       exit 2
     fi
+
+    # Hook commands are persisted on the tmux session via tmux set-environment,
+    # which truncates values at the first newline. Reject multi-line commands
+    # explicitly so the truncation never surprises anyone — use a script file
+    # if you need multi-line behavior.
+    case "$start_cmd" in
+      *$'\n'*) echo "--start must be a single line; use a script file for multi-line commands" >&2; exit 2 ;;
+    esac
+    case "$stop_cmd" in
+      *$'\n'*) echo "--stop must be a single line; use a script file for multi-line commands" >&2; exit 2 ;;
+    esac
+
+    # Resolve role directory if a role name maps to one. Apply manifest
+    # defaults (intelligence, adapters allow-list) and pick up start/stop
+    # scripts unless overridden by inline --start/--stop.
+    role_dir=""
+    role_adapters=""
+    if [[ -n "$role" ]]; then
+      if role_runner="$(resolve_role_runner || true)" && [[ -x "$role_runner" ]]; then
+        role_dir="$("$role_runner" resolve "$role" 2>/dev/null || true)"
+      fi
+    fi
+    if [[ -n "$role_dir" ]]; then
+      manifest_out="$(read_role_manifest "$role_dir/manifest" || true)"
+      if [[ -n "$manifest_out" ]]; then
+        manifest_intelligence="$(printf '%s\n' "$manifest_out" | sed -n 's/^INTELLIGENCE=//p')"
+        role_adapters="$(printf '%s\n' "$manifest_out" | sed -n 's/^ADAPTERS=//p')"
+        if [[ -z "$intelligence" && -n "$manifest_intelligence" ]]; then
+          intelligence="$manifest_intelligence"
+        fi
+      fi
+      if [[ -z "$start_cmd" && -x "$role_dir/start" ]]; then
+        start_cmd="$role_dir/start"
+      fi
+      if [[ -z "$stop_cmd" && -x "$role_dir/stop" ]]; then
+        stop_cmd="$role_dir/stop"
+      fi
+    fi
+
     if [[ -n "$intelligence" ]] && ! valid_intelligence "$intelligence"; then
       echo "invalid intelligence: $intelligence" >&2
       echo "expected integer range: 0-100" >&2
@@ -762,6 +851,9 @@ case "$sub" in
     if [[ -n "$adapter" ]]; then
       cmd+=(--adapter "$adapter")
     fi
+    if [[ -n "$role_adapters" ]]; then
+      cmd+=(--adapters "$role_adapters")
+    fi
     if [[ "$no_worktree" -eq 1 ]]; then
       cmd+=(--no-worktree)
     fi
@@ -770,12 +862,48 @@ case "$sub" in
     fi
 
     create_out="$(
-      ATMUX_MANAGER="$manager" ATMUX_ROLE="$role" ATMUX_TEAM="$team" ATMUX_INTELLIGENCE="$intelligence" "${cmd[@]}"
+      ATMUX_MANAGER="$manager" \
+      ATMUX_ROLE="$role" \
+      ATMUX_ROLE_DIR="$role_dir" \
+      ATMUX_ROLE_START="$start_cmd" \
+      ATMUX_ROLE_STOP="$stop_cmd" \
+      ATMUX_TEAM="$team" \
+      ATMUX_INTELLIGENCE="$intelligence" \
+      "${cmd[@]}"
     )"
 
     created_session="$(printf '%s\n' "$create_out" | awk 'NF { last=$0 } END { print last }')"
     if [[ -z "$created_session" ]]; then
       exit 0
+    fi
+
+    # If a role start hook is configured, watch briefly for an abort signal:
+    # session disappears (run_adapter killed it) or bootstrap state flips to
+    # "failed" (set by run_adapter on hook failure). Without this check, agent
+    # _create would print a success XML even when the session was torn down
+    # async because the role start hook returned non-zero.
+    if [[ -n "$start_cmd" ]]; then
+      # Wait up to ATMUX_ROLE_START_TIMEOUT+2s for run_adapter to publish the
+      # role start outcome via ATMUX_ROLE_START_STATE. Successful starts return
+      # as soon as the hook completes; fast failures return within the hook's
+      # exit time. Only slow-then-failed hooks (rare) hit the cap.
+      role_start_check_deadline=$(( $(date +%s) + ${ATMUX_ROLE_START_TIMEOUT:-60} + 2 ))
+      while (( $(date +%s) < role_start_check_deadline )); do
+        if ! tmux has-session -t "$created_session" 2>/dev/null; then
+          echo "atmux: agent aborted during role start (session gone)" >&2
+          exit 1
+        fi
+        role_state="$(get_session_env "$created_session" ATMUX_ROLE_START_STATE)"
+        if [[ "$role_state" == "failed" ]]; then
+          echo "atmux: agent aborted during role start (role start failed)" >&2
+          tmux kill-session -t "$created_session" >/dev/null 2>&1 || true
+          exit 1
+        fi
+        if [[ "$role_state" == "ready" ]]; then
+          break
+        fi
+        sleep 0.1
+      done
     fi
 
     created_name="$(get_session_env "$created_session" ATMUX_AGENT_NAME)"

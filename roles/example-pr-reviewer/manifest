@@ -1,0 +1,8 @@
+# Sourced by atmux when an agent is created with --role example-pr-reviewer.
+# Anything exported here is visible during agent creation.
+
+# Default intelligence (caller's --intelligence flag still wins)
+INTELLIGENCE=75
+
+# Adapter allow-list. Comment out to allow any adapter.
+ADAPTERS=(claude-code codex)

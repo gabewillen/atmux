@@ -1,9 +1,33 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+resolve_real_tmux() {
+  local self_dir self_path dir candidate candidate_dir candidate_path
+  self_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+  self_path="$self_dir/$(basename -- "${BASH_SOURCE[0]}")"
+
+  IFS=':' read -r -a path_parts <<<"${PATH:-}"
+  for dir in "${path_parts[@]}"; do
+    [[ -n "$dir" ]] || dir="."
+    candidate="$dir/tmux"
+    [[ -x "$candidate" ]] || continue
+    candidate_dir="$(cd -- "$(dirname -- "$candidate")" 2>/dev/null && pwd -P || true)"
+    [[ -n "$candidate_dir" ]] || continue
+    candidate_path="$candidate_dir/$(basename -- "$candidate")"
+    [[ "$candidate_path" != "$self_path" ]] || continue
+    printf '%s\n' "$candidate_path"
+    return 0
+  done
+  return 1
+}
+
 if [[ "${ATMUX_ALLOW_REAL_TMUX:-}" == "1" ]]; then
-  if [[ -n "${ATMUX_REAL_TMUX:-}" && -x "$ATMUX_REAL_TMUX" ]]; then
-    exec "$ATMUX_REAL_TMUX" "$@"
+  real_tmux="${ATMUX_REAL_TMUX:-}"
+  if [[ -z "$real_tmux" || ! -x "$real_tmux" ]]; then
+    real_tmux="$(resolve_real_tmux || true)"
+  fi
+  if [[ -n "$real_tmux" && -x "$real_tmux" ]]; then
+    exec "$real_tmux" "$@"
   fi
   echo "atmux tmux shim: real tmux binary is unavailable" >&2
   exit 127

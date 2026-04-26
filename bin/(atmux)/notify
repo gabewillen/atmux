@@ -37,6 +37,14 @@ debug_notify() {
   printf '%s pid=%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$$" "$*" >>"$log_file"
 }
 
+ensure_internal_real_tmux() {
+  if [[ -n "${ATMUX_REAL_TMUX:-}" && -x "$ATMUX_REAL_TMUX" ]]; then
+    export ATMUX_ALLOW_REAL_TMUX=1
+  fi
+}
+
+ensure_internal_real_tmux
+
 normalize_name() {
   local raw="${1:-}"
   local normalized=""
@@ -613,8 +621,10 @@ deliver_notification_to_pane() {
 next_notification_queue_id() {
   local qdir="$1"
   local lock_dir="$qdir/seq.lock"
+  local payload_dir="$qdir/payloads"
   local current="0"
   local next=1
+  local item_dir item_base item_num
 
   mkdir -p "$qdir"
   while ! mkdir "$lock_dir" 2>/dev/null; do
@@ -624,8 +634,24 @@ next_notification_queue_id() {
   if [[ -f "$qdir/next_id" ]]; then
     current="$(tr -d '\r\n' < "$qdir/next_id" 2>/dev/null || printf '0')"
     [[ "$current" =~ ^[0-9]+$ ]] || current="0"
-    next="$(( 10#$current + 1 ))"
   fi
+
+  if [[ -d "$payload_dir" ]]; then
+    while IFS= read -r item_dir; do
+      item_base="$(basename "$item_dir")"
+      [[ "$item_base" =~ ^[0-9]+$ ]] || continue
+      item_num="$(( 10#$item_base ))"
+      if (( item_num > current )); then
+        current="$item_num"
+      fi
+    done < <(find "$payload_dir" -mindepth 1 -maxdepth 1 -type d 2>/dev/null)
+  fi
+
+  next="$(( 10#$current + 1 ))"
+  while [[ -e "$payload_dir/$(printf '%010d' "$next")" ]]; do
+    next="$(( next + 1 ))"
+  done
+
   printf '%s\n' "$next" > "$qdir/next_id"
   rmdir "$lock_dir" >/dev/null 2>&1 || true
 
@@ -770,9 +796,10 @@ cleanup_notification_worker() {
 
   rm -f "$(notification_wake_fifo "$qdir")"
   rm -rf "$qdir/lock" "$(notification_worker_pid_file "$qdir")"
-  rmdir "$payload_dir" >/dev/null 2>&1 || true
-  rm -f "$qdir/next_id"
-  rmdir "$qdir" >/dev/null 2>&1 || true
+  if rmdir "$payload_dir" >/dev/null 2>&1; then
+    rm -f "$qdir/next_id"
+    rmdir "$qdir" >/dev/null 2>&1 || true
+  fi
 }
 
 open_notification_wake_fifo() {
@@ -831,6 +858,7 @@ serve_notification_queue() {
   local wake_fd_open=0
   local mode_hook_index="$(( ($$ + RANDOM) % 1000000 ))"
   local mode_hook_installed=0
+  local pane_session="" pane_command="" bootstrap_state="" adapter_state=""
   local -a items=()
 
   qdir="$(notify_queue_dir "$pane")"
@@ -918,6 +946,19 @@ serve_notification_queue() {
     fi
 
     prompt_prefix="$(resolve_prompt_prefix_for_pane "$pane" "$source_root" 2>/dev/null || true)"
+    pane_session="$(tmux display-message -t "$pane" -p '#{session_name}' 2>/dev/null || true)"
+    pane_command="$(tmux display-message -t "$pane" -p '#{pane_current_command}' 2>/dev/null || true)"
+    bootstrap_state=""
+    adapter_state=""
+    if [[ -n "$pane_session" ]]; then
+      bootstrap_state="$(get_session_env "$pane_session" ATMUX_BOOTSTRAP_STATE)"
+      adapter_state="$(get_session_env "$pane_session" ATMUX_ADAPTER)"
+    fi
+    if [[ "$adapter_state" == "auto" || ( "$bootstrap_state" == "pending" && -z "$prompt_prefix" ) ]]; then
+      debug_notify "worker:bootstrap_pending pane=$(printf '%q' "$pane") session=$(printf '%q' "$pane_session") command=$(printf '%q' "$pane_command") adapter=$(printf '%q' "$adapter_state") bootstrap=$(printf '%q' "$bootstrap_state")"
+      sleep "$mode_poll_interval"
+      continue
+    fi
     if [[ -n "$prompt_prefix" ]] && ! wait_for_pane_ready "$pane" "$source_root" "$prompt_prefix"; then
       debug_notify "worker:not_ready pane=$(printf '%q' "$pane") prompt_prefix=$(printf '%q' "$prompt_prefix")"
       sleep "$mode_poll_interval"
@@ -945,6 +986,24 @@ serve_notification_queue() {
       if pane_notification_blocked "$pane"; then
         break
       fi
+      prompt_prefix="$(resolve_prompt_prefix_for_pane "$pane" "$source_root" 2>/dev/null || true)"
+      pane_session="$(tmux display-message -t "$pane" -p '#{session_name}' 2>/dev/null || true)"
+      pane_command="$(tmux display-message -t "$pane" -p '#{pane_current_command}' 2>/dev/null || true)"
+      bootstrap_state=""
+      adapter_state=""
+      if [[ -n "$pane_session" ]]; then
+        bootstrap_state="$(get_session_env "$pane_session" ATMUX_BOOTSTRAP_STATE)"
+        adapter_state="$(get_session_env "$pane_session" ATMUX_ADAPTER)"
+      fi
+      if [[ "$adapter_state" == "auto" || ( "$bootstrap_state" == "pending" && -z "$prompt_prefix" ) ]]; then
+        debug_notify "worker:item_bootstrap_pending pane=$(printf '%q' "$pane") session=$(printf '%q' "$pane_session") command=$(printf '%q' "$pane_command") adapter=$(printf '%q' "$adapter_state") bootstrap=$(printf '%q' "$bootstrap_state")"
+        break
+      fi
+      # Outer loop already ran wait_for_pane_ready when batch_active was set,
+      # and submit_input_with_keys falls back to unverified delivery when the
+      # prompt has scrolled out of view. Skipping a redundant 45s ready-poll
+      # here keeps a long burst from stalling on every item once the cursor
+      # rolls past the viewport.
       payload="$(cat "$item_dir/payload" 2>/dev/null || true)"
       submit_keys="$(cat "$item_dir/submit_keys" 2>/dev/null || printf 'Enter')"
       debug_notify "worker:item pane=$(printf '%q' "$pane") item_dir=$(printf '%q' "$item_dir") submit_keys=$(printf '%q' "$submit_keys") $(payload_debug_summary "$payload")"
@@ -1005,6 +1064,9 @@ ensure_notification_worker() {
   nohup env \
     ATMUX_HOME="$ATMUX_HOME" \
     ATMUX_SOURCE_ROOT="$source_root" \
+    ATMUX_REAL_TMUX="${ATMUX_REAL_TMUX:-}" \
+    ATMUX_ALLOW_REAL_TMUX=1 \
+    ATMUX_DEBUG_NOTIFY="${ATMUX_DEBUG_NOTIFY:-0}" \
     "$notify_script" __serve-queue --pane "$pane" --source-root "$source_root" >/dev/null 2>&1 &
 
   for (( attempt=0; attempt<20; attempt++ )); do
@@ -1387,7 +1449,9 @@ notify_cli_main() {
     if [[ -n "$resolve_session" ]]; then
       adapter="$(get_session_env "$resolve_session" ATMUX_ADAPTER)"
       if [[ -n "$adapter" ]]; then
-        mapfile -t submit_keys < <(resolve_submit_keys "$adapter" "interrupt")
+        while IFS= read -r __nk_line; do
+          submit_keys+=("$__nk_line")
+        done < <(resolve_submit_keys "$adapter" "interrupt")
       fi
     fi
   fi

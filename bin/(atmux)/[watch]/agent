@@ -116,7 +116,6 @@ main() {
 
   local deadline last_change_ts snap recent
   deadline=$(( $(date +%s) + timeout_sec ))
-  last_change_ts="$(date +%s)"
 
   snap="$(tmux capture-pane -p -t "$pane" -S "-$lines" 2>/dev/null | tr -d '\r' || true)"
   recent="$(printf '%s\n' "$snap" | tail -n 30)"
@@ -139,6 +138,9 @@ main() {
     exit 1
   fi
   exec 8<>"$event_fifo"
+  # Baseline "last change" at listen start so slow tmux/pipe-pane setup
+  # cannot satisfy --idle before the first pane event is observed.
+  last_change_ts="$(date +%s)"
 
   cleanup_stream() {
     exec 8>&- 8<&- || true

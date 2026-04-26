@@ -8,6 +8,27 @@
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 <atmux>
 # Role
 - ROLE: implementer
@@ -35,9 +56,10 @@ Usage:
   atmux create --agent <name> --role <role> --intelligence <0-100> [--team <team>] [--adapter <adapter>] [--no-worktree] [--task --description <desc> --todo <todo>...] [-- <adapter-args...>]
   atmux create --team <name>
   atmux create --issue --title <title> [--description <description>] [--todo <todo>...] [--repo <repo>]
+  atmux create --pr --title <title> [--description <description>] [--source <branch>] [--target <branch>] [--todo <todo>...] [--repo <repo>]
 
 Description:
-  Unified create entrypoint for agents, teams, and issues.
+  Unified create entrypoint for agents, teams, issues, and pull requests.
   For agents, --team defaults to ATMUX_TEAM when set (for example after `atmux create --team <name>` in a tmux session).
 
 ## list
@@ -46,6 +68,7 @@ Usage:
   atmux list sessions
   atmux list agents [--all] [--status]
   atmux list issues [--repo <repo>]
+  atmux list prs [--repo <repo>]
   atmux list messages [--unread]
 
 Description:
@@ -128,9 +151,10 @@ Description:
 ## comment
 Usage:
   atmux comment "message" --issue <id> [--repo <repo>]
+  atmux comment "message" --pr <id> [--repo <repo>]
 
 Description:
-  Add a comment to a filesystem issue.
+  Add a comment to a filesystem issue or pull request.
   Notifies watchers, assignee, and assigner.
 
 ## capture
@@ -152,6 +176,7 @@ Examples:
 ## kill
 Usage:
   atmux kill --pid <pid> [--timeout <seconds>] [--signal <NAME>]
+  atmux kill --watcher <id> [--timeout <seconds>]
   atmux kill --agent <name|pattern> [name|pattern...]
   atmux kill --all [--yes]
 
@@ -159,6 +184,8 @@ Description:
   --pid    Stop an atmux exec-tracked child process for this repo, wait for
            executor notifications (including watcher fan-out) to finish, then
            remove metadata under ~/.atmux/exec/<repo>/<pid>/.
+  --watcher  Remove a watcher registration by id. Supports watcher ids emitted
+             by `atmux watch --pr` and `atmux watch --issues`.
   --agent  Kill agent sessions and clean up their worktrees and branches.
            Accepts agent names, session names, or glob patterns.
   --all    Kill every atmux session, worktree, and branch for this repo.
@@ -168,6 +195,8 @@ Description:
 Examples:
   atmux kill --pid 12345
   atmux kill --pid 12345 --timeout 30 --signal TERM
+  atmux kill --watcher pr:owner_repo_pr_123:atmux-myrepo-worker-_12
+  atmux kill --watcher issues:owner_repo_issues:atmux-myrepo-worker-_12
   atmux kill --agent worker
   atmux kill --agent 'agent-*'
   atmux kill --agent worker planner
@@ -197,7 +226,11 @@ Usage:
   atmux watch --target <tmux-target> --text <needle> [--scope pane|window|session] [--timeout <seconds>] [--interval <seconds>] [--lines <n>]
   atmux watch --pid <pid> [--timeout <seconds>] [--interval <seconds>]
   atmux watch --pid <pid> --stdio [--duration <seconds>] [--timeout <seconds>] [--interval <seconds>] [--lines <n>]
+  atmux watch --path <glob> [--timeout <seconds>] [--interval <seconds>]
   atmux watch --issue <id> [--repo <repo>] [--timeout <seconds>] [--interval <seconds>]
+  atmux watch --issues <repo|url> [--timeout <seconds>] [--interval <seconds>]
+  atmux watch --pr <id|atmux-uri|github-url> [--repo <repo>] [--timeout <seconds>] [--interval <seconds>]
+  atmux watch --pull-request <id> [--repo <repo>] [--timeout <seconds>] [--interval <seconds>]
   atmux watch --agent <name|session> [--idle <seconds>] [--timeout <seconds>] [--interval <seconds>] [--lines <n>]
 
 Description:
@@ -207,12 +240,21 @@ Description:
   Stdio mode: monitor a detached exec process pane for output changes. Sends
   a notification each time new output is detected. Exits when --duration
   expires, --timeout (no new output) expires, or the process exits.
+  Path mode: watch filesystem paths matching a glob and exit when the matched
+  set or file metadata changes.
   Issue mode: wait for the next filesystem issue update and receive the same
   notification XML as issue assign/claim fan-out.
+  Issues mode: keep watching a GitHub repository for newly created issues and
+  queue notifications to the current pane until the watcher is stopped.
+  PR mode: with a GitHub URL, keep watching a remote pull request discussion;
+  otherwise wait for the next filesystem pull request update. --pull-request is
+  kept as a compatibility alias for local filesystem pull requests.
   Agent mode: wait until an agent's pane output has been stable for --idle
   seconds (default 30). Exits 0 when idle, 124 on timeout.
 
-  Implementations: bin/(atmux)/[watch]/text, [watch]/pid, [watch]/stdio, [watch]/issue, [watch]/agent.
+  Implementations: bin/(atmux)/[watch]/text, [watch]/pid, [watch]/stdio,
+  [watch]/path, [watch]/issue, [watch]/issues, [watch]/pull-request,
+  [watch]/pr, [watch]/agent.
 
 ## env
 Usage:
@@ -227,3 +269,4 @@ Examples:
   atmux env get repo
   atmux env get ATMUX_WORKTREE
 </atmux>
+

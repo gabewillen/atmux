@@ -1,0 +1,240 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Live adversarial stress test for the notification system.
+# Targets a real adapter (default claude-code) and exercises:
+#   A. Adversarial payloads (XML special chars, control chars, long, unicode)
+#   B. Mixed --interrupt + queued sends in parallel
+#   D. Heavy burst right after session start (boot race)
+#
+# Surfaced a real bug on first run: macOS bash 3.2 lacks `mapfile`, so
+# `atmux send --interrupt` exited 127 on every call. Fixed in bin/(atmux)/send
+# and bin/(atmux)/notify by replacing mapfile with portable while-read loops.
+#
+# Note: under heavy parallel --interrupt load the worker can mark items
+# "delivery_unverified" even when the text reached the pane (cursor sample
+# races); the worker keeps retrying and pane-side dedupe is the user's job.
+# This test verifies user-visible delivery (text in pane), not strict queue
+# drain after the parallel interrupt phase.
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+ATMUX_BIN="$REPO_ROOT/bin/atmux"
+CONTROL_FILES=(CLAUDE.md GEMINI.md)
+CONTROL_SNAPSHOT=""
+
+snapshot_control_files() {
+  local file
+  CONTROL_SNAPSHOT="$(mktemp -d "${TMPDIR:-/tmp}/atmux-control-files.XXXXXX")"
+  for file in "${CONTROL_FILES[@]}"; do
+    if [[ -e "$REPO_ROOT/$file" ]]; then
+      cp "$REPO_ROOT/$file" "$CONTROL_SNAPSHOT/$file"
+    else
+      touch "$CONTROL_SNAPSHOT/$file.missing"
+    fi
+  done
+}
+
+restore_control_files() {
+  local file
+  [[ -n "$CONTROL_SNAPSHOT" ]] || return 0
+  for file in "${CONTROL_FILES[@]}"; do
+    if [[ -f "$CONTROL_SNAPSHOT/$file.missing" ]]; then
+      rm -f "$REPO_ROOT/$file"
+    elif [[ -f "$CONTROL_SNAPSHOT/$file" ]]; then
+      cp "$CONTROL_SNAPSHOT/$file" "$REPO_ROOT/$file"
+    fi
+  done
+  rm -rf "$CONTROL_SNAPSHOT"
+}
+
+require_adapter_command() {
+  local adapter="$1"
+  case "$adapter" in
+    codex) command -v codex >/dev/null 2>&1 ;;
+    claude-code) command -v claude >/dev/null 2>&1 ;;
+    gemini) command -v gemini >/dev/null 2>&1 ;;
+    cursor-agent) command -v agent >/dev/null 2>&1 || command -v cursor-agent >/dev/null 2>&1 ;;
+    *) echo "unknown adapter: $adapter" >&2; return 2 ;;
+  esac
+}
+
+session_pane() {
+  local session="$1"
+  tmux list-panes -t "$session" -F '#{pane_id}' 2>/dev/null | head -n1
+}
+
+wait_for_text_in_pane() {
+  local pane="$1"
+  local needle="$2"
+  local timeout="${3:-180}"
+  local deadline now snap
+  deadline=$(( $(date +%s) + timeout ))
+  while true; do
+    snap="$(tmux capture-pane -p -t "$pane" -S -25000 2>/dev/null | tr -d '\r' || true)"
+    if printf '%s' "$snap" | grep -Fq "$needle"; then
+      return 0
+    fi
+    now="$(date +%s)"
+    if (( now >= deadline )); then
+      return 1
+    fi
+    sleep 0.3
+  done
+}
+
+extract_message_id() {
+  local out="$1"
+  printf '%s\n' "$out" | sed -n 's/.*message_id="\([^"]*\)".*/\1/p' | head -n1
+}
+
+ATMUX_HOME_TEST=""
+WORKER_SESSION=""
+REPO=""
+
+cleanup() {
+  if [[ -n "$WORKER_SESSION" ]]; then
+    tmux kill-session -t "$WORKER_SESSION" >/dev/null 2>&1 || true
+  fi
+  if [[ -n "$ATMUX_HOME_TEST" && -d "$ATMUX_HOME_TEST" ]]; then
+    if [[ "${ATMUX_TEST_KEEP_ARTIFACTS:-0}" == "1" ]]; then
+      echo "retaining: $ATMUX_HOME_TEST" >&2
+    else
+      rm -rf "$ATMUX_HOME_TEST"
+    fi
+  fi
+  rm -rf "$REPO_ROOT/.gemini"
+  restore_control_files
+}
+trap cleanup EXIT
+
+snapshot_control_files
+
+ADAPTER="${ATMUX_TEST_STRESS_ADAPTER:-claude-code}"
+require_adapter_command "$ADAPTER" || { echo "missing adapter: $ADAPTER" >&2; exit 1; }
+
+REPO="notify-stress-${ADAPTER//[^A-Za-z0-9]/-}-${RANDOM}"
+ATMUX_HOME_TEST="$(mktemp -d "${TMPDIR:-/tmp}/atmux-notify-stress-${ADAPTER}.XXXXXX")"
+
+run_atmux_as_manager() {
+  ATMUX_ALLOW_OUTSIDE_TMUX=1 ATMUX_HOME="$ATMUX_HOME_TEST" ATMUX_SOURCE_ROOT="$REPO_ROOT" \
+    ATMUX_REPO="$REPO" \
+    ATMUX_AGENT_NAME="manager" ATMUX_SESSION_NAME="atmux-${REPO}-manager" \
+    "$ATMUX_BIN" "$@"
+}
+
+# ---- Boot worker ----
+echo "--- $ADAPTER worker boot ---" >&2
+WORKER_SESSION="$(ATMUX_ALLOW_OUTSIDE_TMUX=1 ATMUX_HOME="$ATMUX_HOME_TEST" ATMUX_SOURCE_ROOT="$REPO_ROOT" \
+  ATMUX_REPO="$REPO" ATMUX_ROLE="implementer" ATMUX_INTELLIGENCE="50" ATMUX_MANAGER="manager" \
+  "$ATMUX_BIN" session start --name worker --adapter auto --adapters "$ADAPTER" --no-worktree)"
+[[ -n "$WORKER_SESSION" ]] || { echo "failed to start worker" >&2; exit 1; }
+WORKER_PANE="$(session_pane "$WORKER_SESSION")"
+[[ -n "$WORKER_PANE" ]] || { echo "missing worker pane" >&2; exit 1; }
+
+# ---- Phase D: boot-time burst (race adapter startup) ----
+echo "--- phase D: boot-time burst (10) ---" >&2
+declare -a BOOT_IDS=()
+for i in $(seq 1 10); do
+  out="$(run_atmux_as_manager send --to worker "boot-burst $i ${ADAPTER} ${RANDOM}")" || true
+  id="$(extract_message_id "$out")"
+  [[ -n "$id" ]] || { echo "boot burst $i: no id" >&2; printf '%s\n' "$out" >&2; exit 1; }
+  BOOT_IDS+=("$id")
+done
+for id in "${BOOT_IDS[@]}"; do
+  if ! wait_for_text_in_pane "$WORKER_PANE" "atmux message read $id --repo $REPO" 240; then
+    echo "boot burst $id not delivered" >&2
+    tmux capture-pane -p -t "$WORKER_PANE" -S -400 >&2 || true
+    exit 1
+  fi
+done
+echo "phase D ok: 10 boot-time messages delivered" >&2
+
+# ---- Phase A: adversarial payloads ----
+echo "--- phase A: adversarial payloads ---" >&2
+declare -a ADV_LABELS=(
+  'xml-special <one>&"\047two\047 mixed <tag attr="x">'
+  'control_'$'\t''tab_and_newline_'$'\n''line2'
+  'unicode-emoji-🦊-multibyte-Привет-中文'
+  'long-payload-'$(printf 'x%.0s' $(seq 1 2000))
+  'shell-meta `echo pwn` $(date) ; rm -rf / | true & cmd'
+  'percent-and-quote: %s %d %%'\''single'\'' "double"'
+  'backslash-and-cr: \\n \\r \\t \\0 \\x1b[31mred\\x1b[0m'
+)
+declare -a ADV_IDS=()
+for label in "${ADV_LABELS[@]}"; do
+  tag="adv-$RANDOM"
+  out="$(run_atmux_as_manager send --to worker "$tag :: $label")" || true
+  id="$(extract_message_id "$out")"
+  [[ -n "$id" ]] || { echo "adv send '$label' no id" >&2; printf '%s\n' "$out" >&2; exit 1; }
+  ADV_IDS+=("$id")
+done
+for id in "${ADV_IDS[@]}"; do
+  if ! wait_for_text_in_pane "$WORKER_PANE" "atmux message read $id --repo $REPO" 240; then
+    echo "adversarial msg $id not delivered" >&2
+    tmux capture-pane -p -t "$WORKER_PANE" -S -400 >&2 || true
+    exit 1
+  fi
+done
+echo "phase A ok: adversarial payloads delivered" >&2
+
+# ---- Phase B: mixed --interrupt + queue parallel ----
+# Verifies user-visible delivery; tolerates retrying items that are still
+# being re-verified (worker prefers redelivery over loss).
+echo "--- phase B: 8 interrupt + 8 queued in parallel ---" >&2
+collect="$(mktemp "${TMPDIR:-/tmp}/atmux-stress-collect.XXXXXX")"
+declare -a PIDS=()
+for i in $(seq 1 8); do
+  (
+    out="$(run_atmux_as_manager send --to worker --interrupt "intr $i $RANDOM" 2>&1)" || true
+    printf '%s\n' "$out" >> "$collect"
+  ) &
+  PIDS+=($!)
+  (
+    out="$(run_atmux_as_manager send --to worker "qd $i $RANDOM" 2>&1)" || true
+    printf '%s\n' "$out" >> "$collect"
+  ) &
+  PIDS+=($!)
+done
+for pid in "${PIDS[@]}"; do wait "$pid" || true; done
+
+declare -a MIX_IDS=()
+while IFS= read -r line; do
+  id="$(extract_message_id "$line")"
+  [[ -n "$id" ]] && MIX_IDS+=("$id")
+done < <(grep -E 'message_id=' "$collect" 2>/dev/null || true)
+
+# Also detect any rc=127 / mapfile-style errors that would indicate the
+# bash-3.2 mapfile bug regressed.
+if grep -qE 'mapfile: command not found|exit_code="127"' "$collect" 2>/dev/null; then
+  echo "phase B: detected rc=127 / mapfile error (bash 3.2 mapfile regression?)" >&2
+  cat "$collect" >&2
+  rm -f "$collect"
+  exit 1
+fi
+rm -f "$collect"
+
+if (( ${#MIX_IDS[@]} != 16 )); then
+  echo "expected 16 ids, got ${#MIX_IDS[@]}" >&2
+  exit 1
+fi
+deadline=$(( $(date +%s) + 360 ))
+while true; do
+  snap="$(tmux capture-pane -p -t "$WORKER_PANE" -S -30000 2>/dev/null | tr -d '\r' || true)"
+  ok=1
+  for id in "${MIX_IDS[@]}"; do
+    if ! printf '%s' "$snap" | grep -Fq "atmux message read $id --repo $REPO"; then
+      ok=0; break
+    fi
+  done
+  (( ok == 1 )) && break
+  if (( $(date +%s) >= deadline )); then
+    echo "phase B: not all 16 mixed ids visible in pane" >&2
+    tmux capture-pane -p -t "$WORKER_PANE" -S -500 >&2 || true
+    exit 1
+  fi
+  sleep 0.4
+done
+echo "phase B ok: 16 mixed-mode messages delivered (worker may still be retrying duplicates)" >&2
+
+echo "ok: notification system survived adversarial payloads, boot burst, and mixed interrupt/queue parallel send"

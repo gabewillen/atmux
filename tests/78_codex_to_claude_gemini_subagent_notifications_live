@@ -4,6 +4,33 @@ set -euo pipefail
 TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
 ATMUX_BIN="$REPO_ROOT/bin/atmux"
+CONTROL_FILES=(CLAUDE.md GEMINI.md)
+CONTROL_SNAPSHOT=""
+
+snapshot_control_files() {
+  local file
+  CONTROL_SNAPSHOT="$(mktemp -d "${TMPDIR:-/tmp}/atmux-control-files.XXXXXX")"
+  for file in "${CONTROL_FILES[@]}"; do
+    if [[ -e "$REPO_ROOT/$file" ]]; then
+      cp "$REPO_ROOT/$file" "$CONTROL_SNAPSHOT/$file"
+    else
+      touch "$CONTROL_SNAPSHOT/$file.missing"
+    fi
+  done
+}
+
+restore_control_files() {
+  local file
+  [[ -n "$CONTROL_SNAPSHOT" ]] || return 0
+  for file in "${CONTROL_FILES[@]}"; do
+    if [[ -f "$CONTROL_SNAPSHOT/$file.missing" ]]; then
+      rm -f "$REPO_ROOT/$file"
+    elif [[ -f "$CONTROL_SNAPSHOT/$file" ]]; then
+      cp "$CONTROL_SNAPSHOT/$file" "$REPO_ROOT/$file"
+    fi
+  done
+  rm -rf "$CONTROL_SNAPSHOT"
+}
 
 require_cmd() {
   command -v "$1" >/dev/null 2>&1 || {
@@ -166,8 +193,11 @@ cleanup() {
   done
   rm -rf "$atmux_home"
   rm -rf "$REPO_ROOT/.gemini"
+  restore_control_files
 }
 trap cleanup EXIT
+
+snapshot_control_files
 
 manager_session="$(ATMUX_ALLOW_OUTSIDE_TMUX=1 ATMUX_HOME="$atmux_home" ATMUX_SOURCE_ROOT="$REPO_ROOT" ATMUX_REPO="$repo" \
   "$ATMUX_BIN" session start --name manager --adapter codex --no-worktree)"

@@ -7,6 +7,47 @@ export ATMUX_ALLOW_OUTSIDE_TMUX="${ATMUX_ALLOW_OUTSIDE_TMUX:-1}"
 TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 CLEANUP_ORPHANS="$TESTS_DIR/scripts/cleanup-orphans"
 
+# Isolate the tmux socket so tests never touch the developer's real tmux server.
+# Setting TMUX_TMPDIR redirects where tmux looks for/creates its socket; any
+# child `tmux ...` invocation in this process tree spawns/uses a private server
+# at $TMUX_TMPDIR/tmux-$UID/default instead of the user's default socket.
+if [[ -z "${ATMUX_TESTS_TMUX_TMPDIR:-}" ]]; then
+  ATMUX_TESTS_TMUX_TMPDIR="$(mktemp -d "${TMPDIR:-/tmp}/atmux-tests-tmux.XXXXXX")"
+  export ATMUX_TESTS_TMUX_TMPDIR
+  cleanup_isolated_tmux() {
+    # Tear down only the isolated tmux server, never the developer's.
+    if [[ -n "${ATMUX_TESTS_TMUX_TMPDIR:-}" && -d "$ATMUX_TESTS_TMUX_TMPDIR" ]]; then
+      TMUX_TMPDIR="$ATMUX_TESTS_TMUX_TMPDIR" tmux kill-server >/dev/null 2>&1 || true
+      rm -rf "$ATMUX_TESTS_TMUX_TMPDIR"
+    fi
+  }
+  trap cleanup_isolated_tmux EXIT INT TERM
+fi
+export TMUX_TMPDIR="$ATMUX_TESTS_TMUX_TMPDIR"
+
+# Notify-queue state in the developer's ~/.atmux/notify-queue/ is keyed on
+# (session_name, pane_id). With an isolated tmux server, pane ids reset to
+# %0,%1,... and collide with stale entries left by previous test runs that
+# used the same session names (atmux-<repo>-sender, etc). Wipe queue dirs
+# matching test session prefixes before the suite runs, but never touch
+# anything else under ~/.atmux.
+purge_test_notify_queues() {
+  local home_atmux="${ATMUX_HOME:-$HOME/.atmux}"
+  local queues="$home_atmux/notify-queue"
+  [[ -d "$queues" ]] || return 0
+  local d base
+  for d in "$queues"/atmux-*-_*; do
+    [[ -d "$d" ]] || continue
+    base="$(basename "$d")"
+    case "$base" in
+      atmux-*-sender-_*|atmux-*-receiver-_*|atmux-*-team-*-_*|atmux-*-par-_*|atmux-*-worker-_*|atmux-*-manager-_*)
+        rm -rf "$d"
+        ;;
+    esac
+  done
+}
+purge_test_notify_queues
+
 log() {
   printf '[atmux-tests] %s\n' "$*"
 }
@@ -21,7 +62,7 @@ should_skip_test() {
   esac
 
   case "$test_name" in
-    68_managed_send_adapter_directions_live|72_no_worktree_send_adapter_directions_live|78_codex_to_claude_gemini_subagent_notifications_live)
+    49_notify_real_adapter_create_send_race_live|50_notify_real_adapter_burst_delivery_live|51_notify_real_adapter_copy_mode_live|52_notify_real_adapter_worker_restart_live|53_notify_real_adapter_parallel_send_live|68_managed_send_adapter_directions_live|72_no_worktree_send_adapter_directions_live|78_codex_to_claude_gemini_subagent_notifications_live)
       return 0
       ;;
   esac

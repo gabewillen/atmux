@@ -1,0 +1,202 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Live: N concurrent atmux send processes target the same worker (exercises
+# queue lock and worker under parallel CLI pressure).
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+ATMUX_BIN="$REPO_ROOT/bin/atmux"
+
+N="${ATMUX_TEST_PARALLEL_SENDS:-12}"
+[[ "$N" =~ ^[0-9]+$ ]] || N=12
+(( N > 0 )) && (( N <= 64 )) || N=12
+
+CONTROL_FILES=(CLAUDE.md GEMINI.md)
+CONTROL_SNAPSHOT=""
+
+snapshot_control_files() {
+  local file
+  CONTROL_SNAPSHOT="$(mktemp -d "${TMPDIR:-/tmp}/atmux-control-files.XXXXXX")"
+  for file in "${CONTROL_FILES[@]}"; do
+    if [[ -e "$REPO_ROOT/$file" ]]; then
+      cp "$REPO_ROOT/$file" "$CONTROL_SNAPSHOT/$file"
+    else
+      touch "$CONTROL_SNAPSHOT/$file.missing"
+    fi
+  done
+}
+
+restore_control_files() {
+  local file
+  [[ -n "$CONTROL_SNAPSHOT" ]] || return 0
+  for file in "${CONTROL_FILES[@]}"; do
+    if [[ -f "$CONTROL_SNAPSHOT/$file.missing" ]]; then
+      rm -f "$REPO_ROOT/$file"
+    elif [[ -f "$CONTROL_SNAPSHOT/$file" ]]; then
+      cp "$CONTROL_SNAPSHOT/$file" "$REPO_ROOT/$file"
+    fi
+  done
+  rm -rf "$CONTROL_SNAPSHOT"
+}
+
+require_adapter_command() {
+  local adapter="$1"
+  case "$adapter" in
+    codex) command -v codex >/dev/null 2>&1 ;;
+    claude-code) command -v claude >/dev/null 2>&1 ;;
+    gemini) command -v gemini >/dev/null 2>&1 ;;
+    cursor-agent) command -v agent >/dev/null 2>&1 || command -v cursor-agent >/dev/null 2>&1 ;;
+    *) return 1 ;;
+  esac
+}
+
+session_pane() {
+  local session="$1"
+  tmux list-panes -t "$session" -F '#{pane_id}' 2>/dev/null | head -n1
+}
+
+queue_has_payloads() {
+  local atmux_home="$1"
+  shopt -s nullglob
+  for _p in "$atmux_home"/notify-queue/*/payloads/*; do
+    [[ -d "$_p" ]] && return 0
+  done
+  return 1
+}
+
+wait_for_queue_empty() {
+  local atmux_home="$1"
+  local timeout="${2:-90}"
+  local deadline now
+  deadline=$(( $(date +%s) + timeout ))
+  while true; do
+    if ! queue_has_payloads "$atmux_home"; then
+      return 0
+    fi
+    now="$(date +%s)"
+    if (( now >= deadline )); then
+      return 1
+    fi
+    sleep 0.3
+  done
+}
+
+run_adapter_case() {
+  local adapter="$1"
+  local repo="notify-par-${adapter//[^A-Za-z0-9]/-}-${RANDOM}"
+  local atmux_home worker_session worker_pane collect_out
+  local -a pids=()
+  local -a ids=()
+  local i id line
+
+  if ! require_adapter_command "$adapter"; then
+    echo "missing real adapter command for $adapter" >&2
+    exit 1
+  fi
+
+  collect_out="$(mktemp "${TMPDIR:-/tmp}/atmux-parallel-ids.XXXXXX")"
+  atmux_home="$(mktemp -d "${TMPDIR:-/tmp}/atmux-notify-par-${adapter}.XXXXXX")"
+  TMP_DIRS+=("$atmux_home")
+  TRASH+=("$collect_out")
+
+  worker_session="$(ATMUX_ALLOW_OUTSIDE_TMUX=1 ATMUX_HOME="$atmux_home" ATMUX_SOURCE_ROOT="$REPO_ROOT" ATMUX_REPO="$repo" \
+    ATMUX_ROLE="implementer" ATMUX_INTELLIGENCE="50" ATMUX_MANAGER="manager" \
+    "$ATMUX_BIN" session start --name worker --adapter auto --adapters "$adapter" --no-worktree)"
+  [[ -n "$worker_session" ]] || { echo "failed to create worker for $adapter" >&2; exit 1; }
+  SESSIONS+=("$worker_session")
+
+  worker_pane="$(session_pane "$worker_session")"
+  [[ -n "$worker_pane" ]] || { echo "missing pane for $adapter" >&2; exit 1; }
+
+  for (( i=1; i<=N; i++ )); do
+    (
+      out="$(ATMUX_ALLOW_OUTSIDE_TMUX=1 ATMUX_HOME="$atmux_home" ATMUX_SOURCE_ROOT="$REPO_ROOT" ATMUX_REPO="$repo" \
+        ATMUX_AGENT_NAME="manager" ATMUX_SESSION_NAME="atmux-${repo}-manager" \
+        "$ATMUX_BIN" send --to worker "parallel $i $adapter $RANDOM")" || true
+      printf '%s\n' "$out" >> "$collect_out"
+    ) &
+    pids+=($!)
+  done
+  for pid in "${pids[@]}"; do
+    wait "$pid" || true
+  done
+
+  while IFS= read -r line; do
+    id="$(printf '%s\n' "$line" | sed -n 's/.*message_id="\([^"]*\)".*/\1/p' | head -n1)"
+    [[ -n "$id" ]] && ids+=("$id")
+  done < <(grep -E 'message_id=' "$collect_out" 2>/dev/null || true)
+  rm -f "$collect_out"
+
+  if ((${#ids[@]} != N )); then
+    echo "expected $N message ids for $adapter, got ${#ids[@]}" >&2
+    exit 1
+  fi
+
+  # Delivery order != submit order; wait until every id's read hint is visible in the pane.
+  per_adapter_timeout="${ATMUX_TEST_PARALLEL_WAIT:-420}"
+  [[ "$per_adapter_timeout" =~ ^[0-9]+$ ]] || per_adapter_timeout=420
+  deadline=$(( $(date +%s) + per_adapter_timeout ))
+  while true; do
+    snap="$(tmux capture-pane -p -t "$worker_pane" -S -25000 2>/dev/null | tr -d '\r' || true)"
+    all_ok=1
+    for id in "${ids[@]}"; do
+      if ! printf '%s' "$snap" | grep -Fq "atmux message read $id --repo $repo"; then
+        all_ok=0
+        break
+      fi
+    done
+    if (( all_ok )); then
+      break
+    fi
+    if (( $(date +%s) >= deadline )); then
+      echo "parallel send: not all message ids visible in $adapter worker pane within ${per_adapter_timeout}s" >&2
+      tmux capture-pane -p -t "$worker_pane" -S -500 >&2 || true
+      exit 1
+    fi
+    sleep 0.4
+  done
+
+  if ! wait_for_queue_empty "$atmux_home" 120; then
+    echo "parallel send: queue did not drain for $adapter" >&2
+    exit 1
+  fi
+
+  tmux kill-session -t "$worker_session" >/dev/null 2>&1 || true
+}
+
+TMP_DIRS=()
+SESSIONS=()
+TRASH=()
+
+cleanup() {
+  local session t f
+  for t in "${TRASH[@]:-}"; do
+    [[ -n "$t" && -f "$t" ]] && rm -f "$t"
+  done
+  for session in "${SESSIONS[@]:-}"; do
+    [[ -n "$session" ]] || continue
+    tmux kill-session -t "$session" 2>/dev/null || true
+  done
+  for f in "${TMP_DIRS[@]:-}"; do
+    if [[ -n "$f" ]]; then
+      if [[ "${ATMUX_TEST_KEEP_ARTIFACTS:-0}" == "1" ]]; then
+        echo "retaining: $f" >&2
+        continue
+      fi
+      rm -rf "$f"
+    fi
+  done
+  rm -rf "$REPO_ROOT/.gemini"
+  restore_control_files
+}
+trap cleanup EXIT
+
+snapshot_control_files
+
+echo "--- $N parallel live sends (all adapters) ---" >&2
+for adapter in ${ATMUX_TEST_ADAPTERS:-codex claude-code gemini cursor-agent}; do
+  run_adapter_case "$adapter"
+done
+
+echo "ok: parallel real-adapter sends drain without lost message ids"

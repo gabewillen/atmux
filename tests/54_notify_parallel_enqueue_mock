@@ -1,0 +1,142 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Adversarial: many processes enqueue to the same pane at once (exercises
+# notify-queue/seq.lock and next_id against the cat harness, no real CLIs).
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+NOTIFY_SCRIPT="$REPO_ROOT/bin/(atmux)/notify"
+
+N="${ATMUX_TEST_PARALLEL_ENQUEUE:-20}"
+[[ "$N" =~ ^[0-9]+$ ]] || N=20
+(( N > 0 )) && (( N <= 200 )) || N=20
+
+count_needle() {
+  local snap="$1"
+  local needle="$2"
+  local compact count
+  compact="$(printf '%s' "$snap" | tr -d '\r\n')"
+  count="$(printf '%s' "$compact" | { grep -F -o "$needle" || true; } | wc -l | tr -d ' ')"
+  [[ -n "$count" ]] && printf '%s' "$count" || printf '0'
+}
+
+wait_for_count() {
+  local target="$1"
+  local needle="$2"
+  local expected_count="$3"
+  local timeout="${4:-20}"
+  local deadline now snap compact count
+  deadline=$(( $(date +%s) + timeout ))
+  while true; do
+    snap="$(tmux capture-pane -p -t "$target" -S -8000 2>/dev/null || true)"
+    compact="$(printf '%s' "$snap" | tr -d '\r\n')"
+    count="$(printf '%s' "$compact" | { grep -F -o "$needle" || true; } | wc -l | tr -d ' ')"
+    if [[ -n "$count" ]] && (( count >= expected_count )); then
+      return 0
+    fi
+    now="$(date +%s)"
+    if (( now >= deadline )); then
+      return 1
+    fi
+    sleep 0.1
+  done
+}
+
+# All needles must each reach expected_count (delivery order can differ from submit order).
+wait_for_all_markers() {
+  local target="$1"
+  local expected_count="$2"
+  local timeout="${3:-240}"
+  local deadline now snap m count all_ok
+  deadline=$(( $(date +%s) + timeout ))
+  while true; do
+    snap="$(tmux capture-pane -p -t "$target" -S -8000 2>/dev/null || true)"
+    all_ok=1
+    for m in "${markers[@]}"; do
+      count="$(count_needle "$snap" "$m")"
+      if [[ -z "$count" ]] || (( 10#$count < expected_count )); then
+        all_ok=0
+        break
+      fi
+    done
+    if (( all_ok )); then
+      return 0
+    fi
+    now="$(date +%s)"
+    if (( now >= deadline )); then
+      return 1
+    fi
+    sleep 0.15
+  done
+}
+
+ATMUX_HOME="${TMPDIR:-/tmp}/atmux-parallel-enq-${RANDOM}"
+ATMUX_SOURCE_ROOT="$REPO_ROOT"
+# shellcheck source=bin/(atmux)/notify
+source "$NOTIFY_SCRIPT"
+
+repo_name="parq${RANDOM}"
+session="atmux-${repo_name}-par"
+
+tmp_out="${TMPDIR:-/tmp}/atmux-parallel-out.$$"
+: > "$tmp_out"
+
+cleanup() {
+  wait 2>/dev/null || true
+  tmux kill-session -t "$session" >/dev/null 2>&1 || true
+  rm -rf "$ATMUX_HOME"
+  rm -f "$tmp_out"
+}
+trap cleanup EXIT
+
+tmux kill-session -t "$session" >/dev/null 2>&1 || true
+tmux new-session -d -s "$session" -n "$session" -x 120 -y 30 "cat"
+tmux set-environment -t "$session" ATMUX_ADAPTER "claude-code"
+
+pane="$(tmux list-panes -t "$session" -F '#{pane_id}' 2>/dev/null | head -n1)"
+[[ -n "$pane" ]] || { echo "pane missing" >&2; exit 1; }
+
+sleep 0.3
+tmux send-keys -t "$pane" -l "❯ "
+tmux send-keys -t "$pane" Enter
+sleep 0.3
+user_text="survive parallel enqueue"
+tmux send-keys -t "$pane" -l "❯ ${user_text}"
+
+markers=()
+pids=()
+for (( idx=1; idx<=N; idx++ )); do
+  marker="par-${idx}-${RANDOM}"
+  markers+=("$marker")
+done
+
+for m in "${markers[@]}"; do
+  (
+    payload="$(build_notification "test" "$m" "")"
+    send_notification "$pane" "$payload" || exit 1
+  ) >>"$tmp_out" 2>&1 &
+  pids+=($!)
+done
+for pid in "${pids[@]}"; do
+  if ! wait "$pid"; then
+    echo "background enqueue failed" >&2
+    cat "$tmp_out" >&2 || true
+    exit 1
+  fi
+done
+
+# cat harness: each line echoed twice; expect 2 appearances per marker.
+if ! wait_for_all_markers "$pane" 2 240; then
+  echo "not all markers appeared twice in time" >&2
+  tmux capture-pane -p -t "$pane" -S -400 >&2 || true
+  exit 1
+fi
+
+if ! wait_for_count "$pane" "$user_text" 1 15; then
+  echo "user input not preserved after parallel enqueue" >&2
+  tmux capture-pane -p -t "$pane" -S -40 >&2 || true
+  exit 1
+fi
+
+echo "ok: parallel enqueue to same pane (count=$N) delivers without id collision or loss"

@@ -1,0 +1,219 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+ATMUX_BIN="$REPO_ROOT/bin/atmux"
+CONTROL_FILES=(CLAUDE.md GEMINI.md)
+CONTROL_SNAPSHOT=""
+
+snapshot_control_files() {
+  local file
+  CONTROL_SNAPSHOT="$(mktemp -d "${TMPDIR:-/tmp}/atmux-control-files.XXXXXX")"
+  for file in "${CONTROL_FILES[@]}"; do
+    if [[ -e "$REPO_ROOT/$file" ]]; then
+      cp "$REPO_ROOT/$file" "$CONTROL_SNAPSHOT/$file"
+    else
+      touch "$CONTROL_SNAPSHOT/$file.missing"
+    fi
+  done
+}
+
+restore_control_files() {
+  local file
+  [[ -n "$CONTROL_SNAPSHOT" ]] || return 0
+  for file in "${CONTROL_FILES[@]}"; do
+    if [[ -f "$CONTROL_SNAPSHOT/$file.missing" ]]; then
+      rm -f "$REPO_ROOT/$file"
+    elif [[ -f "$CONTROL_SNAPSHOT/$file" ]]; then
+      cp "$CONTROL_SNAPSHOT/$file" "$REPO_ROOT/$file"
+    fi
+  done
+  rm -rf "$CONTROL_SNAPSHOT"
+}
+
+require_adapter_command() {
+  local adapter="$1"
+  case "$adapter" in
+    codex) command -v codex >/dev/null 2>&1 ;;
+    claude-code) command -v claude >/dev/null 2>&1 ;;
+    gemini) command -v gemini >/dev/null 2>&1 ;;
+    cursor-agent) command -v agent >/dev/null 2>&1 || command -v cursor-agent >/dev/null 2>&1 ;;
+    *) echo "unknown adapter: $adapter" >&2; return 2 ;;
+  esac
+}
+
+wait_for_text() {
+  local target="$1"
+  local needle="$2"
+  local timeout="${3:-120}"
+  local deadline now snap
+  deadline=$(( $(date +%s) + timeout ))
+  while true; do
+    snap="$(tmux capture-pane -p -t "$target" -S -2500 2>/dev/null | tr -d '\r' || true)"
+    if printf '%s' "$snap" | grep -Fq "$needle"; then
+      return 0
+    fi
+    now="$(date +%s)"
+    if (( now >= deadline )); then
+      return 1
+    fi
+    sleep 0.2
+  done
+}
+
+wait_for_no_text() {
+  local target="$1"
+  local needle="$2"
+  local duration="${3:-3}"
+  local deadline now snap
+  deadline=$(( $(date +%s) + duration ))
+  while true; do
+    snap="$(tmux capture-pane -p -t "$target" -S -2500 2>/dev/null | tr -d '\r' || true)"
+    if printf '%s' "$snap" | grep -Fq "$needle"; then
+      return 1
+    fi
+    now="$(date +%s)"
+    if (( now >= deadline )); then
+      return 0
+    fi
+    sleep 0.2
+  done
+}
+
+wait_for_adapter_ready() {
+  local pane="$1"
+  local adapter="$2"
+  case "$adapter" in
+    codex) wait_for_text "$pane" 'OpenAI Codex' 90 ;;
+    claude-code) wait_for_text "$pane" 'Claude Code v' 90 ;;
+    gemini) wait_for_text "$pane" 'Type your message' 120 ;;
+    cursor-agent) wait_for_text "$pane" 'Cursor Agent' 120 ;;
+    *) echo "unknown adapter: $adapter" >&2; return 2 ;;
+  esac
+}
+
+session_pane() {
+  local session="$1"
+  tmux list-panes -t "$session" -F '#{pane_id}' 2>/dev/null | head -n1
+}
+
+queue_has_payloads() {
+  local atmux_home="$1"
+  local payload
+  shopt -s nullglob
+  for payload in "$atmux_home"/notify-queue/*/payloads/*; do
+    [[ -d "$payload" ]] && return 0
+  done
+  return 1
+}
+
+wait_for_queue_empty() {
+  local atmux_home="$1"
+  local timeout="${2:-30}"
+  local deadline now
+  deadline=$(( $(date +%s) + timeout ))
+  while true; do
+    if ! queue_has_payloads "$atmux_home"; then
+      return 0
+    fi
+    now="$(date +%s)"
+    if (( now >= deadline )); then
+      return 1
+    fi
+    sleep 0.2
+  done
+}
+
+run_adapter_case() {
+  local adapter="$1"
+  local repo="notify-mode-${adapter//[^A-Za-z0-9]/-}-${RANDOM}"
+  local atmux_home worker_session worker_pane send_out message_id mode_state
+
+  echo "--- $adapter copy-mode notification gate ---" >&2
+  if ! require_adapter_command "$adapter"; then
+    echo "missing real adapter command for $adapter" >&2
+    exit 1
+  fi
+
+  atmux_home="$(mktemp -d "${TMPDIR:-/tmp}/atmux-notify-mode-${adapter}.XXXXXX")"
+  TMP_DIRS+=("$atmux_home")
+
+  worker_session="$(ATMUX_ALLOW_OUTSIDE_TMUX=1 ATMUX_HOME="$atmux_home" ATMUX_SOURCE_ROOT="$REPO_ROOT" ATMUX_REPO="$repo" \
+    ATMUX_ROLE="implementer" ATMUX_INTELLIGENCE="50" ATMUX_MANAGER="manager" \
+    "$ATMUX_BIN" session start --name worker --adapter auto --adapters "$adapter" --no-worktree)"
+  [[ -n "$worker_session" ]] || { echo "failed to create worker session for $adapter" >&2; exit 1; }
+  SESSIONS+=("$worker_session")
+
+  worker_pane="$(session_pane "$worker_session")"
+  [[ -n "$worker_pane" ]] || { echo "missing worker pane for $adapter" >&2; exit 1; }
+  if ! wait_for_adapter_ready "$worker_pane" "$adapter"; then
+    echo "real $adapter worker did not become ready" >&2
+    tmux capture-pane -p -t "$worker_pane" -S -320 >&2 || true
+    exit 1
+  fi
+
+  tmux copy-mode -t "$worker_pane"
+  sleep 0.3
+  mode_state="$(tmux display-message -t "$worker_pane" -p '#{pane_in_mode} #{pane_mode} #{scroll_position}' 2>/dev/null || true)"
+  printf '%s\n' "$mode_state" | grep -Eq '^1 ' || {
+    echo "failed to enter copy mode for $adapter" >&2
+    exit 1
+  }
+
+  send_out="$(ATMUX_ALLOW_OUTSIDE_TMUX=1 ATMUX_HOME="$atmux_home" ATMUX_SOURCE_ROOT="$REPO_ROOT" ATMUX_REPO="$repo" \
+    ATMUX_AGENT_NAME="manager" ATMUX_SESSION_NAME="atmux-${repo}-manager" \
+    "$ATMUX_BIN" send --to worker "copy mode notification gate ${adapter} ${RANDOM}")"
+  message_id="$(printf '%s\n' "$send_out" | sed -n 's/.*message_id="\([^"]*\)".*/\1/p' | head -n1)"
+  [[ -n "$message_id" ]] || {
+    echo "missing message_id for $adapter copy-mode send" >&2
+    printf '%s\n' "$send_out" >&2
+    exit 1
+  }
+
+  if ! wait_for_no_text "$worker_pane" "atmux message read $message_id --repo $repo" 3; then
+    echo "real $adapter notification delivered while pane was in copy mode" >&2
+    tmux capture-pane -p -t "$worker_pane" -S -320 >&2 || true
+    exit 1
+  fi
+
+  tmux send-keys -t "$worker_pane" -X cancel
+  if ! wait_for_text "$worker_pane" "atmux message read $message_id --repo $repo" 120; then
+    echo "real $adapter notification did not deliver after exiting copy mode" >&2
+    tmux capture-pane -p -t "$worker_pane" -S -360 >&2 || true
+    exit 1
+  fi
+  if ! wait_for_queue_empty "$atmux_home" 45; then
+    echo "real $adapter copy-mode notification reached pane but queue did not drain" >&2
+    tmux capture-pane -p -t "$worker_pane" -S -360 >&2 || true
+    exit 1
+  fi
+
+  tmux kill-session -t "$worker_session" >/dev/null 2>&1 || true
+}
+
+TMP_DIRS=()
+SESSIONS=()
+
+cleanup() {
+  local session tmp_dir
+  for session in "${SESSIONS[@]:-}"; do
+    [[ -n "$session" ]] || continue
+    tmux kill-session -t "$session" >/dev/null 2>&1 || true
+  done
+  for tmp_dir in "${TMP_DIRS[@]:-}"; do
+    [[ -n "$tmp_dir" ]] || continue
+    rm -rf "$tmp_dir"
+  done
+  rm -rf "$REPO_ROOT/.gemini"
+  restore_control_files
+}
+trap cleanup EXIT
+
+snapshot_control_files
+
+for adapter in ${ATMUX_TEST_ADAPTERS:-codex claude-code gemini cursor-agent}; do
+  run_adapter_case "$adapter"
+done
+
+echo "ok: real adapter notifications wait through copy mode and drain queues"

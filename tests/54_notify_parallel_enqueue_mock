@@ -156,17 +156,8 @@ if ! wait_for_all_markers "$pane" 2 240; then
   exit 1
 fi
 
-# Assert user input is preserved through the workers' save/restore
-# cycles. Under heavy parallel enqueue the trailing characters of
-# mid-typed user input can be clipped on slower hosts (workers extract
-# saved_input while the original send-keys for user_text is still
-# draining), so check a stable prefix of the input rather than the
-# entire string. The point of the assertion is "input wasn't wiped",
-# not "input is byte-identical" — that stronger guarantee is racy by
-# nature when typing and worker C-u/restore cycles overlap.
-user_text_prefix="${user_text% *}"
-if ! wait_for_count "$pane" "$user_text_prefix" 1 15; then
-  echo "user input prefix not preserved after parallel enqueue" >&2
+if ! wait_for_count "$pane" "$user_text" 1 15; then
+  echo "user input not preserved after parallel enqueue" >&2
   tmux capture-pane -p -t "$pane" -S -40 >&2 || true
   exit 1
 fi

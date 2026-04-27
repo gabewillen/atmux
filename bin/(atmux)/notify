@@ -231,7 +231,21 @@ truncate_line_to_cursor() {
     return 0
   fi
 
-  printf '%s' "$line" | cut -c "1-${cursor_x}"
+  # tmux's cursor_x is the visual column (character index), but bash's
+  # substring expansion and `cut -c` are byte-based unless the shell
+  # was started under a UTF-8 LC_CTYPE — and bash evaluates locale at
+  # startup, so re-setting LC_CTYPE here is a no-op. When the captured
+  # line contains a multi-byte char (e.g. the "❯" prompt prefix),
+  # byte-based truncation clips the tail of saved input, which the
+  # worker then types back missing characters. perl with -CS forces
+  # UTF-8 on stdin/stdout regardless of the parent shell's locale, so
+  # substr operates on characters and matches tmux's column count.
+  printf '%s' "$line" | perl -CS -e '
+    my $n = shift;
+    local $/;
+    my $s = <STDIN>;
+    print substr($s, 0, $n);
+  ' "$cursor_x"
 }
 
 split_prompt_line() {

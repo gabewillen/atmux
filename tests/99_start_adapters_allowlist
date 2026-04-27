@@ -12,7 +12,12 @@ ATMUX_BIN="$REPO_ROOT/bin/atmux"
 tmp_root="$(mktemp -d "${TMPDIR:-/tmp}/atmux-start-adapters.XXXXXX")"
 tmp_home="$tmp_root/home"
 atmux_home="$tmp_home/.atmux"
-repo_name="amux_sh"
+# Use the actual repo dir name (normalized the same way atmux does) —
+# hardcoding "amux_sh" only worked when the repo was checked out as
+# amux.sh/. Linux CI clones to /home/runner/work/atmux/atmux/, where
+# the basename is "atmux".
+repo_name_raw="$(basename "$REPO_ROOT")"
+repo_name="$(printf '%s' "$repo_name_raw" | sed -E 's/[^A-Za-z0-9_-]+/_/g; s/_+/_/g; s/^_+//; s/_+$//')"
 agent="allowlist-${RANDOM}"
 bad_agent="disallowed-${RANDOM}"
 session="atmux-${repo_name}-${agent}"
@@ -92,16 +97,7 @@ while true; do
 done
 if [[ "$session_selected" != "beta" ]]; then
   echo "expected session selected adapter beta, got ${session_selected:-missing}" >&2
-  echo "--- expected session: $session ---" >&2
-  echo "--- tmux ls (isolated socket): ---" >&2
-  tmux ls 2>&1 >&2 || true
-  echo "--- TMUX_TMPDIR=${TMUX_TMPDIR:-(unset)} ---" >&2
-  echo "--- show-environment for session: ---" >&2
   tmux show-environment -t "$session" 2>&1 >&2 || true
-  echo "--- selected-adapter file: ---" >&2
-  cat "$atmux_home/selected-adapter" 2>&1 >&2 || true
-  echo "--- atmux processes: ---" >&2
-  ps -ef | grep -E "atmux|tmux" | grep -v grep >&2 || true
   exit 1
 fi
 

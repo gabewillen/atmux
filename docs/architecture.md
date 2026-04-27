@@ -110,7 +110,7 @@ Delivery is serialized by a background worker per pane. The worker:
 <ATMUX_HOME>/exec/<repo>/<pid>/
 ```
 
-`atmux watch --pid` registers watcher panes under that exec directory. `atmux kill --pid` signals the tracked process, waits for executor notifications and watcher fan-out, then removes the metadata directory.
+`atmux process watch` registers watcher panes under that exec directory. `atmux process kill` signals the tracked process, waits for executor notifications and watcher fan-out, then removes the metadata directory.
 
 ### Issues And Messages
 
@@ -121,7 +121,7 @@ Filesystem-backed coordination state lives under:
 <ATMUX_HOME>/messages/<repo>/
 ```
 
-`atmux assign`, `atmux comment`, and `atmux send` write state there and notify the relevant panes.
+`atmux issue create --assign-to`, `atmux issue comment`, `atmux pr comment`, and `atmux send` write state there and notify the relevant panes.
 
 ## Release Flow
 

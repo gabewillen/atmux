@@ -17,7 +17,7 @@ Install by piping `curl` into `sh`, or clone the repo and run `./install.sh`. Th
 - **CLI-agnostic via adapters.** Run Claude Code, Gemini, Codex, and Cursor side-by-side in the same session. Swap vendors without rewriting your workflow. Third-party adapters install with `atmux adapter install owner/repo`.
 - **Intelligence scale, not model names.** Say `--intelligence 80` and the adapter picks the right model and reasoning level. Portable across vendors, survives model renames — no more hardcoding `claude-opus-4-7` or `gpt-5-codex` across your scripts.
 - **You can actually see the agents work.** It's just tmux. Attach to any session, watch the agent think in real time, detach and come back later. No custom TUI, no web dashboard, no log tailing.
-- **Git worktree per agent.** Each agent gets its own branch and working directory under `ATMUX_HOME/agents/`. Parallel agents can't stomp each other's changes, and cleanup is a single `atmux kill --agent`.
+- **Git worktree per agent.** Each agent gets its own branch and working directory under `ATMUX_HOME/agents/`. Parallel agents can't stomp each other's changes, and cleanup is a single `atmux agent kill`.
 
 > **Experimental** — this project is under active development. APIs, commands, and behavior may change without notice. Use at your own risk.
 
@@ -51,16 +51,16 @@ atmux
 
 ```sh
 # Create an agent with a role and intelligence level (0–100)
-atmux create --agent planner --role planner --intelligence 80
+atmux agent create planner --role planner --intelligence 80
 
 # Send it a message
 atmux send --to planner "analyze the codebase and create a task list"
 
 # Capture its output
-atmux capture --agent planner
+atmux agent capture planner
 
 # Assign structured work
-atmux assign --to planner --title "stabilize parser" \
+atmux issue create --title "stabilize parser" --assign-to planner \
   --todo "write failing test" \
   --todo "fix root cause" \
   --todo "verify green"
@@ -77,9 +77,9 @@ Each agent runs in a named tmux session: `atmux-<repo>-<agent>`. By default, age
 Agents can be grouped into teams (capped at 4 per team). Teams share a layout and can be messaged collectively.
 
 ```sh
-atmux create --team platform
-atmux create --agent reviewer --role reviewer --team platform --intelligence 80
-atmux create --agent tester   --role tester   --team platform --intelligence 55
+atmux team create platform
+atmux agent create reviewer --role reviewer --team platform --intelligence 80
+atmux agent create tester   --role tester   --team platform --intelligence 55
 ```
 
 ### Intelligence scale
@@ -118,7 +118,7 @@ Adapters translate `atmux` commands to a specific AI CLI. The default adapter is
 
 ```sh
 # Use a specific adapter
-atmux create --agent worker --role implementer --adapter claude-code --intelligence 60 \
+atmux agent create worker --role implementer --adapter claude-code --intelligence 60 \
   -- --dangerously-skip-permissions
 ```
 
@@ -133,13 +133,13 @@ atmux adapter install owner/repo
 ### `create`
 
 ```sh
-atmux create --agent <name> --role <role> --intelligence <0-100> \
+atmux agent create <name> --role <role> --intelligence <0-100> \
   [--team <team>] [--adapter <adapter>] [--no-worktree] [-- <adapter-args...>]
 
-atmux create --team <name>
+atmux team create <name>
 
-atmux create --issue --title <title> [--description <desc>] [--todo <todo>]...
-atmux create --pr --title <title> [--description <desc>] [--source <branch>] [--target <branch>] [--todo <todo>]...
+atmux issue create --title <title> [--description <desc>] [--todo <todo>]...
+atmux pr create --title <title> [--description <desc>] [--source <branch>] [--target <branch>] [--todo <todo>]...
 ```
 
 ### `send`
@@ -152,13 +152,13 @@ atmux send --to <name|session> [--reply-required] "message"
 
 `--reply-required` signals that the sender is blocked until the recipient responds.
 
-### `assign`
+### `issue create --assign-to` / `issue assign`
 
 Create and assign filesystem-tracked issues.
 
 ```sh
-atmux assign --to <agent> --title <title> [--description <desc>] [--todo <todo>]...
-atmux assign --issue <id> --to <agent>
+atmux issue create --title <title> --assign-to <agent> [--description <desc>] [--todo <todo>]...
+atmux issue assign <id> --to <agent>
 ```
 
 ### `capture`
@@ -166,9 +166,9 @@ atmux assign --issue <id> --to <agent>
 Read tmux pane output from one or more agents.
 
 ```sh
-atmux capture --agent <name>  [--lines <n>]
-atmux capture --team <name>   [--lines <n>]
-atmux capture --all           [--lines <n>]
+atmux agent capture <name>  [--lines <n>]
+atmux team capture <name>   [--lines <n>]
+atmux agent capture --all           [--lines <n>]
 ```
 
 ### `exec`
@@ -186,25 +186,25 @@ atmux exec [--detach] -- <command> [args...]
 Wait for a condition: process exit, pane text, output changes, issue updates, local PR updates, new GitHub issues, new GitHub pull requests, GitHub PR discussion updates, or agent idle state.
 
 ```sh
-atmux watch --pid <pid> [--timeout <seconds>]
-atmux watch --pid <pid> --stdio [--duration <seconds>] [--timeout <seconds>]
-atmux watch --path <glob> [--timeout <seconds>] [--interval <seconds>]
-atmux watch --target <tmux-target> --text <needle> [--scope pane|window|session]
-atmux watch --issue <id> [--timeout <seconds>]
-atmux watch --issues <repo|url> [--timeout <seconds>] [--interval <seconds>]
-atmux watch --prs <repo|url> [--timeout <seconds>] [--interval <seconds>]
-atmux watch --pr <id|atmux-uri|github-url> [--timeout <seconds>] [--interval <seconds>]
-atmux watch --agent <name> [--idle <seconds>] [--timeout <seconds>]
+atmux process watch <pid> [--timeout <seconds>]
+atmux process watch <pid> --stdio [--duration <seconds>] [--timeout <seconds>]
+atmux path watch <glob> [--timeout <seconds>] [--interval <seconds>]
+atmux pane watch <tmux-target> --text <needle> [--scope pane|window|session]
+atmux issue watch <id> [--timeout <seconds>]
+atmux issue watch --feed <repo|url> [--timeout <seconds>] [--interval <seconds>]
+atmux pr watch --feed <repo|url> [--timeout <seconds>] [--interval <seconds>]
+atmux pr watch <id|atmux-uri|github-url> [--timeout <seconds>] [--interval <seconds>]
+atmux agent watch <name> [--idle <seconds>] [--timeout <seconds>]
 ```
 
 `watch --issues` keeps notifying on newly created GitHub issues in a repository until you stop it.
-Its registration output includes `watcher_id="..."`, which you can remove with `atmux kill --watcher <id>`.
+Its registration output includes `watcher_id="..."`, which you can remove with `atmux watcher kill <id>`.
 
-`watch --prs` (alias `--pull-requests`) keeps notifying on newly created GitHub pull requests in a repository until you stop it. Its registration output includes `watcher_id="..."`, which you can remove with `atmux kill --watcher <id>`.
+`watch --prs` (alias `--pull-requests`) keeps notifying on newly created GitHub pull requests in a repository until you stop it. Its registration output includes `watcher_id="..."`, which you can remove with `atmux watcher kill <id>`.
 
 `watch --path` watches paths matching a glob and exits when the matched set or file metadata changes. It uses `fswatch` or `inotifywait` when available, otherwise it falls back to polling.
 
-`watch --pr` accepts both filesystem pull requests and GitHub PR URLs. Local PRs can be referenced by id with `--repo`, or by `atmux://pull-request/<repo>/<id>` URI. GitHub URLs keep running and notify on new PR discussion until you stop them or the PR closes/merges; their registration output includes `watcher_id="..."`, which you can remove with `atmux kill --watcher <id>`.
+`watch --pr` accepts both filesystem pull requests and GitHub PR URLs. Local PRs can be referenced by id with `--repo`, or by `atmux://pull-request/<repo>/<id>` URI. GitHub URLs keep running and notify on new PR discussion until you stop them or the PR closes/merges; their registration output includes `watcher_id="..."`, which you can remove with `atmux watcher kill <id>`.
 
 ### `schedule`
 
@@ -226,9 +226,9 @@ Use `--notification` for self reminders, ticks, and status checks. Only schedule
 Stop exec-tracked processes or remove agent sessions.
 
 ```sh
-atmux kill --pid <pid> [--timeout <seconds>] [--signal <NAME>]
-atmux kill --watcher <id> [--timeout <seconds>]
-atmux kill --agent <name|pattern> [name|pattern...]
+atmux process kill <pid> [--timeout <seconds>] [--signal <NAME>]
+atmux watcher kill <id> [--timeout <seconds>]
+atmux agent kill <name|pattern> [name|pattern...]
 ```
 
 `--pid` stops an exec process, notifies watchers, and cleans up metadata.
@@ -248,11 +248,11 @@ atmux session attach <name|session>
 ### `list`
 
 ```sh
-atmux list agents
-atmux list sessions
-atmux list teams
-atmux list issues
-atmux list prs
+atmux agent list
+atmux session list
+atmux team list
+atmux issue list
+atmux pr list
 ```
 
 ### `env`
@@ -285,7 +285,7 @@ Agents running inside `atmux` sessions are expected to:
 - Message their manager when stuck: `atmux send --to <manager> "..."`
 - Escalate blockers immediately — never leave them unreported.
 - Reuse idle agents before spawning new ones.
-- Check `atmux list teams` before creating new team members.
+- Check `atmux team list` before creating new team members.
 - Never silently change scope — ask the manager first.
 
 ## Docs

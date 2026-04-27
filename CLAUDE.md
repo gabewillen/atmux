@@ -41,7 +41,7 @@
 - ALWAYS send a message to your manager when stuck or after completing any task.
 - ALWAYS message your manager with `atmux send --to manager "..."`.
 - ALWAYS coordinate with peer agents using `atmux send --to <agent> "..."`.
-- ALWAYS check `atmux list agents --all --status` before creating new agents.
+- ALWAYS check `atmux agent list --all --status` before creating new agents.
 - ALWAYS reuse idle capable agents before creating new ones.
 - ALWAYS spawn agents to decompose your todos if necessary.
 - ALWAYS use `--reply-required` when a manager decision is needed.
@@ -53,23 +53,23 @@
 # atmux help
 ## create
 Usage:
-  atmux create --agent <name> --role <role> --intelligence <0-100> [--team <team>] [--adapter <adapter>] [--no-worktree] [--task --description <desc> --todo <todo>...] [-- <adapter-args...>]
-  atmux create --team <name>
-  atmux create --issue --title <title> [--description <description>] [--todo <todo>...] [--repo <repo>]
-  atmux create --pr --title <title> [--description <description>] [--source <branch>] [--target <branch>] [--todo <todo>...] [--repo <repo>]
+  atmux agent create <name> --role <role> --intelligence <0-100> [--team <team>] [--adapter <adapter>] [--no-worktree] [--task --description <desc> --todo <todo>...] [-- <adapter-args...>]
+  atmux team create <name>
+  atmux issue create --title <title> [--description <description>] [--todo <todo>...] [--repo <repo>]
+  atmux pr create --title <title> [--description <description>] [--source <branch>] [--target <branch>] [--todo <todo>...] [--repo <repo>]
 
 Description:
   Unified create entrypoint for agents, teams, issues, and pull requests.
-  For agents, --team defaults to ATMUX_TEAM when set (for example after `atmux create --team <name>` in a tmux session).
+  For agents, --team defaults to ATMUX_TEAM when set (for example after `atmux team create <name>` in a tmux session).
 
 ## list
 Usage:
-  atmux list teams
-  atmux list sessions
-  atmux list agents [--all] [--status]
-  atmux list issues [--repo <repo>]
-  atmux list prs [--repo <repo>]
-  atmux list messages [--unread]
+  atmux team list
+  atmux session list
+  atmux agent list [--all] [--status]
+  atmux issue list [--repo <repo>]
+  atmux pr list [--repo <repo>]
+  atmux message list [--unread]
 
 Description:
   Listings are implemented by scripts under bin/(atmux)/(list)/.
@@ -138,20 +138,20 @@ Examples:
   atmux schedule --once 45s --notification "tick"
   atmux schedule --once 45s -- atmux send --to atmux-myrepo-worker "follow up"
 
-## assign
+## issue create / issue assign
 Usage:
-  atmux assign --to <agent|session> --title <title> [--description <description>] [--given <context>] [--when <action>] [--then <outcome>] [--todo <todo>]... [--repo <repo>]
-  atmux assign --issue <id> --to <agent|session> [--repo <repo>]
+  atmux issue create --title <title> --assign-to <agent|session> [--description <description>] [--given <context>] [--when <action>] [--then <outcome>] [--todo <todo>]... [--repo <repo>]
+  atmux issue assign <id> --to <agent|session> [--repo <repo>]
 
 Description:
   Assign work using filesystem issues.
-  - Without --issue: creates a new issue, then assigns it.
-  - With --issue: assigns an existing issue id.
+  - `issue create --assign-to`: creates a new issue, then assigns it.
+  - `issue assign`: assigns an existing issue id.
 
-## comment
+## issue comment / pr comment
 Usage:
-  atmux comment "message" --issue <id> [--repo <repo>]
-  atmux comment "message" --pr <id> [--repo <repo>]
+  atmux issue comment <id> "message" [--repo <repo>]
+  atmux pr comment <id> "message" [--repo <repo>]
 
 Description:
   Add a comment to a filesystem issue or pull request.
@@ -159,51 +159,51 @@ Description:
 
 ## capture
 Usage:
-  atmux capture --agent <name|session> [--lines <n>]
-  atmux capture --team <name|session> [--lines <n>]
-  atmux capture --all [--lines <n>]
+  atmux agent capture <name|session> [--lines <n>]
+  atmux team capture <name|session> [--lines <n>]
+  atmux agent capture --all [--lines <n>]
 
 Description:
   Capture tmux pane output for agents or team sessions.
 
 Examples:
-  atmux capture --agent planner
-  atmux capture --agent atmux-myrepo-planner --lines 300
-  atmux capture --team platform
-  atmux capture --team atmux-myrepo-team-platform --lines 500
-  atmux capture --all --lines 200
+  atmux agent capture planner
+  atmux agent capture atmux-myrepo-planner --lines 300
+  atmux team capture platform
+  atmux team capture atmux-myrepo-team-platform --lines 500
+  atmux agent capture --all --lines 200
 
 ## kill
 Usage:
-  atmux kill --pid <pid> [--timeout <seconds>] [--signal <NAME>]
-  atmux kill --watcher <id> [--timeout <seconds>]
-  atmux kill --agent <name|pattern> [name|pattern...]
-  atmux kill --all [--yes]
+  atmux process kill <pid> [--timeout <seconds>] [--signal <NAME>]
+  atmux watcher kill <id> [--timeout <seconds>]
+  atmux agent kill <name|pattern> [name|pattern...]
+  atmux agent kill --all [--yes]
 
 Description:
-  --pid    Stop an atmux exec-tracked child process for this repo, wait for
+  process kill  Stop an atmux exec-tracked child process for this repo, wait for
            executor notifications (including watcher fan-out) to finish, then
            remove metadata under ~/.atmux/exec/<repo>/<pid>/.
-  --watcher  Remove a watcher registration by id. Supports watcher ids emitted
-             by `atmux watch --pr`, `atmux watch --issues`, and
-             `atmux watch --prs`.
-  --agent  Kill agent sessions and clean up their worktrees and branches.
+  watcher kill  Remove a watcher registration by id. Supports watcher ids emitted
+             by `atmux pr watch`, `atmux issue watch --feed`, and
+             `atmux pr watch --feed`.
+  agent kill  Kill agent sessions and clean up their worktrees and branches.
            Accepts agent names, session names, or glob patterns.
-  --all    Kill every atmux session, worktree, and branch for this repo.
+  agent kill --all  Kill every atmux session, worktree, and branch for this repo.
            Prompts for y/N confirmation; use --yes to skip. Refuses to run
            from inside an atmux session.
 
 Examples:
-  atmux kill --pid 12345
-  atmux kill --pid 12345 --timeout 30 --signal TERM
-  atmux kill --watcher pr:owner_repo_pr_123:atmux-myrepo-worker-_12
-  atmux kill --watcher issues:owner_repo_issues:atmux-myrepo-worker-_12
-  atmux kill --watcher prs:owner_repo_prs:atmux-myrepo-worker-_12
-  atmux kill --agent worker
-  atmux kill --agent 'agent-*'
-  atmux kill --agent worker planner
-  atmux kill --all
-  atmux kill --all --yes
+  atmux process kill 12345
+  atmux process kill 12345 --timeout 30 --signal TERM
+  atmux watcher kill pr:owner_repo_pr_123:atmux-myrepo-worker-_12
+  atmux watcher kill issues:owner_repo_issues:atmux-myrepo-worker-_12
+  atmux watcher kill prs:owner_repo_prs:atmux-myrepo-worker-_12
+  atmux agent kill worker
+  atmux agent kill 'agent-*'
+  atmux agent kill worker planner
+  atmux agent kill --all
+  atmux agent kill --all --yes
 
 ## exec
 Usage:
@@ -225,17 +225,17 @@ Examples:
 
 ## watch
 Usage:
-  atmux watch --target <tmux-target> --text <needle> [--scope pane|window|session] [--timeout <seconds>] [--interval <seconds>] [--lines <n>]
-  atmux watch --pid <pid> [--timeout <seconds>] [--interval <seconds>]
-  atmux watch --pid <pid> --stdio [--duration <seconds>] [--timeout <seconds>] [--interval <seconds>] [--lines <n>]
-  atmux watch --path <glob> [--timeout <seconds>] [--interval <seconds>]
-  atmux watch --issue <id> [--repo <repo>] [--timeout <seconds>] [--interval <seconds>]
-  atmux watch --issues <repo|url> [--timeout <seconds>] [--interval <seconds>]
-  atmux watch --prs <repo|url> [--timeout <seconds>] [--interval <seconds>]
-  atmux watch --pr <id|atmux-uri|github-url> [--repo <repo>] [--timeout <seconds>] [--interval <seconds>]
-  atmux watch --pull-request <id> [--repo <repo>] [--timeout <seconds>] [--interval <seconds>]
-  atmux watch --pull-requests <repo|url> [--timeout <seconds>] [--interval <seconds>]
-  atmux watch --agent <name|session> [--idle <seconds>] [--timeout <seconds>] [--interval <seconds>] [--lines <n>]
+  atmux pane watch <tmux-target> --text <needle> [--scope pane|window|session] [--timeout <seconds>] [--interval <seconds>] [--lines <n>]
+  atmux process watch <pid> [--timeout <seconds>] [--interval <seconds>]
+  atmux process watch <pid> --stdio [--duration <seconds>] [--timeout <seconds>] [--interval <seconds>] [--lines <n>]
+  atmux path watch <glob> [--timeout <seconds>] [--interval <seconds>]
+  atmux issue watch <id> [--repo <repo>] [--timeout <seconds>] [--interval <seconds>]
+  atmux issue watch --feed <repo|url> [--timeout <seconds>] [--interval <seconds>]
+  atmux pr watch --feed <repo|url> [--timeout <seconds>] [--interval <seconds>]
+  atmux pr watch <id|atmux-uri|github-url> [--repo <repo>] [--timeout <seconds>] [--interval <seconds>]
+  atmux pr watch <id> [--repo <repo>] [--timeout <seconds>] [--interval <seconds>]
+  atmux pr watch --feed <repo|url> [--timeout <seconds>] [--interval <seconds>]
+  atmux agent watch <name|session> [--idle <seconds>] [--timeout <seconds>] [--interval <seconds>] [--lines <n>]
 
 Description:
   Pane mode: poll tmux output until text appears, non-zero on timeout.

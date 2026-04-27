@@ -1,11 +1,11 @@
 ---
 name: atmux-assign
-description: Create and assign an ATMUX filesystem issue with `atmux assign`. Use when the user wants work handed to another ATMUX agent.
-allowed-tools: Bash(atmux assign*)
+description: Create and assign an ATMUX filesystem issue with `atmux issue create --assign-to`. Use when the user wants work handed to another ATMUX agent.
+allowed-tools: Bash(atmux issue create*, atmux issue assign*)
 ---
 # ATMUX Assign
 
-Use `atmux assign` to create and assign work to another ATMUX agent.
+Use `atmux issue create --assign-to` to create and assign work to another ATMUX agent in one shot. To assign an existing issue, use `atmux issue assign <id> --to <agent>`.
 
 ## Arguments
 
@@ -21,8 +21,8 @@ Example:
 
 1. Split the input on `|`.
 2. Trim whitespace around each field.
-3. Map fields: `--to` (1st), `--title` (2nd), `--given` (3rd), `--when` (4th), `--then` (5th).
+3. Map fields: `--assign-to` (1st), `--title` (2nd), `--given` (3rd), `--when` (4th), `--then` (5th).
 4. Add each remaining field (6th+) as `--todo`.
 5. Omit empty structured flags.
-6. Run the matching `atmux assign` command.
+6. Run `atmux issue create --title <title> --assign-to <target> [--given ...] [--when ...] [--then ...] [--todo ...]`.
 7. Report the assigned issue id or the error.

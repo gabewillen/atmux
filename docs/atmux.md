@@ -39,7 +39,7 @@ For project installs, `ATMUX_HOME` defaults to `<project>/.atmux`. For system in
 - Includes nested status per agent:
   `<agent ...><status ... /></agent>`
 
-### `atmux create --agent <name> --role <role> --intelligence <0-100> [--team <team>]`
+### `atmux agent create <name> --role <role> --intelligence <0-100> [--team <team>]`
 - Creates a new agent session/worktree.
 - `--intelligence` is adapter-portable and maps to a model plus reasoning level via the adapter manifest.
 
@@ -64,13 +64,13 @@ Current built-in mapping:
 | `gemini` | 75-89 | `gemini-3.1-pro-preview` | `medium` |
 | `gemini` | 90-100 | `gemini-3.1-pro-preview` | `high` |
 
-### `atmux create --team <name>`
+### `atmux team create <name>`
 - Creates a team session `atmux-{{repo}}-team-{{name}}`.
 
-### `atmux create --issue --title <title> [--description "..."] [--todo "..."]`
+### `atmux issue create --title <title> [--description "..."] [--todo "..."]`
 - Creates a filesystem issue in `<ATMUX_HOME>/issues/{{repo}}/`.
 
-### `atmux create --pr --title <title> [--description "..."] [--source <branch>] [--target <branch>] [--todo "..."]`
+### `atmux pr create --title <title> [--description "..."] [--source <branch>] [--target <branch>] [--todo "..."]`
 - Creates a filesystem pull request in `<ATMUX_HOME>/pull-requests/{{repo}}/`.
 
 ### `atmux send --to <name|session> [--reply-required] "message"`
@@ -98,27 +98,30 @@ Current built-in mapping:
 
 ### `atmux watch`
 - Wait until text appears, a tracked process exits, an issue updates, a local pull request updates, new GitHub issues appear, new GitHub pull requests appear, a PR discussion updates, or an agent goes idle.
-- `atmux watch --path <glob>` watches filesystem paths matching a glob and exits when the matched set or file metadata changes. It uses `fswatch` or `inotifywait` when available, otherwise it falls back to polling.
-- `atmux watch --pr <id|atmux-uri|github-url>` watches either a filesystem pull request or a GitHub pull request based on the URI. Local PRs accept an id with `--repo`, or `atmux://pull-request/<repo>/<id>`.
-- `atmux watch --issues <repo|url>` polls a GitHub repository for newly created issues and queues notifications to the current pane until the watcher is stopped.
-- `watch --issues` registration output includes a `watcher_id`, which can be removed via `atmux kill --watcher <id>`.
-- `atmux watch --prs <repo|url>` (alias `--pull-requests`) polls a GitHub repository for newly created pull requests and queues notifications to the current pane until the watcher is stopped. Registration output includes a `watcher_id`, removable via `atmux kill --watcher <id>`.
-- For GitHub PR URLs, `watch --pr` polls comments/reviews and queues notifications until the PR closes/merges or the watcher is stopped. Remote watcher registration output includes a `watcher_id`, which can be removed via `atmux kill --watcher <id>`.
+- `atmux path watch <glob>` watches filesystem paths matching a glob and exits when the matched set or file metadata changes. It uses `fswatch` or `inotifywait` when available, otherwise it falls back to polling.
+- `atmux pr watch <id|atmux-uri|github-url>` watches either a filesystem pull request or a GitHub pull request based on the URI. Local PRs accept an id with `--repo`, or `atmux://pull-request/<repo>/<id>`.
+- `atmux issue watch --feed <repo|url>` polls a GitHub repository for newly created issues and queues notifications to the current pane until the watcher is stopped.
+- `watch --issues` registration output includes a `watcher_id`, which can be removed via `atmux watcher kill <id>`.
+- `atmux pr watch --feed <repo|url>` (alias `--pull-requests`) polls a GitHub repository for newly created pull requests and queues notifications to the current pane until the watcher is stopped. Registration output includes a `watcher_id`, removable via `atmux watcher kill <id>`.
+- For GitHub PR URLs, `watch --pr` polls comments/reviews and queues notifications until the PR closes/merges or the watcher is stopped. Remote watcher registration output includes a `watcher_id`, which can be removed via `atmux watcher kill <id>`.
 
-### `atmux kill --pid <pid> [--timeout <seconds>] [--signal <NAME>]`
+### `atmux process kill <pid> [--timeout <seconds>] [--signal <NAME>]`
 - Stops the tracked child for this repo (same `exec` metadata as `watch --pid`).
 - After the executor finishes notifications (including watcher fan-out), removes `<ATMUX_HOME>/exec/<repo>/<pid>/`.
 - Default `TERM` and `--timeout` 60s; escalates to `KILL` if the process is still alive after the timeout.
 
-### `atmux kill --watcher <id> [--timeout <seconds>]`
+### `atmux watcher kill <id> [--timeout <seconds>]`
 - Removes a watcher registration by id.
-- Supports watcher ids emitted by `atmux watch --pr`, `atmux watch --issues`, and `atmux watch --prs`.
+- Supports watcher ids emitted by `atmux pr watch`, `atmux issue watch --feed`, and `atmux pr watch --feed`.
 
-### `atmux assign --to <agent> --title <title> [--description "..."] [--todo "..."]`
-- Creates a filesystem issue and assigns it to the target agent/session.
+### `atmux issue create --title <title> --assign-to <agent> [--description "..."] [--todo "..."]`
+- Creates a filesystem issue and assigns it to the target agent/session in one shot.
 
-### `atmux assign --issue <id> --to <agent>`
+### `atmux issue assign <id> --to <agent>`
 - Assigns an existing filesystem issue id to the target agent/session.
+
+### `atmux issue comment <id> "message"` / `atmux pr comment <id> "message"`
+- Adds a comment to a filesystem-backed issue or pull request and notifies watchers/assignee/assigner.
 
 ### `atmux install [--project|--system] [--project-root <dir>] [--no-slash-commands]`
 - Installs atmux into `<project>/.atmux` by default. The installer prompts for project vs system scope when interactive, defaulting to project.

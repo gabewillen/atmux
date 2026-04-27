@@ -29,49 +29,44 @@ if [[ -n "${ATMUX_SOURCE_ROOT:-}" && -x "${ATMUX_SOURCE_ROOT}/bin/atmux" ]]; the
 fi
 
 usage() {
-  local -a cmds=()
+  # The CLI is resource-first: most commands take the form `atmux <noun> <verb>`.
+  # A handful of cross-cutting verbs have no resource home and are invoked
+  # directly. Render them in two static groups so the shape is obvious.
+  cat <<'USAGE'
+Usage:
+  atmux <noun> <verb> [args...]    # resource operations
+  atmux <verb> [args...]           # cross-cutting verbs
 
-  local -a script_dirs=()
-  if [[ -d "$ATMUX_HOME/bin/scripts" ]]; then
-    script_dirs+=("$ATMUX_HOME/bin/scripts")
-  fi
-  local repo_root=""
-  if repo_root="$(git rev-parse --show-toplevel 2>/dev/null)"; then
-    if [[ -d "$repo_root/bin/(atmux)" ]]; then
-      script_dirs+=("$repo_root/bin/(atmux)")
-    fi
-  fi
+atmux is an agent multiplexer across adapters.
 
-  local dir
-  for dir in "${script_dirs[@]}"; do
-    while IFS= read -r name; do
-      [[ -z "$name" ]] && continue
-      cmds+=("$name")
-    done < <(find "$dir" -maxdepth 1 -type f -perm -u+x -exec basename {} \; | sort)
-  done
+Resources (use `atmux <noun> --help` for verbs):
+  agent      manage agent sessions (create, list, kill, capture, watch, resolve)
+  team       manage team sessions (create, list, kill, capture, resolve)
+  role       manage role definitions (create, list, show, resolve)
+  session    manage tmux sessions (start, list, attach)
+  issue      filesystem issue tickets (create, list, show, assign, claim, comment, watch)
+  pr         filesystem pull request tickets (create, list, show, assign, claim, comment, watch)
+  message    inter-agent messages (read, list)
+  config     atmux configuration (get, set, unset, list)
+  env        environment vars (get, list)
+  adapter    AI CLI adapters (install, ...)
+  watcher    background watcher registrations (list, kill)
+  process    atmux exec-tracked processes (watch, kill)
+  pane       tmux pane operations (watch)
+  path       filesystem path operations (watch)
 
-  local -a uniq_cmds=()
-  while IFS= read -r c; do
-    [[ -n "$c" ]] && uniq_cmds+=("$c")
-  done < <(printf '%s\n' "${cmds[@]}" | awk 'NF' | sort -u)
-  cmds=("${uniq_cmds[@]}")
+Verbs (no resource home):
+  send       message another agent or team
+  exec       run a command with notification on exit
+  schedule   schedule a one-shot or recurring action
+  notify     low-level notification CLI (mostly internal)
+  update     update atmux to the latest version
+  install    install atmux into a project or system
 
-  echo "Usage:"
-  echo "  atmux <subcommand> [args...]"
-  echo
-  echo "atmux is an agent multiplexer across adapters."
-  echo
-  echo "Purpose:"
-  echo "  Manage atmux agent sessions, adapters, and agent messaging."
-  echo
-  echo "Available subcommands:"
-  for c in "${cmds[@]}"; do
-    echo "  $c"
-  done
-  echo
-  echo "Run:"
-  echo "  atmux <subcommand> --help"
-  echo "for more information."
+Run:
+  atmux <subcommand> --help
+for more information.
+USAGE
 }
 
 ensure_atmux_home() {
@@ -306,11 +301,10 @@ main() {
       ;;
     *)
       cmd="$1"
-      case "$cmd" in
-        session|update|list|env|message|kill) ;;
-        *) require_tmux ;;
-      esac
       shift
+      # Resolve the script BEFORE checking tmux so unknown commands surface
+      # as "unknown command" rather than the confusing "must be run inside
+      # tmux" message.
       if ! script_path="$(resolve_script_subcommand "$cmd")"; then
         out_file="$(mktemp "${TMPDIR:-/tmp}/atmux-out.XXXXXX")"
         err_file="$(mktemp "${TMPDIR:-/tmp}/atmux-err.XXXXXX")"
@@ -320,6 +314,14 @@ main() {
         emit_atmux_wrapper "$cmd $*" "$out_file" "$err_file" 1
         exit 1
       fi
+      # Most resource nouns and self-update commands are safe to run outside
+      # tmux (the underlying script will refuse if it specifically needs it).
+      # `send`, `exec`, `schedule`, `notify`, `install` need tmux to deliver
+      # notifications or attach to panes.
+      case "$cmd" in
+        session|update|env|message|config|adapter|role|agent|team|issue|pr|watcher|process|pane|path) ;;
+        *) require_tmux ;;
+      esac
 
       export ATMUX_ALLOW_REAL_TMUX=1
       if should_wrap_command "$cmd" "$@"; then

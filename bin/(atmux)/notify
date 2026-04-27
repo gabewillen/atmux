@@ -1218,7 +1218,12 @@ timestamp_utc() {
 }
 
 id() {
-  head -c 12 /dev/urandom | base64 | tr '+/' '-_' | tr -d '='
+  local s
+  s="$(head -c 12 /dev/urandom | base64 | tr '+/' '-_' | tr -d '=')"
+  # Avoid IDs starting with '-' — they get interpreted as flags by
+  # grep, rm, mv, find, and most other CLI tools, breaking any caller
+  # that passes the id as the first positional argument.
+  printf '%s\n' "${s/#-/x}"
 }
 
 repo_name_from_context() {

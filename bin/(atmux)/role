@@ -9,6 +9,10 @@ Usage:
   atmux role list
   atmux role show <name>
   atmux role resolve <name>
+  atmux role create <name> (--from-file <path> | --from-stdin | --description <text>)
+                           [--intelligence <0-100>] [--adapters <a,b,...>]
+                           [--hooks <start,stop>] [--scope repo|global|auto]
+                           [--force]
 
 Description:
   Manage adapter-agnostic roles. A role is a directory containing any of:
@@ -21,6 +25,35 @@ Resolution precedence (first match wins):
     <repo>/.atmux/roles/<name>
     ~/.atmux/roles/<name>
     <source_root>/roles/<name>
+
+`create` writes the role under ~/.atmux/roles/<name> by default. --scope repo
+writes under <repo>/.atmux/roles/<name>; --scope auto picks repo if inside a
+git repo with an existing .atmux/, otherwise global.
+USAGE
+}
+
+create_usage() {
+  cat <<'USAGE'
+Usage:
+  atmux role create <name> (--from-file <path> | --from-stdin | --description <text>)
+                           [--intelligence <0-100>] [--adapters <a,b,...>]
+                           [--hooks <start,stop>] [--scope repo|global|auto]
+                           [--force]
+
+Description:
+  Scaffold a new role directory. Exactly one body source is required:
+    --from-file <path>    use the file's contents as role.md
+    --from-stdin          read role.md body from stdin
+    --description <text>  generate a minimal role.md stub from this text
+
+  Optional manifest fields (omit either to leave it out):
+    --intelligence <n>    default agent intelligence (0-100)
+    --adapters <list>     comma-separated allow-list of adapter names
+
+  Optional hooks (chmod +x written templates):
+    --hooks <list>        comma-separated subset of start,stop (or "none")
+
+  --force overwrites an existing role directory.
 USAGE
 }
 
@@ -98,6 +131,241 @@ list_roles() {
   done < <(role_search_paths)
 }
 
+resolve_create_dest() {
+  # Prints the absolute destination directory for `role create` based on scope.
+  # Args: <name> <scope>
+  local name="$1" scope="$2" rr=""
+  case "$scope" in
+    global)
+      printf '%s\n' "$ATMUX_HOME/roles/$name"
+      ;;
+    repo)
+      rr="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+      if [[ -z "$rr" ]]; then
+        echo "atmux role create: --scope repo requires being inside a git repo" >&2
+        return 1
+      fi
+      printf '%s\n' "$rr/.atmux/roles/$name"
+      ;;
+    auto)
+      rr="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+      if [[ -n "$rr" && -d "$rr/.atmux" ]]; then
+        printf '%s\n' "$rr/.atmux/roles/$name"
+      else
+        printf '%s\n' "$ATMUX_HOME/roles/$name"
+      fi
+      ;;
+    *)
+      echo "atmux role create: invalid --scope: $scope (want repo|global|auto)" >&2
+      return 1
+      ;;
+  esac
+}
+
+write_role_manifest() {
+  # Args: <dest_dir> <name> <intelligence> <adapters_csv>
+  local dest="$1" name="$2" intel="$3" adapters="$4"
+  [[ -z "$intel" && -z "$adapters" ]] && return 0
+  {
+    printf '# Sourced by atmux when an agent is created with --role %s.\n' "$name"
+    printf '# Anything exported here is visible during agent creation.\n\n'
+    if [[ -n "$intel" ]]; then
+      printf '# Default intelligence (caller'\''s --intelligence flag still wins)\n'
+      printf 'INTELLIGENCE=%s\n' "$intel"
+      [[ -n "$adapters" ]] && printf '\n'
+    fi
+    if [[ -n "$adapters" ]]; then
+      printf '# Adapter allow-list. Comment out to allow any adapter.\n'
+      printf 'ADAPTERS=(%s)\n' "${adapters//,/ }"
+    fi
+  } > "$dest/manifest"
+}
+
+write_role_start_hook() {
+  # Args: <dest_dir> <name>
+  local dest="$1" name="$2"
+  cat > "$dest/start" <<EOF
+#!/usr/bin/env bash
+# Role start hook for $name. Runs after the control file is rendered, before
+# the AI CLI execs. Env provided by atmux:
+#   ATMUX_ROLE_STATE_DIR  - private state dir for this (agent, role) pair
+#   ATMUX_ROLE_DIR        - this role's directory
+#   ATMUX_AGENT_NAME      - the agent's short name
+#   ATMUX_REPO            - normalized repo name
+set -euo pipefail
+
+state="\$ATMUX_ROLE_STATE_DIR"
+mkdir -p "\$state"
+
+# TODO: register watchers, warm caches, etc. Record any ids in
+# "\$state/" so 'stop' can tear them down.
+EOF
+  chmod +x "$dest/start"
+}
+
+write_role_stop_hook() {
+  # Args: <dest_dir> <name>
+  local dest="$1" name="$2"
+  cat > "$dest/stop" <<EOF
+#!/usr/bin/env bash
+# Role stop hook for $name. Tears down whatever start registered.
+set -euo pipefail
+
+state="\${ATMUX_ROLE_STATE_DIR:-}"
+[[ -n "\$state" && -d "\$state" ]] || exit 0
+
+# TODO: undo registrations made by start (e.g. atmux watcher kill <id>).
+
+rm -rf "\$state"
+EOF
+  chmod +x "$dest/stop"
+}
+
+write_role_md_stub() {
+  # Args: <dest_dir> <name> <description>
+  local dest="$1" name="$2" desc="$3"
+  cat > "$dest/role.md" <<EOF
+# $name
+
+You are $desc.
+
+## Workflow
+
+1. <fill in step one>
+2. <fill in step two>
+
+## Tools available
+
+- \`atmux\` — coordinate with peer agents.
+- \`git\` — when the role touches code.
+EOF
+}
+
+create_role() {
+  local name=""
+  local description="" body_file="" body_stdin=0
+  local intelligence="" adapters="" hooks=""
+  local scope="auto" force=0
+
+  # First positional is the role name.
+  if [[ $# -gt 0 && "${1:0:1}" != "-" ]]; then
+    name="$1"; shift
+  fi
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --description)        description="$2"; shift 2 ;;
+      --description=*)      description="${1#--description=}"; shift ;;
+      --from-file)          body_file="$2"; shift 2 ;;
+      --from-file=*)        body_file="${1#--from-file=}"; shift ;;
+      --from-stdin)         body_stdin=1; shift ;;
+      --intelligence)       intelligence="$2"; shift 2 ;;
+      --intelligence=*)     intelligence="${1#--intelligence=}"; shift ;;
+      --adapters)           adapters="$2"; shift 2 ;;
+      --adapters=*)         adapters="${1#--adapters=}"; shift ;;
+      --hooks)              hooks="$2"; shift 2 ;;
+      --hooks=*)            hooks="${1#--hooks=}"; shift ;;
+      --scope)              scope="$2"; shift 2 ;;
+      --scope=*)            scope="${1#--scope=}"; shift ;;
+      --force)              force=1; shift ;;
+      -h|--help)            create_usage; return 0 ;;
+      --)                   shift; break ;;
+      *)
+        echo "atmux role create: unknown arg: $1" >&2
+        create_usage >&2
+        return 2
+        ;;
+    esac
+  done
+
+  if [[ -z "$name" ]]; then
+    echo "atmux role create: <name> is required" >&2
+    create_usage >&2
+    return 2
+  fi
+
+  if ! role_name_valid "$name"; then
+    echo "atmux role create: invalid role name: $name (want ^[A-Za-z0-9._-]+\$, no .. or /)" >&2
+    return 2
+  fi
+
+  # Exactly one body source.
+  local sources=0
+  [[ -n "$body_file" ]] && sources=$((sources + 1))
+  [[ "$body_stdin" -eq 1 ]] && sources=$((sources + 1))
+  [[ -n "$description" ]] && sources=$((sources + 1))
+  if [[ "$sources" -ne 1 ]]; then
+    echo "atmux role create: supply exactly one of --from-file, --from-stdin, --description" >&2
+    return 2
+  fi
+
+  if [[ -n "$body_file" && ! -f "$body_file" ]]; then
+    echo "atmux role create: --from-file not found: $body_file" >&2
+    return 1
+  fi
+
+  if [[ -n "$intelligence" ]]; then
+    if ! [[ "$intelligence" =~ ^[0-9]+$ ]] || [[ "$intelligence" -lt 0 ]] || [[ "$intelligence" -gt 100 ]]; then
+      echo "atmux role create: --intelligence must be 0-100, got: $intelligence" >&2
+      return 2
+    fi
+  fi
+
+  # Validate hooks up front so a bad value can't leave a partial role on disk.
+  if [[ -n "$hooks" && "$hooks" != "none" ]]; then
+    local hooks_csv_check=",${hooks// /},"
+    local rest_check="${hooks_csv_check//,start,/,}"
+    rest_check="${rest_check//,stop,/,}"
+    rest_check="${rest_check//,/}"
+    if [[ -n "$rest_check" ]]; then
+      echo "atmux role create: unknown hook(s) in --hooks: $hooks (valid: start, stop, none)" >&2
+      return 2
+    fi
+  fi
+
+  local dest
+  if ! dest="$(resolve_create_dest "$name" "$scope")"; then
+    return 2
+  fi
+
+  if [[ -e "$dest" ]]; then
+    if [[ "$force" -eq 1 ]]; then
+      rm -rf "$dest"
+    else
+      echo "atmux role create: role already exists at $dest (use --force to overwrite)" >&2
+      return 1
+    fi
+  fi
+
+  mkdir -p "$dest"
+
+  # Author role.md. Strip any literal <atmux>/</atmux> fence lines from
+  # supplied bodies — those are reserved in the rendered control file.
+  if [[ -n "$body_file" ]]; then
+    sed -E '/^[[:space:]]*<\/?atmux([[:space:]>]|$)/d' < "$body_file" > "$dest/role.md"
+  elif [[ "$body_stdin" -eq 1 ]]; then
+    sed -E '/^[[:space:]]*<\/?atmux([[:space:]>]|$)/d' > "$dest/role.md"
+  else
+    write_role_md_stub "$dest" "$name" "$description"
+  fi
+
+  write_role_manifest "$dest" "$name" "$intelligence" "$adapters"
+
+  if [[ -n "$hooks" && "$hooks" != "none" ]]; then
+    local hooks_csv=",${hooks// /},"
+    case "$hooks_csv" in
+      *,start,*) write_role_start_hook "$dest" "$name" ;;
+    esac
+    case "$hooks_csv" in
+      *,stop,*) write_role_stop_hook "$dest" "$name" ;;
+    esac
+  fi
+
+  printf 'created role: %s\n' "$dest"
+  ( cd "$dest" && find . -mindepth 1 -maxdepth 1 -printf '  %P\n' 2>/dev/null \
+      || ls -1 "$dest" | sed 's/^/  /' )
+}
+
 sub="${1:-}"
 shift || true
 
@@ -125,6 +393,10 @@ case "$sub" in
       exit 0
     fi
     exit 1
+    ;;
+  create)
+    create_role "$@"
+    exit $?
     ;;
   -h|--help|help|"")
     usage

@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+
+usage() {
+  cat <<'USAGE'
+Usage:
+  atmux pane watch <target> --text <needle> [--scope pane|window|session]
+                            [--timeout <seconds>] [--interval <seconds>]
+                            [--lines <n>]
+
+Description:
+  Operate on a tmux pane by id (e.g. %12, @3:1.0). The only verb today is
+  `watch`, which polls the pane and exits 0 when <needle> appears, non-zero
+  on timeout.
+
+Examples:
+  atmux pane watch %12 --scope pane --text "Select Model and Effort"
+  atmux pane watch @3 --scope window --text "running tests" --timeout 20
+USAGE
+}
+
+verb="${1:-}"
+shift || true
+
+case "$verb" in
+  watch)
+    target="${1:-}"
+    if [[ -z "$target" || "${target:0:1}" == "-" ]]; then
+      echo "usage: atmux pane watch <target> --text <needle> [...]" >&2
+      exit 2
+    fi
+    shift
+    exec "$HERE/[watch]/text" --target "$target" "$@"
+    ;;
+  -h|--help|help|"")
+    usage
+    ;;
+  *)
+    echo "unknown pane command: $verb" >&2
+    usage >&2
+    exit 2
+    ;;
+esac

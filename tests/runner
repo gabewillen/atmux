@@ -70,12 +70,26 @@ should_skip_test() {
   return 1
 }
 
+# Kill any leftover detached `atmux schedule` and notify workers between
+# tests so stale notifications can't leak into a later test's pane.
+# Also re-purge the test notify queue dirs — items written before a
+# session was killed survive in the filesystem and tmux often reuses
+# pane ids when a session is recreated, so the next test's worker would
+# pick up stale items keyed on the same (session, pane_id) pair.
+purge_between_tests() {
+  pkill -TERM -f 'atmux/exec _run .*atmux schedule' 2>/dev/null || true
+  pkill -TERM -f 'bin/atmux schedule --no-detach --interval' 2>/dev/null || true
+  pkill -TERM -f 'bin/atmux schedule --no-detach --once' 2>/dev/null || true
+  purge_test_notify_queues
+}
+
 main() {
   local test_script
   for test_script in "$TESTS_DIR"/[0-9][0-9]_*; do
     [[ -f "$test_script" ]] || continue
     [[ -x "$test_script" ]] || chmod +x "$test_script"
     [[ ! -x "$CLEANUP_ORPHANS" ]] || "$CLEANUP_ORPHANS" || true
+    purge_between_tests
     if should_skip_test "$(basename "$test_script")"; then
       log "skipping $(basename "$test_script") (set ATMUX_RUN_LIVE_ADAPTER_TESTS=1 to include live adapter tests)"
       continue
@@ -83,9 +97,11 @@ main() {
     log "running $(basename "$test_script")"
     if ! "$test_script"; then
       [[ ! -x "$CLEANUP_ORPHANS" ]] || "$CLEANUP_ORPHANS" || true
+      purge_between_tests
       return 1
     fi
     [[ ! -x "$CLEANUP_ORPHANS" ]] || "$CLEANUP_ORPHANS" || true
+    purge_between_tests
   done
   log "suite complete"
 }

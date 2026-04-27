@@ -4,11 +4,25 @@ set -euo pipefail
 usage() {
   cat <<'USAGE'
 Usage:
+  atmux agent create --name <name> --role <role> --intelligence <0-100>
+                     [--team <team>] [--adapter <adapter>] [--no-worktree]
+                     [--start <cmd>] [--stop <cmd>]
+                     [--task --description <desc> --todo <todo>...]
+                     [-- <adapter-args...>]
+  atmux agent list [--all] [--status]
+  atmux agent kill <name|pattern> [<name|pattern>...]
+  atmux agent kill --all [--yes]
+  atmux agent capture <name> [--lines <n>]
+  atmux agent capture --all [--lines <n>]
+  atmux agent watch <name> [--idle <seconds>] [--timeout <seconds>]
+                           [--interval <seconds>] [--lines <n>]
   atmux agent resolve <name> [<repo_name>]
 
 Description:
-  Internal agent subcommands (resolve, _create, status, etc.).
-  To remove agents use: atmux kill --agent <name|pattern>
+  Manage atmux agents — sessions running an AI CLI under tmux. Agents are
+  scoped to the current repo. `_create` is kept as a private alias for
+  `create` so internal callers (the legacy `atmux create --agent` front)
+  continue to work during the resource-first cutover.
 USAGE
 }
 
@@ -689,7 +703,7 @@ sub="${1:-}"
 shift || true
 
 case "$sub" in
-  _create)
+  create|_create)
     manager="${ATMUX_AGENT_NAME:-}"
     if [[ -z "$manager" ]]; then
       echo "ATMUX_AGENT_NAME is required for agent create" >&2
@@ -970,6 +984,42 @@ case "$sub" in
       "$(xml_escape "$intelligence")"
     printf '  %s\n' "$status_node"
     printf '</agent>\n'
+    ;;
+  list)
+    here_agent="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+    exec "$here_agent/(list)/agents" "$@"
+    ;;
+  kill)
+    here_agent="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+    if [[ "${1:-}" == "--all" ]]; then
+      exec "$here_agent/kill" "$@"
+    fi
+    if [[ $# -eq 0 || "${1:0:1}" == "-" ]]; then
+      echo "usage: atmux agent kill <name|pattern> [...]   |   atmux agent kill --all [--yes]" >&2
+      exit 2
+    fi
+    exec "$here_agent/kill" --agent "$@"
+    ;;
+  capture)
+    here_agent="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+    if [[ "${1:-}" == "--all" ]]; then
+      exec "$here_agent/capture" "$@"
+    fi
+    if [[ $# -eq 0 || "${1:0:1}" == "-" ]]; then
+      echo "usage: atmux agent capture <name> [--lines N]   |   atmux agent capture --all [--lines N]" >&2
+      exit 2
+    fi
+    target_name="$1"; shift
+    exec "$here_agent/capture" --agent "$target_name" "$@"
+    ;;
+  watch)
+    here_agent="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+    if [[ $# -eq 0 || "${1:0:1}" == "-" ]]; then
+      echo "usage: atmux agent watch <name|session> [--idle N] [--timeout N] [--interval N] [--lines N]" >&2
+      exit 2
+    fi
+    target_name="$1"; shift
+    exec "$here_agent/[watch]/agent" --agent "$target_name" "$@"
     ;;
   resolve)
     target="${1:-}"

@@ -22,17 +22,28 @@ render_issue_template() {
 usage() {
   cat <<'USAGE'
 Usage:
-  atmux issue create --title <title> [--description <description>] [--given <context>] [--when <action>] [--then <outcome>] [--todo <todo>]... [--repo <repo>]
+  atmux issue create --title <title> [--description <description>]
+                     [--given <context>] [--when <action>] [--then <outcome>]
+                     [--todo <todo>]... [--repo <repo>]
+                     [--assign-to <agent|session>]
   atmux issue list [--repo <repo>]
   atmux issue ls [--repo <repo>]
   atmux issue get <id> [--repo <repo>]
   atmux issue show <id> [--repo <repo>]
   atmux issue assign <id> --to <agent|session> [--repo <repo>]
   atmux issue claim <id> [--by <agent|session>] [--repo <repo>]
+  atmux issue comment <id> "message" [--repo <repo>]
+  atmux issue watch <id> [--repo <repo>] [--timeout <s>] [--interval <s>]
+  atmux issue watch --feed <repo|url> [--timeout <s>] [--interval <s>]
 
 Description:
   Repo-scoped issue tickets on filesystem.
   Issues are stored at: ~/.atmux/issues/<repo>/<id>/
+
+  `create --assign-to` creates the issue and immediately assigns it (one-shot
+  replacement for the legacy `atmux assign --to <agent> --title <t>` form).
+  `watch <id>` waits for the next update on a single issue.
+  `watch --feed <repo>` watches a GitHub repo for newly-filed issues.
 USAGE
 }
 
@@ -495,7 +506,31 @@ shift || true
 
 case "$sub" in
   create)
-    create_issue "$@"
+    # Extract --assign-to <name> so we can run a follow-up assign step.
+    assign_to=""
+    create_args=()
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --assign-to)   assign_to="${2:-}"; shift 2 ;;
+        --assign-to=*) assign_to="${1#--assign-to=}"; shift ;;
+        *)             create_args+=("$1"); shift ;;
+      esac
+    done
+    create_xml="$(create_issue "${create_args[@]}")"
+    printf '%s\n' "$create_xml"
+    if [[ -n "$assign_to" ]]; then
+      new_id="$(printf '%s' "$create_xml" | sed -n 's/.*<issue id="\([^"]*\)".*/\1/p' | head -n 1)"
+      new_repo="$(printf '%s' "$create_xml" | sed -n 's/.*repo="\([^"]*\)".*/\1/p' | head -n 1)"
+      if [[ -z "$new_id" ]]; then
+        echo "atmux issue create: created issue but could not parse id for --assign-to" >&2
+        exit 1
+      fi
+      if [[ -n "$new_repo" ]]; then
+        assign_issue "$new_id" --to "$assign_to" --repo "$new_repo"
+      else
+        assign_issue "$new_id" --to "$assign_to"
+      fi
+    fi
     ;;
   list|ls)
     list_issues "$@"
@@ -508,6 +543,40 @@ case "$sub" in
     ;;
   claim)
     claim_issue "$@"
+    ;;
+  comment)
+    here_issue="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+    if [[ $# -lt 2 ]]; then
+      echo "usage: atmux issue comment <id> \"message\" [--repo R]" >&2
+      exit 2
+    fi
+    issue_id="$1"; shift
+    comment_msg="$1"; shift
+    exec "$here_issue/comment" "$comment_msg" --issue "$issue_id" "$@"
+    ;;
+  watch)
+    here_issue="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+    # --feed <repo> selects the new-issues stream watcher; otherwise first
+    # positional is an issue id.
+    feed_repo=""
+    forward_args=()
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --feed)   feed_repo="${2:-}"; shift 2 ;;
+        --feed=*) feed_repo="${1#--feed=}"; shift ;;
+        *)        forward_args+=("$1"); shift ;;
+      esac
+    done
+    if [[ -n "$feed_repo" ]]; then
+      exec "$here_issue/[watch]/issues" "$feed_repo" "${forward_args[@]}"
+    fi
+    if [[ ${#forward_args[@]} -eq 0 || "${forward_args[0]:0:1}" == "-" ]]; then
+      echo "usage: atmux issue watch <id> [--repo R]   |   atmux issue watch --feed <repo>" >&2
+      exit 2
+    fi
+    issue_id="${forward_args[0]}"
+    forward_args=("${forward_args[@]:1}")
+    exec "$here_issue/[watch]/issue" --issue "$issue_id" "${forward_args[@]}"
     ;;
   -h|--help|help|"")
     usage

@@ -9,17 +9,25 @@ source "$HERE/notify"
 usage() {
   cat <<'USAGE'
 Usage:
-  atmux pr create --title <title> [--description <description>] [--source <branch>] [--target <branch>] [--todo <todo>]... [--repo <repo>]
+  atmux pr create --title <title> [--description <description>]
+                  [--source <branch>] [--target <branch>]
+                  [--todo <todo>]... [--repo <repo>]
   atmux pr list [--repo <repo>]
   atmux pr ls [--repo <repo>]
   atmux pr get <id> [--repo <repo>]
   atmux pr show <id> [--repo <repo>]
   atmux pr assign <id> --to <agent|session> [--repo <repo>]
   atmux pr claim <id> [--by <agent|session>] [--repo <repo>]
+  atmux pr comment <id> "message" [--repo <repo>]
+  atmux pr watch <id|atmux-uri|github-url> [--repo <repo>] [--timeout <s>] [--interval <s>]
+  atmux pr watch --feed <repo|url> [--timeout <s>] [--interval <s>]
 
 Description:
   Repo-scoped pull request tickets on filesystem.
   Pull requests are stored at: ~/.atmux/pull-requests/<repo>/<id>/
+
+  `watch <id>` watches a single pull request (filesystem ticket or GitHub URL).
+  `watch --feed <repo>` watches a GitHub repo for newly-filed pull requests.
 USAGE
 }
 
@@ -493,6 +501,49 @@ case "$sub" in
     ;;
   claim)
     claim_pr "$@"
+    ;;
+  comment)
+    here_pr="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+    if [[ $# -lt 2 ]]; then
+      echo "usage: atmux pr comment <id> \"message\" [--repo R]" >&2
+      exit 2
+    fi
+    pr_id="$1"; shift
+    comment_msg="$1"; shift
+    exec "$here_pr/comment" "$comment_msg" --pr "$pr_id" "$@"
+    ;;
+  watch)
+    here_pr="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+    # --feed <repo> selects the new-PRs stream watcher; otherwise first
+    # positional is a PR id, atmux-uri, or GitHub URL. The legacy `watch --pr`
+    # routing checked if the arg was a GitHub URL to pick `[watch]/pr` vs
+    # `[watch]/pull-request`; we mirror that here.
+    feed_repo=""
+    forward_args=()
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --feed)   feed_repo="${2:-}"; shift 2 ;;
+        --feed=*) feed_repo="${1#--feed=}"; shift ;;
+        *)        forward_args+=("$1"); shift ;;
+      esac
+    done
+    if [[ -n "$feed_repo" ]]; then
+      exec "$here_pr/[watch]/prs" "$feed_repo" "${forward_args[@]}"
+    fi
+    if [[ ${#forward_args[@]} -eq 0 || "${forward_args[0]:0:1}" == "-" ]]; then
+      echo "usage: atmux pr watch <id|atmux-uri|github-url> [--repo R]   |   atmux pr watch --feed <repo>" >&2
+      exit 2
+    fi
+    pr_id="${forward_args[0]}"
+    forward_args=("${forward_args[@]:1}")
+    case "$pr_id" in
+      https://github.com/*|github.com/*|atmux://*)
+        exec "$here_pr/[watch]/pr" --pr "$pr_id" "${forward_args[@]}"
+        ;;
+      *)
+        exec "$here_pr/[watch]/pull-request" --pull-request "$pr_id" "${forward_args[@]}"
+        ;;
+    esac
     ;;
   -h|--help|help|"")
     usage

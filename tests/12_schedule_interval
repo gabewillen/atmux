@@ -31,7 +31,22 @@ wait_for_count() {
 }
 
 eval "$("$SCRIPTS_DIR/setup")"
-trap "$SCRIPTS_DIR/teardown --team-session \"$TEAM_SESSION\" --agent1-session \"$AGENT1_SESSION\" --agent2-session \"$AGENT2_SESSION\"" EXIT
+
+# Track the interval scheduler PID so we can kill it on EXIT — without
+# this it keeps firing 'ping' notifications into the sender session
+# (which gets recreated by setup in every later test under the same
+# name) and floods their notify queue, which causes time-sensitive
+# tests like 71_send_failure_notifies_sender to time out waiting for
+# their own notifications.
+schedule_pid=""
+cleanup() {
+  if [[ -n "$schedule_pid" ]]; then
+    kill -TERM "$schedule_pid" 2>/dev/null || true
+    pkill -TERM -P "$schedule_pid" 2>/dev/null || true
+  fi
+  "$SCRIPTS_DIR/teardown" --team-session "$TEAM_SESSION" --agent1-session "$AGENT1_SESSION" --agent2-session "$AGENT2_SESSION"
+}
+trap cleanup EXIT
 
 sender_pane="$(tmux list-panes -t "$AGENT1_SESSION" -F '#{pane_id}' 2>/dev/null | head -n1)"
 [[ -n "$sender_pane" ]] || { echo "sender pane missing" >&2; exit 1; }
@@ -41,6 +56,7 @@ out="$(ATMUX_REPO="$REPO_NAME" ATMUX_AGENT_NAME="sender" ATMUX_SESSION_NAME="$AG
 printf '%s\n' "$out" | grep -Fq '<schedule'
 printf '%s\n' "$out" | grep -Fq 'kind="notification"'
 printf '%s\n' "$out" | grep -Fq 'mode="interval"'
+schedule_pid="$(printf '%s\n' "$out" | sed -n 's/.*pid="\([^"]*\)".*/\1/p' | head -n1)"
 
 if ! wait_for_count "$sender_pane" 'type="scheduled"' 2 12; then
   echo "scheduled notifications not repeated in sender pane" >&2

@@ -42,7 +42,12 @@ session_agent="atmux-${repo_name}-worker"
 tmp_home="$(mktemp -d "${TMPDIR:-/tmp}/atmux-schedule-adapter.XXXXXX")"
 atmux_home="$tmp_home/.atmux"
 
+schedule_pid=""
 cleanup() {
+  if [[ -n "$schedule_pid" ]]; then
+    kill -TERM "$schedule_pid" 2>/dev/null || true
+    pkill -TERM -P "$schedule_pid" 2>/dev/null || true
+  fi
   tmux kill-session -t "$session_mgr" >/dev/null 2>&1 || true
   tmux kill-session -t "$session_agent" >/dev/null 2>&1 || true
   "$TESTS_DIR/scripts/cleanup-orphans" >/dev/null 2>&1 || true
@@ -92,6 +97,7 @@ echo "schedule output: $sched_out" >&2
 # Verify schedule returned expected XML
 printf '%s\n' "$sched_out" | grep -Fq '<schedule' || { echo "no <schedule in output" >&2; exit 1; }
 printf '%s\n' "$sched_out" | grep -Fq 'kind="command"' || { echo "schedule output missing command kind" >&2; exit 1; }
+schedule_pid="$(printf '%s\n' "$sched_out" | sed -n 's/.*pid="\([^"]*\)".*/\1/p' | head -n1)"
 
 # Wait for at least 2 message notifications to arrive at the agent from the scheduled sends.
 echo "--- waiting for notifications on agent pane $pane_agent ---" >&2

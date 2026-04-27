@@ -47,7 +47,7 @@ Runs a command and sends an exec notification when it exits. Detached execs run 
 
 ### `atmux watch`
 
-Waits for text, process completion, issue updates, local PR updates, new GitHub issues, GitHub PR discussion updates, stdio output, or agent idleness.
+Waits for text, process completion, issue updates, local PR updates, new GitHub issues, new GitHub pull requests, GitHub PR discussion updates, stdio output, or agent idleness.
 
 Examples:
 
@@ -56,12 +56,15 @@ atmux watch --agent worker --idle 20 --timeout 120
 atmux watch --pid 12345 --timeout 60
 atmux watch --path 'src/**/*.sh' --timeout 60
 atmux watch --issues owner/repo --timeout 600
+atmux watch --prs owner/repo --timeout 600
 atmux watch --pr atmux://pull-request/myrepo/AbCdEfGhIjKlMnOp --timeout 120
 atmux watch --pr https://github.com/owner/repo/pull/123 --timeout 600
 atmux watch --target %1 --text "ready" --timeout 30
 ```
 
 `watch --issues` is long-lived: it keeps notifying on newly created GitHub issues until stopped. Its registration output includes `watcher_id="..."` for use with `atmux kill --watcher <id>`.
+
+`watch --prs` (alias `--pull-requests`) is long-lived: it keeps notifying on newly created GitHub pull requests until stopped. Its registration output includes `watcher_id="..."` for use with `atmux kill --watcher <id>`.
 
 `watch --path` exits when a filesystem glob's matched set or file metadata changes. It uses `fswatch` or `inotifywait` when available, otherwise it falls back to polling.
 
@@ -73,7 +76,7 @@ Stops an `atmux exec` tracked process, waits for completion notifications and wa
 
 ### `atmux kill --watcher <id> [--timeout <seconds>]`
 
-Removes a watcher registration by id. Supports watcher ids emitted by `watch --pr` and `watch --issues`.
+Removes a watcher registration by id. Supports watcher ids emitted by `watch --pr`, `watch --issues`, and `watch --prs`.
 
 ### `atmux install [--project|--system] [--project-root <dir>] [--no-slash-commands]`
 

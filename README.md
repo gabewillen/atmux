@@ -183,7 +183,7 @@ atmux exec [--detach] -- <command> [args...]
 
 ### `watch`
 
-Wait for a condition: process exit, pane text, output changes, issue updates, local PR updates, new GitHub issues, GitHub PR discussion updates, or agent idle state.
+Wait for a condition: process exit, pane text, output changes, issue updates, local PR updates, new GitHub issues, new GitHub pull requests, GitHub PR discussion updates, or agent idle state.
 
 ```sh
 atmux watch --pid <pid> [--timeout <seconds>]
@@ -192,12 +192,15 @@ atmux watch --path <glob> [--timeout <seconds>] [--interval <seconds>]
 atmux watch --target <tmux-target> --text <needle> [--scope pane|window|session]
 atmux watch --issue <id> [--timeout <seconds>]
 atmux watch --issues <repo|url> [--timeout <seconds>] [--interval <seconds>]
+atmux watch --prs <repo|url> [--timeout <seconds>] [--interval <seconds>]
 atmux watch --pr <id|atmux-uri|github-url> [--timeout <seconds>] [--interval <seconds>]
 atmux watch --agent <name> [--idle <seconds>] [--timeout <seconds>]
 ```
 
 `watch --issues` keeps notifying on newly created GitHub issues in a repository until you stop it.
 Its registration output includes `watcher_id="..."`, which you can remove with `atmux kill --watcher <id>`.
+
+`watch --prs` (alias `--pull-requests`) keeps notifying on newly created GitHub pull requests in a repository until you stop it. Its registration output includes `watcher_id="..."`, which you can remove with `atmux kill --watcher <id>`.
 
 `watch --path` watches paths matching a glob and exits when the matched set or file metadata changes. It uses `fswatch` or `inotifywait` when available, otherwise it falls back to polling.
 
@@ -229,7 +232,7 @@ atmux kill --agent <name|pattern> [name|pattern...]
 ```
 
 `--pid` stops an exec process, notifies watchers, and cleans up metadata.
-`--watcher` removes a watcher registration by id, including watcher ids emitted by `watch --pr` and `watch --issues`.
+`--watcher` removes a watcher registration by id, including watcher ids emitted by `watch --pr`, `watch --issues`, and `watch --prs`.
 `--agent` kills agent sessions and removes their worktrees and branches.
 
 ### `session`

@@ -185,7 +185,8 @@ Description:
            executor notifications (including watcher fan-out) to finish, then
            remove metadata under ~/.atmux/exec/<repo>/<pid>/.
   --watcher  Remove a watcher registration by id. Supports watcher ids emitted
-             by `atmux watch --pr` and `atmux watch --issues`.
+             by `atmux watch --pr`, `atmux watch --issues`, and
+             `atmux watch --prs`.
   --agent  Kill agent sessions and clean up their worktrees and branches.
            Accepts agent names, session names, or glob patterns.
   --all    Kill every atmux session, worktree, and branch for this repo.
@@ -197,6 +198,7 @@ Examples:
   atmux kill --pid 12345 --timeout 30 --signal TERM
   atmux kill --watcher pr:owner_repo_pr_123:atmux-myrepo-worker-_12
   atmux kill --watcher issues:owner_repo_issues:atmux-myrepo-worker-_12
+  atmux kill --watcher prs:owner_repo_prs:atmux-myrepo-worker-_12
   atmux kill --agent worker
   atmux kill --agent 'agent-*'
   atmux kill --agent worker planner
@@ -229,8 +231,10 @@ Usage:
   atmux watch --path <glob> [--timeout <seconds>] [--interval <seconds>]
   atmux watch --issue <id> [--repo <repo>] [--timeout <seconds>] [--interval <seconds>]
   atmux watch --issues <repo|url> [--timeout <seconds>] [--interval <seconds>]
+  atmux watch --prs <repo|url> [--timeout <seconds>] [--interval <seconds>]
   atmux watch --pr <id|atmux-uri|github-url> [--repo <repo>] [--timeout <seconds>] [--interval <seconds>]
   atmux watch --pull-request <id> [--repo <repo>] [--timeout <seconds>] [--interval <seconds>]
+  atmux watch --pull-requests <repo|url> [--timeout <seconds>] [--interval <seconds>]
   atmux watch --agent <name|session> [--idle <seconds>] [--timeout <seconds>] [--interval <seconds>] [--lines <n>]
 
 Description:
@@ -246,6 +250,9 @@ Description:
   notification XML as issue assign/claim fan-out.
   Issues mode: keep watching a GitHub repository for newly created issues and
   queue notifications to the current pane until the watcher is stopped.
+  PRs mode: keep watching a GitHub repository for newly created pull requests
+  and queue notifications to the current pane until the watcher is stopped.
+  --pull-requests is an alias for --prs.
   PR mode: with a GitHub URL, keep watching a remote pull request discussion;
   otherwise wait for the next filesystem pull request update. --pull-request is
   kept as a compatibility alias for local filesystem pull requests.
@@ -253,8 +260,8 @@ Description:
   seconds (default 30). Exits 0 when idle, 124 on timeout.
 
   Implementations: bin/(atmux)/[watch]/text, [watch]/pid, [watch]/stdio,
-  [watch]/path, [watch]/issue, [watch]/issues, [watch]/pull-request,
-  [watch]/pr, [watch]/agent.
+  [watch]/path, [watch]/issue, [watch]/issues, [watch]/prs,
+  [watch]/pull-request, [watch]/pr, [watch]/agent.
 
 ## env
 Usage:

@@ -1,0 +1,491 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ATMUX_HOME="${ATMUX_HOME:-$HOME/.atmux}"
+
+HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=bin/(atmux)/notify
+source "$HERE/../notify"
+
+usage() {
+  cat <<'USAGE'
+Usage:
+  atmux watch --prs <repo|url> [--timeout <seconds>] [--interval <seconds>] [--exec <cmd>]
+  atmux watch --pull-requests <repo|url> [--timeout <seconds>] [--interval <seconds>] [--exec <cmd>]
+
+Description:
+  Register the current pane to watch a GitHub repository for newly created
+  pull requests. A shared background worker polls for new PRs and queues
+  ATMUX notifications into the pane until you stop the watch.
+
+  Multiple local watchers for the same repository share a single polling worker
+  so only one process polls GitHub at a time.
+
+  --exec  When supplied, the notification XML is also piped into <cmd> via
+          `bash -c <cmd>` on stdin every time the watcher fires.
+
+  Requires GitHub CLI (`gh`) with API access to the target repository.
+
+Examples:
+  atmux watch --prs owner/repo
+  atmux watch --prs https://github.com/owner/repo/pulls --timeout 600
+  atmux watch --pull-requests owner/repo --exec ./on-new-pr
+USAGE
+}
+
+resolve_gh_bin() {
+  if [[ -n "${ATMUX_GH_BIN:-}" ]]; then
+    printf '%s\n' "$ATMUX_GH_BIN"
+    return 0
+  fi
+  command -v gh 2>/dev/null || true
+}
+
+parse_repo_spec() {
+  local spec="${1:-}" stripped path owner repo
+
+  if [[ "$spec" == https://github.com/* || "$spec" == http://github.com/* ]]; then
+    stripped="${spec#http://}"
+    stripped="${stripped#https://}"
+    stripped="${stripped#github.com/}"
+    stripped="${stripped%%\?*}"
+    stripped="${stripped%%#*}"
+    path="${stripped#/}"
+    owner="$(printf '%s\n' "$path" | cut -d/ -f1)"
+    repo="$(printf '%s\n' "$path" | cut -d/ -f2)"
+  else
+    owner="$(printf '%s\n' "$spec" | cut -d/ -f1)"
+    repo="$(printf '%s\n' "$spec" | cut -d/ -f2)"
+    if [[ "$(printf '%s\n' "$spec" | cut -d/ -f3)" != "" ]]; then
+      return 1
+    fi
+  fi
+
+  [[ -n "$owner" && -n "$repo" ]] || return 1
+  printf '%s\n%s\n' "$owner" "$repo"
+}
+
+prs_watch_key() {
+  local owner="$1" repo="$2"
+  normalize_name "${owner}_${repo}_prs"
+}
+
+prs_watch_dir() {
+  local key="$1"
+  printf '%s/watch-prs/%s\n' "$ATMUX_HOME" "$key"
+}
+
+prs_watch_watchers_dir() {
+  local key="$1"
+  printf '%s/watchers\n' "$(prs_watch_dir "$key")"
+}
+
+prs_watch_watcher_file() {
+  local key="$1" pane="$2"
+  printf '%s/%s\n' "$(prs_watch_watchers_dir "$key")" "$(pane_queue_key "$pane")"
+}
+
+prs_watch_watcher_id() {
+  local key="$1" pane="$2"
+  printf 'prs:%s:%s\n' "$key" "$(pane_queue_key "$pane")"
+}
+
+prs_watch_pid_file() {
+  local key="$1"
+  printf '%s/worker.pid\n' "$(prs_watch_dir "$key")"
+}
+
+prs_watch_lock_dir() {
+  local key="$1"
+  printf '%s/lock\n' "$(prs_watch_dir "$key")"
+}
+
+prs_watch_snapshot_file() {
+  local key="$1"
+  printf '%s/snapshot\n' "$(prs_watch_dir "$key")"
+}
+
+prs_watch_event_file() {
+  local key="$1"
+  printf '%s/event\n' "$(prs_watch_dir "$key")"
+}
+
+read_trimmed_file() {
+  local file="$1"
+  [[ -f "$file" ]] || return 0
+  tr -d '\r\n' < "$file" 2>/dev/null || true
+}
+
+adaptive_poll_sleep() {
+  local interval="$1" failures="${2:-0}" max="${ATMUX_GITHUB_WATCH_MAX_INTERVAL:-300}"
+  awk -v base="$interval" -v failures="$failures" -v max="$max" 'BEGIN {
+    delay = base + 0
+    for (i = 0; i < failures; i++) delay *= 2
+    if (delay > max) delay = max
+    if (delay >= 1) {
+      srand()
+      delay += rand()
+    }
+    printf "%.3f\n", delay
+  }'
+}
+
+watcher_deadline_from_file() {
+  local file="$1" raw=""
+  raw="$(read_trimmed_file "$file")"
+  printf '%s\n' "${raw##*|}"
+}
+
+watcher_pane_from_file() {
+  local file="$1" raw=""
+  raw="$(read_trimmed_file "$file")"
+  printf '%s\n' "${raw%%|*}"
+}
+
+fetch_prs_poll_data() {
+  local gh_bin="$1" owner="$2" repo="$3"
+  local query
+
+  # shellcheck disable=SC2016
+  query='
+    query($owner: String!, $repo: String!) {
+      repository(owner: $owner, name: $repo) {
+        pullRequests(first: 50, states: OPEN, orderBy: { field: CREATED_AT, direction: ASC }) {
+          nodes {
+            id
+            number
+            title
+            url
+            createdAt
+            state
+            isDraft
+            author { login }
+          }
+        }
+      }
+    }
+  '
+
+  # shellcheck disable=SC2016
+  "$gh_bin" api graphql \
+    -f query="$query" \
+    -F owner="$owner" \
+    -F repo="$repo" \
+    --jq '
+      .data.repository.pullRequests.nodes
+      | sort_by(.createdAt, .id)
+      | .[]
+      | "\(.createdAt)|\(.id)|\(.number)|\(.author.login // \"unknown\")|\(.state // \"\")|\(if .isDraft then \"draft\" else \"ready\" end)|\((.title // \"\" | gsub(\"[\\r\\n]+\"; \" \") | .[0:160]))|\(.url // \"\")"
+    ' 2>/dev/null || return 1
+}
+
+pr_notification_payload_for_line() {
+  local owner="$1" repo="$2" line="$3"
+  local created_at event_id pr_number author state draft text pr_url
+
+  IFS='|' read -r created_at event_id pr_number author state draft text pr_url <<< "$line"
+  build_notification "pull_request" "github" "gh pr view $pr_number --repo $owner/$repo --comments" \
+    "url=$pr_url" \
+    "repo=$owner/$repo" \
+    "number=$pr_number" \
+    "kind=created" \
+    "event_id=$event_id" \
+    "author=$author" \
+    "state=$state" \
+    "draft=$draft" \
+    "created_at=$created_at" \
+    "text=$text"
+}
+
+notify_prs_watchers() {
+  local key="$1" payload="$2"
+  local watchers_dir watcher_file pane exec_cmd
+
+  watchers_dir="$(prs_watch_watchers_dir "$key")"
+  [[ -d "$watchers_dir" ]] || return 0
+
+  while IFS= read -r watcher_file; do
+    [[ -f "$watcher_file" ]] || continue
+    pane="$(watcher_pane_from_file "$watcher_file")"
+    [[ -n "$pane" ]] || continue
+    send_payload_to_pane "$pane" "$payload"
+    if [[ -f "${watcher_file}.exec" ]]; then
+      exec_cmd="$(cat "${watcher_file}.exec" 2>/dev/null || true)"
+      if [[ -n "$exec_cmd" ]]; then
+        printf '%s' "$payload" | bash -c "$exec_cmd" >/dev/null 2>&1 || true
+      fi
+    fi
+  done < <(find "$watchers_dir" -mindepth 1 -maxdepth 1 -type f ! -name '*.exec' 2>/dev/null | sort)
+}
+
+prs_watchers_present() {
+  local key="$1"
+  local watchers_dir watcher_file pane expires_at now count=0
+
+  watchers_dir="$(prs_watch_watchers_dir "$key")"
+  [[ -d "$watchers_dir" ]] || return 1
+
+  now="$(date +%s)"
+  while IFS= read -r watcher_file; do
+    [[ -f "$watcher_file" ]] || continue
+    pane="$(watcher_pane_from_file "$watcher_file")"
+    expires_at="$(watcher_deadline_from_file "$watcher_file")"
+    if [[ -n "$expires_at" && "$expires_at" != "0" && "$expires_at" =~ ^[0-9]+$ ]] && (( now >= expires_at )); then
+      rm -f "$watcher_file" "${watcher_file}.exec"
+      continue
+    fi
+    if [[ -z "$pane" || -z "$(tmux display-message -t "$pane" -p '#{pane_id}' 2>/dev/null || true)" ]]; then
+      rm -f "$watcher_file" "${watcher_file}.exec"
+      continue
+    fi
+    count=$((count + 1))
+  done < <(find "$watchers_dir" -mindepth 1 -maxdepth 1 -type f ! -name '*.exec' 2>/dev/null | sort)
+
+  (( count > 0 ))
+}
+
+prs_worker_running() {
+  local key="$1" pid=""
+
+  pid="$(read_trimmed_file "$(prs_watch_pid_file "$key")")"
+  [[ -n "$pid" ]] || return 1
+  kill -0 "$pid" 2>/dev/null
+}
+
+acquire_prs_worker_lock() {
+  local key="$1" lock_dir pid_file pid
+  lock_dir="$(prs_watch_lock_dir "$key")"
+  pid_file="$(prs_watch_pid_file "$key")"
+  mkdir -p "$(prs_watch_dir "$key")"
+
+  if mkdir "$lock_dir" 2>/dev/null; then
+    printf '%s\n' "$$" > "$pid_file"
+    return 0
+  fi
+
+  pid="$(read_trimmed_file "$pid_file")"
+  if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+    return 1
+  fi
+
+  rm -rf "$lock_dir" "$pid_file"
+  if mkdir "$lock_dir" 2>/dev/null; then
+    printf '%s\n' "$$" > "$pid_file"
+    return 0
+  fi
+
+  return 1
+}
+
+cleanup_prs_worker() {
+  local key="$1"
+  rm -rf "$(prs_watch_lock_dir "$key")"
+  rm -f "$(prs_watch_pid_file "$key")"
+}
+
+ensure_prs_watch_worker() {
+  local key="$1" owner="$2" repo="$3" interval="$4"
+
+  mkdir -p "$(prs_watch_watchers_dir "$key")"
+  if prs_worker_running "$key"; then
+    return 0
+  fi
+
+  nohup env \
+    ATMUX_HOME="$ATMUX_HOME" \
+    ATMUX_SOURCE_ROOT="${ATMUX_SOURCE_ROOT:-${ATMUX_HOME}/src/atmux}" \
+    ATMUX_GH_BIN="${ATMUX_GH_BIN:-}" \
+    "$0" __serve-prs-watch \
+      --key "$key" \
+      --owner "$owner" \
+      --repo "$repo" \
+      --interval "$interval" >/dev/null 2>&1 &
+}
+
+notify_new_prs_since_baseline() {
+  local owner="$1" repo="$2" baseline_snapshot="$3" snapshot="$4" key="$5"
+  local added_lines="" line payload
+
+  added_lines="$(
+    comm -13 \
+      <(printf '%s\n' "$baseline_snapshot" | awk 'NF' | sort) \
+      <(printf '%s\n' "$snapshot" | awk 'NF' | sort)
+  )"
+
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
+    payload="$(pr_notification_payload_for_line "$owner" "$repo" "$line")"
+    notify_prs_watchers "$key" "$payload"
+  done <<< "$added_lines"
+}
+
+serve_prs_watch() {
+  local key="" owner="" repo="" interval="30"
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --key)
+        key="${2:-}"
+        shift 2
+        ;;
+      --owner)
+        owner="${2:-}"
+        shift 2
+        ;;
+      --repo)
+        repo="${2:-}"
+        shift 2
+        ;;
+      --interval)
+        interval="${2:-}"
+        shift 2
+        ;;
+      *)
+        echo "unknown flag: $1" >&2
+        exit 2
+        ;;
+    esac
+  done
+
+  [[ -n "$key" && -n "$owner" && -n "$repo" ]] || exit 2
+
+  local gh_bin snapshot_file event_file watchers_dir
+  gh_bin="$(resolve_gh_bin)"
+  [[ -n "$gh_bin" && -x "$gh_bin" ]] || exit 1
+
+  if ! acquire_prs_worker_lock "$key"; then
+    exit 0
+  fi
+  trap 'cleanup_prs_worker "$key"' EXIT
+
+  snapshot_file="$(prs_watch_snapshot_file "$key")"
+  event_file="$(prs_watch_event_file "$key")"
+  watchers_dir="$(prs_watch_watchers_dir "$key")"
+  mkdir -p "$watchers_dir"
+
+  local snapshot="" baseline_snapshot="" baseline_initialized=0 poll_data="" latest_line="" failure_count=0
+  snapshot="$(read_trimmed_file "$snapshot_file")"
+
+  while true; do
+    if ! prs_watchers_present "$key"; then
+      break
+    fi
+
+    if ! poll_data="$(fetch_prs_poll_data "$gh_bin" "$owner" "$repo")"; then
+      failure_count=$((failure_count + 1))
+      sleep "$(adaptive_poll_sleep "$interval" "$failure_count")"
+      continue
+    fi
+    failure_count=0
+
+    snapshot="$(printf '%s\n' "$poll_data" | awk 'NF')"
+    printf '%s\n' "$snapshot" > "$snapshot_file"
+
+    if (( baseline_initialized == 0 )); then
+      baseline_snapshot="$snapshot"
+      baseline_initialized=1
+    elif [[ "$snapshot" != "$baseline_snapshot" ]]; then
+      notify_new_prs_since_baseline "$owner" "$repo" "$baseline_snapshot" "$snapshot" "$key"
+      latest_line="$(printf '%s\n' "$snapshot" | tail -n 1)"
+      printf '%s\n' "$latest_line" > "$event_file"
+      baseline_snapshot="$snapshot"
+    fi
+
+    sleep "$(adaptive_poll_sleep "$interval" 0)"
+  done
+
+  if [[ -d "$watchers_dir" ]]; then
+    find "$watchers_dir" -mindepth 1 -maxdepth 1 -type f -delete 2>/dev/null || true
+  fi
+}
+
+main() {
+  local repo_spec=""
+  local timeout_sec="0"
+  local interval="30"
+  local exec_cmd=""
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --prs|--pull-requests)
+        repo_spec="${2:-}"
+        shift 2
+        ;;
+      --timeout)
+        timeout_sec="${2:-}"
+        shift 2
+        ;;
+      --interval)
+        interval="${2:-}"
+        shift 2
+        ;;
+      --exec)
+        exec_cmd="${2:-}"
+        shift 2
+        ;;
+      -h|--help|help)
+        usage
+        exit 0
+        ;;
+      *)
+        echo "unknown flag: $1" >&2
+        usage >&2
+        exit 2
+        ;;
+    esac
+  done
+
+  [[ -n "$repo_spec" ]] || { echo "missing --prs" >&2; exit 2; }
+
+  local gh_bin=""
+  gh_bin="$(resolve_gh_bin)"
+  if [[ -z "$gh_bin" || ! -x "$gh_bin" ]]; then
+    echo "atmux watch --prs: GitHub CLI not found; install gh or set ATMUX_GH_BIN" >&2
+    exit 1
+  fi
+
+  local owner repo
+  {
+    IFS= read -r owner
+    IFS= read -r repo
+  } < <(parse_repo_spec "$repo_spec" || true)
+  if [[ -z "${owner:-}" || -z "${repo:-}" ]]; then
+    echo "atmux watch --prs: invalid GitHub repository spec: $repo_spec" >&2
+    exit 2
+  fi
+
+  local pane="" key="" watcher_file="" expires_at="0"
+  pane="$(current_pane)"
+  [[ -n "$pane" ]] || { echo "atmux watch --prs: unable to resolve current pane" >&2; exit 2; }
+
+  key="$(prs_watch_key "$owner" "$repo")"
+  mkdir -p "$(prs_watch_watchers_dir "$key")"
+  watcher_file="$(prs_watch_watcher_file "$key" "$pane")"
+  if [[ -n "$timeout_sec" && "$timeout_sec" != "0" ]]; then
+    expires_at="$(( $(date +%s) + timeout_sec ))"
+  fi
+  write_field "$watcher_file" "${pane}|${expires_at}"
+  if [[ -n "$exec_cmd" ]]; then
+    printf '%s' "$exec_cmd" > "${watcher_file}.exec"
+  else
+    rm -f "${watcher_file}.exec" 2>/dev/null || true
+  fi
+
+  ensure_prs_watch_worker "$key" "$owner" "$repo" "$interval"
+  printf '<watch type="prs" repo="%s/%s" pane="%s" timeout="%s" watcher_id="%s" />\n' \
+    "$(xml_escape "$owner")" \
+    "$(xml_escape "$repo")" \
+    "$(xml_escape "$pane")" \
+    "$(xml_escape "$timeout_sec")" \
+    "$(xml_escape "$(prs_watch_watcher_id "$key" "$pane")")"
+}
+
+case "${1:-}" in
+  __serve-prs-watch)
+    shift
+    serve_prs_watch "$@"
+    ;;
+  *)
+    main "$@"
+    ;;
+esac

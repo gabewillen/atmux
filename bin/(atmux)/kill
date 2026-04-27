@@ -20,7 +20,8 @@ Description:
            executor notifications (including watcher fan-out) to finish, then
            remove metadata under ~/.atmux/exec/<repo>/<pid>/.
   --watcher  Remove a watcher registration by id. Supports watcher ids emitted
-             by `atmux watch --pr` and `atmux watch --issues`.
+             by `atmux watch --pr`, `atmux watch --issues`, and
+             `atmux watch --prs`.
   --agent  Kill agent sessions and clean up their worktrees and branches.
            Accepts agent names, session names, or glob patterns.
   --all    Kill every atmux session, worktree, and branch for this repo.
@@ -32,6 +33,7 @@ Examples:
   atmux kill --pid 12345 --timeout 30 --signal TERM
   atmux kill --watcher pr:owner_repo_pr_123:atmux-myrepo-worker-_12
   atmux kill --watcher issues:owner_repo_issues:atmux-myrepo-worker-_12
+  atmux kill --watcher prs:owner_repo_prs:atmux-myrepo-worker-_12
   atmux kill --agent worker
   atmux kill --agent 'agent-*'
   atmux kill --agent worker planner
@@ -137,6 +139,11 @@ issues_watch_dir() {
   printf '%s/watch-issues/%s\n' "$ATMUX_HOME" "$key"
 }
 
+prs_watch_dir() {
+  local key="$1"
+  printf '%s/watch-prs/%s\n' "$ATMUX_HOME" "$key"
+}
+
 pr_watch_watchers_dir() {
   local key="$1"
   printf '%s/watchers\n' "$(pr_watch_dir "$key")"
@@ -147,6 +154,11 @@ issues_watch_watchers_dir() {
   printf '%s/watchers\n' "$(issues_watch_dir "$key")"
 }
 
+prs_watch_watchers_dir() {
+  local key="$1"
+  printf '%s/watchers\n' "$(prs_watch_dir "$key")"
+}
+
 pr_watch_pid_file() {
   local key="$1"
   printf '%s/worker.pid\n' "$(pr_watch_dir "$key")"
@@ -155,6 +167,11 @@ pr_watch_pid_file() {
 issues_watch_pid_file() {
   local key="$1"
   printf '%s/worker.pid\n' "$(issues_watch_dir "$key")"
+}
+
+prs_watch_pid_file() {
+  local key="$1"
+  printf '%s/worker.pid\n' "$(prs_watch_dir "$key")"
 }
 
 read_trimmed_file() {
@@ -173,6 +190,13 @@ pr_worker_running_for_key() {
 issues_worker_running_for_key() {
   local key="$1" pid=""
   pid="$(read_trimmed_file "$(issues_watch_pid_file "$key")")"
+  [[ -n "$pid" ]] || return 1
+  kill -0 "$pid" 2>/dev/null
+}
+
+prs_worker_running_for_key() {
+  local key="$1" pid=""
+  pid="$(read_trimmed_file "$(prs_watch_pid_file "$key")")"
   [[ -n "$pid" ]] || return 1
   kill -0 "$pid" 2>/dev/null
 }
@@ -200,6 +224,22 @@ wait_for_issues_worker_exit() {
 
   deadline=$(( $(date +%s) + timeout_sec ))
   while issues_worker_running_for_key "$key" || [[ -f "$(issues_watch_pid_file "$key")" ]]; do
+    now="$(date +%s)"
+    if (( now >= deadline )); then
+      return 1
+    fi
+    sleep 0.1
+  done
+  return 0
+}
+
+wait_for_prs_worker_exit() {
+  local key="$1"
+  local timeout_sec="$2"
+  local deadline now
+
+  deadline=$(( $(date +%s) + timeout_sec ))
+  while prs_worker_running_for_key "$key" || [[ -f "$(prs_watch_pid_file "$key")" ]]; do
     now="$(date +%s)"
     if (( now >= deadline )); then
       return 1
@@ -262,6 +302,27 @@ kill_watcher() {
 
       if [[ "${remaining:-0}" -eq 0 ]] && issues_worker_running_for_key "$key"; then
         wait_for_issues_worker_exit "$key" "$timeout_sec" || true
+      fi
+      ;;
+    prs)
+      local watcher_file watchers_dir remaining=0
+      watcher_file="$(prs_watch_watchers_dir "$key")/$watcher_name"
+      if [[ ! -f "$watcher_file" ]]; then
+        if [[ -f "${watcher_file}.exec" ]]; then
+          rm -f "${watcher_file}.exec"
+        fi
+        echo "atmux kill: watcher not found: $watcher_id" >&2
+        exit 2
+      fi
+
+      rm -f "$watcher_file" "${watcher_file}.exec"
+      watchers_dir="$(prs_watch_watchers_dir "$key")"
+      if [[ -d "$watchers_dir" ]]; then
+        remaining="$(find "$watchers_dir" -mindepth 1 -maxdepth 1 -type f ! -name '*.exec' 2>/dev/null | wc -l | tr -d ' ')"
+      fi
+
+      if [[ "${remaining:-0}" -eq 0 ]] && prs_worker_running_for_key "$key"; then
+        wait_for_prs_worker_exit "$key" "$timeout_sec" || true
       fi
       ;;
     *)

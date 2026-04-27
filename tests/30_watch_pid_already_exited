@@ -39,13 +39,13 @@ pid="$(tr -d '\r\n' < "$entry_dir/pid")"
 st="$(tr -d '\r\n' < "$entry_dir/state")"
 [[ "$st" == "exited" ]] || { echo "expected exited state, got $st" >&2; exit 1; }
 
-# Watch --pid for an already-exited process should return immediately with 0
+# `process watch` for an already-exited process should return immediately with 0
 set +e
 ATMUX_HOME="$atmux_home" ATMUX_REPO="$repo_name" ATMUX_ALLOW_OUTSIDE_TMUX=1 \
-  "$ATMUX_BIN" watch --pid "$pid"
+  "$ATMUX_BIN" process watch "$pid"
 rc=$?
 set -e
 
 [[ "$rc" -eq 0 ]] || { echo "expected exit 0 for already-exited process, got $rc" >&2; exit 1; }
 
-echo "ok: watch --pid exits 0 immediately for already-exited process"
+echo "ok: process watch exits 0 immediately for already-exited process"

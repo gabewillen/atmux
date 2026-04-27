@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+
+usage() {
+  cat <<'USAGE'
+Usage:
+  atmux process watch <pid> [--timeout <seconds>] [--interval <seconds>]
+  atmux process watch <pid> --stdio [--duration <seconds>] [--timeout <seconds>]
+                                    [--interval <seconds>] [--lines <n>]
+  atmux process kill <pid> [--timeout <seconds>] [--signal <NAME>]
+
+Description:
+  Operate on an atmux exec-tracked child process by pid (see ~/.atmux/exec/<repo>/<pid>/).
+
+  watch          Wait for the process to finish; receive the same exit
+                 notification XML as the executor when it does.
+  watch --stdio  Monitor a detached exec process pane for output changes.
+                 Sends a notification each time new output is detected.
+                 Exits when --duration expires, --timeout (no new output)
+                 expires, or the process exits.
+  kill           Stop the tracked process, wait for executor notifications
+                 (including watcher fan-out) to finish, then remove metadata.
+
+Examples:
+  atmux process watch 12345
+  atmux process watch 12345 --stdio --duration 60
+  atmux process kill 12345 --timeout 30 --signal TERM
+USAGE
+}
+
+verb="${1:-}"
+shift || true
+
+require_pid() {
+  local p="${1:-}"
+  if [[ -z "$p" || "${p:0:1}" == "-" ]]; then
+    echo "usage: atmux process $verb <pid> [...]" >&2
+    exit 2
+  fi
+}
+
+case "$verb" in
+  watch)
+    pid="${1:-}"
+    require_pid "$pid"
+    shift
+    # Detect --stdio in remaining args to pick the right backing script.
+    has_stdio=0
+    for arg in "$@"; do
+      [[ "$arg" == "--stdio" ]] && has_stdio=1
+    done
+    if [[ "$has_stdio" -eq 1 ]]; then
+      exec "$HERE/[watch]/stdio" --pid "$pid" "$@"
+    else
+      exec "$HERE/[watch]/pid" --pid "$pid" "$@"
+    fi
+    ;;
+  kill)
+    pid="${1:-}"
+    require_pid "$pid"
+    shift
+    exec "$HERE/(internal)/kill" --pid "$pid" "$@"
+    ;;
+  -h|--help|help|"")
+    usage
+    ;;
+  *)
+    echo "unknown process command: $verb" >&2
+    usage >&2
+    exit 2
+    ;;
+esac

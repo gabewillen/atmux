@@ -90,7 +90,7 @@ while [[ -z "$pid" ]]; do
   sleep 0.05
 done
 
-tmux send-keys -t "$pane_b" "ATMUX_HOME=\"$atmux_home\" ATMUX_REPO=\"$repo_name\" ATMUX_AGENT_NAME=\"b\" ATMUX_SESSION_NAME=\"$session_b\" \"$ATMUX_BIN\" watch --pid \"$pid\"" C-m
+tmux send-keys -t "$pane_b" "ATMUX_HOME=\"$atmux_home\" ATMUX_REPO=\"$repo_name\" ATMUX_AGENT_NAME=\"b\" ATMUX_SESSION_NAME=\"$session_b\" \"$ATMUX_BIN\" process watch \"$pid\"" C-m
 
 deadline=$(( $(date +%s) + 15 ))
 while true; do
@@ -111,7 +111,7 @@ while true; do
   sleep 0.05
 done
 
-tmux send-keys -t "$pane_c" "ATMUX_HOME=\"$atmux_home\" ATMUX_REPO=\"$repo_name\" ATMUX_AGENT_NAME=\"c\" ATMUX_SESSION_NAME=\"$session_c\" \"$ATMUX_BIN\" kill --pid \"$pid\" --timeout 30" C-m
+tmux send-keys -t "$pane_c" "ATMUX_HOME=\"$atmux_home\" ATMUX_REPO=\"$repo_name\" ATMUX_AGENT_NAME=\"c\" ATMUX_SESSION_NAME=\"$session_c\" \"$ATMUX_BIN\" process kill \"$pid\" --timeout 30" C-m
 
 if ! wait_for_text "$pane_b" 'type="exec"' 25; then
   echo "watcher pane missing notification after kill" >&2

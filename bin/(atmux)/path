@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+
+usage() {
+  cat <<'USAGE'
+Usage:
+  atmux path watch <glob> [--timeout <seconds>] [--interval <seconds>]
+                          [--exec <cmd>]
+
+Description:
+  Operate on filesystem paths matched by a glob. The only verb today is
+  `watch`, which exits 0 when the matched set or any matched file's metadata
+  changes. Uses fswatch or inotifywait when available; falls back to polling.
+  Exits 124 on timeout.
+
+  --exec  When supplied, the change-event XML is also piped into <cmd> via
+          `bash -c <cmd>` on stdin in addition to being printed to stdout.
+
+Examples:
+  atmux path watch 'src/**/*.sh'
+  atmux path watch '/tmp/build/*.log' --timeout 60
+  atmux path watch 'docs/**/*.md' --exec ./on-docs-changed
+USAGE
+}
+
+verb="${1:-}"
+shift || true
+
+case "$verb" in
+  watch)
+    glob="${1:-}"
+    if [[ -z "$glob" || "${glob:0:1}" == "-" ]]; then
+      echo "usage: atmux path watch <glob> [--timeout N] [--interval N] [--exec CMD]" >&2
+      exit 2
+    fi
+    shift
+    exec "$HERE/[watch]/path" --path "$glob" "$@"
+    ;;
+  -h|--help|help|"")
+    usage
+    ;;
+  *)
+    echo "unknown path command: $verb" >&2
+    usage >&2
+    exit 2
+    ;;
+esac

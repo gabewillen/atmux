@@ -10,7 +10,7 @@ source "$HERE/../notify"
 usage() {
   cat <<'USAGE'
 Usage:
-  atmux watch --issues <repo|url> [--timeout <seconds>] [--interval <seconds>] [--exec <cmd>]
+  atmux issue watch --feed <repo|url> [--timeout <seconds>] [--interval <seconds>] [--exec <cmd>]
 
 Description:
   Register the current pane to watch a GitHub repository for newly created
@@ -26,9 +26,9 @@ Description:
   Requires GitHub CLI (`gh`) with API access to the target repository.
 
 Examples:
-  atmux watch --issues owner/repo
-  atmux watch --issues https://github.com/owner/repo/issues --timeout 600
-  atmux watch --issues owner/repo --exec ./on-new-issue
+  atmux issue watch --feed owner/repo
+  atmux issue watch --feed https://github.com/owner/repo/issues --timeout 600
+  atmux issue watch --feed owner/repo --exec ./on-new-issue
 USAGE
 }
 
@@ -437,7 +437,7 @@ main() {
   local gh_bin=""
   gh_bin="$(resolve_gh_bin)"
   if [[ -z "$gh_bin" || ! -x "$gh_bin" ]]; then
-    echo "atmux watch --issues: GitHub CLI not found; install gh or set ATMUX_GH_BIN" >&2
+    echo "atmux issue watch --feed: GitHub CLI not found; install gh or set ATMUX_GH_BIN" >&2
     exit 1
   fi
 
@@ -447,13 +447,13 @@ main() {
     IFS= read -r repo
   } < <(parse_repo_spec "$repo_spec" || true)
   if [[ -z "${owner:-}" || -z "${repo:-}" ]]; then
-    echo "atmux watch --issues: invalid GitHub repository spec: $repo_spec" >&2
+    echo "atmux issue watch --feed: invalid GitHub repository spec: $repo_spec" >&2
     exit 2
   fi
 
   local pane="" key="" watcher_file="" expires_at="0"
   pane="$(current_pane)"
-  [[ -n "$pane" ]] || { echo "atmux watch --issues: unable to resolve current pane" >&2; exit 2; }
+  [[ -n "$pane" ]] || { echo "atmux issue watch --feed: unable to resolve current pane" >&2; exit 2; }
 
   key="$(issues_watch_key "$owner" "$repo")"
   mkdir -p "$(issues_watch_watchers_dir "$key")"

@@ -8,7 +8,7 @@ source "$HERE/../notify"
 repo_context() {
   local repo_root repo_name
   if ! repo_root="$(git rev-parse --show-toplevel 2>/dev/null)"; then
-    echo "atmux list agents must be run from a git repository" >&2
+    echo "atmux agent list must be run from a git repository" >&2
     exit 1
   fi
 
@@ -120,7 +120,7 @@ main() {
   done
 
   if [[ "$all" -ne 1 ]]; then
-    echo "usage: atmux list agents --all [--status]" >&2
+    echo "usage: atmux agent list --all [--status]" >&2
     exit 2
   fi
 

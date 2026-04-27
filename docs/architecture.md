@@ -28,8 +28,9 @@ Examples:
 - `bin/(atmux)/send`
 - `bin/(atmux)/notify`
 - `bin/(atmux)/exec`
-- `bin/(atmux)/watch`
-- `bin/(atmux)/kill`
+- `bin/(atmux)/agent`, `team`, `issue`, `pr`, `process`, `pane`, `path`, `watcher` (resource scripts)
+- `bin/(atmux)/[watch]/*` (per-resource watch backends, dispatched by the resource scripts)
+- `bin/(atmux)/(internal)/{kill,capture,comment}` (internal backends shared by resource scripts)
 
 Installed project or system launchers execute the installed source copy under `<ATMUX_HOME>/src/atmux`.
 
@@ -110,7 +111,7 @@ Delivery is serialized by a background worker per pane. The worker:
 <ATMUX_HOME>/exec/<repo>/<pid>/
 ```
 
-`atmux watch --pid` registers watcher panes under that exec directory. `atmux kill --pid` signals the tracked process, waits for executor notifications and watcher fan-out, then removes the metadata directory.
+`atmux process watch` registers watcher panes under that exec directory. `atmux process kill` signals the tracked process, waits for executor notifications and watcher fan-out, then removes the metadata directory.
 
 ### Issues And Messages
 
@@ -121,7 +122,7 @@ Filesystem-backed coordination state lives under:
 <ATMUX_HOME>/messages/<repo>/
 ```
 
-`atmux assign`, `atmux comment`, and `atmux send` write state there and notify the relevant panes.
+`atmux issue create --assign-to`, `atmux issue comment`, `atmux pr comment`, and `atmux send` write state there and notify the relevant panes.
 
 ## Release Flow
 

@@ -32,9 +32,9 @@ fi
 # script. The handler receives the notification XML on stdin.
 handler="$ATMUX_ROLE_DIR/on-pr-opened"
 
-# atmux watch --issues registers a watcher tied to the current pane and
+# atmux issue watch --feed registers a watcher tied to the current pane and
 # returns a watcher id we record for teardown.
-watch_xml="$(atmux watch --issues "$gh_repo" --exec "$handler" 2>/dev/null || true)"
+watch_xml="$(atmux issue watch --feed "$gh_repo" --exec "$handler" 2>/dev/null || true)"
 watcher_id="$(printf '%s\n' "$watch_xml" | sed -n 's/.*watcher_id="\([^"]*\)".*/\1/p')"
 if [[ -n "$watcher_id" ]]; then
   printf '%s\n' "$watcher_id" >> "$state/watcher-ids"

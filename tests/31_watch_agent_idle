@@ -32,10 +32,10 @@ sleep 1
 # Watch with short idle — pane will become stable quickly
 set +e
 ATMUX_REPO="$repo_name" ATMUX_ALLOW_OUTSIDE_TMUX=1 \
-  "$ATMUX_BIN" watch --agent "$session" --idle 2 --timeout 15 --interval 1
+  "$ATMUX_BIN" agent watch "$session" --idle 2 --timeout 15 --interval 1
 rc=$?
 set -e
 
 [[ "$rc" -eq 0 ]] || { echo "expected exit 0 when agent idle, got $rc" >&2; exit 1; }
 
-echo "ok: watch --agent exits 0 when pane is idle"
+echo "ok: agent watch exits 0 when pane is idle"

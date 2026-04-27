@@ -26,7 +26,7 @@ trap cleanup EXIT
 set +e
 missing_out="$(
   ATMUX_HOME="$atmux_home" ATMUX_REPO="$repo_name" ATMUX_ALLOW_OUTSIDE_TMUX=1 \
-    "$ATMUX_BIN" watch --pr missing --repo "$repo_name" 2>&1
+    "$ATMUX_BIN" pr watch missing --repo "$repo_name" 2>&1
 )"
 missing_rc=$?
 set -e
@@ -41,7 +41,7 @@ pr_uri="$(printf '%s\n' "$create_out" | sed -n 's/.*uri="\([^"]*\)".*/\1/p')"
 (
   set +e
   ATMUX_HOME="$atmux_home" ATMUX_ALLOW_OUTSIDE_TMUX=1 \
-    "$ATMUX_BIN" watch --pr "$pr_uri" --interval 999 --timeout 30
+    "$ATMUX_BIN" pr watch "$pr_uri" --interval 999 --timeout 30
   printf '%s\n' "$?" > "$rc_file"
 ) &
 watch_pid=$!
@@ -53,7 +53,7 @@ ATMUX_HOME="$atmux_home" ATMUX_REPO="$repo_name" ATMUX_ALLOW_OUTSIDE_TMUX=1 \
 deadline=$(( $(date +%s) + 5 ))
 while kill -0 "$watch_pid" >/dev/null 2>&1; do
   if (( $(date +%s) >= deadline )); then
-    echo "watch --pr did not wake from local pull request event" >&2
+    echo "pr watch did not wake from local pull request event" >&2
     exit 1
   fi
   sleep 0.1
@@ -69,9 +69,9 @@ timeout_pr_id="$(printf '%s\n' "$timeout_out" | sed -n 's/.*id="\([^"]*\)".*/\1/
 
 set +e
 ATMUX_HOME="$atmux_home" ATMUX_REPO="$repo_name" ATMUX_ALLOW_OUTSIDE_TMUX=1 \
-  "$ATMUX_BIN" watch --pr "$timeout_pr_id" --repo "$repo_name" --timeout 2 >/dev/null
+  "$ATMUX_BIN" pr watch "$timeout_pr_id" --repo "$repo_name" --timeout 2 >/dev/null
 timeout_rc=$?
 set -e
 [[ "$timeout_rc" -eq 124 ]] || { echo "expected timeout rc 124, got $timeout_rc" >&2; exit 1; }
 
-echo "ok: watch --pr validates local pull requests, wakes from event, and times out"
+echo "ok: pr watch validates local pull requests, wakes from event, and times out"

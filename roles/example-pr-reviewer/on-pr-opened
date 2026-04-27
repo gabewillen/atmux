@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# Dispatch handler called by `atmux watch --issues --exec` whenever a new
-# issue/PR is filed in the watched repo. The notification XML is on stdin.
+# Dispatch handler called by `atmux issue watch --feed --exec` whenever a
+# new issue/PR is filed in the watched repo. The notification XML is on stdin.
 #
 # In this example we just append the payload to a per-agent log; a real
-# role would parse the XML and `atmux assign --to <self>` a structured task.
+# role would parse the XML and `atmux issue create --assign-to <self>`
+# a structured task.
 set -euo pipefail
 
 state="${ATMUX_ROLE_STATE_DIR:-/tmp}"

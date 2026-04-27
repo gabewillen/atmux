@@ -18,7 +18,7 @@ trap cleanup EXIT
 repo_name="kill_test_$RANDOM"
 
 set +e
-out_rej="$(HOME="$tmp_home" ATMUX_HOME="$tmp_home/.atmux" ATMUX_REPO="$repo_name" ATMUX_ALLOW_OUTSIDE_TMUX=1 "$ATMUX_BIN" kill --pid 999999999 2>&1)"
+out_rej="$(HOME="$tmp_home" ATMUX_HOME="$tmp_home/.atmux" ATMUX_REPO="$repo_name" ATMUX_ALLOW_OUTSIDE_TMUX=1 "$ATMUX_BIN" process kill 999999999 2>&1)"
 rc_rej=$?
 set -e
 [[ "$rc_rej" -eq 2 ]] || { echo "expected reject exit 2, got $rc_rej: $out_rej" >&2; exit 1; }
@@ -48,9 +48,9 @@ while [[ -z "$child_pid" ]]; do
   sleep 0.05
 done
 
-HOME="$tmp_home" ATMUX_HOME="$tmp_home/.atmux" ATMUX_REPO="$repo_name" ATMUX_ALLOW_OUTSIDE_TMUX=1 "$ATMUX_BIN" kill --pid "$child_pid" --timeout 30
+HOME="$tmp_home" ATMUX_HOME="$tmp_home/.atmux" ATMUX_REPO="$repo_name" ATMUX_ALLOW_OUTSIDE_TMUX=1 "$ATMUX_BIN" process kill "$child_pid" --timeout 30
 rc_kill=$?
-[[ "$rc_kill" -eq 0 ]] || { echo "kill failed rc=$rc_kill" >&2; exit 1; }
+[[ "$rc_kill" -eq 0 ]] || { echo "process kill failed rc=$rc_kill" >&2; exit 1; }
 
 wait "$exec_wrapper_pid" || true
 

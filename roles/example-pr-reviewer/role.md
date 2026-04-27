@@ -17,4 +17,4 @@ incoming pull requests and post structured feedback as PR comments.
 
 - `gh` (GitHub CLI) — read PR, post review.
 - `git` — diff, blame, log.
-- `atmux` — assign sub-tasks to peer agents via `atmux assign --to <name>`.
+- `atmux` — assign sub-tasks to peer agents via `atmux issue create --title "..." --assign-to <name>`.

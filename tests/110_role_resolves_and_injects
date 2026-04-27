@@ -175,10 +175,10 @@ mkdir -p "$orphan_root/watch-pr/owner_repo_pr_42/watchers"
 echo "echo orphan" > "$orphan_root/watch-pr/owner_repo_pr_42/watchers/abc.exec"
 ATMUX_HOME="$orphan_root" \
 ATMUX_ALLOW_OUTSIDE_TMUX=1 \
-"$ATMUX_BIN" kill --watcher "pr:owner_repo_pr_42:abc" >/dev/null 2>&1 || true
+"$ATMUX_BIN" watcher kill "pr:owner_repo_pr_42:abc" >/dev/null 2>&1 || true
 remaining=$(find "$orphan_root/watch-pr/owner_repo_pr_42/watchers" -type f 2>/dev/null | wc -l | tr -d ' ')
 if [[ "$remaining" != "0" ]]; then
-  echo "fail: kill --watcher did not sweep orphan .exec sidecar (remaining=$remaining)" >&2
+  echo "fail: watcher kill did not sweep orphan .exec sidecar (remaining=$remaining)" >&2
   exit 1
 fi
 

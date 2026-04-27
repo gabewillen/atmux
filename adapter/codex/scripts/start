@@ -70,7 +70,7 @@ schedule_intelligence_profile() {
     return 0
   fi
 
-  local pane_id adapter_cmd watch_cmd
+  local pane_id adapter_cmd atmux_bin
   pane_id="$(tmux display-message -p '#{pane_id}' 2>/dev/null || true)"
   if [[ -z "$pane_id" ]]; then
     set_bootstrap_state ready
@@ -78,13 +78,13 @@ schedule_intelligence_profile() {
   fi
 
   adapter_cmd="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)/cmd"
-  watch_cmd="${ATMUX_SOURCE_ROOT:-${ATMUX_HOME:-$HOME/.atmux}/src/atmux}/bin/(atmux)/watch"
+  atmux_bin="${ATMUX_SOURCE_ROOT:-${ATMUX_HOME:-$HOME/.atmux}/src/atmux}/bin/atmux"
   set_bootstrap_state pending
 
   (
     success=0
-    if [[ -x "$watch_cmd" ]]; then
-      "$watch_cmd" --target "$pane_id" --scope pane --text "OpenAI Codex" --timeout 30 --interval 0.2 --lines 300 || true
+    if [[ -x "$atmux_bin" ]]; then
+      "$atmux_bin" pane watch "$pane_id" --scope pane --text "OpenAI Codex" --timeout 30 --interval 0.2 --lines 300 || true
     else
       sleep 2
     fi

@@ -32,7 +32,7 @@ pane="$(tmux list-panes -t "$session" -F '#{pane_id}' 2>/dev/null | head -n1)"
 (
   set +e
   ATMUX_REPO="$repo_name" ATMUX_ALLOW_OUTSIDE_TMUX=1 \
-    "$ATMUX_BIN" watch --target "$pane" --text "$marker" --interval 999 --timeout 10
+    "$ATMUX_BIN" pane watch "$pane" --text "$marker" --interval 999 --timeout 10
   printf '%s\n' "$?" > "$rc_file"
 ) &
 watch_pid=$!

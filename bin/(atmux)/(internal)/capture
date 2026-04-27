@@ -2,25 +2,19 @@
 set -euo pipefail
 
 HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=bin/(atmux)/notify
-source "$HERE/notify"
+# shellcheck source=bin/(atmux)/notify  # accessed via $HERE/../notify
+source "$HERE/../notify"
 
 usage() {
   cat <<'USAGE'
-Usage:
-  atmux capture --agent <name|session> [--lines <n>]
-  atmux capture --team <name|session> [--lines <n>]
-  atmux capture --all [--lines <n>]
+Internal capture backend. Invoked by the noun-first front-ends:
 
-Description:
-  Capture tmux pane output for agents or team sessions.
+  atmux agent capture <name|session> [--lines <n>]
+  atmux agent capture --all [--lines <n>]
+  atmux team capture <name|session> [--lines <n>]
 
-Examples:
-  atmux capture --agent planner
-  atmux capture --agent atmux-myrepo-planner --lines 300
-  atmux capture --team platform
-  atmux capture --team atmux-myrepo-team-platform --lines 500
-  atmux capture --all --lines 200
+Direct invocation (--agent, --team, --all) is for internal callers only and
+is not part of the user-facing CLI surface.
 USAGE
 }
 
@@ -121,7 +115,7 @@ if [[ "$capture_all" -eq 1 ]]; then
 fi
 
 if [[ -n "$agent_target" ]]; then
-  session="$("$HERE/agent" resolve "$agent_target" "$repo_name" || true)"
+  session="$("$HERE/../agent" resolve "$agent_target" "$repo_name" || true)"
   if [[ -z "$session" ]]; then
     echo "agent session not found: $agent_target" >&2
     echo "pass absolute (atmux-<repo>-<agent>) or shorthand (<agent>)" >&2
@@ -148,7 +142,7 @@ if [[ -n "$agent_target" ]]; then
   exit 0
 fi
 
-session="$("$HERE/team" resolve "$team_target" "$repo_name" || true)"
+session="$("$HERE/../team" resolve "$team_target" "$repo_name" || true)"
 if [[ -z "$session" ]]; then
   echo "team session not found: $team_target" >&2
   echo "pass absolute (atmux-<repo>-team-<name>) or shorthand (<name>)" >&2

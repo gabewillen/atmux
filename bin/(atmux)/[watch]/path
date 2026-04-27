@@ -4,7 +4,7 @@ set -euo pipefail
 usage() {
   cat <<'USAGE'
 Usage:
-  atmux watch --path <glob> [--timeout <seconds>] [--interval <seconds>] [--exec <cmd>]
+  atmux path watch <glob> [--timeout <seconds>] [--interval <seconds>] [--exec <cmd>]
 
 Description:
   Watch filesystem paths matching a glob and exit 0 when the matched set or
@@ -15,9 +15,9 @@ Description:
           `bash -c <cmd>` on stdin in addition to being printed to stdout.
 
 Examples:
-  atmux watch --path 'src/**/*.sh'
-  atmux watch --path '/tmp/build/*.log' --timeout 60
-  atmux watch --path 'docs/**/*.md' --exec ./on-docs-changed
+  atmux path watch 'src/**/*.sh'
+  atmux path watch '/tmp/build/*.log' --timeout 60
+  atmux path watch 'docs/**/*.md' --exec ./on-docs-changed
 USAGE
 }
 
@@ -272,7 +272,7 @@ watch_poll_backend() {
   local after now
 
   if [[ "${ATMUX_WATCH_PATH_POLL_WARNED:-0}" != "1" ]]; then
-    echo "atmux watch --path: using polling fallback; install fswatch or inotifywait for event-driven watching" >&2
+    echo "atmux path watch: using polling fallback; install fswatch or inotifywait for event-driven watching" >&2
     export ATMUX_WATCH_PATH_POLL_WARNED=1
   fi
 

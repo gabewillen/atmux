@@ -25,13 +25,13 @@ ATMUX_REPO="$REPO_NAME" ATMUX_AGENT_NAME="receiver" ATMUX_SESSION_NAME="$AGENT2_
   "$ATMUX_BIN" message read "$id_2" >/dev/null
 
 unread_list="$(ATMUX_REPO="$REPO_NAME" ATMUX_AGENT_NAME="receiver" ATMUX_SESSION_NAME="$AGENT2_SESSION" \
-  "$ATMUX_BIN" list messages --unread)"
+  "$ATMUX_BIN" message list --unread)"
 
 printf '%s\n' "$unread_list" | grep -Fq "$id_1"
 if printf '%s\n' "$unread_list" | grep -Fq "$id_2"; then
-  echo "read message leaked into list messages --unread output" >&2
+  echo "read message leaked into message list --unread output" >&2
   printf '%s\n' "$unread_list" >&2
   exit 1
 fi
 
-echo "ok: list messages --unread delegates to unread-only message listing"
+echo "ok: message list --unread returns unread-only output"

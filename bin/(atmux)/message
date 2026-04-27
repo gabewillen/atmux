@@ -83,14 +83,19 @@ current_message_recipients() {
 message_is_for_current_agent() {
   local to="$1"
   local repo="$2"
-  local candidate=""
+  local recipients_text candidate
   local any=1
 
+  recipients_text="$(current_message_recipients "$repo")"
+
+  # Iterate via here-string instead of `< <(...)`. Bash 3.2 (still shipped
+  # by macOS) can SIGABRT cleaning up the producer when this function returns
+  # early from inside a process-substitution loop.
   while IFS= read -r candidate; do
     [[ -n "$candidate" ]] || continue
     any=0
     [[ "$to" == "$candidate" ]] && return 0
-  done < <(current_message_recipients "$repo")
+  done <<< "$recipients_text"
 
   # Outside an agent/session context, keep the old broad view.
   (( any == 1 )) && return 0

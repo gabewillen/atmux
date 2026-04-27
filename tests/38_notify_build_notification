@@ -10,8 +10,8 @@ REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
 NOTIFY_SCRIPT="$REPO_ROOT/bin/(atmux)/notify"
 
 # Test basic notification format
-out="$(ATMUX_HOME="${TMPDIR:-/tmp}" "$NOTIFY_SCRIPT" build "exec" "make test" "atmux capture --agent worker" "exit_code=0")"
-expected='<notification type="exec" from="make test" cmd="atmux capture --agent worker" exit_code="0" />'
+out="$(ATMUX_HOME="${TMPDIR:-/tmp}" "$NOTIFY_SCRIPT" build "exec" "make test" "atmux agent capture worker" "exit_code=0")"
+expected='<notification type="exec" from="make test" cmd="atmux agent capture worker" exit_code="0" />'
 [[ "$out" == "$expected" ]] || { echo "basic notification mismatch" >&2; echo "got:      $out" >&2; echo "expected: $expected" >&2; exit 1; }
 
 # Test with multiple key=value attributes

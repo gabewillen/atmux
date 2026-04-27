@@ -55,7 +55,7 @@ done
 (
   set +e
   ATMUX_HOME="$atmux_home" ATMUX_REPO="$repo_name" ATMUX_ALLOW_OUTSIDE_TMUX=1 \
-    "$ATMUX_BIN" watch --pid "$pid" --interval 999 --timeout 30
+    "$ATMUX_BIN" process watch "$pid" --interval 999 --timeout 30
   printf '%s\n' "$?" > "$rc_file"
 ) &
 watch_pid=$!

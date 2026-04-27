@@ -1,4 +1,4 @@
-Use the shell tool to run an ATMUX capture command.
+Use the shell tool to run `atmux agent capture`, `atmux team capture`, or `atmux agent capture --all`.
 
 Expected inputs:
 
@@ -13,5 +13,8 @@ Optional suffix:
 Behavior:
 
 1. Parse the selector and optional line count.
-2. Run the corresponding `atmux capture` command.
+2. Run the corresponding command:
+   - `agent <name>` → `atmux agent capture <name> [--lines N]`
+   - `team <name>`  → `atmux team capture <name> [--lines N]`
+   - `all`          → `atmux agent capture --all [--lines N]`
 3. Return the important captured output, not a raw dump unless the user asks for it.

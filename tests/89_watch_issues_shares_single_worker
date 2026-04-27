@@ -86,7 +86,7 @@ pane_b="$(tmux list-panes -t "$session_b" -F '#{pane_id}' 2>/dev/null | head -n1
 
 watchers_dir="$atmux_home/watch-issues/octo_example_issues/watchers"
 
-watch_cmd="ATMUX_HOME=\"$atmux_home\" ATMUX_GH_BIN=\"$stub_dir/gh\" ATMUX_TEST_ISSUES_TRIGGER=\"$trigger_file\" ATMUX_TEST_ISSUES_SECOND_TRIGGER=\"$second_trigger_file\" ATMUX_TEST_ISSUES_COUNT_FILE=\"$count_file\" \"$ATMUX_BIN\" watch --issues \"octo/example\" --interval 0.2 --timeout 12"
+watch_cmd="ATMUX_HOME=\"$atmux_home\" ATMUX_GH_BIN=\"$stub_dir/gh\" ATMUX_TEST_ISSUES_TRIGGER=\"$trigger_file\" ATMUX_TEST_ISSUES_SECOND_TRIGGER=\"$second_trigger_file\" ATMUX_TEST_ISSUES_COUNT_FILE=\"$count_file\" \"$ATMUX_BIN\" issue watch --feed \"octo/example\" --interval 0.2 --timeout 12"
 tmux send-keys -t "$pane_a" "$watch_cmd" C-m
 tmux send-keys -t "$pane_b" "$watch_cmd" C-m
 

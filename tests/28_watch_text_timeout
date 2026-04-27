@@ -25,7 +25,7 @@ pane="$(tmux list-panes -t "$session" -F '#{pane_id}' 2>/dev/null | head -n1)"
 
 # Search for text that will never appear, with a short timeout
 set +e
-ATMUX_REPO="$repo_name" ATMUX_ALLOW_OUTSIDE_TMUX=1 "$ATMUX_BIN" watch --target "$pane" --text "this-will-never-appear-$RANDOM" --timeout 2
+ATMUX_REPO="$repo_name" ATMUX_ALLOW_OUTSIDE_TMUX=1 "$ATMUX_BIN" pane watch "$pane" --text "this-will-never-appear-$RANDOM" --timeout 2
 rc=$?
 set -e
 
@@ -33,15 +33,15 @@ set -e
 
 # Missing required args
 set +e
-out="$(ATMUX_REPO="$repo_name" ATMUX_ALLOW_OUTSIDE_TMUX=1 "$ATMUX_BIN" watch --target "$pane" 2>&1)"
+out="$(ATMUX_REPO="$repo_name" ATMUX_ALLOW_OUTSIDE_TMUX=1 "$ATMUX_BIN" pane watch "$pane" 2>&1)"
 rc2=$?
 set -e
 [[ "$rc2" -eq 2 ]] || { echo "expected exit 2 for missing --text, got $rc2" >&2; exit 1; }
 
 set +e
-out="$(ATMUX_REPO="$repo_name" ATMUX_ALLOW_OUTSIDE_TMUX=1 "$ATMUX_BIN" watch --text "foo" 2>&1)"
+out="$(ATMUX_REPO="$repo_name" ATMUX_ALLOW_OUTSIDE_TMUX=1 "$ATMUX_BIN" pane watch 2>&1)"
 rc3=$?
 set -e
-[[ "$rc3" -eq 2 ]] || { echo "expected exit 2 for missing --target, got $rc3" >&2; exit 1; }
+[[ "$rc3" -eq 2 ]] || { echo "expected exit 2 for missing pane target, got $rc3" >&2; exit 1; }
 
 echo "ok: watch --text exits 1 on timeout, exits 2 for missing args"

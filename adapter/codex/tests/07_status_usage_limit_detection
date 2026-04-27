@@ -22,7 +22,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-if ! "$REPO_ROOT/bin/(atmux)/watch" --target "$pane_id" --scope pane --text "OpenAI Codex" --timeout 20 --interval 0.2 --lines 600; then
+if ! "$REPO_ROOT/bin/atmux" pane watch "$pane_id" --scope pane --text "OpenAI Codex" --timeout 20 --interval 0.2 --lines 600; then
   tmux capture-pane -p -t "$pane_id" -S -220 >&2 || true
   echo "timed out waiting for codex banner" >&2
   exit 1

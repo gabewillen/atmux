@@ -55,7 +55,7 @@ claim_out="$(
 
 comment_out="$(
   ATMUX_HOME="$atmux_home" ATMUX_REPO="$repo_name" ATMUX_ALLOW_OUTSIDE_TMUX=1 \
-    "$ATMUX_BIN" comment "looks good" --pr "$pr_id" --repo "$repo_name"
+    "$ATMUX_BIN" pr comment "$pr_id" "looks good" --repo "$repo_name"
 )"
 [[ "$comment_out" == *"<comment pr_id=\"$pr_id\""* ]] || { echo "comment missing pr id" >&2; exit 1; }
 [[ "$comment_out" == *'<body>looks good</body>'* ]] || { echo "comment missing body" >&2; exit 1; }
@@ -68,12 +68,12 @@ shopt -u nullglob
 
 shortcut_out="$(
   ATMUX_HOME="$atmux_home" ATMUX_REPO="$repo_name" ATMUX_ALLOW_OUTSIDE_TMUX=1 \
-    "$ATMUX_BIN" create --pr --title "shortcut" --source "short" --target "main" --repo "$repo_name"
+    "$ATMUX_BIN" pr create --title "shortcut" --source "short" --target "main" --repo "$repo_name"
 )"
-[[ "$shortcut_out" == *'<pull-request id="'* ]] || { echo "create --pr did not create pull request" >&2; exit 1; }
+[[ "$shortcut_out" == *'<pull-request id="'* ]] || { echo "pr create did not create pull request" >&2; exit 1; }
 
-list_shortcut_out="$(ATMUX_HOME="$atmux_home" ATMUX_REPO="$repo_name" ATMUX_ALLOW_OUTSIDE_TMUX=1 "$ATMUX_BIN" list prs --repo "$repo_name")"
-[[ "$list_shortcut_out" == *'<pull-requests repo="'* ]] || { echo "list prs did not route to pr list" >&2; exit 1; }
-[[ "$list_shortcut_out" == *'title="shortcut"'* ]] || { echo "list prs missing shortcut pull request" >&2; exit 1; }
+list_shortcut_out="$(ATMUX_HOME="$atmux_home" ATMUX_REPO="$repo_name" ATMUX_ALLOW_OUTSIDE_TMUX=1 "$ATMUX_BIN" pr list --repo "$repo_name")"
+[[ "$list_shortcut_out" == *'<pull-requests repo="'* ]] || { echo "pr list did not return pull-requests envelope" >&2; exit 1; }
+[[ "$list_shortcut_out" == *'title="shortcut"'* ]] || { echo "pr list missing shortcut pull request" >&2; exit 1; }
 
 echo "ok: filesystem pull request lifecycle, comments, create shortcut, and list shortcut"

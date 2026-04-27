@@ -10,7 +10,7 @@ source "$HERE/../notify"
 usage() {
   cat <<'USAGE'
 Usage:
-  atmux watch --pid <pid> [--timeout <seconds>] [--interval <seconds>]
+  atmux process watch <pid> [--timeout <seconds>] [--interval <seconds>]
 
 Description:
   Wait for an atmux exec process (metadata under ~/.atmux/exec/<repo>/<pid>/).
@@ -18,8 +18,8 @@ Description:
   Only PIDs tracked by atmux exec are accepted.
 
 Examples:
-  atmux watch --pid 12345
-  atmux watch --pid 12345 --timeout 60 --interval 0.5
+  atmux process watch 12345
+  atmux process watch 12345 --timeout 60 --interval 0.5
 USAGE
 }
 
@@ -62,7 +62,7 @@ main() {
   exec_dir="$(exec_dir_for_repo_pid "$repo_name" "$pid")"
 
   if ! validate_exec_ownership "$exec_dir" "$pid" "$repo_name"; then
-    echo "atmux watch --pid: not an atmux-owned exec PID for this repo: $pid" >&2
+    echo "atmux process watch: not an atmux-owned exec PID for this repo: $pid" >&2
     exit 2
   fi
 

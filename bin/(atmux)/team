@@ -8,8 +8,12 @@ source "$HERE/notify"
 usage() {
   cat <<'USAGE'
 Usage:
+  atmux team create <name>
   atmux team list
   atmux team ls
+  atmux team capture <name> [--lines <n>]
+  atmux team kill <name|pattern> [...]
+  atmux team resolve <name> [<repo_name>]
 
 Description:
   Manage repo-scoped team tmux sessions.
@@ -45,7 +49,7 @@ ensure_tmux_scroll_enabled() {
 create_team() {
   local raw_name="${1:-}"
   if [[ -z "$raw_name" ]]; then
-    echo "usage: atmux create --team <name>" >&2
+    echo "usage: atmux team create <name>" >&2
     exit 2
   fi
 
@@ -68,7 +72,7 @@ create_team() {
   fi
 
   # When invoked from within a repo agent session, remember this as the
-  # default team for subsequent `atmux create --agent ...` calls.
+  # default team for subsequent `atmux agent create ...` calls.
   if [[ -n "${TMUX:-}" ]]; then
     local caller_session caller_repo
     caller_session="$(tmux display-message -p '#S' 2>/dev/null || true)"
@@ -129,11 +133,41 @@ sub="${1:-}"
 shift || true
 
 case "$sub" in
-  _create)
+  create|_create)
     create_team "${1:-}"
     ;;
   list|ls)
     list_teams
+    ;;
+  capture)
+    here_team="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+    if [[ $# -eq 0 || "${1:0:1}" == "-" ]]; then
+      echo "usage: atmux team capture <name> [--lines N]" >&2
+      exit 2
+    fi
+    target_name="$1"; shift
+    exec "$here_team/(internal)/capture" --team "$target_name" "$@"
+    ;;
+  kill)
+    here_team="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+    if [[ $# -eq 0 || "${1:0:1}" == "-" ]]; then
+      echo "usage: atmux team kill <name|pattern> [...]" >&2
+      exit 2
+    fi
+    # Team sessions are named atmux-<repo>-team-<name>; the underlying
+    # `kill --agent` accepts session names so we resolve and forward.
+    r_repo="$(repo_name_from_context)"
+    resolved=()
+    for tname in "$@"; do
+      if [[ "$tname" == atmux-* ]]; then
+        resolved+=("$tname")
+      elif [[ -n "$r_repo" ]]; then
+        resolved+=("atmux-${r_repo}-team-${tname}")
+      else
+        resolved+=("$tname")
+      fi
+    done
+    exec "$here_team/(internal)/kill" --agent "${resolved[@]}"
     ;;
   resolve)
     target="${1:-}"

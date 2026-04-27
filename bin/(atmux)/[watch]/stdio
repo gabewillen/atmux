@@ -10,7 +10,7 @@ source "$HERE/../notify"
 usage() {
   cat <<'USAGE'
 Usage:
-  atmux watch --pid <pid> --stdio [--duration <seconds>] [--timeout <seconds>] [--interval <seconds>] [--lines <n>]
+  atmux process watch <pid> --stdio [--duration <seconds>] [--timeout <seconds>] [--interval <seconds>] [--lines <n>]
 
 Description:
   Monitor a detached exec process pane for output changes. Each time new
@@ -24,8 +24,8 @@ Description:
   Exits 0 when the process exits, 124 on duration/timeout expiry.
 
 Examples:
-  atmux watch --pid 12345 --stdio --duration 600 --timeout 30
-  atmux watch --pid 12345 --stdio --timeout 60
+  atmux process watch 12345 --stdio --duration 600 --timeout 30
+  atmux process watch 12345 --stdio --timeout 60
 USAGE
 }
 
@@ -81,7 +81,7 @@ main() {
   exec_dir="$(exec_dir_for_repo_pid "$repo_name" "$pid")"
 
   if ! validate_exec_ownership "$exec_dir" "$pid" "$repo_name"; then
-    echo "atmux watch --stdio: not an atmux-owned exec PID for this repo: $pid" >&2
+    echo "atmux process watch --stdio: not an atmux-owned exec PID for this repo: $pid" >&2
     exit 2
   fi
 
@@ -89,7 +89,7 @@ main() {
   local executor_pane
   executor_pane="$(read_state_field "$exec_dir/executor_pane")"
   if [[ -z "$executor_pane" ]]; then
-    echo "atmux watch --stdio: no executor_pane recorded for PID $pid" >&2
+    echo "atmux process watch --stdio: no executor_pane recorded for PID $pid" >&2
     exit 2
   fi
 
@@ -107,7 +107,7 @@ main() {
   stream_rc=$?
   set -e
   if [[ "$stream_rc" -ne 0 ]]; then
-    echo "atmux watch --stdio: unable to attach event stream to pane $executor_pane" >&2
+    echo "atmux process watch --stdio: unable to attach event stream to pane $executor_pane" >&2
     exit 1
   fi
   exec 8<>"$event_fifo"

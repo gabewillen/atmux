@@ -1,0 +1,420 @@
+#!/usr/bin/env bash
+# Render README.md and the CLAUDE.md `# atmux help` block from the same
+# sources of truth: each command's `usage()` heredoc and the adapter
+# manifests under adapter/*/manifest.json.
+#
+#   render-docs readme        # write README.md
+#   render-docs claude-help   # rewrite the marker block in CLAUDE.md
+#   render-docs all           # both
+#   render-docs all --check   # render to a tmpdir and diff vs on-disk
+#
+# Pure bash + python3 (used only for adapter manifest JSON parsing). Pure
+# runtime atmux still has no python3 dependency — this is a dev tool.
+
+set -euo pipefail
+
+ROOT="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+if [[ -z "$ROOT" ]]; then
+  ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../.." && pwd)"
+fi
+
+CMD_DIR="$ROOT/bin/(atmux)"
+ADAPTER_DIR="$ROOT/adapter"
+TEMPLATE_DIR="$ROOT/templates"
+
+# Display order matches `bin/atmux`'s top-level `usage()`.
+RESOURCES=(agent team role session issue pr message config env adapter watcher process pane path)
+VERBS=(send exec schedule notify update install)
+
+require_python3() {
+  if ! command -v python3 >/dev/null 2>&1; then
+    echo "render-docs: python3 is required for adapter manifest parsing" >&2
+    exit 2
+  fi
+}
+
+# Extract the first heredoc inside a `usage()`-like function. Matches
+# `cat <<'<DELIM>'` where the body's first non-empty line begins with
+# `Usage:`. Captures lines up to the closing `<DELIM>`. Trims trailing
+# blank lines.
+extract_usage_block() {
+  local file="$1"
+  awk '
+    done_one { next }
+    /^[[:space:]]*cat[[:space:]]*<<'\''[A-Za-z_][A-Za-z0-9_]*'\''[[:space:]]*$/ {
+      delim=$0
+      sub(/^.*<<'\''/, "", delim)
+      sub(/'\''.*/, "", delim)
+      capturing=1
+      buf=""
+      first_seen=0
+      next
+    }
+    capturing && $0 == delim {
+      if (first_seen) { print buf; done_one=1 }
+      capturing=0
+      delim=""
+      next
+    }
+    capturing {
+      if (!first_seen) {
+        if ($0 ~ /^[[:space:]]*$/) next
+        if ($0 !~ /^Usage:/) { capturing=0; delim=""; next }
+        first_seen=1
+        buf = $0
+        next
+      }
+      buf = buf "\n" $0
+    }
+  ' "$file" | awk '
+    { lines[NR]=$0 }
+    END {
+      end=NR
+      while (end>0 && lines[end] ~ /^[[:space:]]*$/) end--
+      for (i=1; i<=end; i++) print lines[i]
+    }
+  '
+}
+
+# Split a usage block on its top-level section labels (Usage:, Description:,
+# Examples:, Options:, Notes:, Durations:). Emits a stream of records:
+#   <SECTION_LABEL>
+#   <body line>
+#   <body line>
+#   ...
+#   <SECTION_LABEL>
+#   ...
+# Body lines are de-indented by stripping the leading two spaces that the
+# heredocs use.
+split_usage_sections() {
+  awk '
+    BEGIN { section="" }
+    /^(Usage|Description|Examples|Options|Notes|Durations):[[:space:]]*$/ {
+      section=$1
+      sub(/:.*/, "", section)
+      print "##SECTION##" section
+      next
+    }
+    section != "" {
+      line=$0
+      sub(/^  /, "", line)
+      print line
+    }
+  '
+}
+
+render_command_section() {
+  local name="$1" file="$2" heading="$3"
+  if [[ ! -f "$file" ]]; then
+    return 0
+  fi
+
+  # Per-command markdown override. When templates/cli/<name>.md exists,
+  # use it verbatim under the section heading. The heredoc in the script
+  # is the source of truth for terminal `--help`; this file is the source
+  # of truth for the rendered markdown. Either can be edited independently.
+  local override="$TEMPLATE_DIR/cli/$name.md"
+  if [[ -f "$override" ]]; then
+    # `$(...)` strips trailing newlines, normalising whatever the override
+    # ends with. We then re-add exactly one blank line so consecutive
+    # sections are separated cleanly.
+    local body
+    body="$(cat "$override")"
+    printf '%s `%s`\n\n%s\n\n' "$heading" "$name" "$body"
+    return 0
+  fi
+
+  local block
+  block="$(extract_usage_block "$file")"
+  if [[ -z "$block" ]]; then
+    return 0
+  fi
+
+  printf '%s `%s`\n\n' "$heading" "$name"
+
+  # Buffer the body of each section so trailing blank lines can be stripped
+  # before the closing code fence. Without this, every section ends with a
+  # blank line inside the fence, which reads sloppily.
+  local current=""
+  local body=""
+  flush() {
+    if [[ -z "$current" ]]; then return 0; fi
+    # Strip trailing blank lines from $body.
+    while [[ "$body" == *$'\n' ]]; do body="${body%$'\n'}"; done
+    case "$current" in
+      Usage|Examples)
+        printf '```sh\n%s\n```\n\n' "$body"
+        ;;
+      Description|Notes)
+        printf '%s\n\n' "$body"
+        ;;
+      Options|Durations)
+        printf '**%s**\n\n```\n%s\n```\n\n' "$current" "$body"
+        ;;
+    esac
+    body=""
+    current=""
+  }
+  while IFS= read -r line; do
+    if [[ "$line" == "##SECTION##"* ]]; then
+      flush
+      current="${line#"##SECTION##"}"
+      continue
+    fi
+    if [[ -n "$current" ]]; then
+      body+="$line"$'\n'
+    fi
+  done < <(printf '%s\n' "$block" | split_usage_sections)
+  flush
+}
+
+render_resource_reference() {
+  for n in "${RESOURCES[@]}"; do
+    render_command_section "$n" "$CMD_DIR/$n" "####"
+  done
+}
+
+render_verb_reference() {
+  for n in "${VERBS[@]}"; do
+    render_command_section "$n" "$CMD_DIR/$n" "####"
+  done
+}
+
+# Combined reference (used by CLAUDE.md help block where one flat list is
+# preferable).
+render_command_reference() {
+  render_resource_reference
+  render_verb_reference
+}
+
+render_top_level_usage() {
+  local block
+  block="$(extract_usage_block "$ROOT/bin/atmux")"
+  printf '```text\n%s\n```\n' "$block"
+}
+
+render_intelligence_scale() {
+  require_python3
+  python3 - "$ADAPTER_DIR" <<'PY'
+import json, os, sys
+adapter_dir = sys.argv[1]
+print("| Adapter | Intelligence | Model | Reasoning level |")
+print("|---------|--------------|-------|-----------------|")
+for name in sorted(os.listdir(adapter_dir)):
+    manifest = os.path.join(adapter_dir, name, "manifest.json")
+    if not os.path.isfile(manifest):
+        continue
+    with open(manifest) as f:
+        data = json.load(f)
+    for row in data.get("intelligence_map", []):
+        rng = f"{row['min']}–{row['max']}"
+        print(f"| `{data['name']}` | {rng} | `{row['model']}` | `{row['reasoning_level']}` |")
+PY
+}
+
+render_adapter_list() {
+  require_python3
+  python3 - "$ADAPTER_DIR" <<'PY'
+import json, os, sys
+adapter_dir = sys.argv[1]
+print("| Adapter | CLI |")
+print("|---------|-----|")
+for name in sorted(os.listdir(adapter_dir)):
+    manifest = os.path.join(adapter_dir, name, "manifest.json")
+    if not os.path.isfile(manifest):
+        continue
+    with open(manifest) as f:
+        data = json.load(f)
+    display_path = os.path.join(adapter_dir, name, "display.txt")
+    if os.path.isfile(display_path):
+        with open(display_path) as f:
+            display = f.read().strip()
+    else:
+        display = data["name"]
+    print(f"| `{data['name']}` | {display} |")
+PY
+}
+
+render_env_vars_table() {
+  printf '| Variable | Description |\n'
+  printf '|----------|-------------|\n'
+  while IFS=$'\t' read -r var desc; do
+    [[ -z "$var" ]] && continue
+    printf '| `%s` | %s |\n' "$var" "$desc"
+  done < "$TEMPLATE_DIR/env-vars.tsv"
+}
+
+render_version() {
+  cat "$ROOT/VERSION"
+}
+
+# Read the template and substitute every {{TOKEN}} by piping the token's
+# rendered value through a placeholder line. Done in a single awk pass so
+# tokens can appear anywhere on a line.
+render_template() {
+  local template_file="$1"
+  local tmpdir
+  tmpdir="$(mktemp -d)"
+  trap "rm -rf $tmpdir" RETURN
+
+  render_top_level_usage          > "$tmpdir/TOP_LEVEL_USAGE"
+  render_intelligence_scale       > "$tmpdir/INTELLIGENCE_SCALE"
+  render_adapter_list             > "$tmpdir/ADAPTER_LIST"
+  render_command_reference        > "$tmpdir/COMMAND_REFERENCE"
+  render_resource_reference       > "$tmpdir/RESOURCE_REFERENCE"
+  render_verb_reference           > "$tmpdir/VERB_REFERENCE"
+  render_env_vars_table           > "$tmpdir/ENV_VARS_TABLE"
+  render_version                  > "$tmpdir/VERSION"
+
+  awk -v tdir="$tmpdir" '
+    function read_token(name,    file, l, content, first) {
+      file = tdir "/" name
+      content = ""
+      first = 1
+      while ((getline l < file) > 0) {
+        if (first) { content = l; first = 0 }
+        else       { content = content "\n" l }
+      }
+      close(file)
+      return content
+    }
+    {
+      line=$0
+      out=""
+      emitted_block=0
+      while (match(line, /\{\{[A-Z_]+\}\}/)) {
+        before=substr(line, 1, RSTART-1)
+        token=substr(line, RSTART+2, RLENGTH-4)
+        after=substr(line, RSTART+RLENGTH)
+        value=read_token(token)
+        # Single-line token: splice inline. Multi-line: emit the prefix on
+        # its own line, then the multi-line block, then continue with the
+        # suffix on the next iteration so any further tokens are still
+        # processed.
+        if (index(value, "\n") == 0) {
+          out = out before value
+        } else {
+          if (out before != "") print out before
+          # Trim trailing blank lines from multi-line tokens. Without this,
+          # a token whose contents end with `\n\n` plus the templates own
+          # trailing blank line accumulate into 2+ blank lines.
+          sub(/\n+$/, "", value)
+          print value
+          out = ""
+          emitted_block = 1
+        }
+        line = after
+      }
+      # When a block-emitting token consumed the whole template line, dont
+      # also emit the line itself — that would inject an extra blank.
+      if (emitted_block && out == "" && line == "") next
+      print out line
+    }
+  ' "$template_file"
+}
+
+render_readme() {
+  render_template "$TEMPLATE_DIR/README.md.tmpl"
+}
+
+render_claude_help_block() {
+  render_template "$TEMPLATE_DIR/CLAUDE-help.md.tmpl"
+}
+
+# Replace the lines between `<!-- ATMUX-HELP-BEGIN -->` and `<!-- ATMUX-HELP-END -->`
+# in CLAUDE.md with `block`. Markers are preserved.
+splice_claude_help() {
+  local block_file="$1"
+  local target="$ROOT/CLAUDE.md"
+  if ! grep -q '<!-- ATMUX-HELP-BEGIN -->' "$target" || ! grep -q '<!-- ATMUX-HELP-END -->' "$target"; then
+    echo "render-docs: CLAUDE.md is missing <!-- ATMUX-HELP-BEGIN --> / <!-- ATMUX-HELP-END --> markers" >&2
+    exit 3
+  fi
+  awk -v bf="$block_file" '
+    BEGIN { in_block=0 }
+    /<!-- ATMUX-HELP-BEGIN -->/ {
+      print
+      while ((getline l < bf) > 0) print l
+      close(bf)
+      in_block=1
+      next
+    }
+    /<!-- ATMUX-HELP-END -->/ {
+      in_block=0
+      print
+      next
+    }
+    !in_block { print }
+  ' "$target"
+}
+
+write_or_check() {
+  local target="$1"
+  local content="$2"
+  if (( CHECK )); then
+    if ! diff -u "$target" <(printf '%s' "$content"); then
+      echo
+      echo "render-docs: $target is out of sync." >&2
+      echo "Run: bin/(atmux)/(internal)/render-docs all" >&2
+      DRIFT=1
+    fi
+  else
+    printf '%s' "$content" > "$target"
+    echo "wrote $target"
+  fi
+}
+
+cmd_readme() {
+  local out
+  out="$(render_readme)"
+  write_or_check "$ROOT/README.md" "$out"
+}
+
+cmd_claude_help() {
+  local block_file
+  block_file="$(mktemp)"
+  trap "rm -f $block_file" RETURN
+  render_claude_help_block > "$block_file"
+  local out
+  out="$(splice_claude_help "$block_file")"
+  write_or_check "$ROOT/CLAUDE.md" "$out"
+}
+
+cmd_all() {
+  cmd_readme
+  cmd_claude_help
+}
+
+main() {
+  CHECK=0
+  DRIFT=0
+  local cmd=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --check) CHECK=1; shift ;;
+      readme|claude-help|all) cmd="$1"; shift ;;
+      -h|--help)
+        sed -n '2,12p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+        exit 0
+        ;;
+      *)
+        echo "render-docs: unknown argument: $1" >&2
+        exit 64
+        ;;
+    esac
+  done
+  if [[ -z "$cmd" ]]; then
+    echo "render-docs: usage: render-docs {readme|claude-help|all} [--check]" >&2
+    exit 64
+  fi
+  case "$cmd" in
+    readme)       cmd_readme ;;
+    claude-help)  cmd_claude_help ;;
+    all)          cmd_all ;;
+  esac
+  if (( CHECK && DRIFT )); then
+    exit 1
+  fi
+}
+
+main "$@"

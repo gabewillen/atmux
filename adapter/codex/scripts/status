@@ -47,7 +47,7 @@ resolve_target() {
 
 capture_status_snapshot() {
   local target="$1"
-  local watch_cmd="${ATMUX_SOURCE_ROOT:-${ATMUX_HOME:-$HOME/.atmux}/src/atmux}/bin/(atmux)/watch"
+  local atmux_bin="${ATMUX_SOURCE_ROOT:-${ATMUX_HOME:-$HOME/.atmux}/src/atmux}/bin/atmux"
 
   tmux send-keys -t "$target" C-u
   sleep 0.2
@@ -55,8 +55,8 @@ capture_status_snapshot() {
   sleep 0.2
   tmux send-keys -t "$target" ENTER
 
-  if [[ -x "$watch_cmd" ]]; then
-    "$watch_cmd" --target "$target" --scope pane --text "OpenAI Codex" --timeout 6 --interval 0.2 --lines 400 >/dev/null 2>&1 || true
+  if [[ -x "$atmux_bin" ]]; then
+    "$atmux_bin" pane watch "$target" --scope pane --text "OpenAI Codex" --timeout 6 --interval 0.2 --lines 400 >/dev/null 2>&1 || true
   else
     sleep 0.8
   fi

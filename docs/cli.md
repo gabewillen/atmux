@@ -4,21 +4,21 @@
 
 ## Common Commands
 
-### `atmux create --agent <name> --role <role> --intelligence <0-100> [--team <team>] [--adapter <adapter>]`
+### `atmux agent create <name> --role <role> --intelligence <0-100> [--team <team>] [--adapter <adapter>]`
 
 Creates an agent session and worktree. The `--intelligence` value is adapter-portable: the selected adapter maps it to the correct model and reasoning level.
 
 Example:
 
 ```sh
-atmux create --agent planner --role planner --intelligence 80
+atmux agent create planner --role planner --intelligence 80
 ```
 
-### `atmux create --team <name>`
+### `atmux team create <name>`
 
 Creates a team session. Agents created while `ATMUX_TEAM` is set join that team.
 
-### `atmux create --pr --title <title> [--description <description>] [--source <branch>] [--target <branch>]`
+### `atmux pr create --title <title> [--description <description>] [--source <branch>] [--target <branch>]`
 
 Creates a filesystem-backed pull request under `<ATMUX_HOME>/pull-requests/<repo>/`.
 
@@ -26,9 +26,15 @@ Creates a filesystem-backed pull request under `<ATMUX_HOME>/pull-requests/<repo
 
 Queues a notification into another agent pane. Target resolution prefers teams, then agents/sessions. `--interrupt` uses the adapter interrupt submit key when available.
 
-### `atmux assign --to <agent|session> --title <title> [--description <description>] [--todo <todo>]...`
+### `atmux issue create --title <title> --assign-to <agent|session> [--description <description>] [--todo <todo>]...`
 
-Creates and assigns a filesystem-backed issue.
+Creates and assigns a filesystem-backed issue in one shot. For an existing
+issue, use `atmux issue assign <id> --to <agent|session>`.
+
+### `atmux issue comment <id> "message"` / `atmux pr comment <id> "message"`
+
+Posts a comment on a filesystem-backed issue or pull request; notifies
+watchers, the assignee, and the assigner.
 
 ### `atmux schedule (--interval <duration> | --once <duration>) --notification <text>`
 ### `atmux schedule (--interval <duration> | --once <duration>) -- <command> [args...]`
@@ -45,38 +51,38 @@ atmux schedule --once 10m -- atmux send --to worker "status check"
 
 Runs a command and sends an exec notification when it exits. Detached execs run in a tmux window and are tracked under `<ATMUX_HOME>/exec/<repo>/<pid>/`.
 
-### `atmux watch`
+### Watch (per-resource)
 
-Waits for text, process completion, issue updates, local PR updates, new GitHub issues, new GitHub pull requests, GitHub PR discussion updates, stdio output, or agent idleness.
+Watch verbs live on each resource. Available forms: `atmux agent watch`, `atmux pane watch`, `atmux process watch`, `atmux path watch`, `atmux issue watch`, `atmux pr watch`. They wait for text, process completion, issue updates, local PR updates, new GitHub issues, new GitHub pull requests, GitHub PR discussion updates, stdio output, or agent idleness.
 
 Examples:
 
 ```sh
-atmux watch --agent worker --idle 20 --timeout 120
-atmux watch --pid 12345 --timeout 60
-atmux watch --path 'src/**/*.sh' --timeout 60
-atmux watch --issues owner/repo --timeout 600
-atmux watch --prs owner/repo --timeout 600
-atmux watch --pr atmux://pull-request/myrepo/AbCdEfGhIjKlMnOp --timeout 120
-atmux watch --pr https://github.com/owner/repo/pull/123 --timeout 600
-atmux watch --target %1 --text "ready" --timeout 30
+atmux agent watch worker --idle 20 --timeout 120
+atmux process watch 12345 --timeout 60
+atmux path watch 'src/**/*.sh' --timeout 60
+atmux issue watch --feed owner/repo --timeout 600
+atmux pr watch --feed owner/repo --timeout 600
+atmux pr watch atmux://pull-request/myrepo/AbCdEfGhIjKlMnOp --timeout 120
+atmux pr watch https://github.com/owner/repo/pull/123 --timeout 600
+atmux pane watch %1 --text "ready" --timeout 30
 ```
 
-`watch --issues` is long-lived: it keeps notifying on newly created GitHub issues until stopped. Its registration output includes `watcher_id="..."` for use with `atmux kill --watcher <id>`.
+`atmux issue watch --feed` is long-lived: it keeps notifying on newly created GitHub issues until stopped. Its registration output includes `watcher_id="..."` for use with `atmux watcher kill <id>`.
 
-`watch --prs` (alias `--pull-requests`) is long-lived: it keeps notifying on newly created GitHub pull requests until stopped. Its registration output includes `watcher_id="..."` for use with `atmux kill --watcher <id>`.
+`atmux pr watch --feed` is long-lived: it keeps notifying on newly created GitHub pull requests until stopped. Its registration output includes `watcher_id="..."` for use with `atmux watcher kill <id>`.
 
-`watch --path` exits when a filesystem glob's matched set or file metadata changes. It uses `fswatch` or `inotifywait` when available, otherwise it falls back to polling.
+`atmux path watch` exits when a filesystem glob's matched set or file metadata changes. It uses `fswatch` or `inotifywait` when available, otherwise it falls back to polling.
 
-`watch --pr` accepts both local PR ids/URIs and GitHub PR URLs. For GitHub URLs it is long-lived: it keeps notifying on new discussion until stopped or the PR closes/merges. Its registration output includes `watcher_id="..."` for use with `atmux kill --watcher <id>`.
+`atmux pr watch <url>` accepts both local PR ids/URIs and GitHub PR URLs. For GitHub URLs it is long-lived: it keeps notifying on new discussion until stopped or the PR closes/merges. Its registration output includes `watcher_id="..."` for use with `atmux watcher kill <id>`.
 
-### `atmux kill --pid <pid> [--timeout <seconds>] [--signal <NAME>]`
+### `atmux process kill <pid> [--timeout <seconds>] [--signal <NAME>]`
 
 Stops an `atmux exec` tracked process, waits for completion notifications and watcher fan-out, then clears metadata.
 
-### `atmux kill --watcher <id> [--timeout <seconds>]`
+### `atmux watcher kill <id> [--timeout <seconds>]`
 
-Removes a watcher registration by id. Supports watcher ids emitted by `watch --pr`, `watch --issues`, and `watch --prs`.
+Removes a watcher registration by id. Supports watcher ids emitted by `atmux pr watch <url>`, `atmux issue watch --feed`, and `atmux pr watch --feed`.
 
 ### `atmux install [--project|--system] [--project-root <dir>] [--no-slash-commands]`
 

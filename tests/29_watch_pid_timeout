@@ -51,11 +51,11 @@ done
 # Watch with a short timeout — process won't exit, so watch should timeout
 set +e
 ATMUX_HOME="$atmux_home" ATMUX_REPO="$repo_name" ATMUX_ALLOW_OUTSIDE_TMUX=1 \
-  "$ATMUX_BIN" watch --pid "$child_pid" --timeout 2
+  "$ATMUX_BIN" process watch "$child_pid" --timeout 2
 rc=$?
 set -e
 
-[[ "$rc" -eq 124 ]] || { echo "expected exit 124 on watch --pid timeout, got $rc" >&2; exit 1; }
+[[ "$rc" -eq 124 ]] || { echo "expected exit 124 on process watch timeout, got $rc" >&2; exit 1; }
 
 # Clean up the exec process
 kill "$child_pid" 2>/dev/null || true

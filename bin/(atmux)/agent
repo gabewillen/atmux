@@ -4,11 +4,24 @@ set -euo pipefail
 usage() {
   cat <<'USAGE'
 Usage:
+  atmux agent create <name> --role <role> --intelligence <0-100>
+                     [--team <team>] [--adapter <adapter>] [--no-worktree]
+                     [--start <cmd>] [--stop <cmd>]
+                     [--task --description <desc> --todo <todo>...]
+                     [-- <adapter-args...>]
+    (or `--name <name>` instead of positional)
+  atmux agent list [--all] [--status]
+  atmux agent kill <name|pattern> [<name|pattern>...]
+  atmux agent kill --all [--yes]
+  atmux agent capture <name> [--lines <n>]
+  atmux agent capture --all [--lines <n>]
+  atmux agent watch <name> [--idle <seconds>] [--timeout <seconds>]
+                           [--interval <seconds>] [--lines <n>]
   atmux agent resolve <name> [<repo_name>]
 
 Description:
-  Internal agent subcommands (resolve, _create, status, etc.).
-  To remove agents use: atmux kill --agent <name|pattern>
+  Manage atmux agents — sessions running an AI CLI under tmux. Agents are
+  scoped to the current repo.
 USAGE
 }
 
@@ -669,8 +682,9 @@ send_task_to_agent() {
     fi
   fi
 
-  # Use atmux assign to store the task on disk; notification is sent by assign
-  local assign_cmd=("${ATMUX_SOURCE_ROOT:-$ATMUX_HOME/src/atmux}/bin/atmux" assign --to "$target_session" --title "$description")
+  # Use `atmux issue create --assign-to` to store the task on disk; notification
+  # is sent by the assign step inside that command.
+  local assign_cmd=("${ATMUX_SOURCE_ROOT:-$ATMUX_HOME/src/atmux}/bin/atmux" issue create --title "$description" --assign-to "$target_session")
   local todo
   while IFS= read -r todo; do
     [[ -z "$todo" ]] && continue
@@ -689,7 +703,7 @@ sub="${1:-}"
 shift || true
 
 case "$sub" in
-  _create)
+  create|_create)
     manager="${ATMUX_AGENT_NAME:-}"
     if [[ -z "$manager" ]]; then
       echo "ATMUX_AGENT_NAME is required for agent create" >&2
@@ -765,9 +779,19 @@ case "$sub" in
           forward=("$@")
           break
           ;;
-        *)
+        -*)
           echo "unknown flag: $1" >&2
           exit 2
+          ;;
+        *)
+          # Positional agent name (allows `atmux agent create worker --role X`).
+          if [[ -z "$name" ]]; then
+            name="$1"
+            shift
+          else
+            echo "unexpected argument: $1" >&2
+            exit 2
+          fi
           ;;
       esac
     done
@@ -970,6 +994,42 @@ case "$sub" in
       "$(xml_escape "$intelligence")"
     printf '  %s\n' "$status_node"
     printf '</agent>\n'
+    ;;
+  list)
+    here_agent="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+    exec "$here_agent/(list)/agents" "$@"
+    ;;
+  kill)
+    here_agent="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+    if [[ "${1:-}" == "--all" ]]; then
+      exec "$here_agent/(internal)/kill" "$@"
+    fi
+    if [[ $# -eq 0 || "${1:0:1}" == "-" ]]; then
+      echo "usage: atmux agent kill <name|pattern> [...]   |   atmux agent kill --all [--yes]" >&2
+      exit 2
+    fi
+    exec "$here_agent/(internal)/kill" --agent "$@"
+    ;;
+  capture)
+    here_agent="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+    if [[ "${1:-}" == "--all" ]]; then
+      exec "$here_agent/(internal)/capture" "$@"
+    fi
+    if [[ $# -eq 0 || "${1:0:1}" == "-" ]]; then
+      echo "usage: atmux agent capture <name> [--lines N]   |   atmux agent capture --all [--lines N]" >&2
+      exit 2
+    fi
+    target_name="$1"; shift
+    exec "$here_agent/(internal)/capture" --agent "$target_name" "$@"
+    ;;
+  watch)
+    here_agent="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+    if [[ $# -eq 0 || "${1:0:1}" == "-" ]]; then
+      echo "usage: atmux agent watch <name|session> [--idle N] [--timeout N] [--interval N] [--lines N]" >&2
+      exit 2
+    fi
+    target_name="$1"; shift
+    exec "$here_agent/[watch]/agent" --agent "$target_name" "$@"
     ;;
   resolve)
     target="${1:-}"

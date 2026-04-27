@@ -1,0 +1,8 @@
+ATMUX_HOME	Installation/state root (default: `<project>/.atmux` for project installs, `~/.atmux` for system installs)
+ATMUX_REPO	Repository name for the current session
+ATMUX_AGENT_NAME	Current agent's name
+ATMUX_MANAGER	Parent manager agent name
+ATMUX_WORKTREE	Working directory (worktree or repo root)
+ATMUX_TEAM	Team this agent belongs to
+ATMUX_SESSION_ID	Unique session identifier
+ATMUX_SESSION_KIND	`agent` or `team`

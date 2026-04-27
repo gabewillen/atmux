@@ -10,7 +10,7 @@ source "$HERE/../notify"
 usage() {
   cat <<'USAGE'
 Usage:
-  atmux watch --agent <name|session> [--idle <seconds>] [--timeout <seconds>] [--interval <seconds>] [--lines <n>]
+  atmux agent watch <name|session> [--idle <seconds>] [--timeout <seconds>] [--interval <seconds>] [--lines <n>]
 
 Description:
   Wait until an agent's pane output has been stable (unchanged) for --idle
@@ -22,9 +22,9 @@ Description:
   Defaults: --idle 30, --timeout 120, --interval 2, --lines 80.
 
 Examples:
-  atmux watch --agent worker
-  atmux watch --agent worker --idle 10 --timeout 60
-  atmux watch --agent atmux-myrepo-planner --idle 5
+  atmux agent watch worker
+  atmux agent watch worker --idle 10 --timeout 60
+  atmux agent watch atmux-myrepo-planner --idle 5
 USAGE
 }
 
@@ -134,7 +134,7 @@ main() {
   stream_rc=$?
   set -e
   if [[ "$stream_rc" -ne 0 ]]; then
-    echo "atmux watch --agent: unable to attach event stream to pane $pane" >&2
+    echo "atmux agent watch: unable to attach event stream to pane $pane" >&2
     exit 1
   fi
   exec 8<>"$event_fifo"

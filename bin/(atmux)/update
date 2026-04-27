@@ -170,7 +170,11 @@ main() {
   fi
 
   tmpdir="$(mktemp -d "${TMPDIR:-/tmp}/atmux-update.XXXXXX")"
-  trap 'rm -rf "$tmpdir"' EXIT
+  # Bake the path into the trap so it doesn't deref a local that's
+  # already gone out of scope by the time the EXIT trap fires (under
+  # `set -u` the deferred deref would be reported as "unbound variable"
+  # and turn a successful update into a non-zero exit).
+  trap "rm -rf -- $(printf '%q' "$tmpdir")" EXIT
 
   echo "downloading ${tarball_url} ..."
   curl -fsSL --max-time 120 -L "$tarball_url" | tar xz -C "$tmpdir" --strip-components=1

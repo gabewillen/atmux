@@ -63,6 +63,15 @@ tmux send-keys -t "$pane" -l "❯ "
 tmux send-keys -t "$pane" Enter
 sleep 0.3
 tmux send-keys -t "$pane" -l "❯ ${user_text}"
+# Wait for the typed input to land in the pane buffer before queueing
+# the notification — otherwise on slower hosts (Linux CI) the worker
+# can save_input/C-u/restore while the original send-keys is still
+# draining, clipping the tail.
+if ! wait_for_text "$pane" "$user_text" 5; then
+  echo "user_text never landed in pane before notify" >&2
+  tmux capture-pane -p -t "$pane" -S -40 >&2 || true
+  exit 1
+fi
 
 # Queue a notification
 marker="queuetest-$RANDOM"

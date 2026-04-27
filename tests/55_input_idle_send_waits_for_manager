@@ -69,6 +69,15 @@ tmux send-keys -t "$pane_mgr" Enter
 sleep 0.3
 user_text="reviewing the architecture docs"
 tmux send-keys -t "$pane_mgr" -l "❯ ${user_text}"
+# Wait for the typed input to land in the pane buffer before firing the
+# notification — otherwise on slower hosts (notably Linux CI without an
+# attached client) the worker can save_input/C-u/restore while the
+# original send-keys is still draining, clipping the tail.
+if ! wait_for_text "$pane_mgr" "$user_text" 5; then
+  echo "user_text never landed in pane before notify" >&2
+  tmux capture-pane -p -t "$pane_mgr" -S -40 >&2 || true
+  exit 1
+fi
 
 # Agent sends to manager
 ATMUX_REPO="$repo_name" ATMUX_AGENT_NAME="worker" ATMUX_SESSION_NAME="$session_agent" \

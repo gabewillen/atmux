@@ -70,6 +70,15 @@ tmux send-keys -t "$pane" Enter
 sleep 0.3
 user_text="my partial input must survive"
 tmux send-keys -t "$pane" -l "❯ ${user_text}"
+# Wait for the typed input to land in the pane buffer before queueing
+# the burst — otherwise on slower hosts (Linux CI) the worker can
+# save_input/C-u/restore while the original send-keys is still
+# draining, clipping the tail.
+if ! wait_for_count "$pane" "$user_text" 1 5; then
+  echo "user_text never landed in pane before notify burst" >&2
+  tmux capture-pane -p -t "$pane" -S -40 >&2 || true
+  exit 1
+fi
 
 markers=()
 for idx in 1 2 3 4 5; do

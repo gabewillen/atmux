@@ -26,10 +26,10 @@ issue_id="$(printf '%s\n' "$create_out" | sed -n 's/.*id="\([^"]*\)".*/\1/p' | h
 # Watch with short timeout — no updates will happen
 set +e
 ATMUX_HOME="$atmux_home" ATMUX_REPO="$repo_name" ATMUX_ALLOW_OUTSIDE_TMUX=1 \
-  "$ATMUX_BIN" watch --issue "$issue_id" --timeout 2
+  "$ATMUX_BIN" issue watch "$issue_id" --timeout 2
 rc=$?
 set -e
 
-[[ "$rc" -eq 124 ]] || { echo "expected exit 124 on watch --issue timeout, got $rc" >&2; exit 1; }
+[[ "$rc" -eq 124 ]] || { echo "expected exit 124 on issue watch timeout, got $rc" >&2; exit 1; }
 
 echo "ok: watch --issue exits 124 on timeout"

@@ -88,7 +88,7 @@ while [[ -z "$pid" ]]; do
 done
 
 # Start stdio watcher with fast polling
-tmux send-keys -t "$pane_watch" "ATMUX_HOME=\"$atmux_home\" ATMUX_REPO=\"$repo_name\" ATMUX_AGENT_NAME=\"watch\" ATMUX_SESSION_NAME=\"$session_watch\" \"$ATMUX_BIN\" watch --pid \"$pid\" --stdio --duration 30 --timeout 15 --interval 1" C-m
+tmux send-keys -t "$pane_watch" "ATMUX_HOME=\"$atmux_home\" ATMUX_REPO=\"$repo_name\" ATMUX_AGENT_NAME=\"watch\" ATMUX_SESSION_NAME=\"$session_watch\" \"$ATMUX_BIN\" process watch \"$pid\" --stdio --duration 30 --timeout 15 --interval 1" C-m
 
 # Wait for watcher registration
 deadline=$(( $(date +%s) + 10 ))

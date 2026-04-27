@@ -119,7 +119,7 @@ run_adapter_case() {
 
   create_out="$(ATMUX_ALLOW_OUTSIDE_TMUX=1 ATMUX_HOME="$atmux_home" ATMUX_SOURCE_ROOT="$REPO_ROOT" ATMUX_REPO="$repo" \
     ATMUX_AGENT_NAME="manager" ATMUX_SESSION_NAME="$manager_session" \
-    "$ATMUX_BIN" create --agent worker --role implementer --adapter "$adapter" --intelligence 50 --no-worktree)"
+    "$ATMUX_BIN" agent create worker --role implementer --adapter "$adapter" --intelligence 50 --no-worktree)"
   worker_session="$(printf '%s\n' "$create_out" | sed -n 's/.*session="\([^"]*\)".*/\1/p' | head -n1)"
   [[ -n "$worker_session" ]] || {
     echo "failed to parse worker session for $adapter" >&2

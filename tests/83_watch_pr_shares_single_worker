@@ -93,7 +93,7 @@ pane_b="$(tmux list-panes -t "$session_b" -F '#{pane_id}' 2>/dev/null | head -n1
 
 watchers_dir="$atmux_home/watch-pr/octo_example_pr_42/watchers"
 
-watch_cmd="ATMUX_HOME=\"$atmux_home\" ATMUX_GH_BIN=\"$stub_dir/gh\" ATMUX_TEST_PR_TRIGGER=\"$trigger_file\" ATMUX_TEST_PR_SECOND_TRIGGER=\"$second_trigger_file\" ATMUX_TEST_PR_CLOSE_FILE=\"$close_file\" ATMUX_TEST_PR_COUNT_FILE=\"$count_file\" \"$ATMUX_BIN\" watch --pr \"https://github.com/octo/example/pull/42\" --interval 0.2 --timeout 10"
+watch_cmd="ATMUX_HOME=\"$atmux_home\" ATMUX_GH_BIN=\"$stub_dir/gh\" ATMUX_TEST_PR_TRIGGER=\"$trigger_file\" ATMUX_TEST_PR_SECOND_TRIGGER=\"$second_trigger_file\" ATMUX_TEST_PR_CLOSE_FILE=\"$close_file\" ATMUX_TEST_PR_COUNT_FILE=\"$count_file\" \"$ATMUX_BIN\" pr watch \"https://github.com/octo/example/pull/42\" --interval 0.2 --timeout 10"
 tmux send-keys -t "$pane_a" "$watch_cmd" C-m
 tmux send-keys -t "$pane_b" "$watch_cmd" C-m
 

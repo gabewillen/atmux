@@ -11,18 +11,18 @@ ATMUX_BIN="$REPO_ROOT/bin/atmux"
 
 # Watch for a non-existent agent — should exit 1
 set +e
-out="$(ATMUX_REPO="test" ATMUX_ALLOW_OUTSIDE_TMUX=1 "$ATMUX_BIN" watch --agent "nonexistent-agent-$RANDOM" 2>&1)"
+out="$(ATMUX_REPO="test" ATMUX_ALLOW_OUTSIDE_TMUX=1 "$ATMUX_BIN" agent watch "nonexistent-agent-$RANDOM" 2>&1)"
 rc=$?
 set -e
 
 [[ "$rc" -eq 1 ]] || { echo "expected exit 1 for unknown agent, got $rc: $out" >&2; exit 1; }
 
-# Missing --agent value — shift 2 with only 1 arg causes non-zero exit
+# Missing positional agent name — usage error
 set +e
-out2="$(ATMUX_REPO="test" ATMUX_ALLOW_OUTSIDE_TMUX=1 "$ATMUX_BIN" watch --agent 2>&1)"
+out2="$(ATMUX_REPO="test" ATMUX_ALLOW_OUTSIDE_TMUX=1 "$ATMUX_BIN" agent watch 2>&1)"
 rc2=$?
 set -e
 
-[[ "$rc2" -ne 0 ]] || { echo "expected non-zero exit for missing --agent value, got $rc2" >&2; exit 1; }
+[[ "$rc2" -ne 0 ]] || { echo "expected non-zero exit for missing agent name, got $rc2" >&2; exit 1; }
 
 echo "ok: watch --agent rejects unknown session and missing args"

@@ -61,13 +61,13 @@ worktree="$ATMUX_HOME/agents/${repo_norm}-${agent_name}"
 out="$(
   ATMUX_ALLOW_OUTSIDE_TMUX=1 \
   ATMUX_AGENT_NAME=test-manager \
-  "$ATMUX_BIN" create --agent "$agent_name" \
+  "$ATMUX_BIN" agent create "$agent_name" \
     --role failing \
     --intelligence 20 \
     --adapter mock 2>&1 || true
 )"
 
-# atmux create's wrapper publishes the inner exit code as exit_code="N" in
+# atmux agent create's wrapper publishes the inner exit code as exit_code="N" in
 # its <atmux ...> envelope. A failed start hook must surface as non-zero.
 ec="$(printf '%s\n' "$out" | sed -n 's/.*exit_code="\([0-9]*\)".*/\1/p' | head -1)"
 if [[ "$ec" != "1" ]]; then

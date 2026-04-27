@@ -62,7 +62,7 @@ receiver_pane="$(tmux list-panes -t "$AGENT2_SESSION" -F '#{pane_id}' 2>/dev/nul
 
 assign_out="$(
   ATMUX_HOME="$atmux_home_tmp" ATMUX_REPO="$REPO_NAME" ATMUX_AGENT_NAME="sender" ATMUX_SESSION_NAME="$AGENT1_SESSION" \
-    "$ATMUX_BIN" assign --to receiver --title "skip-creator-notification-$RANDOM"
+    "$ATMUX_BIN" issue create --title "skip-creator-notification-$RANDOM" --assign-to receiver
 )"
 issue_id="$(printf '%s\n' "$assign_out" | sed -n 's/.*issue_id="\([^"]*\)".*/\1/p' | head -n1)"
 [[ -n "$issue_id" ]] || { echo "failed to parse issue id from assign output" >&2; exit 1; }

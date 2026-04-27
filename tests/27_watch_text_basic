@@ -28,12 +28,12 @@ marker="textwatch-$RANDOM-$(date +%s)"
 # Schedule the marker to appear after 1 second
 tmux send-keys -t "$pane" "sleep 1 && echo '$marker'" C-m
 
-# Run watch --text looking for the marker
+# Run pane watch looking for the marker
 set +e
-ATMUX_REPO="$repo_name" ATMUX_ALLOW_OUTSIDE_TMUX=1 "$ATMUX_BIN" watch --target "$pane" --text "$marker" --timeout 10
+ATMUX_REPO="$repo_name" ATMUX_ALLOW_OUTSIDE_TMUX=1 "$ATMUX_BIN" pane watch "$pane" --text "$marker" --timeout 10
 rc=$?
 set -e
 
 [[ "$rc" -eq 0 ]] || { echo "expected exit 0 when text found, got $rc" >&2; exit 1; }
 
-echo "ok: watch --text exits 0 when text appears"
+echo "ok: pane watch exits 0 when text appears"

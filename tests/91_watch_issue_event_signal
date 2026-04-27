@@ -30,7 +30,7 @@ issue_id="$(printf '%s\n' "$create_out" | sed -n 's/.*id="\([^"]*\)".*/\1/p')"
 (
   set +e
   ATMUX_HOME="$atmux_home" ATMUX_REPO="$repo_name" ATMUX_ALLOW_OUTSIDE_TMUX=1 \
-    "$ATMUX_BIN" watch --issue "$issue_id" --repo "$repo_name" --interval 999 --timeout 30
+    "$ATMUX_BIN" issue watch "$issue_id" --repo "$repo_name" --interval 999 --timeout 30
   printf '%s\n' "$?" > "$rc_file"
 ) &
 watch_pid=$!

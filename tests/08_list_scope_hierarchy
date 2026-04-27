@@ -70,7 +70,7 @@ out="$(
   ATMUX_AGENT_NAME="child" \
   ATMUX_SESSION_NAME="$child_session" \
   ATMUX_MANAGER="mgr" \
-  "$ATMUX_BIN" list agents --all --status
+  "$ATMUX_BIN" agent list --all --status
 )"
 
 printf '%s\n' "$out" | grep -Fq "session=\"$grand_session\""

@@ -34,7 +34,7 @@ sleep 1
 # Watch with window scope — should find text in second pane even though targeting pane1's window
 set +e
 ATMUX_REPO="$repo_name" ATMUX_ALLOW_OUTSIDE_TMUX=1 \
-  "$ATMUX_BIN" watch --target "${session}:0" --text "$marker" --scope window --timeout 5
+  "$ATMUX_BIN" pane watch "${session}:0" --text "$marker" --scope window --timeout 5
 rc=$?
 set -e
 
@@ -43,7 +43,7 @@ set -e
 # Watch with pane scope targeting pane1 — should NOT find the text
 set +e
 ATMUX_REPO="$repo_name" ATMUX_ALLOW_OUTSIDE_TMUX=1 \
-  "$ATMUX_BIN" watch --target "$pane1" --text "$marker" --scope pane --timeout 2
+  "$ATMUX_BIN" pane watch "$pane1" --text "$marker" --scope pane --timeout 2
 rc2=$?
 set -e
 

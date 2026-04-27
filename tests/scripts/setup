@@ -58,7 +58,7 @@ main() {
   tmux set-environment -t "$agent2" ATMUX_AGENT_NAME "receiver"
   tmux set-environment -t "$agent2" ATMUX_SESSION_NAME "$agent2"
 
-  ATMUX_REPO="$repo_name" "$ATMUX_BIN" create --team "$team_name" >/dev/null
+  ATMUX_REPO="$repo_name" "$ATMUX_BIN" team create "$team_name" >/dev/null
   deadline=$(( $(date +%s) + 5 ))
   until tmux has-session -t "$team_session" 2>/dev/null; do
     if (( $(date +%s) >= deadline )); then

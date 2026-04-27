@@ -34,14 +34,14 @@ pane="$(tmux list-panes -t "$session" -F '#{pane_id}' 2>/dev/null | head -n1)"
 (
   set +e
   ATMUX_REPO="$repo_name" ATMUX_ALLOW_OUTSIDE_TMUX=1 \
-    "$ATMUX_BIN" watch --agent "$session" --idle 2 --timeout 10 --interval 999
+    "$ATMUX_BIN" agent watch "$session" --idle 2 --timeout 10 --interval 999
   printf '%s\n' "$?" > "$rc_file"
 ) &
 watch_pid=$!
 
 sleep 1.5
 if ! kill -0 "$watch_pid" >/dev/null 2>&1; then
-  echo "watch --agent exited before pane output event" >&2
+  echo "agent watch exited before pane output event" >&2
   exit 1
 fi
 
@@ -49,14 +49,14 @@ tmux send-keys -t "$pane" -l "agent-output-${RANDOM}"
 tmux send-keys -t "$pane" Enter
 sleep 1
 if ! kill -0 "$watch_pid" >/dev/null 2>&1; then
-  echo "watch --agent did not reset idle timer from output event" >&2
+  echo "agent watch did not reset idle timer from output event" >&2
   exit 1
 fi
 
 deadline=$(( $(date +%s) + 5 ))
 while kill -0 "$watch_pid" >/dev/null 2>&1; do
   if (( $(date +%s) >= deadline )); then
-    echo "watch --agent did not exit after event-driven idle window" >&2
+    echo "agent watch did not exit after event-driven idle window" >&2
     exit 1
   fi
   sleep 0.1
@@ -66,4 +66,4 @@ wait "$watch_pid" || true
 watch_rc="$(tr -d '\r\n' < "$rc_file" 2>/dev/null || true)"
 [[ "$watch_rc" == "0" ]] || { echo "expected watch rc 0, got ${watch_rc:-missing}" >&2; exit 1; }
 
-echo "ok: watch --agent resets idle timer from pane output events"
+echo "ok: agent watch resets idle timer from pane output events"

@@ -8,7 +8,7 @@
 #     <atmux>...</atmux> block.
 #   - role.start fires after inject_control_file, before the adapter execs,
 #     and sees the expected env.
-#   - atmux kill --agent runs role.stop while the session env is still
+#   - atmux agent kill runs role.stop while the session env is still
 #     readable, then tears the session/worktree/branch down.
 #
 # Mocks the adapter the same way 99_start_adapters_allowlist does so this
@@ -109,7 +109,7 @@ agent_name="lifecycleprobe$$"
 out="$(
   ATMUX_ALLOW_OUTSIDE_TMUX=1 \
   ATMUX_AGENT_NAME=test-manager \
-  "$ATMUX_BIN" create --agent "$agent_name" \
+  "$ATMUX_BIN" agent create "$agent_name" \
     --role probe \
     --intelligence 20 \
     --adapter mock 2>&1 || true
@@ -165,7 +165,7 @@ for var in ATMUX_ROLE ATMUX_ROLE_DIR ATMUX_ROLE_START ATMUX_ROLE_STOP ATMUX_ROLE
 done
 
 # Kill and verify stop fired
-ATMUX_ALLOW_OUTSIDE_TMUX=1 "$ATMUX_BIN" kill --agent "$agent_name" >/dev/null 2>&1 || true
+ATMUX_ALLOW_OUTSIDE_TMUX=1 "$ATMUX_BIN" agent kill "$agent_name" >/dev/null 2>&1 || true
 
 for i in $(seq 1 80); do
   [[ -f "$MARKERS/stopped" ]] && break

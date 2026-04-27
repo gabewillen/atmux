@@ -4,11 +4,12 @@ set -euo pipefail
 usage() {
   cat <<'USAGE'
 Usage:
-  atmux agent create --name <name> --role <role> --intelligence <0-100>
+  atmux agent create <name> --role <role> --intelligence <0-100>
                      [--team <team>] [--adapter <adapter>] [--no-worktree]
                      [--start <cmd>] [--stop <cmd>]
                      [--task --description <desc> --todo <todo>...]
                      [-- <adapter-args...>]
+    (or `--name <name>` instead of positional)
   atmux agent list [--all] [--status]
   atmux agent kill <name|pattern> [<name|pattern>...]
   atmux agent kill --all [--yes]
@@ -780,9 +781,19 @@ case "$sub" in
           forward=("$@")
           break
           ;;
-        *)
+        -*)
           echo "unknown flag: $1" >&2
           exit 2
+          ;;
+        *)
+          # Positional agent name (allows `atmux agent create worker --role X`).
+          if [[ -z "$name" ]]; then
+            name="$1"
+            shift
+          else
+            echo "unexpected argument: $1" >&2
+            exit 2
+          fi
           ;;
       esac
     done

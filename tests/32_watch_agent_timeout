@@ -32,10 +32,10 @@ tmux send-keys -t "$pane" "while true; do echo busy-\$RANDOM; sleep 0.5; done" C
 # Watch with short idle and very short timeout — should timeout because output keeps changing
 set +e
 ATMUX_REPO="$repo_name" ATMUX_ALLOW_OUTSIDE_TMUX=1 \
-  "$ATMUX_BIN" watch --agent "$session" --idle 5 --timeout 3 --interval 1
+  "$ATMUX_BIN" agent watch "$session" --idle 5 --timeout 3 --interval 1
 rc=$?
 set -e
 
 [[ "$rc" -eq 124 ]] || { echo "expected exit 124 on timeout, got $rc" >&2; exit 1; }
 
-echo "ok: watch --agent exits 124 when agent never idles"
+echo "ok: agent watch exits 124 when agent never idles"

@@ -15,7 +15,7 @@ marker="agent-capture-$RANDOM"
 tmux send-keys -t "${AGENT2_SESSION}:0.0" "$marker" C-m
 sleep 0.2
 
-out="$(ATMUX_REPO="$REPO_NAME" "$ATMUX_BIN" capture --agent receiver --lines 120)"
+out="$(ATMUX_REPO="$REPO_NAME" "$ATMUX_BIN" agent capture receiver --lines 120)"
 
 printf '%s\n' "$out" | grep -Fq "<captures scope=\"agent\" agent=\"receiver\" session=\"$AGENT2_SESSION\">"
 printf '%s\n' "$out" | grep -Fq "$marker"

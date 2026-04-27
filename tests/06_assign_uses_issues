@@ -14,7 +14,7 @@ trap "$SCRIPTS_DIR/teardown --team-session \"$TEAM_SESSION\" --agent1-session \"
 
 title="issue-assign-$RANDOM"
 desc="stabilize parser"
-out="$(ATMUX_HOME="$atmux_home_tmp" ATMUX_REPO="$REPO_NAME" ATMUX_AGENT_NAME="sender" ATMUX_SESSION_NAME="$AGENT1_SESSION" "$ATMUX_BIN" assign --to receiver --title "$title" --description "$desc" --todo "write failing test first" --todo "implement fix")"
+out="$(ATMUX_HOME="$atmux_home_tmp" ATMUX_REPO="$REPO_NAME" ATMUX_AGENT_NAME="sender" ATMUX_SESSION_NAME="$AGENT1_SESSION" "$ATMUX_BIN" issue create --title "$title" --description "$desc" --todo "write failing test first" --todo "implement fix" --assign-to receiver)"
 
 printf '%s\n' "$out" | grep -Fq '<assignment '
 printf '%s\n' "$out" | grep -Fq 'created="true"'
@@ -22,6 +22,10 @@ printf '%s\n' "$out" | grep -Fq '<issue '
 printf '%s\n' "$out" | grep -Fq "state=\"assigned\""
 
 issue_id="$(printf '%s\n' "$out" | sed -n 's/.*issue_id="\([^"]*\)".*/\1/p' | head -n1)"
+if [[ -z "$issue_id" ]]; then
+  # Fallback: parse from the create XML's <issue id=...>
+  issue_id="$(printf '%s\n' "$out" | sed -n 's/.*<issue id="\([^"]*\)".*/\1/p' | head -n1)"
+fi
 [[ -n "$issue_id" ]] || { echo "failed to parse issue id from output" >&2; exit 1; }
 
 get_out="$(ATMUX_HOME="$atmux_home_tmp" ATMUX_REPO="$REPO_NAME" "$ATMUX_BIN" issue get "$issue_id")"
@@ -29,5 +33,5 @@ printf '%s\n' "$get_out" | grep -Fq "state=\"assigned\""
 printf '%s\n' "$get_out" | grep -Fq "to=\"atmux-${REPO_NAME}-receiver\""
 printf '%s\n' "$get_out" | grep -Fq "<title>$title</title>"
 
-echo "ok: assign creates and assigns filesystem issue"
+echo "ok: issue create --assign-to creates and assigns filesystem issue"
 

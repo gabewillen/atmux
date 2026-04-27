@@ -10,15 +10,15 @@ REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
 ATMUX_BIN="$REPO_ROOT/bin/atmux"
 
 set +e
-out="$(ATMUX_ALLOW_OUTSIDE_TMUX=1 "$ATMUX_BIN" kill --watcher bogus 2>&1)"
+out="$(ATMUX_ALLOW_OUTSIDE_TMUX=1 "$ATMUX_BIN" watcher kill bogus 2>&1)"
 rc=$?
 set -e
 [[ "$rc" -eq 2 ]] || { echo "expected exit 2 for invalid watcher id, got $rc: $out" >&2; exit 1; }
 
 set +e
-out2="$(ATMUX_ALLOW_OUTSIDE_TMUX=1 "$ATMUX_BIN" kill --watcher foo:bar:baz 2>&1)"
+out2="$(ATMUX_ALLOW_OUTSIDE_TMUX=1 "$ATMUX_BIN" watcher kill foo:bar:baz 2>&1)"
 rc2=$?
 set -e
 [[ "$rc2" -eq 2 ]] || { echo "expected exit 2 for unsupported watcher type, got $rc2: $out2" >&2; exit 1; }
 
-echo "ok: kill --watcher rejects invalid ids"
+echo "ok: watcher kill rejects invalid ids"

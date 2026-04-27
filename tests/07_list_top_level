@@ -11,24 +11,24 @@ SCRIPTS_DIR="$TESTS_DIR/scripts"
 eval "$("$SCRIPTS_DIR/setup")"
 trap "$SCRIPTS_DIR/teardown --team-session \"$TEAM_SESSION\" --agent1-session \"$AGENT1_SESSION\" --agent2-session \"$AGENT2_SESSION\"" EXIT
 
-teams_out="$(ATMUX_REPO="$REPO_NAME" "$ATMUX_BIN" list teams)"
+teams_out="$(ATMUX_REPO="$REPO_NAME" "$ATMUX_BIN" team list)"
 printf '%s\n' "$teams_out" | grep -Fq "<teams repo=\"$REPO_NAME\">"
 printf '%s\n' "$teams_out" | grep -Fq "session=\"$TEAM_SESSION\""
 
-sessions_out="$(ATMUX_REPO="$REPO_NAME" "$ATMUX_BIN" list sessions)"
+sessions_out="$(ATMUX_REPO="$REPO_NAME" "$ATMUX_BIN" session list)"
 printf '%s\n' "$sessions_out" | grep -Fq "<sessions repo=\"$REPO_NAME\">"
 printf '%s\n' "$sessions_out" | grep -Fq "name=\"$AGENT1_SESSION\""
 printf '%s\n' "$sessions_out" | grep -Fq "name=\"$AGENT2_SESSION\""
 printf '%s\n' "$sessions_out" | grep -Fq "name=\"$TEAM_SESSION\""
 
-agents_out="$(ATMUX_REPO="$REPO_NAME" "$ATMUX_BIN" list agents --all)"
+agents_out="$(ATMUX_REPO="$REPO_NAME" "$ATMUX_BIN" agent list --all)"
 printf '%s\n' "$agents_out" | grep -Fq "<agents repo=\"$REPO_NAME\">"
 printf '%s\n' "$agents_out" | grep -Fq "session=\"$AGENT1_SESSION\""
 printf '%s\n' "$agents_out" | grep -Fq "session=\"$AGENT2_SESSION\""
 if printf '%s\n' "$agents_out" | grep -Fq "session=\"$TEAM_SESSION\""; then
-  echo "team session should not appear in --agents output" >&2
+  echo "team session should not appear in agent list output" >&2
   printf '%s\n' "$agents_out" >&2
   exit 1
 fi
 
-echo "ok: top-level list supports teams/sessions/agents"
+echo "ok: noun-first list works for team/session/agent"

@@ -55,7 +55,7 @@ pane_b="$(tmux list-panes -t "$session_b" -F '#{pane_id}' 2>/dev/null | head -n1
 
 # Reject unknown PID
 set +e
-out_rej="$(ATMUX_HOME="$atmux_home" ATMUX_REPO="$repo_name" "$ATMUX_BIN" watch --pid 999999999 2>&1)"
+out_rej="$(ATMUX_HOME="$atmux_home" ATMUX_REPO="$repo_name" "$ATMUX_BIN" process watch 999999999 2>&1)"
 rc_rej=$?
 set -e
 [[ "$rc_rej" -eq 2 ]] || { echo "expected reject exit 2, got $rc_rej: $out_rej" >&2; exit 1; }
@@ -82,7 +82,7 @@ done
 
 [[ -n "$pid" ]] || { echo "pid empty" >&2; exit 1; }
 
-tmux send-keys -t "$pane_b" "ATMUX_HOME=\"$atmux_home\" ATMUX_REPO=\"$repo_name\" ATMUX_AGENT_NAME=\"b\" ATMUX_SESSION_NAME=\"$session_b\" \"$ATMUX_BIN\" watch --pid \"$pid\"" C-m
+tmux send-keys -t "$pane_b" "ATMUX_HOME=\"$atmux_home\" ATMUX_REPO=\"$repo_name\" ATMUX_AGENT_NAME=\"b\" ATMUX_SESSION_NAME=\"$session_b\" \"$ATMUX_BIN\" process watch \"$pid\"" C-m
 
 # Avoid race: watch must register before exec finishes, or watch exits early with no watcher
 deadline=$(( $(date +%s) + 15 ))

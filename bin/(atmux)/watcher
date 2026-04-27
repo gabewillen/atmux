@@ -58,7 +58,7 @@ case "$verb" in
       exit 2
     fi
     shift
-    exec "$HERE/kill" --watcher "$id" "$@"
+    exec "$HERE/(internal)/kill" --watcher "$id" "$@"
     ;;
   -h|--help|help|"")
     usage

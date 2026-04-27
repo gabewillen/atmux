@@ -61,7 +61,7 @@ case "$verb" in
     pid="${1:-}"
     require_pid "$pid"
     shift
-    exec "$HERE/kill" --pid "$pid" "$@"
+    exec "$HERE/(internal)/kill" --pid "$pid" "$@"
     ;;
   -h|--help|help|"")
     usage

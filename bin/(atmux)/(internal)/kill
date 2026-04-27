@@ -4,8 +4,8 @@ set -euo pipefail
 ATMUX_HOME="${ATMUX_HOME:-$HOME/.atmux}"
 
 HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=bin/(atmux)/notify
-source "$HERE/notify"
+# shellcheck source=bin/(atmux)/notify  # accessed via $HERE/../notify
+source "$HERE/../notify"
 
 usage() {
   cat <<'USAGE'

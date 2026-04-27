@@ -510,7 +510,7 @@ case "$sub" in
     fi
     pr_id="$1"; shift
     comment_msg="$1"; shift
-    exec "$here_pr/comment" "$comment_msg" --pr "$pr_id" "$@"
+    exec "$here_pr/(internal)/comment" "$comment_msg" --pr "$pr_id" "$@"
     ;;
   watch)
     here_pr="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"

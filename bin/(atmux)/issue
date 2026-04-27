@@ -552,7 +552,7 @@ case "$sub" in
     fi
     issue_id="$1"; shift
     comment_msg="$1"; shift
-    exec "$here_issue/comment" "$comment_msg" --issue "$issue_id" "$@"
+    exec "$here_issue/(internal)/comment" "$comment_msg" --issue "$issue_id" "$@"
     ;;
   watch)
     here_issue="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"

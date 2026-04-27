@@ -1004,25 +1004,25 @@ case "$sub" in
   kill)
     here_agent="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
     if [[ "${1:-}" == "--all" ]]; then
-      exec "$here_agent/kill" "$@"
+      exec "$here_agent/(internal)/kill" "$@"
     fi
     if [[ $# -eq 0 || "${1:0:1}" == "-" ]]; then
       echo "usage: atmux agent kill <name|pattern> [...]   |   atmux agent kill --all [--yes]" >&2
       exit 2
     fi
-    exec "$here_agent/kill" --agent "$@"
+    exec "$here_agent/(internal)/kill" --agent "$@"
     ;;
   capture)
     here_agent="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
     if [[ "${1:-}" == "--all" ]]; then
-      exec "$here_agent/capture" "$@"
+      exec "$here_agent/(internal)/capture" "$@"
     fi
     if [[ $# -eq 0 || "${1:0:1}" == "-" ]]; then
       echo "usage: atmux agent capture <name> [--lines N]   |   atmux agent capture --all [--lines N]" >&2
       exit 2
     fi
     target_name="$1"; shift
-    exec "$here_agent/capture" --agent "$target_name" "$@"
+    exec "$here_agent/(internal)/capture" --agent "$target_name" "$@"
     ;;
   watch)
     here_agent="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"

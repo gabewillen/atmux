@@ -8,7 +8,7 @@ state="${ATMUX_ROLE_STATE_DIR:-}"
 if [[ -f "$state/watcher-ids" ]]; then
   while IFS= read -r wid; do
     [[ -n "$wid" ]] || continue
-    atmux kill --watcher "$wid" >/dev/null 2>&1 || true
+    atmux watcher kill "$wid" >/dev/null 2>&1 || true
   done < "$state/watcher-ids"
 fi
 

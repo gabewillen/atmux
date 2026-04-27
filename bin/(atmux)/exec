@@ -315,7 +315,7 @@ _run_detached() {
   # state haven't cleaned up their watcher files yet
   if ! exec_notifications_suppressed; then
     local notification_xml
-    notification_xml="$(build_notification "exec" "$command_text" "atmux capture --agent ${agent_name:-unknown}" "exit_code=$exit_code")"
+    notification_xml="$(build_notification "exec" "$command_text" "atmux agent capture ${agent_name:-unknown}" "exit_code=$exit_code")"
     notify_exec_completion "$exec_dir" "$notify_pane" "$notification_xml"
   fi
 

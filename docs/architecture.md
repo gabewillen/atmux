@@ -28,8 +28,9 @@ Examples:
 - `bin/(atmux)/send`
 - `bin/(atmux)/notify`
 - `bin/(atmux)/exec`
-- `bin/(atmux)/watch`
-- `bin/(atmux)/kill`
+- `bin/(atmux)/agent`, `team`, `issue`, `pr`, `process`, `pane`, `path`, `watcher` (resource scripts)
+- `bin/(atmux)/[watch]/*` (per-resource watch backends, dispatched by the resource scripts)
+- `bin/(atmux)/(internal)/{kill,capture,comment}` (internal backends shared by resource scripts)
 
 Installed project or system launchers execute the installed source copy under `<ATMUX_HOME>/src/atmux`.
 

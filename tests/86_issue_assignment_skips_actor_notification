@@ -64,7 +64,7 @@ assign_out="$(
   ATMUX_HOME="$atmux_home_tmp" ATMUX_REPO="$REPO_NAME" ATMUX_AGENT_NAME="sender" ATMUX_SESSION_NAME="$AGENT1_SESSION" \
     "$ATMUX_BIN" issue create --title "skip-creator-notification-$RANDOM" --assign-to receiver
 )"
-issue_id="$(printf '%s\n' "$assign_out" | sed -n 's/.*issue_id="\([^"]*\)".*/\1/p' | head -n1)"
+issue_id="$(printf '%s\n' "$assign_out" | sed -n 's/.*<issue id="\([^"]*\)".*/\1/p' | head -n1)"
 [[ -n "$issue_id" ]] || { echo "failed to parse issue id from assign output" >&2; exit 1; }
 
 if ! wait_for_text "$receiver_pane" '<notification type="issue"' 10; then

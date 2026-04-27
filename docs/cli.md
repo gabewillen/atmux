@@ -51,9 +51,9 @@ atmux schedule --once 10m -- atmux send --to worker "status check"
 
 Runs a command and sends an exec notification when it exits. Detached execs run in a tmux window and are tracked under `<ATMUX_HOME>/exec/<repo>/<pid>/`.
 
-### `atmux watch`
+### Watch (per-resource)
 
-Waits for text, process completion, issue updates, local PR updates, new GitHub issues, new GitHub pull requests, GitHub PR discussion updates, stdio output, or agent idleness.
+Watch verbs live on each resource. Available forms: `atmux agent watch`, `atmux pane watch`, `atmux process watch`, `atmux path watch`, `atmux issue watch`, `atmux pr watch`. They wait for text, process completion, issue updates, local PR updates, new GitHub issues, new GitHub pull requests, GitHub PR discussion updates, stdio output, or agent idleness.
 
 Examples:
 
@@ -68,13 +68,13 @@ atmux pr watch https://github.com/owner/repo/pull/123 --timeout 600
 atmux pane watch %1 --text "ready" --timeout 30
 ```
 
-`watch --issues` is long-lived: it keeps notifying on newly created GitHub issues until stopped. Its registration output includes `watcher_id="..."` for use with `atmux watcher kill <id>`.
+`atmux issue watch --feed` is long-lived: it keeps notifying on newly created GitHub issues until stopped. Its registration output includes `watcher_id="..."` for use with `atmux watcher kill <id>`.
 
-`watch --prs` (alias `--pull-requests`) is long-lived: it keeps notifying on newly created GitHub pull requests until stopped. Its registration output includes `watcher_id="..."` for use with `atmux watcher kill <id>`.
+`atmux pr watch --feed` is long-lived: it keeps notifying on newly created GitHub pull requests until stopped. Its registration output includes `watcher_id="..."` for use with `atmux watcher kill <id>`.
 
-`watch --path` exits when a filesystem glob's matched set or file metadata changes. It uses `fswatch` or `inotifywait` when available, otherwise it falls back to polling.
+`atmux path watch` exits when a filesystem glob's matched set or file metadata changes. It uses `fswatch` or `inotifywait` when available, otherwise it falls back to polling.
 
-`watch --pr` accepts both local PR ids/URIs and GitHub PR URLs. For GitHub URLs it is long-lived: it keeps notifying on new discussion until stopped or the PR closes/merges. Its registration output includes `watcher_id="..."` for use with `atmux watcher kill <id>`.
+`atmux pr watch <url>` accepts both local PR ids/URIs and GitHub PR URLs. For GitHub URLs it is long-lived: it keeps notifying on new discussion until stopped or the PR closes/merges. Its registration output includes `watcher_id="..."` for use with `atmux watcher kill <id>`.
 
 ### `atmux process kill <pid> [--timeout <seconds>] [--signal <NAME>]`
 
@@ -82,7 +82,7 @@ Stops an `atmux exec` tracked process, waits for completion notifications and wa
 
 ### `atmux watcher kill <id> [--timeout <seconds>]`
 
-Removes a watcher registration by id. Supports watcher ids emitted by `watch --pr`, `watch --issues`, and `watch --prs`.
+Removes a watcher registration by id. Supports watcher ids emitted by `atmux pr watch <url>`, `atmux issue watch --feed`, and `atmux pr watch --feed`.
 
 ### `atmux install [--project|--system] [--project-root <dir>] [--no-slash-commands]`
 

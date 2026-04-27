@@ -25,7 +25,7 @@ ATMUX_HOME="$atmux_home" \
 ATMUX_TARGET_PANE="$pane_id" \
 "$ADAPTER_DIR/scripts/model" set gpt-5.4 high >/dev/null
 
-if ! "$REPO_ROOT/bin/(atmux)/watch" --target "$pane_id" --scope pane --text "Model changed to gpt-5.4 high" --timeout 40 --interval 0.2 --lines 600; then
+if ! "$REPO_ROOT/bin/atmux" pane watch "$pane_id" --scope pane --text "Model changed to gpt-5.4 high" --timeout 40 --interval 0.2 --lines 600; then
   tmux capture-pane -p -t "$pane_id" -S -200 >&2 || true
   echo "expected model change message not found" >&2
   exit 1

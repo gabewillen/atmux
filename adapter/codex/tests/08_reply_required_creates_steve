@@ -49,13 +49,13 @@ dump_debug() {
 }
 
 cleanup() {
-  ATMUX_REPO="$repo" "$REPO_ROOT/bin/atmux" kill --agent "$steve_session" >/dev/null 2>&1 || true
+  ATMUX_REPO="$repo" "$REPO_ROOT/bin/atmux" agent kill "$steve_session" >/dev/null 2>&1 || true
   "$SCRIPTS_DIR/teardown" --session "$manager_session" >/dev/null 2>&1 || true
   "$SCRIPTS_DIR/teardown" --session "$worker_session" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 
-cmd_create="ATMUX_NO_WRAP=1 ATMUX_REPO=${repo} ATMUX_AGENT_NAME=worker ATMUX_SOURCE_ROOT=${REPO_ROOT} ${REPO_ROOT}/bin/atmux create --agent Steve --role principal --intelligence 100"
+cmd_create="ATMUX_NO_WRAP=1 ATMUX_REPO=${repo} ATMUX_AGENT_NAME=worker ATMUX_SOURCE_ROOT=${REPO_ROOT} ${REPO_ROOT}/bin/atmux agent create Steve --role principal --intelligence 100"
 cmd_reply="ATMUX_NO_WRAP=1 ATMUX_REPO=${repo} ATMUX_MANAGER=manager ATMUX_AGENT_NAME=worker ATMUX_SESSION_NAME=${worker_session} ${REPO_ROOT}/bin/atmux send --to manager \"${reply_token} Steve created\""
 instruction="${task_token}: Create the most intelligent agent named Steve. REQUIRED: run this exact command: ${cmd_create} . Then run this exact command: ${cmd_reply} . Do not ask questions."
 
@@ -64,13 +64,13 @@ ATMUX_AGENT_NAME="manager" \
 ATMUX_SESSION_NAME="$manager_session" \
 "$REPO_ROOT/bin/atmux" send --to worker --reply-required "$instruction"
 
-if ! "$REPO_ROOT/bin/(atmux)/watch" --target "$worker_pane" --scope pane --text "reply_required=\"true\"" --timeout 30 --interval 0.2 --lines 600; then
+if ! "$REPO_ROOT/bin/atmux" pane watch "$worker_pane" --scope pane --text "reply_required=\"true\"" --timeout 30 --interval 0.2 --lines 600; then
   dump_debug
   echo "worker did not receive reply_required=true message" >&2
   exit 1
 fi
 
-if ! "$REPO_ROOT/bin/(atmux)/watch" --target "$manager_pane" --scope pane --text "$reply_token" --timeout 240 --interval 0.5 --lines 1500; then
+if ! "$REPO_ROOT/bin/atmux" pane watch "$manager_pane" --scope pane --text "$reply_token" --timeout 240 --interval 0.5 --lines 1500; then
   dump_debug
   echo "manager did not receive required reply from worker" >&2
   exit 1

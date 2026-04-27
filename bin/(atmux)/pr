@@ -528,20 +528,21 @@ case "$sub" in
       esac
     done
     if [[ -n "$feed_repo" ]]; then
-      exec "$here_pr/[watch]/prs" "$feed_repo" "${forward_args[@]}"
+      exec "$here_pr/[watch]/prs" --prs "$feed_repo" ${forward_args[@]+"${forward_args[@]}"}
     fi
     if [[ ${#forward_args[@]} -eq 0 || "${forward_args[0]:0:1}" == "-" ]]; then
       echo "usage: atmux pr watch <id|atmux-uri|github-url> [--repo R]   |   atmux pr watch --feed <repo>" >&2
       exit 2
     fi
     pr_id="${forward_args[0]}"
-    forward_args=("${forward_args[@]:1}")
+    rest=("${forward_args[@]:1}")
     case "$pr_id" in
-      https://github.com/*|github.com/*|atmux://*)
-        exec "$here_pr/[watch]/pr" --pr "$pr_id" "${forward_args[@]}"
+      https://github.com/*|github.com/*)
+        exec "$here_pr/[watch]/pr" --pr "$pr_id" ${rest[@]+"${rest[@]}"}
         ;;
       *)
-        exec "$here_pr/[watch]/pull-request" --pull-request "$pr_id" "${forward_args[@]}"
+        # atmux:// URIs and bare ids are local filesystem PRs.
+        exec "$here_pr/[watch]/pull-request" --pr "$pr_id" ${rest[@]+"${rest[@]}"}
         ;;
     esac
     ;;

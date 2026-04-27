@@ -266,7 +266,7 @@ render_managed_block() {
     echo
     if [[ -z "$manager_value" ]]; then
       echo "# Delegation Rules"
-      echo "- ALWAYS check \`atmux list agents --all --status\` first."
+      echo "- ALWAYS check \`atmux agent list --all --status\` first."
       echo "- ALWAYS assign to an existing idle capable agent before creating a new one."
       echo "- ONLY create a new agent when no idle agent matches the required capability/intelligence."
       echo "- ALWAYS include clear task scope via \`--description\` and \`--todos\`."
@@ -280,7 +280,7 @@ render_managed_block() {
       echo "- ALWAYS send a message to your manager when stuck or after completing any task."
       echo "- ALWAYS message your manager with \`atmux send --to ${manager_value} \"...\"\`."
       echo "- ALWAYS coordinate with peer agents using \`atmux send --to <agent> \"...\"\`."
-      echo "- ALWAYS check \`atmux list agents --all --status\` before creating new agents."
+      echo "- ALWAYS check \`atmux agent list --all --status\` before creating new agents."
       echo "- ALWAYS reuse idle capable agents before creating new ones."
       echo "- ALWAYS spawn agents to decompose your todos if necessary."
       echo "- ALWAYS use \`--reply-required\` when a manager decision is needed."
@@ -634,17 +634,16 @@ run_adapter() {
           echo "atmux: role start failed (rc=$role_start_rc); aborting agent" >&2
         fi
         # Order matters here. tmux kill-session destroys the pane (and this
-        # script's bash process), so anything after it may not run. Strategy:
-        # 1) Signal the abort to the parent via ATMUX_ROLE_START_STATE=failed
-        #    (the parent's poll picks this up and exits 1).
-        # 2) Clean up worktree + branch while we're still alive.
-        # 3) Kill the session last (this kills us).
+        # script's bash process), so anything after it may not run. The parent
+        # `agent _create` poll also kills the session as soon as it sees
+        # ATMUX_ROLE_START_STATE=failed, which can preempt cleanup if we
+        # signal first. Strategy:
+        # 1) Clean up worktree + branch while we're guaranteed alive.
+        # 2) Signal the abort to the parent (parent may kill the session, but
+        #    cleanup is already done by then).
+        # 3) Kill the session ourselves as a fallback if the parent didn't.
         local fail_worktree="${ATMUX_WORKTREE:-}"
         local fail_session="$current_session"
-        if [[ -n "$fail_session" ]] && tmux has-session -t "$fail_session" 2>/dev/null; then
-          tmux set-environment -t "$fail_session" ATMUX_ROLE_START_STATE failed >/dev/null 2>&1 || true
-          tmux set-environment -t "$fail_session" ATMUX_BOOTSTRAP_STATE failed >/dev/null 2>&1 || true
-        fi
         if [[ -n "$fail_worktree" && -d "$fail_worktree" ]]; then
           local repo_for_cleanup=""
           repo_for_cleanup="$(git -C "$fail_worktree" rev-parse --show-toplevel 2>/dev/null || true)"
@@ -657,6 +656,10 @@ run_adapter() {
           if [[ -n "$repo_for_cleanup" && -n "$fail_session" ]]; then
             git -C "$repo_for_cleanup" branch -D "$fail_session" >/dev/null 2>&1 || true
           fi
+        fi
+        if [[ -n "$fail_session" ]] && tmux has-session -t "$fail_session" 2>/dev/null; then
+          tmux set-environment -t "$fail_session" ATMUX_ROLE_START_STATE failed >/dev/null 2>&1 || true
+          tmux set-environment -t "$fail_session" ATMUX_BOOTSTRAP_STATE failed >/dev/null 2>&1 || true
         fi
         if [[ -n "$fail_session" ]] && tmux has-session -t "$fail_session" 2>/dev/null; then
           tmux kill-session -t "$fail_session" >/dev/null 2>&1 || true
@@ -1009,7 +1012,8 @@ shift || true
 
 case "$sub" in
   list|ls)
-    tmux list-sessions -F '#{session_name}' 2>/dev/null | awk '/^atmux-/ { print }'
+    HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+    exec "$HERE/(list)/sessions" "$@"
     ;;
   start)
     start_session "$@"

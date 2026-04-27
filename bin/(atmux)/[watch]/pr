@@ -10,7 +10,7 @@ source "$HERE/../notify"
 usage() {
   cat <<'USAGE'
 Usage:
-  atmux watch --pr <url> [--timeout <seconds>] [--interval <seconds>] [--exec <cmd>]
+  atmux pr watch <url> [--timeout <seconds>] [--interval <seconds>] [--exec <cmd>]
 
 Description:
   Register the current pane to watch a GitHub pull request discussion stream.
@@ -27,9 +27,9 @@ Description:
   Requires GitHub CLI (`gh`) with API access to the target PR.
 
 Examples:
-  atmux watch --pr https://github.com/owner/repo/pull/123
-  atmux watch --pr https://github.com/owner/repo/pull/123 --timeout 600
-  atmux watch --pr https://github.com/owner/repo/pull/123 --exec ./on-pr
+  atmux pr watch https://github.com/owner/repo/pull/123
+  atmux pr watch https://github.com/owner/repo/pull/123 --timeout 600
+  atmux pr watch https://github.com/owner/repo/pull/123 --exec ./on-pr
 USAGE
 }
 
@@ -537,7 +537,7 @@ main() {
   local gh_bin=""
   gh_bin="$(resolve_gh_bin)"
   if [[ -z "$gh_bin" || ! -x "$gh_bin" ]]; then
-    echo "atmux watch --pr: GitHub CLI not found; install gh or set ATMUX_GH_BIN" >&2
+    echo "atmux pr watch: GitHub CLI not found; install gh or set ATMUX_GH_BIN" >&2
     exit 1
   fi
 
@@ -548,13 +548,13 @@ main() {
     IFS= read -r number
   } < <(parse_pr_url "$pr_url" || true)
   if [[ -z "${owner:-}" || -z "${repo:-}" || -z "${number:-}" ]]; then
-    echo "atmux watch --pr: invalid GitHub pull request URL: $pr_url" >&2
+    echo "atmux pr watch: invalid GitHub pull request URL: $pr_url" >&2
     exit 2
   fi
 
   local pane="" key="" watcher_file="" expires_at="0"
   pane="$(current_pane)"
-  [[ -n "$pane" ]] || { echo "atmux watch --pr: unable to resolve current pane" >&2; exit 2; }
+  [[ -n "$pane" ]] || { echo "atmux pr watch: unable to resolve current pane" >&2; exit 2; }
 
   key="$(pr_watch_key "$owner" "$repo" "$number")"
   mkdir -p "$(pr_watch_watchers_dir "$key")"

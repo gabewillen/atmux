@@ -9,36 +9,15 @@ source "$HERE/../notify"
 
 usage() {
   cat <<'USAGE'
-Usage:
-  atmux kill --pid <pid> [--timeout <seconds>] [--signal <NAME>]
-  atmux kill --watcher <id> [--timeout <seconds>]
-  atmux kill --agent <name|pattern> [name|pattern...]
-  atmux kill --all [--yes]
+Internal kill backend. Invoked by the noun-first front-ends:
 
-Description:
-  --pid    Stop an atmux exec-tracked child process for this repo, wait for
-           executor notifications (including watcher fan-out) to finish, then
-           remove metadata under ~/.atmux/exec/<repo>/<pid>/.
-  --watcher  Remove a watcher registration by id. Supports watcher ids emitted
-             by `atmux watch --pr`, `atmux watch --issues`, and
-             `atmux watch --prs`.
-  --agent  Kill agent sessions and clean up their worktrees and branches.
-           Accepts agent names, session names, or glob patterns.
-  --all    Kill every atmux session, worktree, and branch for this repo.
-           Prompts for y/N confirmation; use --yes to skip. Refuses to run
-           from inside an atmux session.
+  atmux process kill <pid> [--timeout <seconds>] [--signal <NAME>]
+  atmux watcher kill <id> [--timeout <seconds>]
+  atmux agent kill <name|pattern> [name|pattern...]
+  atmux agent kill --all [--yes]
 
-Examples:
-  atmux kill --pid 12345
-  atmux kill --pid 12345 --timeout 30 --signal TERM
-  atmux kill --watcher pr:owner_repo_pr_123:atmux-myrepo-worker-_12
-  atmux kill --watcher issues:owner_repo_issues:atmux-myrepo-worker-_12
-  atmux kill --watcher prs:owner_repo_prs:atmux-myrepo-worker-_12
-  atmux kill --agent worker
-  atmux kill --agent 'agent-*'
-  atmux kill --agent worker planner
-  atmux kill --all
-  atmux kill --all --yes
+Direct invocation (--pid, --watcher, --agent, --all) is for internal callers
+only and is not part of the user-facing CLI surface.
 USAGE
 }
 
@@ -90,7 +69,7 @@ kill_pid() {
   exec_dir="$(exec_dir_for_repo_pid "$repo_name" "$pid")"
 
   if ! validate_exec_ownership "$exec_dir" "$pid" "$repo_name"; then
-    echo "atmux kill: not an atmux-owned exec PID for this repo: $pid" >&2
+    echo "atmux process kill: not an atmux-owned exec PID for this repo: $pid" >&2
     exit 2
   fi
 
@@ -117,7 +96,7 @@ kill_pid() {
   fi
 
   if ! wait_for_completion_or_timeout "$exec_dir" "$timeout_sec"; then
-    echo "atmux kill: timeout waiting for exec completion" >&2
+    echo "atmux process kill: timeout waiting for exec completion" >&2
     exit 124
   fi
 
@@ -256,7 +235,7 @@ kill_watcher() {
 
   IFS=':' read -r kind key watcher_name extra <<< "$watcher_id"
   if [[ -z "$kind" || -z "$key" || -z "$watcher_name" || -n "$extra" ]]; then
-    echo "atmux kill: invalid watcher id: $watcher_id" >&2
+    echo "atmux watcher kill: invalid watcher id: $watcher_id" >&2
     exit 2
   fi
 
@@ -269,7 +248,7 @@ kill_watcher() {
         if [[ -f "${watcher_file}.exec" ]]; then
           rm -f "${watcher_file}.exec"
         fi
-        echo "atmux kill: watcher not found: $watcher_id" >&2
+        echo "atmux watcher kill: watcher not found: $watcher_id" >&2
         exit 2
       fi
 
@@ -290,7 +269,7 @@ kill_watcher() {
         if [[ -f "${watcher_file}.exec" ]]; then
           rm -f "${watcher_file}.exec"
         fi
-        echo "atmux kill: watcher not found: $watcher_id" >&2
+        echo "atmux watcher kill: watcher not found: $watcher_id" >&2
         exit 2
       fi
 
@@ -311,7 +290,7 @@ kill_watcher() {
         if [[ -f "${watcher_file}.exec" ]]; then
           rm -f "${watcher_file}.exec"
         fi
-        echo "atmux kill: watcher not found: $watcher_id" >&2
+        echo "atmux watcher kill: watcher not found: $watcher_id" >&2
         exit 2
       fi
 
@@ -326,7 +305,7 @@ kill_watcher() {
       fi
       ;;
     *)
-      echo "atmux kill: unsupported watcher type: $kind" >&2
+      echo "atmux watcher kill: unsupported watcher type: $kind" >&2
       exit 2
       ;;
   esac
@@ -564,10 +543,10 @@ inside_atmux_session() {
 confirm_kill_all() {
   local repo_name="$1"
   if [[ ! -t 0 ]]; then
-    echo "atmux kill --all: stdin is not a tty; pass --yes to skip prompt" >&2
+    echo "atmux agent kill --all: stdin is not a tty; pass --yes to skip prompt" >&2
     exit 2
   fi
-  printf 'atmux kill --all will destroy every session, worktree, and branch for repo "%s".\nContinue? [y/N] ' "$repo_name" >&2
+  printf 'atmux agent kill --all will destroy every session, worktree, and branch for repo "%s".\nContinue? [y/N] ' "$repo_name" >&2
   local reply=""
   IFS= read -r reply || reply=""
   case "$reply" in
@@ -655,7 +634,7 @@ main() {
       exit 2
     fi
     if inside_atmux_session; then
-      echo "atmux kill --all: refusing to run from inside an atmux session" >&2
+      echo "atmux agent kill --all: refusing to run from inside an atmux session" >&2
       exit 2
     fi
     local repo_root="" repo_name=""

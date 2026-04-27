@@ -8,7 +8,7 @@ source "$HERE/../notify"
 repo_context() {
   local repo_root repo_name
   if ! repo_root="$(git rev-parse --show-toplevel 2>/dev/null)"; then
-    echo "atmux list sessions must be run from a git repository" >&2
+    echo "atmux session list must be run from a git repository" >&2
     exit 1
   fi
 

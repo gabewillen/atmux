@@ -36,7 +36,7 @@ ATMUX_HOME="$atmux_home" \
 ATMUX_TARGET_PANE="$pane_id" \
 "$ADAPTER_DIR/scripts/reasoning-level" set medium >/dev/null
 
-if ! "$REPO_ROOT/bin/(atmux)/watch" --target "$pane_id" --scope pane --text "Model changed to gpt-5.5 medium" --timeout 40 --interval 0.2 --lines 700; then
+if ! "$REPO_ROOT/bin/atmux" pane watch "$pane_id" --scope pane --text "Model changed to gpt-5.5 medium" --timeout 40 --interval 0.2 --lines 700; then
   tmux capture-pane -p -t "$pane_id" -S -220 >&2 || true
   echo "expected medium reasoning change message not found" >&2
   exit 1

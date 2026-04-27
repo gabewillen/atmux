@@ -96,17 +96,17 @@ Current built-in mapping:
   `<notification type="exec" from="..." cmd="..." exit_code="..." />`
 - Tracks each launched child process under `<ATMUX_HOME>/exec/<repo>/<pid>/`.
 
-### `atmux watch`
+### Watch (per-resource)
+- Watch verbs live on each resource: `atmux agent watch`, `atmux pane watch`, `atmux process watch`, `atmux path watch`, `atmux issue watch`, `atmux pr watch`.
 - Wait until text appears, a tracked process exits, an issue updates, a local pull request updates, new GitHub issues appear, new GitHub pull requests appear, a PR discussion updates, or an agent goes idle.
 - `atmux path watch <glob>` watches filesystem paths matching a glob and exits when the matched set or file metadata changes. It uses `fswatch` or `inotifywait` when available, otherwise it falls back to polling.
 - `atmux pr watch <id|atmux-uri|github-url>` watches either a filesystem pull request or a GitHub pull request based on the URI. Local PRs accept an id with `--repo`, or `atmux://pull-request/<repo>/<id>`.
-- `atmux issue watch --feed <repo|url>` polls a GitHub repository for newly created issues and queues notifications to the current pane until the watcher is stopped.
-- `watch --issues` registration output includes a `watcher_id`, which can be removed via `atmux watcher kill <id>`.
-- `atmux pr watch --feed <repo|url>` (alias `--pull-requests`) polls a GitHub repository for newly created pull requests and queues notifications to the current pane until the watcher is stopped. Registration output includes a `watcher_id`, removable via `atmux watcher kill <id>`.
-- For GitHub PR URLs, `watch --pr` polls comments/reviews and queues notifications until the PR closes/merges or the watcher is stopped. Remote watcher registration output includes a `watcher_id`, which can be removed via `atmux watcher kill <id>`.
+- `atmux issue watch --feed <repo|url>` polls a GitHub repository for newly created issues and queues notifications to the current pane until the watcher is stopped. Registration output includes a `watcher_id`, removable via `atmux watcher kill <id>`.
+- `atmux pr watch --feed <repo|url>` polls a GitHub repository for newly created pull requests and queues notifications to the current pane until the watcher is stopped. Registration output includes a `watcher_id`, removable via `atmux watcher kill <id>`.
+- For GitHub PR URLs, `atmux pr watch <url>` polls comments/reviews and queues notifications until the PR closes/merges or the watcher is stopped. Remote watcher registration output includes a `watcher_id`, removable via `atmux watcher kill <id>`.
 
 ### `atmux process kill <pid> [--timeout <seconds>] [--signal <NAME>]`
-- Stops the tracked child for this repo (same `exec` metadata as `watch --pid`).
+- Stops the tracked child for this repo (same `exec` metadata as `atmux process watch <pid>`).
 - After the executor finishes notifications (including watcher fan-out), removes `<ATMUX_HOME>/exec/<repo>/<pid>/`.
 - Default `TERM` and `--timeout` 60s; escalates to `KILL` if the process is still alive after the timeout.
 

@@ -8,13 +8,13 @@ source "$HERE/../notify"
 
 usage() {
   cat <<'USAGE'
-Usage:
-  atmux comment "message" --issue <id> [--repo <repo>]
-  atmux comment "message" --pr <id> [--repo <repo>]
+Internal comment backend. Invoked by the noun-first front-ends:
 
-Description:
-  Add a comment to a filesystem issue or pull request.
-  Notifies watchers, assignee, and assigner.
+  atmux issue comment <id> "message" [--repo <repo>]
+  atmux pr comment <id> "message" [--repo <repo>]
+
+Direct invocation (--issue, --pr) is for internal callers only and is not
+part of the user-facing CLI surface.
 USAGE
 }
 
@@ -72,7 +72,7 @@ notify_agent_by_name() {
   [[ -n "$agent_name" ]] || return 0
 
   local session=""
-  session="$("$HERE/agent" resolve "$agent_name" "$repo" 2>/dev/null || true)"
+  session="$("$HERE/../agent" resolve "$agent_name" "$repo" 2>/dev/null || true)"
   if [[ -z "$session" ]]; then
     session="atmux-${repo}-${agent_name}"
   fi

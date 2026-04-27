@@ -87,6 +87,22 @@ determines what the flags mean.
   unknown commands surface as "unknown command" rather than the confusing
   "must be run inside tmux".
 
+### Fixed
+
+- `bin/(atmux)/message`: `message_is_for_current_agent` returned early
+  from inside `while ... done < <(producer)`, which intermittently
+  triggered SIGABRT under macOS bash 3.2's process-substitution cleanup
+  race. Switched to a here-string with the producer captured up front.
+- `bin/(atmux)/session`: when a role start hook failed, `run_adapter`
+  signaled `ATMUX_ROLE_START_STATE=failed` before cleaning up the
+  worktree. The parent `agent _create` poll then killed the session in
+  response, terminating cleanup mid-flight and leaking the worktree.
+  Reordered to clean up worktree+branch first, then signal, then kill.
+- `tests/runner`: glob `[0-9][0-9]_*` silently skipped tests with 3-digit
+  prefixes (`100_`, `110_`–`112_`); broadened to `[0-9]*_*`. Live-test
+  skip list replaced with a `*_live` suffix pattern so newly added live
+  tests are gated by default.
+
 ## Earlier versions
 
 See `git log` — no CHANGELOG was kept before 0.9.0.

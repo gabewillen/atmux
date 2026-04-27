@@ -10,8 +10,7 @@ source "$HERE/../notify"
 usage() {
   cat <<'USAGE'
 Usage:
-  atmux watch --pr <id|atmux-uri> [--repo <repo>] [--timeout <seconds>] [--interval <seconds>]
-  atmux watch --pull-request <id> [--repo <repo>] [--timeout <seconds>] [--interval <seconds>]
+  atmux pr watch <id|atmux-uri> [--repo <repo>] [--timeout <seconds>] [--interval <seconds>]
 
 Description:
   Wait for the next update to an atmux filesystem pull request
@@ -20,8 +19,8 @@ Description:
   assign/claim/comment fan-out.
 
 Examples:
-  atmux watch --pr AbCdEfGhIjKlMnOp --repo myrepo
-  atmux watch --pr atmux://pull-request/myrepo/AbCdEfGhIjKlMnOp --timeout 120
+  atmux pr watch AbCdEfGhIjKlMnOp --repo myrepo
+  atmux pr watch atmux://pull-request/myrepo/AbCdEfGhIjKlMnOp --timeout 120
 USAGE
 }
 
@@ -55,7 +54,7 @@ resolve_pr_repo() {
   fi
 
   if [[ -z "$repo" ]]; then
-    echo "atmux watch --pull-request: unable to resolve repo; pass --repo <repo>" >&2
+    echo "atmux pr watch: unable to resolve repo; pass --repo <repo>" >&2
     exit 2
   fi
 
@@ -70,13 +69,13 @@ parse_local_pr_ref() {
   case "$ref" in
     atmux://pull-request/*)
       rest="${ref#atmux://pull-request/}"
-      [[ "$rest" == */* ]] || { echo "atmux watch --pr: invalid local PR URI: $ref" >&2; exit 2; }
+      [[ "$rest" == */* ]] || { echo "atmux pr watch: invalid local PR URI: $ref" >&2; exit 2; }
       uri_repo="${rest%%/*}"
       uri_id="${rest#*/}"
       ;;
     atmux://pr/*)
       rest="${ref#atmux://pr/}"
-      [[ "$rest" == */* ]] || { echo "atmux watch --pr: invalid local PR URI: $ref" >&2; exit 2; }
+      [[ "$rest" == */* ]] || { echo "atmux pr watch: invalid local PR URI: $ref" >&2; exit 2; }
       uri_repo="${rest%%/*}"
       uri_id="${rest#*/}"
       ;;
@@ -86,10 +85,10 @@ parse_local_pr_ref() {
   esac
 
   if [[ -n "$uri_repo" ]]; then
-    [[ -n "$uri_id" && "$uri_id" != */* ]] || { echo "atmux watch --pr: invalid local PR URI: $ref" >&2; exit 2; }
+    [[ -n "$uri_id" && "$uri_id" != */* ]] || { echo "atmux pr watch: invalid local PR URI: $ref" >&2; exit 2; }
     uri_repo="$(normalize_name "$uri_repo")"
     if [[ -n "$explicit_repo" && "$(normalize_name "$explicit_repo")" != "$uri_repo" ]]; then
-      echo "atmux watch --pr: URI repo '$uri_repo' does not match --repo '$(normalize_name "$explicit_repo")'" >&2
+      echo "atmux pr watch: URI repo '$uri_repo' does not match --repo '$(normalize_name "$explicit_repo")'" >&2
       exit 2
     fi
     printf '%s\n%s\n' "$uri_repo" "$uri_id"
@@ -152,7 +151,7 @@ main() {
   pr_dir="$(pull_request_dir_for_id "$root" "$pr_id")"
 
   if [[ ! -d "$pr_dir" ]]; then
-    echo "atmux watch --pr: pull request not found: $pr_id" >&2
+    echo "atmux pr watch: pull request not found: $pr_id" >&2
     exit 2
   fi
 

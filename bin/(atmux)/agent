@@ -21,9 +21,7 @@ Usage:
 
 Description:
   Manage atmux agents — sessions running an AI CLI under tmux. Agents are
-  scoped to the current repo. `_create` is kept as a private alias for
-  `create` so internal callers (the legacy `atmux create --agent` front)
-  continue to work during the resource-first cutover.
+  scoped to the current repo.
 USAGE
 }
 

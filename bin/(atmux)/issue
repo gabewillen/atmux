@@ -40,8 +40,7 @@ Description:
   Repo-scoped issue tickets on filesystem.
   Issues are stored at: ~/.atmux/issues/<repo>/<id>/
 
-  `create --assign-to` creates the issue and immediately assigns it (one-shot
-  replacement for the legacy `atmux assign --to <agent> --title <t>` form).
+  `create --assign-to` creates the issue and immediately assigns it.
   `watch <id>` waits for the next update on a single issue.
   `watch --feed <repo>` watches a GitHub repo for newly-filed issues.
 USAGE
@@ -568,15 +567,15 @@ case "$sub" in
       esac
     done
     if [[ -n "$feed_repo" ]]; then
-      exec "$here_issue/[watch]/issues" "$feed_repo" "${forward_args[@]}"
+      exec "$here_issue/[watch]/issues" --issues "$feed_repo" ${forward_args[@]+"${forward_args[@]}"}
     fi
     if [[ ${#forward_args[@]} -eq 0 || "${forward_args[0]:0:1}" == "-" ]]; then
       echo "usage: atmux issue watch <id> [--repo R]   |   atmux issue watch --feed <repo>" >&2
       exit 2
     fi
     issue_id="${forward_args[0]}"
-    forward_args=("${forward_args[@]:1}")
-    exec "$here_issue/[watch]/issue" --issue "$issue_id" "${forward_args[@]}"
+    rest=("${forward_args[@]:1}")
+    exec "$here_issue/[watch]/issue" --issue "$issue_id" ${rest[@]+"${rest[@]}"}
     ;;
   -h|--help|help|"")
     usage

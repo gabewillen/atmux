@@ -10,15 +10,15 @@ source "$HERE/../notify"
 usage() {
   cat <<'USAGE'
 Usage:
-  atmux watch --issue <id> [--repo <repo>] [--timeout <seconds>] [--interval <seconds>]
+  atmux issue watch <id> [--repo <repo>] [--timeout <seconds>] [--interval <seconds>]
 
 Description:
   Wait for the next update to an atmux filesystem issue (~/.atmux/issues/<repo>/<id>/).
   Registers this pane to receive the same notification XML as issue assign/claim fan-out.
 
 Examples:
-  atmux watch --issue AbCdEfGhIjKlMnOp
-  atmux watch --issue "$id" --repo myrepo --timeout 120
+  atmux issue watch AbCdEfGhIjKlMnOp
+  atmux issue watch "$id" --repo myrepo --timeout 120
 USAGE
 }
 
@@ -52,7 +52,7 @@ resolve_issue_repo() {
   fi
 
   if [[ -z "$repo" ]]; then
-    echo "atmux watch --issue: unable to resolve repo; pass --repo <repo>" >&2
+    echo "atmux issue watch: unable to resolve repo; pass --repo <repo>" >&2
     exit 2
   fi
 
@@ -103,7 +103,7 @@ main() {
   issue_dir="$(issue_dir_for_id "$root" "$issue_id")"
 
   if [[ ! -d "$issue_dir" ]]; then
-    echo "atmux watch --issue: issue not found: $issue_id" >&2
+    echo "atmux issue watch: issue not found: $issue_id" >&2
     exit 2
   fi
 

@@ -10,14 +10,14 @@ source "$HERE/../notify"
 usage() {
   cat <<'USAGE'
 Usage:
-  atmux watch --target <tmux-target> --text <needle> [--scope pane|window|session] [--timeout <seconds>] [--interval <seconds>] [--lines <n>]
+  atmux pane watch <tmux-target> --text <needle> [--scope pane|window|session] [--timeout <seconds>] [--interval <seconds>] [--lines <n>]
 
 Description:
   Poll tmux output and exit 0 when text appears, non-zero on timeout.
 
 Examples:
-  atmux watch --target %12 --scope pane --text "Select Model and Effort"
-  atmux watch --target @3 --scope window --text "running tests" --timeout 20
+  atmux pane watch %12 --scope pane --text "Select Model and Effort"
+  atmux pane watch @3 --scope window --text "running tests" --timeout 20
 USAGE
 }
 
@@ -160,7 +160,7 @@ main() {
     set -e
     if [[ "$stream_rc" -ne 0 ]]; then
       cleanup_streams
-      echo "atmux watch --text: unable to attach event stream to pane $pane" >&2
+      echo "atmux pane watch: unable to attach event stream to pane $pane" >&2
       exit 1
     fi
     stream_panes+=("$pane")
@@ -175,7 +175,7 @@ main() {
     forwarders+=("$!")
   done < <(scope_panes "$scope" "$target")
 
-  [[ "${#stream_panes[@]}" -gt 0 ]] || { echo "atmux watch --text: no panes matched target" >&2; exit 1; }
+  [[ "${#stream_panes[@]}" -gt 0 ]] || { echo "atmux pane watch: no panes matched target" >&2; exit 1; }
 
   while true; do
     now="$(date +%s)"

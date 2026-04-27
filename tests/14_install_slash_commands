@@ -38,7 +38,7 @@ grep -Fx "config/install/project-root" "$tmp_project/.atmux/.gitignore" >/dev/nu
 [[ ! -e "$tmp_home/.codex/prompts/atmux-send.md" ]] || { echo "project install polluted home codex prompts" >&2; exit 1; }
 
 launcher_help="$(cd "$tmp_project" && HOME="$tmp_home" ATMUX_ALLOW_OUTSIDE_TMUX=1 "$tmp_project/.atmux/bin/atmux" help)"
-printf '%s\n' "$launcher_help" | grep -F "Available subcommands:" >/dev/null || {
+printf '%s\n' "$launcher_help" | grep -F "Resources" >/dev/null || {
   echo "project launcher did not execute installed atmux source" >&2
   exit 1
 }

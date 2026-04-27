@@ -62,7 +62,7 @@ should_skip_test() {
   esac
 
   case "$test_name" in
-    49_notify_real_adapter_create_send_race_live|50_notify_real_adapter_burst_delivery_live|51_notify_real_adapter_copy_mode_live|52_notify_real_adapter_worker_restart_live|53_notify_real_adapter_parallel_send_live|68_managed_send_adapter_directions_live|72_no_worktree_send_adapter_directions_live|78_codex_to_claude_gemini_subagent_notifications_live)
+    *_live)
       return 0
       ;;
   esac
@@ -85,7 +85,7 @@ purge_between_tests() {
 
 main() {
   local test_script
-  for test_script in "$TESTS_DIR"/[0-9][0-9]_*; do
+  for test_script in "$TESTS_DIR"/[0-9]*_*; do
     [[ -f "$test_script" ]] || continue
     [[ -x "$test_script" ]] || chmod +x "$test_script"
     [[ ! -x "$CLEANUP_ORPHANS" ]] || "$CLEANUP_ORPHANS" || true

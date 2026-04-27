@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Isolate the tmux socket so this test can never touch the developer's
+# default tmux server. Idempotent if the runner already isolated.
+source "$(dirname "${BASH_SOURCE[0]}")/lib/isolate-tmux.sh"
+
 # Adversarial: many processes enqueue to the same pane at once (exercises
 # notify-queue/seq.lock and next_id against the cat harness, no real CLIs).
 
@@ -12,12 +16,20 @@ N="${ATMUX_TEST_PARALLEL_ENQUEUE:-20}"
 [[ "$N" =~ ^[0-9]+$ ]] || N=20
 (( N > 0 )) && (( N <= 200 )) || N=20
 
+# Strip all whitespace so that mid-word line wrapping in the captured
+# pane (Linux CI often gives us a narrower pane than the requested
+# -x 120) can't break a contiguous match.
+strip_ws() {
+  printf '%s' "$1" | tr -d '[:space:]'
+}
+
 count_needle() {
   local snap="$1"
   local needle="$2"
-  local compact count
-  compact="$(printf '%s' "$snap" | tr -d '\r\n')"
-  count="$(printf '%s' "$compact" | { grep -F -o "$needle" || true; } | wc -l | tr -d ' ')"
+  local compact compact_needle count
+  compact="$(strip_ws "$snap")"
+  compact_needle="$(strip_ws "$needle")"
+  count="$(printf '%s' "$compact" | { grep -F -o "$compact_needle" || true; } | wc -l | tr -d ' ')"
   [[ -n "$count" ]] && printf '%s' "$count" || printf '0'
 }
 
@@ -26,12 +38,13 @@ wait_for_count() {
   local needle="$2"
   local expected_count="$3"
   local timeout="${4:-20}"
-  local deadline now snap compact count
+  local deadline now snap compact compact_needle count
+  compact_needle="$(strip_ws "$needle")"
   deadline=$(( $(date +%s) + timeout ))
   while true; do
     snap="$(tmux capture-pane -p -t "$target" -S -8000 2>/dev/null || true)"
-    compact="$(printf '%s' "$snap" | tr -d '\r\n')"
-    count="$(printf '%s' "$compact" | { grep -F -o "$needle" || true; } | wc -l | tr -d ' ')"
+    compact="$(strip_ws "$snap")"
+    count="$(printf '%s' "$compact" | { grep -F -o "$compact_needle" || true; } | wc -l | tr -d ' ')"
     if [[ -n "$count" ]] && (( count >= expected_count )); then
       return 0
     fi
@@ -103,6 +116,16 @@ tmux send-keys -t "$pane" Enter
 sleep 0.3
 user_text="survive parallel enqueue"
 tmux send-keys -t "$pane" -l "❯ ${user_text}"
+# Wait for the user input to actually land in the pane buffer before we
+# start the parallel enqueue. Without this, on slower hosts (notably
+# Linux CI without an attached client) the send-keys above and the
+# notification workers race, and the workers can capture and clobber
+# the partial input. Tolerate up to 5s.
+if ! wait_for_count "$pane" "$user_text" 1 5; then
+  echo "user_text never landed in pane before enqueue" >&2
+  tmux capture-pane -p -t "$pane" -S -40 >&2 || true
+  exit 1
+fi
 
 markers=()
 pids=()

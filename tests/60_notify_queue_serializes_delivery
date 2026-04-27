@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Isolate the tmux socket so this test can never touch the developer's
+# default tmux server. Idempotent if the runner already isolated.
+source "$(dirname "${BASH_SOURCE[0]}")/lib/isolate-tmux.sh"
+
 # Test that multiple rapid notifications to the same prompt-driven pane are
 # serialized and leave the user's partial input intact. `cat` echoes each input
 # line twice in this harness: once from terminal echo and once from cat itself.

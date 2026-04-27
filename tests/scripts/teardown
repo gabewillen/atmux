@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+source "$(dirname "${BASH_SOURCE[0]}")/../lib/isolate-tmux.sh"
+
 team_session="${TEAM_SESSION:-}"
 agent1_session="${AGENT1_SESSION:-}"
 agent2_session="${AGENT2_SESSION:-}"

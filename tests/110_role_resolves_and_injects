@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Isolate the tmux socket so this test can never touch the developer's
+# default tmux server. Idempotent if the runner already isolated.
+source "$(dirname "${BASH_SOURCE[0]}")/lib/isolate-tmux.sh"
+
 # Regression test for adapter-agnostic roles. Verifies:
 #   - `atmux role list/resolve/show` find roles in the source tree.
 #   - render_managed_block appends role.md under the # Role section when

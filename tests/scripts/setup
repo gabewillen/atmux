@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Defense in depth: this script spawns tmux servers; isolate the socket
+# even if invoked outside a test that already did.
+source "$(dirname "${BASH_SOURCE[0]}")/../lib/isolate-tmux.sh"
+
 SCRIPTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 TESTS_DIR="$(cd -- "$SCRIPTS_DIR/.." && pwd)"
 REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"

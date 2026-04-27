@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Isolate the tmux socket so this test can never touch the developer's
+# default tmux server. Idempotent if the runner already isolated.
+source "$(dirname "${BASH_SOURCE[0]}")/lib/isolate-tmux.sh"
+
 # Test: manager (root, has ATMUX_ADAPTER) sets a schedule for a child agent
 # (has ATMUX_MANAGER + ATMUX_ADAPTER). Verifies the agent receives at least 2
 # scheduled notifications — the exact production flow reported broken.

@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+source "$(dirname "${BASH_SOURCE[0]}")/../lib/isolate-tmux.sh"
+
 # Test sessions are intentionally short-lived. If a test fails or is interrupted,
 # notify workers can outlive their target panes unless cleaned up explicitly.
 ps -axo pid=,command= | awk '

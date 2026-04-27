@@ -110,7 +110,7 @@ finish_foreground_exec() {
   write_field "$exec_dir/finished_at" "$(timestamp_utc)"
   write_field "$exec_dir/exit_code" "$exit_code"
   if ! exec_notifications_suppressed; then
-    notification_xml="$(build_notification "exec" "$command_text" "atmux capture --agent ${ATMUX_AGENT_NAME:-unknown}" "exit_code=$exit_code")"
+    notification_xml="$(build_notification "exec" "$command_text" "atmux agent capture ${ATMUX_AGENT_NAME:-unknown}" "exit_code=$exit_code")"
     notify_exec_completion_inline "$exec_dir" "$notify_pane" "$notification_xml"
   fi
   signal_exec_watchers "$exec_dir" || true

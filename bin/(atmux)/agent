@@ -683,8 +683,9 @@ send_task_to_agent() {
     fi
   fi
 
-  # Use atmux assign to store the task on disk; notification is sent by assign
-  local assign_cmd=("${ATMUX_SOURCE_ROOT:-$ATMUX_HOME/src/atmux}/bin/atmux" assign --to "$target_session" --title "$description")
+  # Use `atmux issue create --assign-to` to store the task on disk; notification
+  # is sent by the assign step inside that command.
+  local assign_cmd=("${ATMUX_SOURCE_ROOT:-$ATMUX_HOME/src/atmux}/bin/atmux" issue create --title "$description" --assign-to "$target_session")
   local todo
   while IFS= read -r todo; do
     [[ -z "$todo" ]] && continue

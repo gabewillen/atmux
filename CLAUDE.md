@@ -50,230 +50,460 @@
 - NEVER report task completion without validation evidence.
 - NEVER leave blockers unreported; escalate immediately.
 
+<!-- ATMUX-HELP-BEGIN -->
 # atmux help
-## create
+
+Generated from each command's `usage()` heredoc by
+`bin/(atmux)/(internal)/render-docs`. Edit the source `usage()` and re-run.
+
+```text
 Usage:
-  atmux agent create <name> --role <role> --intelligence <0-100> [--team <team>] [--adapter <adapter>] [--no-worktree] [--task --description <desc> --todo <todo>...] [-- <adapter-args...>]
-  atmux team create <name>
-  atmux issue create --title <title> [--description <description>] [--todo <todo>...] [--repo <repo>]
-  atmux pr create --title <title> [--description <description>] [--source <branch>] [--target <branch>] [--todo <todo>...] [--repo <repo>]
+  atmux <noun> <verb> [args...]    # resource operations
+  atmux <verb> [args...]           # cross-cutting verbs
 
-Description:
-  Unified create entrypoint for agents, teams, issues, and pull requests.
-  For agents, --team defaults to ATMUX_TEAM when set (for example after `atmux team create <name>` in a tmux session).
+atmux is an agent multiplexer across adapters.
 
-## list
-Usage:
-  atmux team list
-  atmux session list
-  atmux agent list [--all] [--status]
-  atmux issue list [--repo <repo>]
-  atmux pr list [--repo <repo>]
-  atmux message list [--unread]
+Resources (use `atmux <noun> --help` for verbs):
+  agent      manage agent sessions (create, list, kill, capture, watch, resolve)
+  team       manage team sessions (create, list, kill, capture, resolve)
+  role       manage role definitions (create, list, show, resolve)
+  session    manage tmux sessions (start, list, attach)
+  issue      filesystem issue tickets (create, list, show, assign, claim, comment, watch)
+  pr         filesystem pull request tickets (create, list, show, assign, claim, comment, watch)
+  message    inter-agent messages (read, list)
+  config     atmux configuration (get, set, unset, list)
+  env        environment vars (get, list)
+  adapter    AI CLI adapters (install, ...)
+  watcher    background watcher registrations (list, kill)
+  process    atmux exec-tracked processes (watch, kill)
+  pane       tmux pane operations (watch)
+  path       filesystem path operations (watch)
 
-Description:
-  Listings are implemented by scripts under bin/(atmux)/(list)/.
+Verbs (no resource home):
+  send       message another agent or team
+  exec       run a command with notification on exit
+  schedule   schedule a one-shot or recurring action
+  notify     low-level notification CLI (mostly internal)
+  update     update atmux to the latest version
+  install    install atmux into a project or system
 
-## send
-Usage:
-  atmux send --to <name|session> [--reply-required] [--interrupt] "message"
+Run:
+  atmux <subcommand> --help
+for more information.
+```
 
-Description:
-  Send XML messages to a single agent or every agent in a team.
-  Resolution order for --to:
-    1) Team session/name
-    2) Agent session/name
-  --interrupt  Submit using the adapter's interrupt key (processed after current
-               tool) instead of the default queue key (processed when idle).
+## Resources
 
-Examples:
-  atmux send --to planner "run tests"
-  atmux send --to platform --reply-required "status check-in"
-  atmux send --to worker --interrupt "stop and check this"
+#### `agent`
 
-## message
-Usage:
-  atmux message read <id> [--repo <repo>]
-  atmux message list [--unread]
+```sh
+atmux agent create <name> --role <role> --intelligence <0-100>
+                   [--team <team>] [--adapter <adapter>] [--no-worktree]
+                   [--start <cmd>] [--stop <cmd>]
+                   [--task --description <desc> --todo <todo>...]
+                   [-- <adapter-args...>]
+  (or `--name <name>` instead of positional)
+atmux agent list [--all] [--status]
+atmux agent kill <name|pattern> [<name|pattern>...]
+atmux agent kill --all [--yes]
+atmux agent capture <name> [--lines <n>]
+atmux agent capture --all [--lines <n>]
+atmux agent watch <name> [--idle <seconds>] [--timeout <seconds>]
+                         [--interval <seconds>] [--lines <n>]
+atmux agent resolve <name> [<repo_name>]
+```
 
-Description:
-  Read or list filesystem-backed messages.
-  Messages are stored at: ~/.atmux/messages/<repo>/<id>/
+Manage atmux agents — sessions running an AI CLI under tmux. Agents are
+scoped to the current repo.
 
-## schedule
-Usage:
-  atmux schedule (--interval <duration> | --once <duration>) [--no-detach] --notification <text>
-  atmux schedule (--interval <duration> | --once <duration>) [--no-detach] -- <command> [args...]
+#### `team`
 
-Description:
-  Schedule a future or repeating action. Use `--notification` to queue an
-  ATMUX notification to the current session, or use `-- <command...>`
-  to run any command after the delay.
+```sh
+atmux team create <name>
+atmux team list
+atmux team ls
+atmux team capture <name> [--lines <n>]
+atmux team kill <name|pattern> [...]
+atmux team resolve <name> [<repo_name>]
+```
 
-  Notification mode:
-    - Always targets the current agent/session.
-    - Use this for self reminders, ticks, and status checks.
+Manage repo-scoped team tmux sessions.
+Team session format: atmux-<repo>-team-<name>
 
-  Command mode:
-    - Runs the provided command in the current environment.
-    - Only schedule `atmux send` when the target is another agent or team:
-      `atmux schedule --once 10m -- atmux send --to worker "status check"`
-    - Never schedule `atmux send --to <self>`; use `--notification` instead.
+#### `role`
 
-  --no-detach  Run in the foreground (blocking). By default, the scheduled
-               task runs in a detached tmux window and the command returns
-               immediately.
+```sh
+atmux role list
+atmux role show <name>
+atmux role resolve <name>
+atmux role create <name> (--from-file <path> | --from-stdin | --description <text>) \
+                         [--intelligence <0-100>] [--adapters <a,b,...>] \
+                         [--hooks <start,stop>] [--scope repo|global|auto] [--force]
+```
 
-Durations:
-  Supports integer values with optional unit suffix:
-    ms  milliseconds
-    s   seconds
-    m   minutes
-    h   hours
-    d   days
-  If no suffix is provided, seconds are assumed.
+Roles are adapter-agnostic. A role is a directory containing any of:
 
-Examples:
-  atmux schedule --interval 30m --notification "check on long-running jobs"
-  atmux schedule --once 45s --notification "tick"
-  atmux schedule --once 45s -- atmux send --to atmux-myrepo-worker "follow up"
+- `role.md` — prompt body, appended under `# Role` in the agent's control file
+- `manifest` — optional, sourced bash: `INTELLIGENCE=<0-100>`, `ADAPTERS=(name ...)`
+- `start` — runs before the adapter starts (at agent-create time)
+- `stop` — runs after the adapter exits (at agent-kill time)
 
-## issue create / issue assign
-Usage:
-  atmux issue create --title <title> --assign-to <agent|session> [--description <description>] [--given <context>] [--when <action>] [--then <outcome>] [--todo <todo>]... [--repo <repo>]
-  atmux issue assign <id> --to <agent|session> [--repo <repo>]
+Resolution precedence (first match wins): `<repo>/.atmux/roles/<name>` → `~/.atmux/roles/<name>` → `<source-root>/roles/<name>`.
 
-Description:
-  Assign work using filesystem issues.
-  - `issue create --assign-to`: creates a new issue, then assigns it.
-  - `issue assign`: assigns an existing issue id.
+`create` writes the role to `~/.atmux/roles/<name>` by default. `--scope repo` writes under `<repo>/.atmux/roles/<name>`; `--scope auto` picks repo if inside a git repo with an existing `.atmux/`, otherwise global.
 
-## issue comment / pr comment
-Usage:
-  atmux issue comment <id> "message" [--repo <repo>]
-  atmux pr comment <id> "message" [--repo <repo>]
+#### `session`
 
-Description:
-  Add a comment to a filesystem issue or pull request.
-  Notifies watchers, assignee, and assigner.
+```sh
+atmux session list
+atmux session ls
+atmux session start [--name <name>] [--adapter <adapter>] [--adapters <list>] [-- <adapter-args...>]
+atmux session attach <name|session>
+```
 
-## capture
-Usage:
-  atmux agent capture <name|session> [--lines <n>]
-  atmux team capture <name|session> [--lines <n>]
-  atmux agent capture --all [--lines <n>]
+List atmux sessions, start a session, or attach to an existing one.
 
-Description:
-  Capture tmux pane output for agents or team sessions.
+session attach must be run outside tmux.
 
-Examples:
-  atmux agent capture planner
-  atmux agent capture atmux-myrepo-planner --lines 300
-  atmux team capture platform
-  atmux team capture atmux-myrepo-team-platform --lines 500
-  atmux agent capture --all --lines 200
+```sh
+atmux session list
+atmux session start
+atmux session start --name planner
+atmux session start --adapters codex,gemini
+atmux session attach planner
+atmux session start --adapter claude-code -- --dangerously-skip-permissions
+```
 
-## kill
-Usage:
-  atmux process kill <pid> [--timeout <seconds>] [--signal <NAME>]
-  atmux watcher kill <id> [--timeout <seconds>]
-  atmux agent kill <name|pattern> [name|pattern...]
-  atmux agent kill --all [--yes]
+#### `issue`
 
-Description:
-  process kill  Stop an atmux exec-tracked child process for this repo, wait for
-           executor notifications (including watcher fan-out) to finish, then
-           remove metadata under ~/.atmux/exec/<repo>/<pid>/.
-  watcher kill  Remove a watcher registration by id. Supports watcher ids emitted
-             by `atmux pr watch`, `atmux issue watch --feed`, and
-             `atmux pr watch --feed`.
-  agent kill  Kill agent sessions and clean up their worktrees and branches.
-           Accepts agent names, session names, or glob patterns.
-  agent kill --all  Kill every atmux session, worktree, and branch for this repo.
-           Prompts for y/N confirmation; use --yes to skip. Refuses to run
-           from inside an atmux session.
+```sh
+atmux issue create --title <title> [--description <description>]
+                   [--given <context>] [--when <action>] [--then <outcome>]
+                   [--todo <todo>]... [--repo <repo>]
+                   [--assign-to <agent|session>]
+atmux issue list [--repo <repo>]
+atmux issue ls [--repo <repo>]
+atmux issue get <id> [--repo <repo>]
+atmux issue show <id> [--repo <repo>]
+atmux issue assign <id> --to <agent|session> [--repo <repo>]
+atmux issue claim <id> [--by <agent|session>] [--repo <repo>]
+atmux issue comment <id> "message" [--repo <repo>]
+atmux issue watch <id> [--repo <repo>] [--timeout <s>] [--interval <s>]
+atmux issue watch --feed <repo|url> [--timeout <s>] [--interval <s>]
+```
 
-Examples:
-  atmux process kill 12345
-  atmux process kill 12345 --timeout 30 --signal TERM
-  atmux watcher kill pr:owner_repo_pr_123:atmux-myrepo-worker-_12
-  atmux watcher kill issues:owner_repo_issues:atmux-myrepo-worker-_12
-  atmux watcher kill prs:owner_repo_prs:atmux-myrepo-worker-_12
-  atmux agent kill worker
-  atmux agent kill 'agent-*'
-  atmux agent kill worker planner
-  atmux agent kill --all
-  atmux agent kill --all --yes
+Repo-scoped issue tickets on filesystem.
+Issues are stored at: ~/.atmux/issues/<repo>/<id>/
 
-## exec
-Usage:
-  atmux exec [--detach] [--] <command> [args...]
+`create --assign-to` creates the issue and immediately assigns it.
+`watch <id>` waits for the next update on a single issue.
+`watch --feed <repo>` watches a GitHub repo for newly-filed issues.
 
-Description:
-  Execute a command with passthrough stdio and unchanged exit behavior.
-  After the command exits or is interrupted, send an ATMUX notification back
-  to the current agent pane with the exit code.
+#### `pr`
 
-  --detach  Run the command in a new tmux window. Returns immediately.
-            The process pane is stored so watchers can capture its output.
-            Notification is sent to the agent pane when the process exits.
+```sh
+atmux pr create --title <title> [--description <description>]
+                [--source <branch>] [--target <branch>]
+                [--todo <todo>]... [--repo <repo>]
+atmux pr list [--repo <repo>]
+atmux pr ls [--repo <repo>]
+atmux pr get <id> [--repo <repo>]
+atmux pr show <id> [--repo <repo>]
+atmux pr assign <id> --to <agent|session> [--repo <repo>]
+atmux pr claim <id> [--by <agent|session>] [--repo <repo>]
+atmux pr comment <id> "message" [--repo <repo>]
+atmux pr watch <id|atmux-uri|github-url> [--repo <repo>] [--timeout <s>] [--interval <s>]
+atmux pr watch --feed <repo|url> [--timeout <s>] [--interval <s>]
+```
 
-Examples:
-  atmux exec sleep 30
-  atmux exec -- make test
-  atmux exec --detach -- make test
+Repo-scoped pull request tickets on filesystem.
+Pull requests are stored at: ~/.atmux/pull-requests/<repo>/<id>/
 
-## watch
-Usage:
-  atmux pane watch <tmux-target> --text <needle> [--scope pane|window|session] [--timeout <seconds>] [--interval <seconds>] [--lines <n>]
-  atmux process watch <pid> [--timeout <seconds>] [--interval <seconds>]
-  atmux process watch <pid> --stdio [--duration <seconds>] [--timeout <seconds>] [--interval <seconds>] [--lines <n>]
-  atmux path watch <glob> [--timeout <seconds>] [--interval <seconds>]
-  atmux issue watch <id> [--repo <repo>] [--timeout <seconds>] [--interval <seconds>]
-  atmux issue watch --feed <repo|url> [--timeout <seconds>] [--interval <seconds>]
-  atmux pr watch --feed <repo|url> [--timeout <seconds>] [--interval <seconds>]
-  atmux pr watch <id|atmux-uri|github-url> [--repo <repo>] [--timeout <seconds>] [--interval <seconds>]
-  atmux pr watch <id> [--repo <repo>] [--timeout <seconds>] [--interval <seconds>]
-  atmux pr watch --feed <repo|url> [--timeout <seconds>] [--interval <seconds>]
-  atmux agent watch <name|session> [--idle <seconds>] [--timeout <seconds>] [--interval <seconds>] [--lines <n>]
+`watch <id>` watches a single pull request (filesystem ticket or GitHub URL).
+`watch --feed <repo>` watches a GitHub repo for newly-filed pull requests.
 
-Description:
-  Pane mode: poll tmux output until text appears, non-zero on timeout.
-  PID mode: wait for an atmux exec process (see ~/.atmux/exec/<repo>/<pid>/) and
-  receive the same exit notification XML as the executor when it finishes.
-  Stdio mode: monitor a detached exec process pane for output changes. Sends
-  a notification each time new output is detected. Exits when --duration
-  expires, --timeout (no new output) expires, or the process exits.
-  Path mode: watch filesystem paths matching a glob and exit when the matched
-  set or file metadata changes.
-  Issue mode: wait for the next filesystem issue update and receive the same
-  notification XML as issue assign/claim fan-out.
-  Issues mode: keep watching a GitHub repository for newly created issues and
-  queue notifications to the current pane until the watcher is stopped.
-  PRs mode: keep watching a GitHub repository for newly created pull requests
-  and queue notifications to the current pane until the watcher is stopped.
-  --pull-requests is an alias for --prs.
-  PR mode: with a GitHub URL, keep watching a remote pull request discussion;
-  otherwise wait for the next filesystem pull request update. --pull-request is
-  kept as a compatibility alias for local filesystem pull requests.
-  Agent mode: wait until an agent's pane output has been stable for --idle
-  seconds (default 30). Exits 0 when idle, 124 on timeout.
+#### `message`
 
-  Implementations: bin/(atmux)/[watch]/text, [watch]/pid, [watch]/stdio,
-  [watch]/path, [watch]/issue, [watch]/issues, [watch]/prs,
-  [watch]/pull-request, [watch]/pr, [watch]/agent.
+```sh
+atmux message read <id> [--repo <repo>]
+atmux message list [--unread]
+```
 
-## env
-Usage:
-  atmux env
-  atmux env get <key>
+Read or list filesystem-backed messages.
+Messages are stored at: ~/.atmux/messages/<repo>/<id>/
 
-Description:
-  Inspect ATMUX_* environment variables in the current process.
+#### `config`
 
-Examples:
-  atmux env
-  atmux env get repo
-  atmux env get ATMUX_WORKTREE
+```sh
+atmux config get   <key>          [--global]
+atmux config set   <key> <value>  [--global]
+atmux config unset <key>          [--global]
+atmux config list                 [--global]
+```
+
+One file per key under `<repo>/.atmux/config/<key>` (local) or `~/.atmux/config/<key>` (with `--global`). Key paths are hierarchical with `/`, e.g. `update/auto`. `get` without `--global` resolves local first, then global.
+
+#### `env`
+
+```sh
+atmux env
+atmux env get <key>
+```
+
+Inspect ATMUX_* environment variables in the current process.
+
+```sh
+atmux env
+atmux env get repo
+atmux env get ATMUX_WORKTREE
+```
+
+#### `adapter`
+
+```sh
+atmux adapter install <owner/repo|github-url>
+atmux adapter <name> <command> [args...]
+```
+
+Install adapters and run adapter contract commands.
+
+```sh
+atmux adapter install org/my-adapter
+atmux adapter codex status
+atmux adapter codex model list
+```
+
+#### `watcher`
+
+```sh
+atmux watcher list
+atmux watcher kill <id> [--timeout <seconds>]
+```
+
+List or remove background watcher registrations created by `atmux pr watch
+--feed`, `atmux issue watch --feed`, and `atmux pr watch <id|url>` (the
+long-running fan-out modes).
+
+Watcher ids have the form <kind>:<key>:<watcher_name>, e.g.:
+  pr:owner_repo_pr_123:atmux-myrepo-worker-_12
+  issues:owner_repo_issues:atmux-myrepo-worker-_12
+  prs:owner_repo_prs:atmux-myrepo-worker-_12
+
+#### `process`
+
+```sh
+atmux process watch <pid> [--timeout <seconds>] [--interval <seconds>]
+atmux process watch <pid> --stdio [--duration <seconds>] [--timeout <seconds>] \
+                                  [--interval <seconds>] [--lines <n>]
+atmux process kill  <pid> [--timeout <seconds>] [--signal <NAME>]
+```
+
+Operates on `atmux exec`-tracked child processes by pid (state at `~/.atmux/exec/<repo>/<pid>/`).
+
+- **`watch`** — wait for the process to finish; receive the same exit-notification XML the executor would have sent.
+- **`watch --stdio`** — monitor a detached exec process pane for output changes; sends a notification each time new output appears. Exits when `--duration` expires, `--timeout` (no new output) expires, or the process exits.
+- **`kill`** — stop the tracked process, wait for executor and watcher fan-out notifications to drain, then remove its metadata.
+
+#### `pane`
+
+```sh
+atmux pane watch <target> --text <needle> [--scope pane|window|session]
+                          [--timeout <seconds>] [--interval <seconds>]
+                          [--lines <n>]
+```
+
+Operate on a tmux pane by id (e.g. %12, @3:1.0). The only verb today is
+`watch`, which polls the pane and exits 0 when <needle> appears, non-zero
+on timeout.
+
+```sh
+atmux pane watch %12 --scope pane --text "Select Model and Effort"
+atmux pane watch @3 --scope window --text "running tests" --timeout 20
+```
+
+#### `path`
+
+```sh
+atmux path watch <glob> [--timeout <seconds>] [--interval <seconds>]
+                        [--exec <cmd>]
+```
+
+Operate on filesystem paths matched by a glob. The only verb today is
+`watch`, which exits 0 when the matched set or any matched file's metadata
+changes. Uses fswatch or inotifywait when available; falls back to polling.
+Exits 124 on timeout.
+
+--exec  When supplied, the change-event XML is also piped into <cmd> via
+        `bash -c <cmd>` on stdin in addition to being printed to stdout.
+
+```sh
+atmux path watch 'src/**/*.sh'
+atmux path watch '/tmp/build/*.log' --timeout 60
+atmux path watch 'docs/**/*.md' --exec ./on-docs-changed
+```
+## Cross-cutting verbs
+
+#### `send`
+
+```sh
+atmux send --to <name|session> [--reply-required] [--interrupt] "message"
+```
+
+Send XML messages to a single agent or every agent in a team.
+Resolution order for --to:
+  1) Team session/name
+  2) Agent session/name
+--interrupt  Submit using the adapter's interrupt key (processed after current
+             tool) instead of the default queue key (processed when idle).
+
+```sh
+atmux send --to planner "run tests"
+atmux send --to platform --reply-required "status check-in"
+atmux send --to worker --interrupt "stop and check this"
+```
+
+#### `exec`
+
+```sh
+atmux exec [--detach] [--] <command> [args...]
+```
+
+Execute a command with passthrough stdio and unchanged exit behavior.
+After the command exits or is interrupted, send an ATMUX notification back
+to the current agent pane with the exit code.
+
+--detach  Run the command in a new tmux window. Returns immediately.
+          The process pane is stored so watchers can capture its output.
+          Notification is sent to the agent pane when the process exits.
+
+```sh
+atmux exec sleep 30
+atmux exec -- make test
+atmux exec --detach -- make test
+```
+
+#### `schedule`
+
+```sh
+atmux schedule (--once <duration> | --interval <duration>) [--no-detach] --notification "<text>"
+atmux schedule (--once <duration> | --interval <duration>) [--no-detach] -- <command> [args...]
+```
+
+Schedule a future or recurring action.
+
+- **Notification mode** (`--notification`) — queues an ATMUX notification back to the current agent's session. Use this for self-reminders, ticks, and status checks.
+- **Command mode** (`-- <command...>`) — runs the command in the current environment. Only schedule `atmux send` when the target is **another** agent or team; never schedule `atmux send --to <self>` (use notification mode instead).
+- **`--no-detach`** — run in the foreground (blocking). By default the scheduled task runs in a detached tmux window so the command returns immediately.
+
+Durations accept a unit suffix: `ms`, `s`, `m`, `h`, `d`. No suffix means seconds. Examples: `45s`, `30m`, `2h`.
+
+#### `notify`
+
+```sh
+atmux notify --pane <tmux-pane-id> --xml <payload> [--interrupt]
+```
+
+Send an ATMUX XML notification to a tmux pane.
+--interrupt  Use the adapter's interrupt submit key instead of the default
+             key (Enter). Resolves the adapter from the pane's session, or from
+             --session if provided.
+
+```sh
+atmux notify --pane %12 --xml '<notification type="test" from="manual" cmd="atmux message read abc" />'
+atmux notify --pane %12 --xml '<notification type="urgent" from="mgr" />' --interrupt
+```
+
+#### `update`
+
+```sh
+atmux update [--check] [--version <version>]
+atmux update --auto
+atmux update --no-auto
+```
+
+**Options**
+
+```
+--check              Only report whether an update is available; do not install.
+--version <version>  Install a specific version (e.g. 0.2.0). Defaults to latest.
+--auto               Enable background auto-update on every atmux command (hourly throttle).
+--no-auto            Disable background auto-update.
+```
+
+```sh
+atmux update
+atmux update --check
+atmux update --version 0.2.0
+atmux update --auto
+atmux update --no-auto
+```
+
+#### `install`
+
+```sh
+atmux install [--project|--system] [--project-root <dir>] [--no-slash-commands]
+```
+
+Install atmux for a project by default, or system-wide when requested. Project
+installs write to <project>/.atmux and project-local CLI command directories.
+
+**Options**
+
+```
+--project            Install into <project>/.atmux and project-local CLI command dirs.
+--system             Install into ~/.atmux and user-level CLI command dirs.
+--scope <scope>      Same as --project or --system. Values: project, system.
+--project-root <dir> Project directory for --project (default: git root or cwd).
+--no-slash-commands  Skip installing Claude/Gemini/Codex slash commands.
+```
+
+```sh
+atmux install
+atmux install --project
+atmux install --system
+atmux install --no-slash-commands
+```
+## Adapters
+
+| Adapter | CLI |
+|---------|-----|
+| `claude-code` | Claude Code |
+| `codex` | OpenAI Codex |
+| `cursor-agent` | Cursor AI |
+| `gemini` | Gemini CLI |
+
+## Intelligence scale
+
+| Adapter | Intelligence | Model | Reasoning level |
+|---------|--------------|-------|-----------------|
+| `claude-code` | 0–39 | `sonnet` | `low` |
+| `claude-code` | 40–74 | `sonnet` | `medium` |
+| `claude-code` | 75–89 | `sonnet` | `high` |
+| `claude-code` | 90–100 | `opus` | `high` |
+| `codex` | 0–29 | `gpt-5.5` | `low` |
+| `codex` | 30–59 | `gpt-5.5` | `medium` |
+| `codex` | 60–84 | `gpt-5.5` | `high` |
+| `codex` | 85–100 | `gpt-5.5` | `extra-high` |
+| `cursor-agent` | 0–39 | `composer-2-fast` | `low` |
+| `cursor-agent` | 40–74 | `composer-2` | `medium` |
+| `cursor-agent` | 75–89 | `gpt-5.3-codex-high` | `high` |
+| `cursor-agent` | 90–100 | `gpt-5.3-codex-xhigh` | `extra-high` |
+| `gemini` | 0–39 | `gemini-3.1-flash-lite-preview` | `low` |
+| `gemini` | 40–74 | `gemini-3-flash-preview` | `medium` |
+| `gemini` | 75–89 | `gemini-3.1-pro-preview` | `medium` |
+| `gemini` | 90–100 | `gemini-3.1-pro-preview` | `high` |
+
+## Environment variables
+
+| Variable | Description |
+|----------|-------------|
+| `ATMUX_HOME` | Installation/state root (default: `<project>/.atmux` for project installs, `~/.atmux` for system installs) |
+| `ATMUX_REPO` | Repository name for the current session |
+| `ATMUX_AGENT_NAME` | Current agent's name |
+| `ATMUX_MANAGER` | Parent manager agent name |
+| `ATMUX_WORKTREE` | Working directory (worktree or repo root) |
+| `ATMUX_TEAM` | Team this agent belongs to |
+| `ATMUX_SESSION_ID` | Unique session identifier |
+| `ATMUX_SESSION_KIND` | `agent` or `team` |
+<!-- ATMUX-HELP-END -->
 </atmux>
-

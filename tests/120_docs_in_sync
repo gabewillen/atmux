@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Verify README.md and CLAUDE.md's `# atmux help` block are in sync with
+# their sources of truth (each command's `usage()` heredoc + adapter
+# manifests). When this fails, run:
+#
+#     bin/(atmux)/(internal)/render-docs all
+#
+# This test does not touch tmux, so it skips the runner's socket-isolation
+# setup — but sourcing it is harmless and matches the convention of the
+# other tests.
+source "$(dirname "${BASH_SOURCE[0]}")/lib/isolate-tmux.sh"
+
+set -euo pipefail
+
+ROOT="$(git rev-parse --show-toplevel)"
+RENDER="$ROOT/bin/(atmux)/(internal)/render-docs"
+
+if [[ ! -x "$RENDER" ]]; then
+  echo "render-docs is not executable: $RENDER" >&2
+  exit 1
+fi
+
+if ! "$RENDER" all --check; then
+  echo "ok: docs out of sync — see diff above" >&2
+  exit 1
+fi
+
+echo "ok: README.md and CLAUDE.md help block match generated output"

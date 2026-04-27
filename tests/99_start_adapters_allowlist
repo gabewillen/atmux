@@ -77,8 +77,25 @@ done
 selected="$(tr -d '\r\n' < "$atmux_home/selected-adapter")"
 [[ "$selected" == "beta" ]] || { echo "expected beta adapter, got ${selected:-missing}" >&2; exit 1; }
 
-session_selected="$(tmux show-environment -t "$session" ATMUX_ADAPTER_SELECTED 2>/dev/null | sed -n 's/^ATMUX_ADAPTER_SELECTED=//p' || true)"
-[[ "$session_selected" == "beta" ]] || { echo "expected session selected adapter beta, got ${session_selected:-missing}" >&2; exit 1; }
+# Poll up to 5s for ATMUX_ADAPTER_SELECTED on the session env. start_session
+# sets it to the requested value (here "auto") synchronously, but run_adapter
+# updates it to the actually-selected adapter ("beta") asynchronously after
+# the pane shell picks up and runs `_run-adapter`. On slower hosts (Linux CI)
+# the pane shell can take a moment to register, so polling avoids a race.
+session_selected=""
+deadline=$(( $(date +%s) + 5 ))
+while true; do
+  session_selected="$(tmux show-environment -t "$session" ATMUX_ADAPTER_SELECTED 2>/dev/null | sed -n 's/^ATMUX_ADAPTER_SELECTED=//p' || true)"
+  [[ "$session_selected" == "beta" ]] && break
+  (( $(date +%s) >= deadline )) && break
+  sleep 0.1
+done
+if [[ "$session_selected" != "beta" ]]; then
+  echo "expected session selected adapter beta, got ${session_selected:-missing}" >&2
+  echo "--- full session env: ---" >&2
+  tmux show-environment -t "$session" 2>&1 >&2 || true
+  exit 1
+fi
 
 set +e
 (

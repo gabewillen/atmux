@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.9.2
+
+- Fix `atmux install` failing with "must be run inside tmux" outside a tmux session. The 0.9.0 cutover added `install` to the require-tmux list by mistake — install is the bootstrap command and doesn't touch panes or notifications.
+- Fix `atmux install` hanging silently when run interactively. The dispatcher was capturing install's stdout/stderr into temp files for `<atmux>` XML wrapping, so the project-vs-system scope prompt never reached the terminal and the script blocked on `read` with no visible output. Install now bypasses output wrapping (same as `exec`/`watch`/`notify`/`kill`).
+
 ## 0.9.1
 
 - Rename built-in role `example-pr-reviewer` → `gh-pr-reviewer`. It's a real role, not an example.

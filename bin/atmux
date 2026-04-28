@@ -172,7 +172,7 @@ should_wrap_command() {
   fi
 
   case "$cmd" in
-    exec|watch|notify|kill)
+    exec|watch|notify|kill|install)
       return 1
       ;;
     session)
@@ -314,12 +314,12 @@ main() {
         emit_atmux_wrapper "$cmd $*" "$out_file" "$err_file" 1
         exit 1
       fi
-      # Most resource nouns and self-update commands are safe to run outside
-      # tmux (the underlying script will refuse if it specifically needs it).
-      # `send`, `exec`, `schedule`, `notify`, `install` need tmux to deliver
+      # Most resource nouns and self-update/bootstrap commands are safe to run
+      # outside tmux (the underlying script will refuse if it specifically
+      # needs it). `send`, `exec`, `schedule`, `notify` need tmux to deliver
       # notifications or attach to panes.
       case "$cmd" in
-        session|update|env|message|config|adapter|role|agent|team|issue|pr|watcher|process|pane|path) ;;
+        session|update|install|env|message|config|adapter|role|agent|team|issue|pr|watcher|process|pane|path) ;;
         *) require_tmux ;;
       esac
 

@@ -1,12 +1,15 @@
 # Agent
 
-An agent can be a directory.
+An agent is a tmux session running an AI CLI under `atmux`'s control.
 
-For now, an agent directory can contain:
-- `bin/(atmux)/session` (`session start` handles adapter launch)
-
-Current example:
-- `bin/(atmux)/session`
+The agent CLI lives at `bin/(atmux)/agent` and owns the full agent
+lifecycle:
+- `agent create` — provision worktree, set tmux session env, launch the
+  adapter via the in-pane `_run-adapter` bootstrap, and (when interactive
+  with no manager) attach to the new session.
+- `agent attach` — re-attach to an existing agent session from outside
+  tmux.
+- `agent list|kill|capture|watch|resolve` — manage running agents.
 
 ## Worktree Convention
 - When an agent starts in a repo, it uses a git worktree at:

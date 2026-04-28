@@ -7,7 +7,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/isolate-tmux.sh"
 
 TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
-SESSION_SCRIPT="$REPO_ROOT/bin/(atmux)/session"
+AGENT_SCRIPT="$REPO_ROOT/bin/(atmux)/agent"
 
 repo_name="managed-envless-${RANDOM}"
 session="atmux-${repo_name}-worker"
@@ -40,7 +40,7 @@ tmux set-environment -t "$session" ATMUX_SOURCE_ROOT "$REPO_ROOT"
 
 attach_out="$(
   cd "$tmp_repo" && \
-  ATMUX_REPO="$repo_name" ATMUX_SOURCE_ROOT="$REPO_ROOT" "$SESSION_SCRIPT" attach "$session"
+  ATMUX_REPO="$repo_name" ATMUX_SOURCE_ROOT="$REPO_ROOT" "$AGENT_SCRIPT" attach "$session"
 )"
 
 [[ "$attach_out" == "$session" ]] || {

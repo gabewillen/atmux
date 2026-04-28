@@ -43,17 +43,17 @@ tmux kill-session -t "$target_session" >/dev/null 2>&1 || true
 
 tmux new-session -d -s "$target_session" -n "$target_session" -x 120 -y 30 -c "$REPO_ROOT" "cat"
 tmux new-session -d -s "$runner_session" -n "$runner_session" -x 120 -y 30 -c "$REPO_ROOT" \
-  "/bin/bash -lc 'cd \"$REPO_ROOT\" && \"$ATMUX_BIN\" session attach \"$target_session\" 2>&1; printf \"__EXIT:%s__\\n\" \"\$?\"; sleep 30'"
+  "/bin/bash -lc 'cd \"$REPO_ROOT\" && \"$ATMUX_BIN\" agent attach \"$target_session\" 2>&1; printf \"__EXIT:%s__\\n\" \"\$?\"; sleep 30'"
 runner_pane="$(tmux list-panes -t "$runner_session" -F '#{pane_id}' 2>/dev/null | head -n1)"
 [[ -n "$runner_pane" ]] || { echo "runner pane missing" >&2; exit 1; }
 
 if ! wait_for_text "$runner_pane" "__EXIT:2__" 15; then
   tmux capture-pane -p -t "$runner_pane" -S -200 >&2 || true
-  echo "session attach did not exit with code 2 inside tmux" >&2
+  echo "agent attach did not exit with code 2 inside tmux" >&2
   exit 1
 fi
 
 attach_out="$(tmux capture-pane -p -t "$runner_pane" -S -200 2>/dev/null | tr -d '\r' || true)"
-printf '%s\n' "$attach_out" | grep -Fq "atmux session attach must be run outside tmux"
+printf '%s\n' "$attach_out" | grep -Fq "atmux agent attach must be run outside tmux"
 
-echo "ok: session attach is rejected inside tmux"
+echo "ok: agent attach is rejected inside tmux"

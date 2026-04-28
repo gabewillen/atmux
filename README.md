@@ -22,7 +22,7 @@ Install by piping `curl` into `sh`, or clone the repo and run `./install.sh`. Th
 - **You can actually see the agents work.** It's just tmux. Attach to any session, watch the agent think in real time, detach and come back later. No custom TUI, no web dashboard, no log tailing.
 - **Git worktree per agent.** Each agent gets its own branch and working directory under `ATMUX_HOME/agents/`. Parallel agents can't stomp each other's changes, and cleanup is a single `atmux agent kill`.
 
-> **Experimental** — this project is under active development (current version: `0.9.1`). APIs, commands, and behavior may change without notice. Use at your own risk.
+> **Experimental** — this project is under active development (current version: `0.10.0`). APIs, commands, and behavior may change without notice. Use at your own risk.
 
 ## Install
 
@@ -145,10 +145,9 @@ Usage:
 atmux is an agent multiplexer across adapters.
 
 Resources (use `atmux <noun> --help` for verbs):
-  agent      manage agent sessions (create, list, kill, capture, watch, resolve)
+  agent      manage agent sessions (create, attach, list, kill, capture, watch, resolve)
   team       manage team sessions (create, list, kill, capture, resolve)
   role       manage role definitions (create, list, show, resolve)
-  session    manage tmux sessions (start, list, attach)
   issue      filesystem issue tickets (create, list, show, assign, claim, comment, watch)
   pr         filesystem pull request tickets (create, list, show, assign, claim, comment, watch)
   message    inter-agent messages (read, list)
@@ -179,12 +178,13 @@ for more information.
 
 ```sh
 atmux agent create <name> --role <role> --intelligence <0-100>
-                   [--team <team>] [--adapter <adapter>] [--no-worktree]
-                   [--start <cmd>] [--stop <cmd>]
+                   [--team <team>] [--adapter <adapter>] [--adapters <list>]
+                   [--no-worktree] [--start <cmd>] [--stop <cmd>]
                    [--task --description <desc> --todo <todo>...]
                    [-- <adapter-args...>]
   (or `--name <name>` instead of positional)
 atmux agent list [--all] [--status]
+atmux agent attach <name|session>
 atmux agent kill <name|pattern> [<name|pattern>...]
 atmux agent kill --all [--yes]
 atmux agent capture <name> [--lines <n>]
@@ -195,7 +195,11 @@ atmux agent resolve <name> [<repo_name>]
 ```
 
 Manage atmux agents — sessions running an AI CLI under tmux. Agents are
-scoped to the current repo.
+scoped to the current repo. `create` works both as a top-level command
+(no manager required) and from inside a manager agent. When run
+interactively without a manager, the new agent is attached to.
+
+agent attach must be run outside tmux.
 
 #### `team`
 
@@ -232,28 +236,6 @@ Roles are adapter-agnostic. A role is a directory containing any of:
 Resolution precedence (first match wins): `<repo>/.atmux/roles/<name>` → `~/.atmux/roles/<name>` → `<source-root>/roles/<name>`.
 
 `create` writes the role to `~/.atmux/roles/<name>` by default. `--scope repo` writes under `<repo>/.atmux/roles/<name>`; `--scope auto` picks repo if inside a git repo with an existing `.atmux/`, otherwise global.
-
-#### `session`
-
-```sh
-atmux session list
-atmux session ls
-atmux session start [--name <name>] [--adapter <adapter>] [--adapters <list>] [-- <adapter-args...>]
-atmux session attach <name|session>
-```
-
-List atmux sessions, start a session, or attach to an existing one.
-
-session attach must be run outside tmux.
-
-```sh
-atmux session list
-atmux session start
-atmux session start --name planner
-atmux session start --adapters codex,gemini
-atmux session attach planner
-atmux session start --adapter claude-code -- --dangerously-skip-permissions
-```
 
 #### `issue`
 

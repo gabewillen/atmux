@@ -32,7 +32,7 @@ case "${1:-}" in
   start)
     command -v tmux > "$ATMUX_HOME/tmux-path"
     printf '%s\n' "${ATMUX_ALLOW_REAL_TMUX:-}" > "$ATMUX_HOME/tmux-allow"
-    if tmux session list > "$ATMUX_HOME/tmux-alias-out" 2>"$ATMUX_HOME/tmux-alias-err"; then
+    if tmux agent list --all > "$ATMUX_HOME/tmux-alias-out" 2>"$ATMUX_HOME/tmux-alias-err"; then
       printf '0\n' > "$ATMUX_HOME/tmux-alias-rc"
     else
       printf '%s\n' "$?" > "$ATMUX_HOME/tmux-alias-rc"
@@ -56,7 +56,8 @@ tmux kill-session -t "$session" >/dev/null 2>&1 || true
     ATMUX_HOME="$atmux_home" \
     ATMUX_SOURCE_ROOT="$REPO_ROOT" \
     ATMUX_ALLOW_OUTSIDE_TMUX=1 \
-    "$ATMUX_BIN" session start --name "$agent" --no-worktree --adapter probe >/dev/null
+    "$ATMUX_BIN" agent create --name "$agent" --role probe --intelligence 50 \
+      --no-worktree --adapter probe >/dev/null
 )
 
 deadline=$(( $(date +%s) + 10 ))
@@ -81,8 +82,8 @@ alias_rc="$(tr -d '\r\n' < "$atmux_home/tmux-alias-rc")"
   exit 1
 }
 
-if ! grep -Fq '<atmux command="session list"' "$atmux_home/tmux-alias-out"; then
-  echo "tmux command did not route through atmux session list" >&2
+if ! grep -Fq '<atmux command="agent list --all"' "$atmux_home/tmux-alias-out"; then
+  echo "tmux command did not route through atmux agent list" >&2
   cat "$atmux_home/tmux-alias-out" >&2 || true
   exit 1
 fi

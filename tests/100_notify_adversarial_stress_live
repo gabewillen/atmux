@@ -131,7 +131,7 @@ run_atmux_as_manager() {
 echo "--- $ADAPTER worker boot ---" >&2
 WORKER_SESSION="$(ATMUX_ALLOW_OUTSIDE_TMUX=1 ATMUX_HOME="$ATMUX_HOME_TEST" ATMUX_SOURCE_ROOT="$REPO_ROOT" \
   ATMUX_REPO="$REPO" ATMUX_ROLE="implementer" ATMUX_INTELLIGENCE="50" ATMUX_MANAGER="manager" \
-  "$ATMUX_BIN" session start --name worker --adapter auto --adapters "$ADAPTER" --no-worktree)"
+  "$ATMUX_BIN" agent create --name worker --role worker --intelligence 50 --adapter auto --adapters "$ADAPTER" --no-worktree)"
 [[ -n "$WORKER_SESSION" ]] || { echo "failed to start worker" >&2; exit 1; }
 WORKER_PANE="$(session_pane "$WORKER_SESSION")"
 [[ -n "$WORKER_PANE" ]] || { echo "missing worker pane" >&2; exit 1; }

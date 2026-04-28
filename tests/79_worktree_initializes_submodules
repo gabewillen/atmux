@@ -8,7 +8,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/isolate-tmux.sh"
 TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
 ATMUX_BIN="$REPO_ROOT/bin/atmux"
-SESSION_BIN="$REPO_ROOT/bin/(atmux)/session"
+AGENT_BIN="$REPO_ROOT/bin/(atmux)/agent"
 
 tmp_root="$(mktemp -d "${TMPDIR:-/tmp}/atmux-submodule-test.XXXXXX")"
 tmp_home="$tmp_root/home"
@@ -74,7 +74,7 @@ tmux kill-session -t "$session" >/dev/null 2>&1 || true
     ATMUX_SOURCE_ROOT="$REPO_ROOT" \
     ATMUX_ALLOW_OUTSIDE_TMUX=1 \
     GIT_ALLOW_PROTOCOL=file \
-    "$SESSION_BIN" start --name worker --adapter noop >/dev/null
+    "$AGENT_BIN" create --name worker --role worker --intelligence 50 --adapter noop >/dev/null
 )
 
 worktree="$atmux_home/agents/mainrepo-worker"

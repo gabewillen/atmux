@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.10.0 — Session command removed (BREAKING)
+
+The `atmux session` command has been removed. Its functionality is folded
+into `atmux agent`:
+
+| Old | New |
+|---|---|
+| `atmux session start [--name N] [--adapter A] [--adapters ...] [--no-worktree] [-- ...]` | `atmux agent create [N] --role R --intelligence I [--adapter A] [--adapters ...] [--no-worktree] [-- ...]` |
+| `atmux session attach <name\|session>` | `atmux agent attach <name\|session>` |
+| `atmux session list` | `atmux agent list --all` (or `atmux team list` for teams) |
+
+`atmux agent create` no longer requires a manager. When run as a top-level
+command outside any agent session, it works just like the old
+`atmux session start` did — it creates the session/worktree, launches the
+adapter, and (when interactive) attaches you to it. From inside a manager
+agent it keeps its existing sub-agent-spawn behavior and prints the
+`<agent>...</agent>` XML envelope.
+
+`--role` and `--intelligence` are now required for every `agent create`,
+including top-level invocations that previously relied on `session
+start`'s defaults.
+
+## 0.9.2
+
+- Fix `atmux install` failing with "must be run inside tmux" outside a tmux session. The 0.9.0 cutover added `install` to the require-tmux list by mistake — install is the bootstrap command and doesn't touch panes or notifications.
+- Fix `atmux install` hanging silently when run interactively. The dispatcher was capturing install's stdout/stderr into temp files for `<atmux>` XML wrapping, so the project-vs-system scope prompt never reached the terminal and the script blocked on `read` with no visible output. Install now bypasses output wrapping (same as `exec`/`watch`/`notify`/`kill`).
+
 ## 0.9.1
 
 - Rename built-in role `example-pr-reviewer` → `gh-pr-reviewer`. It's a real role, not an example.

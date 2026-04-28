@@ -40,10 +40,9 @@ Usage:
 atmux is an agent multiplexer across adapters.
 
 Resources (use `atmux <noun> --help` for verbs):
-  agent      manage agent sessions (create, list, kill, capture, watch, resolve)
+  agent      manage agent sessions (create, attach, list, kill, capture, watch, resolve)
   team       manage team sessions (create, list, kill, capture, resolve)
   role       manage role definitions (create, list, show, resolve)
-  session    manage tmux sessions (start, list, attach)
   issue      filesystem issue tickets (create, list, show, assign, claim, comment, watch)
   pr         filesystem pull request tickets (create, list, show, assign, claim, comment, watch)
   message    inter-agent messages (read, list)
@@ -172,13 +171,22 @@ should_wrap_command() {
   fi
 
   case "$cmd" in
-    exec|watch|notify|kill)
+    exec|watch|notify|kill|install)
       return 1
       ;;
-    session)
+    agent)
       case "${1:-}" in
-        start|attach|_run-adapter)
+        attach|_run-adapter|_bootstrap-unlock)
           return 1
+          ;;
+        create|_create)
+          # Top-level create (no manager) attaches to the new session
+          # interactively, so it must not be wrapped in the XML envelope —
+          # wrapping redirects stdout to a temp file and would defeat attach.
+          # Sub-agent creates (manager set) keep wrapping for XML output.
+          if [[ -z "${ATMUX_AGENT_NAME:-}" ]]; then
+            return 1
+          fi
           ;;
       esac
       ;;
@@ -314,12 +322,12 @@ main() {
         emit_atmux_wrapper "$cmd $*" "$out_file" "$err_file" 1
         exit 1
       fi
-      # Most resource nouns and self-update commands are safe to run outside
-      # tmux (the underlying script will refuse if it specifically needs it).
-      # `send`, `exec`, `schedule`, `notify`, `install` need tmux to deliver
+      # Most resource nouns and self-update/bootstrap commands are safe to run
+      # outside tmux (the underlying script will refuse if it specifically
+      # needs it). `send`, `exec`, `schedule`, `notify` need tmux to deliver
       # notifications or attach to panes.
       case "$cmd" in
-        session|update|env|message|config|adapter|role|agent|team|issue|pr|watcher|process|pane|path) ;;
+        update|install|env|message|config|adapter|role|agent|team|issue|pr|watcher|process|pane|path) ;;
         *) require_tmux ;;
       esac
 

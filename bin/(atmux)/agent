@@ -1,16 +1,23 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+ATMUX_HOME="${ATMUX_HOME:-$HOME/.atmux}"
+HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=bin/(atmux)/notify
+source "$HERE/notify"
+
 usage() {
   cat <<'USAGE'
 Usage:
-  atmux agent create <name> --role <role> --intelligence <0-100>
-                     [--team <team>] [--adapter <adapter>] [--no-worktree]
-                     [--start <cmd>] [--stop <cmd>]
+  atmux agent create [name] --role <role> --intelligence <0-100>
+                     [--team <team>] [--adapter <adapter>] [--adapters <list>]
+                     [--no-worktree] [--start <cmd>] [--stop <cmd>]
                      [--task --description <desc> --todo <todo>...]
                      [-- <adapter-args...>]
-    (or `--name <name>` instead of positional)
+    (or `--name <name>` instead of positional; if omitted, atmux
+     auto-generates `agent-N`.)
   atmux agent list [--all] [--status]
+  atmux agent attach <name|session>
   atmux agent kill <name|pattern> [<name|pattern>...]
   atmux agent kill --all [--yes]
   atmux agent capture <name> [--lines <n>]
@@ -21,9 +28,16 @@ Usage:
 
 Description:
   Manage atmux agents — sessions running an AI CLI under tmux. Agents are
-  scoped to the current repo.
+  scoped to the current repo. `create` works both as a top-level command
+  (no manager required) and from inside a manager agent. When run
+  interactively without a manager, the new agent is attached to.
+
+Notes:
+  agent attach must be run outside tmux.
 USAGE
 }
+
+# === Repo / context helpers =================================================
 
 normalize_repo_name() {
   local raw="${1:-}"
@@ -70,6 +84,8 @@ repo_name_from_context() {
   printf '%s\n' "$repo_name"
 }
 
+# === Team helpers ===========================================================
+
 team_session_name() {
   local repo_name="$1"
   local team_name="$2"
@@ -109,12 +125,13 @@ ensure_team_has_capacity() {
   fi
 }
 
+# === Session resolution =====================================================
+
 resolve_target_session() {
   local target="$1"
   local repo_name="${2:-}"
   local candidate=""
 
-  # If caller passed an existing tmux session, use it verbatim.
   if tmux has-session -t "$target" 2>/dev/null; then
     printf '%s\n' "$target"
     return 0
@@ -135,7 +152,6 @@ resolve_target_session() {
     return 0
   fi
 
-  # Allow "<repo>-<agent>" shorthand as well.
   if [[ "$target" == "${repo_name}-"* ]]; then
     candidate="atmux-${target}"
     if tmux has-session -t "$candidate" 2>/dev/null; then
@@ -300,6 +316,8 @@ resolve_send_targets() {
   return 0
 }
 
+# === Adapter / role / runner resolution =====================================
+
 resolve_atmux_runner() {
   if [[ -z "${ATMUX_SOURCE_ROOT:-}" && -n "${TMUX:-}" ]]; then
     tmux_source_root="$(tmux show-environment ATMUX_SOURCE_ROOT 2>/dev/null | sed -n 's/^ATMUX_SOURCE_ROOT=//p' || true)"
@@ -349,9 +367,6 @@ resolve_role_runner() {
 }
 
 read_role_manifest() {
-  # Sources $1 in a subshell with a clean slate, then prints back any defaults
-  # the caller cares about. Output: lines of KEY=VALUE for INTELLIGENCE and
-  # ADAPTERS (joined with commas).
   local manifest_path="$1"
   [[ -f "$manifest_path" ]] || return 0
   (
@@ -369,37 +384,1009 @@ read_role_manifest() {
   )
 }
 
-resolve_session_runner() {
-  if [[ -n "${ATMUX_SOURCE_ROOT:-}" && -x "${ATMUX_SOURCE_ROOT}/bin/(atmux)/session" ]]; then
-    printf '%s\n' "${ATMUX_SOURCE_ROOT}/bin/(atmux)/session"
-    return
+resolve_adapter_cmd_path() {
+  local adapter="$1"
+  local source_root="${ATMUX_SOURCE_ROOT:-${ATMUX_HOME}/src/atmux}"
+  local repo_root=""
+
+  if [[ -n "$source_root" && -x "$source_root/adapter/$adapter/cmd" ]]; then
+    printf '%s\n' "$source_root/adapter/$adapter/cmd"
+    return 0
   fi
 
-  if [[ -n "${TMUX:-}" ]]; then
-    tmux_source_root="$(tmux show-environment ATMUX_SOURCE_ROOT 2>/dev/null | sed -n 's/^ATMUX_SOURCE_ROOT=//p' || true)"
-    if [[ -n "$tmux_source_root" && -x "$tmux_source_root/bin/(atmux)/session" ]]; then
-      printf '%s\n' "$tmux_source_root/bin/(atmux)/session"
-      return
+  if repo_root="$(git rev-parse --show-toplevel 2>/dev/null)"; then
+    if [[ -x "$repo_root/adapter/$adapter/cmd" ]]; then
+      printf '%s\n' "$repo_root/adapter/$adapter/cmd"
+      return 0
     fi
   fi
 
-  local atmux_home="${ATMUX_HOME:-$HOME/.atmux}"
-  if [[ -x "$atmux_home/src/atmux/bin/(atmux)/session" ]]; then
-    printf '%s\n' "$atmux_home/src/atmux/bin/(atmux)/session"
-    return
+  if [[ -x "$ATMUX_HOME/adapters/$adapter/cmd" ]]; then
+    printf '%s\n' "$ATMUX_HOME/adapters/$adapter/cmd"
+    return 0
+  fi
+
+  return 1
+}
+
+resolve_adapter_cmd_for_session() {
+  local session="$1"
+  local adapter source_root
+  adapter="$(get_session_env "$session" ATMUX_ADAPTER)"
+  source_root="$(get_session_env "$session" ATMUX_SOURCE_ROOT)"
+  [[ -n "$adapter" ]] || adapter="codex"
+
+  if [[ -n "$source_root" && -x "$source_root/adapter/$adapter/cmd" ]]; then
+    printf '%s\n' "$source_root/adapter/$adapter/cmd"
+    return 0
+  fi
+  if [[ -n "${ATMUX_SOURCE_ROOT:-}" && -x "${ATMUX_SOURCE_ROOT}/adapter/$adapter/cmd" ]]; then
+    printf '%s\n' "${ATMUX_SOURCE_ROOT}/adapter/$adapter/cmd"
+    return 0
   fi
 
   local repo_root=""
   if repo_root="$(git rev-parse --show-toplevel 2>/dev/null)"; then
-    if [[ -x "$repo_root/bin/(atmux)/session" ]]; then
-      printf '%s\n' "$repo_root/bin/(atmux)/session"
-      return
+    if [[ -x "$repo_root/adapter/$adapter/cmd" ]]; then
+      printf '%s\n' "$repo_root/adapter/$adapter/cmd"
+      return 0
     fi
   fi
 
-  echo "session runner not found" >&2
-  exit 127
+  local atmux_home="${ATMUX_HOME:-$HOME/.atmux}"
+  if [[ -x "$atmux_home/adapters/$adapter/cmd" ]]; then
+    printf '%s\n' "$atmux_home/adapters/$adapter/cmd"
+    return 0
+  fi
+
+  return 1
 }
+
+resolve_auto_candidates() {
+  local auto_cmd=""
+  auto_cmd="$(resolve_adapter_cmd_path "auto" || true)"
+  [[ -x "$auto_cmd" ]] || return 1
+
+  ATMUX_HOME="$ATMUX_HOME" ATMUX_SOURCE_ROOT="${ATMUX_SOURCE_ROOT:-${ATMUX_HOME}/src/atmux}" "$auto_cmd" select --all 2>/dev/null
+}
+
+split_adapter_list() {
+  local list="$1"
+  printf '%s\n' "$list" | tr ',' '\n' | awk '
+    {
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", $0)
+      if ($0 != "") print
+    }
+  '
+}
+
+adapter_name_valid() {
+  local adapter="$1"
+  [[ "$adapter" =~ ^[A-Za-z0-9_.-]+$ ]]
+}
+
+resolve_real_tmux_bin() {
+  local candidate=""
+
+  if [[ -n "${ATMUX_REAL_TMUX:-}" && -x "$ATMUX_REAL_TMUX" ]]; then
+    printf '%s\n' "$ATMUX_REAL_TMUX"
+    return 0
+  fi
+
+  for candidate in /opt/homebrew/bin/tmux /usr/local/bin/tmux /usr/bin/tmux /bin/tmux; do
+    if [[ -x "$candidate" ]]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+
+  candidate="$(command -v tmux 2>/dev/null || true)"
+  if [[ -n "$candidate" && -x "$candidate" && "$candidate" != "${ATMUX_SOURCE_ROOT:-}/bin/tmux" ]]; then
+    printf '%s\n' "$candidate"
+    return 0
+  fi
+
+  return 1
+}
+
+adapter_in_list() {
+  local needle="$1"
+  shift || true
+  local item
+  for item in "$@"; do
+    [[ "$item" == "$needle" ]] && return 0
+  done
+  return 1
+}
+
+# === Misc utilities =========================================================
+
+matches_any_pattern() {
+  local value="$1"
+  shift || true
+  local pattern
+  for pattern in "$@"; do
+    case "$value" in
+      $pattern) return 0 ;;
+    esac
+  done
+  return 1
+}
+
+build_notification() {
+  "${ATMUX_SOURCE_ROOT:-$ATMUX_HOME/src/atmux}/bin/(atmux)/notify" build "$@"
+}
+
+valid_intelligence() {
+  local value="${1:-}"
+  [[ "$value" =~ ^[0-9]+$ ]] || return 1
+  (( value >= 0 && value <= 100 ))
+}
+
+# === Attach / bootstrap helpers (from old session) ==========================
+
+attach_or_switch() {
+  local session="$1"
+  local readonly="${ATMUX_ATTACH_READONLY:-auto}"
+  local bootstrap_state=""
+  if [[ ! -t 0 || ! -t 1 ]]; then
+    printf '%s\n' "$session"
+    return
+  fi
+
+  case "$readonly" in
+    auto|AUTO|"")
+      local manager=""
+      manager="$(tmux show-environment -t "$session" ATMUX_MANAGER 2>/dev/null | sed -n 's/^ATMUX_MANAGER=//p' || true)"
+      if [[ -n "$manager" ]]; then
+        readonly="1"
+      else
+        readonly="0"
+      fi
+      ;;
+  esac
+
+  bootstrap_state="$(get_session_env "$session" ATMUX_BOOTSTRAP_STATE)"
+  if [[ "$bootstrap_state" == "pending" ]]; then
+    readonly="1"
+  fi
+
+  case "$readonly" in
+    0|false|FALSE|no|NO)
+      if [[ -n "${TMUX:-}" ]]; then
+        tmux switch-client -t "$session"
+      else
+        tmux attach-session -t "$session"
+      fi
+      return
+      ;;
+  esac
+
+  start_bootstrap_unlock_if_needed "$session"
+
+  if [[ -n "${TMUX:-}" ]]; then
+    tmux refresh-client -f read-only >/dev/null 2>&1 || true
+    tmux switch-client -r -t "$session" 2>/dev/null || tmux switch-client -t "$session"
+  else
+    tmux attach-session -r -t "$session"
+  fi
+}
+
+ensure_tmux_scroll_enabled() {
+  local history_limit
+  history_limit="${ATMUX_TMUX_HISTORY_LIMIT:-200000}"
+
+  tmux set-option -g mouse on >/dev/null 2>&1 || true
+  tmux set-window-option -g history-limit "$history_limit" >/dev/null 2>&1 || true
+
+  while IFS= read -r window_id; do
+    [[ -z "$window_id" ]] && continue
+    tmux set-window-option -t "$window_id" history-limit "$history_limit" >/dev/null 2>&1 || true
+  done < <(tmux list-windows -a -F '#{window_id}' 2>/dev/null || true)
+}
+
+initialize_worktree_submodules() {
+  local worktree="$1"
+  local submodule_err=""
+
+  [[ -f "$worktree/.gitmodules" ]] || return 0
+
+  git -C "$worktree" submodule sync --recursive >/dev/null
+  submodule_err="$(git -C "$worktree" submodule update --init --recursive 2>&1)" || {
+    printf '%s\n' "$submodule_err" >&2
+    exit 1
+  }
+}
+
+bootstrap_unlock_pid_matches_session() {
+  local pid="$1"
+  local session="$2"
+  local cmd=""
+
+  [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+  kill -0 "$pid" >/dev/null 2>&1 || return 1
+  cmd="$(ps -p "$pid" -o command= 2>/dev/null || true)"
+  [[ -n "$cmd" ]] || return 1
+  [[ "$cmd" == *"bin/(atmux)/agent"*"_bootstrap-unlock ${session}"* ]] || return 1
+  return 0
+}
+
+unlock_session_clients() {
+  local session="$1"
+  local client is_readonly
+  while read -r client is_readonly; do
+    [[ -n "$client" ]] || continue
+    if [[ "$is_readonly" == "1" ]]; then
+      tmux switch-client -c "$client" -t "$session" -r >/dev/null 2>&1 || true
+    fi
+    tmux refresh-client -t "$client" -f '!ignore-size' >/dev/null 2>&1 || true
+    tmux display-message -t "$client" "atmux bootstrap complete; input unlocked" >/dev/null 2>&1 || true
+  done < <(tmux list-clients -t "$session" -F '#{client_tty} #{client_readonly}' 2>/dev/null || true)
+}
+
+bootstrap_unlock_worker() {
+  local session="$1"
+  local interval timeout start_ts now state elapsed
+
+  interval="${ATMUX_BOOTSTRAP_UNLOCK_INTERVAL_SECONDS:-1}"
+  timeout="${ATMUX_BOOTSTRAP_UNLOCK_TIMEOUT_SECONDS:-120}"
+  start_ts="$(date +%s)"
+
+  while tmux has-session -t "$session" 2>/dev/null; do
+    state="$(get_session_env "$session" ATMUX_BOOTSTRAP_STATE)"
+    if [[ "$state" != "pending" && -n "$state" ]]; then
+      break
+    fi
+
+    now="$(date +%s)"
+    elapsed=$((now - start_ts))
+    if (( elapsed >= timeout )); then
+      tmux set-environment -t "$session" ATMUX_BOOTSTRAP_STATE failed >/dev/null 2>&1 || true
+      state="failed"
+      break
+    fi
+
+    sleep "$interval"
+  done
+
+  if tmux has-session -t "$session" 2>/dev/null; then
+    unlock_session_clients "$session"
+    tmux set-environment -t "$session" -u ATMUX_BOOTSTRAP_UNLOCK_PID >/dev/null 2>&1 || true
+  fi
+}
+
+start_bootstrap_unlock_if_needed() {
+  local session="$1"
+  local state pid log_file new_pid
+
+  state="$(get_session_env "$session" ATMUX_BOOTSTRAP_STATE)"
+  [[ "$state" == "pending" ]] || return 0
+
+  pid="$(get_session_env "$session" ATMUX_BOOTSTRAP_UNLOCK_PID)"
+  if [[ -n "$pid" ]] && bootstrap_unlock_pid_matches_session "$pid" "$session"; then
+    return 0
+  fi
+  if [[ -n "$pid" ]] && kill -0 "$pid" >/dev/null 2>&1; then
+    kill "$pid" >/dev/null 2>&1 || true
+  fi
+  tmux set-environment -t "$session" -u ATMUX_BOOTSTRAP_UNLOCK_PID >/dev/null 2>&1 || true
+
+  log_file="${TMPDIR:-/tmp}/atmux-bootstrap-${session}.log"
+  nohup "$0" _bootstrap-unlock "$session" >>"$log_file" 2>&1 </dev/null &
+  new_pid="$!"
+  sleep 0.05
+  if bootstrap_unlock_pid_matches_session "$new_pid" "$session"; then
+    tmux set-environment -t "$session" ATMUX_BOOTSTRAP_UNLOCK_PID "$new_pid"
+  fi
+}
+
+# === Control file injection (from old session) ==============================
+
+collect_agent_help() {
+  local runner="$1"
+  local runner_cwd="${2:-}"
+  local out=""
+  local cmd
+  for cmd in create list send message schedule assign comment capture kill exec watch env; do
+    local cmd_out=""
+    if [[ -n "$runner_cwd" ]]; then
+      cmd_out="$(cd "$runner_cwd" && ATMUX_NO_WRAP=1 ATMUX_ALLOW_OUTSIDE_TMUX=1 "$runner" "$cmd" --help 2>/dev/null || true)"
+    else
+      cmd_out="$(ATMUX_NO_WRAP=1 ATMUX_ALLOW_OUTSIDE_TMUX=1 "$runner" "$cmd" --help 2>/dev/null || true)"
+    fi
+    if [[ -n "$cmd_out" ]] && printf '%s\n' "$cmd_out" | grep -Eq "^  atmux ${cmd}( |$)"; then
+      out+=$'## '"$cmd"$'\n'
+      out+="$cmd_out"$'\n\n'
+    fi
+  done
+  printf '%s' "$out"
+}
+
+render_managed_block() {
+  local repo_root="$1"
+  local role_name="${ATMUX_ROLE:-}"
+  local manager_value="${ATMUX_MANAGER:-}"
+  local atmux_runner=""
+  local atmux_help=""
+  local source_root="${ATMUX_SOURCE_ROOT:-}"
+
+  if [[ -n "$source_root" && -x "$source_root/bin/atmux" ]]; then
+    atmux_runner="$source_root/bin/atmux"
+  elif [[ -x "$repo_root/bin/atmux" ]]; then
+    atmux_runner="$repo_root/bin/atmux"
+  elif command -v atmux >/dev/null 2>&1; then
+    atmux_runner="atmux"
+  fi
+
+  if [[ -n "$atmux_runner" ]]; then
+    if [[ -n "$source_root" && -d "$source_root" ]]; then
+      atmux_help="$(collect_agent_help "$atmux_runner" "$source_root")"
+    else
+      atmux_help="$(collect_agent_help "$atmux_runner")"
+    fi
+  fi
+
+  {
+    echo "<atmux>"
+    if [[ -n "$role_name" ]]; then
+      echo "# Role"
+      echo "- ROLE: $role_name"
+      if [[ -n "${ATMUX_ROLE_DIR:-}" && -f "$ATMUX_ROLE_DIR/role.md" ]]; then
+        echo
+        sed -E 's@^</?atmux>$@@' "$ATMUX_ROLE_DIR/role.md"
+      fi
+      echo
+    fi
+    echo "# atmux Rules"
+    echo "- Use plain \`atmux ...\` commands; do not prefix them with inherited session environment."
+    echo
+    if [[ -z "$manager_value" ]]; then
+      echo "# Delegation Rules"
+      echo "- ALWAYS check \`atmux agent list --all --status\` first."
+      echo "- ALWAYS assign to an existing idle capable agent before creating a new one."
+      echo "- ONLY create a new agent when no idle agent matches the required capability/intelligence."
+      echo "- ALWAYS include clear task scope via \`--description\` and \`--todos\`."
+      echo "- ALWAYS use \`--reply-required\` for decisions/blockers."
+      echo "- NEVER poll agent panes unless absolutely necessary."
+      echo "- NEVER do tasks yourself unless explicitly instructed."
+      echo
+    else
+      echo "# Managed Agent Rules"
+      echo "- ALWAYS acknowledge manager messages quickly with a short plan."
+      echo "- ALWAYS send a message to your manager when stuck or after completing any task."
+      echo "- ALWAYS message your manager with \`atmux send --to ${manager_value} \"...\"\`."
+      echo "- ALWAYS coordinate with peer agents using \`atmux send --to <agent> \"...\"\`."
+      echo "- ALWAYS check \`atmux agent list --all --status\` before creating new agents."
+      echo "- ALWAYS reuse idle capable agents before creating new ones."
+      echo "- ALWAYS spawn agents to decompose your todos if necessary."
+      echo "- ALWAYS use \`--reply-required\` when a manager decision is needed."
+      echo "- NEVER poll agent panes unless absolutely necessary."
+      echo "- NEVER silently change scope; ask your manager first."
+      echo "- NEVER report task completion without validation evidence."
+      echo "- NEVER leave blockers unreported; escalate immediately."
+      echo
+    fi
+    echo "# atmux help"
+    if [[ -n "$atmux_help" ]]; then
+      printf '%s\n' "$atmux_help"
+    fi
+    echo "</atmux>"
+  }
+}
+
+inject_control_file() {
+  local repo_root="$1"
+  local adapter="${ATMUX_ADAPTER:-codex}"
+  local adapter_cmd=""
+
+  adapter_cmd="$(resolve_adapter_cmd_path "$adapter" || true)"
+  [[ -x "$adapter_cmd" ]] || return 0
+
+  local control_file
+  control_file="$("$adapter_cmd" control-file 2>/dev/null || true)"
+  [[ -n "$control_file" ]] || return 0
+
+  local target_file="$repo_root/$control_file"
+  [[ -f "$target_file" ]] || : > "$target_file"
+
+  local tmp_base managed_file stripped_file
+  tmp_base="${TMPDIR:-/tmp}/atmux-control-$RANDOM-$$"
+  managed_file="${tmp_base}.managed"
+  stripped_file="${tmp_base}.stripped"
+
+  render_managed_block "$repo_root" > "$managed_file"
+
+  if grep -Eq '^(<!-- ATMUX:BEGIN -->|<atmux>)$' "$target_file" 2>/dev/null; then
+    awk '
+      BEGIN { in_block=0 }
+      /<!-- ATMUX:BEGIN -->/ { in_block=1; next }
+      /<!-- ATMUX:END -->/ { in_block=0; next }
+      /^<atmux>$/ { in_block=1; next }
+      /^<\/atmux>$/ { in_block=0; next }
+      in_block==0 { print }
+    ' "$target_file" > "$stripped_file"
+  else
+    awk '
+      /^# Default Rules$/ { exit }
+      /^# atmux help$/ { exit }
+      { print }
+    ' "$target_file" > "$stripped_file"
+  fi
+
+  {
+    cat "$stripped_file"
+    if [[ -s "$stripped_file" ]]; then
+      echo
+    fi
+    cat "$managed_file"
+    echo
+  } > "$target_file"
+
+  rm -f "$managed_file" "$stripped_file"
+}
+
+run_role_hook() {
+  local cmd="$1"
+  [[ -n "$cmd" ]] || return 0
+  if [[ -x "$cmd" && -f "$cmd" ]]; then
+    "$cmd"
+  else
+    bash -c "$cmd"
+  fi
+}
+
+run_role_hook_bounded() {
+  local cmd="$1"
+  local budget_secs="${2:-30}"
+  local pid deadline now
+  [[ -n "$cmd" ]] || return 0
+  ( run_role_hook "$cmd" ) &
+  pid=$!
+  deadline=$(( $(date +%s) + budget_secs ))
+  while kill -0 "$pid" 2>/dev/null; do
+    now="$(date +%s)"
+    if (( now >= deadline )); then
+      kill -TERM "$pid" 2>/dev/null || true
+      sleep 0.5
+      kill -KILL "$pid" 2>/dev/null || true
+      wait "$pid" 2>/dev/null || true
+      return 124
+    fi
+    sleep 0.2
+  done
+  wait "$pid"
+}
+
+# === run_adapter (the in-pane bootstrap that execs the adapter) =============
+
+run_adapter() {
+  local adapter="codex"
+  local requested_adapter=""
+  local adapters_list="${ATMUX_ADAPTERS_ALLOWED:-}"
+  local -a adapter_args=()
+  local -a allowed_adapters=()
+  local real_tmux=""
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --adapter)
+        adapter="${2:-}"
+        shift 2
+        ;;
+      --adapters)
+        adapters_list="${2:-}"
+        shift 2
+        ;;
+      --)
+        shift
+        adapter_args=("$@")
+        break
+        ;;
+      *)
+        echo "unknown flag: $1" >&2
+        exit 2
+        ;;
+    esac
+  done
+
+  if [[ -n "$adapters_list" ]]; then
+    local allowed_adapter
+    while IFS= read -r allowed_adapter; do
+      [[ -n "$allowed_adapter" ]] || continue
+      if ! adapter_name_valid "$allowed_adapter"; then
+        echo "invalid adapter name in --adapters: $allowed_adapter" >&2
+        exit 2
+      fi
+      allowed_adapters+=("$allowed_adapter")
+    done < <(split_adapter_list "$adapters_list")
+    if ((${#allowed_adapters[@]} == 0)); then
+      echo "--adapters requires at least one adapter" >&2
+      exit 2
+    fi
+  fi
+
+  requested_adapter="$adapter"
+  if [[ "$requested_adapter" != "auto" && ${#allowed_adapters[@]} -gt 0 ]]; then
+    if ! adapter_in_list "$requested_adapter" "${allowed_adapters[@]}"; then
+      echo "adapter not allowed by --adapters: $requested_adapter" >&2
+      exit 2
+    fi
+  fi
+
+  export ATMUX_ADAPTER_REQUESTED="$requested_adapter"
+  export ATMUX_ADAPTERS_ALLOWED="$adapters_list"
+  real_tmux="$(resolve_real_tmux_bin || true)"
+  if [[ -n "$real_tmux" ]]; then
+    export ATMUX_REAL_TMUX="$real_tmux"
+  fi
+  export ATMUX_ALLOW_REAL_TMUX=1
+
+  if [[ -z "${ATMUX_SOURCE_ROOT:-}" ]]; then
+    if [[ -d "${ATMUX_HOME}/src/atmux" ]]; then
+      ATMUX_SOURCE_ROOT="${ATMUX_HOME}/src/atmux"
+    else
+      ATMUX_SOURCE_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
+    fi
+    export ATMUX_SOURCE_ROOT
+  fi
+  # Non-login tmux panes often lack user-local PATH (Cursor CLI, Homebrew, etc.).
+  export PATH="${HOME}/.local/bin:${HOME}/.cursor/bin:/opt/homebrew/bin:/usr/local/bin:${PATH}"
+  if [[ -d "$ATMUX_SOURCE_ROOT/bin" ]]; then
+    export PATH="$ATMUX_SOURCE_ROOT/bin:$(pwd)/bin:$PATH"
+  else
+    export PATH="$(pwd)/bin:$PATH"
+  fi
+
+  local current_session=""
+  if [[ -n "${TMUX:-}" ]]; then
+    current_session="$(tmux display-message -p '#S' 2>/dev/null || true)"
+  fi
+  if [[ -n "$current_session" ]]; then
+    while IFS= read -r line; do
+      [[ "$line" == ATMUX_*=* ]] || continue
+      key="${line%%=*}"
+      value="${line#*=}"
+      export "$key=$value"
+    done < <(tmux show-environment -t "$current_session" 2>/dev/null || true)
+  fi
+
+  local -a candidates=()
+  if [[ "$requested_adapter" == "auto" ]]; then
+    if ((${#allowed_adapters[@]} > 0)); then
+      candidates=("${allowed_adapters[@]}")
+    else
+      while IFS= read -r line; do
+        [[ -z "$line" ]] && continue
+        candidates+=("$line")
+      done < <(resolve_auto_candidates || true)
+    fi
+  else
+    candidates=("$requested_adapter")
+  fi
+
+  if ((${#candidates[@]} == 0)); then
+    candidates=("codex")
+  fi
+
+  local rc=127
+  local selected_adapter=""
+  local adapter_cmd=""
+  local candidate=""
+  for candidate in "${candidates[@]}"; do
+    adapter_cmd="$(resolve_adapter_cmd_path "$candidate" || true)"
+    if [[ ! -x "$adapter_cmd" ]]; then
+      rc=127
+      if [[ "$requested_adapter" == "auto" ]]; then
+        continue
+      fi
+      echo "adapter start not found: $candidate" >&2
+      break
+    fi
+
+    selected_adapter="$candidate"
+    export ATMUX_ADAPTER="$selected_adapter"
+    export ATMUX_ADAPTER_SELECTED="$selected_adapter"
+    if [[ -n "$current_session" ]]; then
+      tmux set-environment -t "$current_session" ATMUX_ADAPTER "$selected_adapter"
+      tmux set-environment -t "$current_session" ATMUX_ADAPTER_REQUESTED "$requested_adapter"
+      tmux set-environment -t "$current_session" ATMUX_ADAPTER_SELECTED "$selected_adapter"
+      if [[ -n "$adapters_list" ]]; then
+        tmux set-environment -t "$current_session" ATMUX_ADAPTERS_ALLOWED "$adapters_list"
+      else
+        tmux set-environment -t "$current_session" -u ATMUX_ADAPTERS_ALLOWED >/dev/null 2>&1 || true
+      fi
+    fi
+
+    inject_control_file "$(pwd)"
+
+    if [[ -n "${ATMUX_ROLE_START:-}" ]]; then
+      ATMUX_ROLE_STATE_DIR="${ATMUX_HOME}/agents/${ATMUX_REPO:-repo}/${ATMUX_AGENT_NAME:-agent}/role"
+      mkdir -p "$ATMUX_ROLE_STATE_DIR"
+      export ATMUX_ROLE_STATE_DIR
+      if [[ -n "$current_session" ]]; then
+        tmux set-environment -t "$current_session" ATMUX_ROLE_STATE_DIR "$ATMUX_ROLE_STATE_DIR" >/dev/null 2>&1 || true
+      fi
+      role_start_rc=0
+      run_role_hook_bounded "$ATMUX_ROLE_START" "${ATMUX_ROLE_START_TIMEOUT:-60}" || role_start_rc=$?
+      if [[ "$role_start_rc" -eq 0 && -n "$current_session" ]]; then
+        tmux set-environment -t "$current_session" ATMUX_ROLE_START_STATE ready >/dev/null 2>&1 || true
+      fi
+      if [[ "$role_start_rc" -ne 0 ]]; then
+        if [[ "$role_start_rc" -eq 124 ]]; then
+          echo "atmux: role start timed out after ${ATMUX_ROLE_START_TIMEOUT:-60}s; aborting agent" >&2
+        else
+          echo "atmux: role start failed (rc=$role_start_rc); aborting agent" >&2
+        fi
+        local fail_worktree="${ATMUX_WORKTREE:-}"
+        local fail_session="$current_session"
+        if [[ -n "$fail_worktree" && -d "$fail_worktree" ]]; then
+          local repo_for_cleanup=""
+          repo_for_cleanup="$(git -C "$fail_worktree" rev-parse --show-toplevel 2>/dev/null || true)"
+          if [[ -n "$repo_for_cleanup" ]] && \
+             git -C "$repo_for_cleanup" worktree list --porcelain 2>/dev/null | grep -Fqx "worktree $fail_worktree"; then
+            git -C "$repo_for_cleanup" worktree remove -f "$fail_worktree" >/dev/null 2>&1 || rm -rf "$fail_worktree"
+          else
+            rm -rf "$fail_worktree"
+          fi
+          if [[ -n "$repo_for_cleanup" && -n "$fail_session" ]]; then
+            git -C "$repo_for_cleanup" branch -D "$fail_session" >/dev/null 2>&1 || true
+          fi
+        fi
+        if [[ -n "$fail_session" ]] && tmux has-session -t "$fail_session" 2>/dev/null; then
+          tmux set-environment -t "$fail_session" ATMUX_ROLE_START_STATE failed >/dev/null 2>&1 || true
+          tmux set-environment -t "$fail_session" ATMUX_BOOTSTRAP_STATE failed >/dev/null 2>&1 || true
+        fi
+        if [[ -n "$fail_session" ]] && tmux has-session -t "$fail_session" 2>/dev/null; then
+          tmux kill-session -t "$fail_session" >/dev/null 2>&1 || true
+        fi
+        exit 1
+      fi
+    fi
+
+    rc=0
+    (
+      unset ATMUX_ALLOW_REAL_TMUX
+      if ((${#adapter_args[@]})); then
+        "$adapter_cmd" start "${adapter_args[@]}"
+      else
+        "$adapter_cmd" start
+      fi
+    ) || rc=$?
+    export ATMUX_ALLOW_REAL_TMUX=1
+
+    if [[ "$rc" -eq 0 ]]; then
+      break
+    fi
+
+    if [[ "$requested_adapter" == "auto" && "$rc" -eq 127 ]]; then
+      continue
+    fi
+    break
+  done
+
+  if [[ -z "$selected_adapter" ]]; then
+    echo "no adapter available" >&2
+    rc=127
+  fi
+
+  local session_name="${ATMUX_SESSION_NAME:-}"
+  if [[ -z "$session_name" && -n "${TMUX:-}" ]]; then
+    session_name="$(tmux display-message -p '#S' 2>/dev/null || true)"
+  fi
+  if [[ -n "$session_name" ]] && tmux has-session -t "$session_name" 2>/dev/null; then
+    tmux kill-session -t "$session_name" >/dev/null 2>&1 || true
+  fi
+  exit "$rc"
+}
+
+# === Session lifecycle (start / attach) =====================================
+
+# Build the new tmux session, set its environment, queue _run-adapter into
+# its primary pane, and (when interactive) attach. Returns the session name
+# on stdout. Used by both top-level and sub-agent `agent create`.
+spawn_agent_session() {
+  local name=""
+  local adapter="codex"
+  local adapter_explicit=0
+  local adapters_list=""
+  local team="${ATMUX_TEAM:-}"
+  local intelligence="${ATMUX_INTELLIGENCE:-20}"
+  local name_explicit=0
+  local no_worktree=0
+  local real_tmux=""
+  local -a forward_args=()
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --name)
+        name="${2:-}"
+        name_explicit=1
+        shift 2
+        ;;
+      --adapter)
+        adapter="${2:-}"
+        adapter_explicit=1
+        shift 2
+        ;;
+      --adapters)
+        adapters_list="${2:-}"
+        shift 2
+        ;;
+      --no-worktree)
+        no_worktree=1
+        shift
+        ;;
+      --)
+        shift
+        forward_args=("$@")
+        break
+        ;;
+      *)
+        echo "unknown flag: $1" >&2
+        exit 2
+        ;;
+    esac
+  done
+
+  if [[ -n "$adapters_list" && "$adapter_explicit" -eq 0 ]]; then
+    adapter="auto"
+  fi
+
+  local -a allowed_adapters=()
+  if [[ -n "$adapters_list" ]]; then
+    local allowed_adapter
+    while IFS= read -r allowed_adapter; do
+      [[ -n "$allowed_adapter" ]] || continue
+      if ! adapter_name_valid "$allowed_adapter"; then
+        echo "invalid adapter name in --adapters: $allowed_adapter" >&2
+        exit 2
+      fi
+      allowed_adapters+=("$allowed_adapter")
+    done < <(split_adapter_list "$adapters_list")
+    if ((${#allowed_adapters[@]} == 0)); then
+      echo "--adapters requires at least one adapter" >&2
+      exit 2
+    fi
+    if [[ "$adapter" != "auto" ]] && ! adapter_in_list "$adapter" "${allowed_adapters[@]}"; then
+      echo "adapter not allowed by --adapters: $adapter" >&2
+      exit 2
+    fi
+  fi
+
+  local repo_root repo_name
+  {
+    IFS= read -r repo_root
+    IFS= read -r repo_name
+  } < <(repo_context)
+  local source_root="${ATMUX_SOURCE_ROOT:-${ATMUX_HOME}/src/atmux}"
+
+  if [[ "$name_explicit" -eq 0 ]]; then
+    local n
+    n="$(
+      (tmux list-sessions -F '#{session_name}' 2>/dev/null || true) \
+        | awk -v p="^atmux-${repo_name}-agent-[0-9]+$" '$0 ~ p { c++ } END { print c+0 }'
+    )"
+    name="agent-$n"
+    while tmux has-session -t "atmux-${repo_name}-${name}" 2>/dev/null; do
+      n=$((n + 1))
+      name="agent-$n"
+    done
+  fi
+
+  local session="atmux-${repo_name}-${name}"
+  local worktree="$ATMUX_HOME/agents/${repo_name}-${name}"
+  local branch="atmux-${repo_name}-${name}"
+
+  if tmux has-session -t "$session" 2>/dev/null; then
+    local existing_adapter existing_worktree existing_source_root existing_manager existing_role existing_team existing_intelligence
+    existing_adapter="$(tmux show-environment -t "$session" ATMUX_ADAPTER 2>/dev/null | sed -n 's/^ATMUX_ADAPTER=//p' || true)"
+    existing_worktree="$(tmux show-environment -t "$session" ATMUX_WORKTREE 2>/dev/null | sed -n 's/^ATMUX_WORKTREE=//p' || true)"
+    existing_source_root="$(tmux show-environment -t "$session" ATMUX_SOURCE_ROOT 2>/dev/null | sed -n 's/^ATMUX_SOURCE_ROOT=//p' || true)"
+    existing_manager="$(tmux show-environment -t "$session" ATMUX_MANAGER 2>/dev/null | sed -n 's/^ATMUX_MANAGER=//p' || true)"
+    existing_role="$(tmux show-environment -t "$session" ATMUX_ROLE 2>/dev/null | sed -n 's/^ATMUX_ROLE=//p' || true)"
+    existing_team="$(tmux show-environment -t "$session" ATMUX_TEAM 2>/dev/null | sed -n 's/^ATMUX_TEAM=//p' || true)"
+    existing_intelligence="$(tmux show-environment -t "$session" ATMUX_INTELLIGENCE 2>/dev/null | sed -n 's/^ATMUX_INTELLIGENCE=//p' || true)"
+    if [[ -n "$existing_adapter" ]]; then
+      export ATMUX_ADAPTER="$existing_adapter"
+    else
+      export ATMUX_ADAPTER="$adapter"
+    fi
+    export ATMUX_REPO="$repo_name"
+    export ATMUX_MANAGER="$existing_manager"
+    export ATMUX_ROLE="$existing_role"
+    if [[ -n "$existing_team" ]]; then
+      export ATMUX_TEAM="$existing_team"
+    else
+      export ATMUX_TEAM="$team"
+    fi
+    if [[ -n "$existing_intelligence" ]]; then
+      export ATMUX_INTELLIGENCE="$existing_intelligence"
+    else
+      export ATMUX_INTELLIGENCE="$intelligence"
+    fi
+    if [[ -n "$existing_source_root" && -d "$existing_source_root" ]]; then
+      export ATMUX_SOURCE_ROOT="$existing_source_root"
+    else
+      export ATMUX_SOURCE_ROOT="$repo_root"
+    fi
+    if [[ -n "$existing_worktree" && -d "$existing_worktree" ]]; then
+      inject_control_file "$existing_worktree"
+    else
+      inject_control_file "$repo_root"
+    fi
+    ensure_tmux_scroll_enabled
+    attach_or_switch "$session"
+    return
+  fi
+
+  local work_dir="$worktree"
+  local worktree_created=0
+
+  if [[ "$no_worktree" -eq 1 ]]; then
+    work_dir="$repo_root"
+  else
+    mkdir -p "$ATMUX_HOME/agents"
+
+    if [[ -e "$worktree" ]]; then
+      if ! git -C "$worktree" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        echo "path exists and is not a git worktree: $worktree" >&2
+        exit 1
+      fi
+    else
+      worktree_err="$(
+        git -C "$repo_root" worktree add -B "$branch" "$worktree" HEAD 2>&1
+      )" || {
+        if printf '%s\n' "$worktree_err" | grep -Eq 'cannot lock ref|Operation not permitted|Permission denied'; then
+          echo "branch creation failed; retrying detached worktree for $worktree" >&2
+          git -C "$repo_root" worktree add "$worktree" HEAD >/dev/null
+          worktree_created=1
+        else
+          printf '%s\n' "$worktree_err" >&2
+          exit 1
+        fi
+      }
+      worktree_created=1
+    fi
+    if [[ "$worktree_created" -eq 1 ]]; then
+      initialize_worktree_submodules "$worktree"
+    fi
+  fi
+
+  local session_id
+  session_id="$(id)"
+
+  tmux new-session -d -s "$session" -n "$session" -c "$work_dir"
+  ensure_tmux_scroll_enabled
+  tmux set-environment -t "$session" ATMUX_REPO "$repo_name"
+  tmux set-environment -t "$session" ATMUX_HOME "$ATMUX_HOME"
+  tmux set-environment -t "$session" ATMUX_SESSION_ID "$session_id"
+  tmux set-environment -t "$session" ATMUX_SESSION_NAME "$session"
+  tmux set-environment -t "$session" ATMUX_WORKTREE "$work_dir"
+  tmux set-environment -t "$session" ATMUX_SOURCE_ROOT "$source_root"
+  real_tmux="$(resolve_real_tmux_bin || true)"
+  if [[ -n "$real_tmux" ]]; then
+    tmux set-environment -t "$session" ATMUX_REAL_TMUX "$real_tmux"
+  fi
+  tmux set-environment -t "$session" ATMUX_AGENT_NAME "$name"
+  tmux set-environment -t "$session" ATMUX_ADAPTER "$adapter"
+  tmux set-environment -t "$session" ATMUX_ADAPTER_REQUESTED "$adapter"
+  tmux set-environment -t "$session" ATMUX_ADAPTER_SELECTED "$adapter"
+  if [[ -n "$adapters_list" ]]; then
+    tmux set-environment -t "$session" ATMUX_ADAPTERS_ALLOWED "$adapters_list"
+  fi
+  tmux set-environment -t "$session" ATMUX_INTELLIGENCE "$intelligence"
+  if [[ "$adapter" == "codex" || "$adapter" == "auto" ]]; then
+    tmux set-environment -t "$session" ATMUX_BOOTSTRAP_STATE pending
+  else
+    tmux set-environment -t "$session" ATMUX_BOOTSTRAP_STATE ready
+  fi
+  if [[ -n "${ATMUX_ROLE:-}" ]]; then
+    tmux set-environment -t "$session" ATMUX_ROLE "$ATMUX_ROLE"
+  fi
+  if [[ -n "${ATMUX_ROLE_DIR:-}" ]]; then
+    tmux set-environment -t "$session" ATMUX_ROLE_DIR "$ATMUX_ROLE_DIR"
+  fi
+  if [[ -n "${ATMUX_ROLE_START:-}" ]]; then
+    tmux set-environment -t "$session" ATMUX_ROLE_START "$ATMUX_ROLE_START"
+  fi
+  if [[ -n "${ATMUX_ROLE_STOP:-}" ]]; then
+    tmux set-environment -t "$session" ATMUX_ROLE_STOP "$ATMUX_ROLE_STOP"
+  fi
+  if [[ -n "${ATMUX_MANAGER:-}" ]]; then
+    tmux set-environment -t "$session" ATMUX_MANAGER "$ATMUX_MANAGER"
+  fi
+  if [[ -n "${ATMUX_TEAM:-}" ]]; then
+    tmux set-environment -t "$session" ATMUX_TEAM "$ATMUX_TEAM"
+  fi
+
+  local -a cmd=("$source_root/bin/(atmux)/agent" "_run-adapter" "--adapter" "$adapter")
+  if [[ -n "$adapters_list" ]]; then
+    cmd+=("--adapters" "$adapters_list")
+  fi
+  if ((${#forward_args[@]})); then
+    cmd+=("--" "${forward_args[@]}")
+  fi
+
+  local launch
+  printf -v launch '%q ' "${cmd[@]}"
+  local launch_pane
+  launch_pane="$(primary_pane_for_session "$session")"
+  if [[ -z "$launch_pane" ]]; then
+    echo "cannot find pane for session: $session" >&2
+    exit 1
+  fi
+  tmux send-keys -t "$launch_pane" "$launch" C-m
+  attach_or_switch "$session"
+}
+
+attach_agent() {
+  local target="${1:-}"
+  if [[ -z "$target" ]]; then
+    echo "usage: atmux agent attach <name|session>" >&2
+    exit 2
+  fi
+  if [[ -n "${TMUX:-}" ]]; then
+    echo "atmux agent attach must be run outside tmux" >&2
+    exit 2
+  fi
+
+  local repo_root repo_name
+  {
+    IFS= read -r repo_root
+    IFS= read -r repo_name
+  } < <(repo_context)
+  local source_root="${ATMUX_SOURCE_ROOT:-${ATMUX_HOME}/src/atmux}"
+
+  local session
+  if tmux has-session -t "$target" 2>/dev/null; then
+    session="$target"
+  elif [[ "$target" == atmux-* ]]; then
+    session="$target"
+  elif [[ "$target" == "${repo_name}-"* ]] && tmux has-session -t "atmux-${target}" 2>/dev/null; then
+    session="atmux-${target}"
+  else
+    session="atmux-${repo_name}-${target}"
+  fi
+
+  if ! tmux has-session -t "$session" 2>/dev/null; then
+    echo "session not found: $session" >&2
+    exit 1
+  fi
+
+  local existing_adapter existing_worktree existing_source_root existing_repo existing_manager existing_role existing_team
+  existing_adapter="$(tmux show-environment -t "$session" ATMUX_ADAPTER 2>/dev/null | sed -n 's/^ATMUX_ADAPTER=//p' || true)"
+  existing_worktree="$(tmux show-environment -t "$session" ATMUX_WORKTREE 2>/dev/null | sed -n 's/^ATMUX_WORKTREE=//p' || true)"
+  existing_source_root="$(tmux show-environment -t "$session" ATMUX_SOURCE_ROOT 2>/dev/null | sed -n 's/^ATMUX_SOURCE_ROOT=//p' || true)"
+  existing_repo="$(tmux show-environment -t "$session" ATMUX_REPO 2>/dev/null | sed -n 's/^ATMUX_REPO=//p' || true)"
+  existing_manager="$(tmux show-environment -t "$session" ATMUX_MANAGER 2>/dev/null | sed -n 's/^ATMUX_MANAGER=//p' || true)"
+  existing_role="$(tmux show-environment -t "$session" ATMUX_ROLE 2>/dev/null | sed -n 's/^ATMUX_ROLE=//p' || true)"
+  existing_team="$(tmux show-environment -t "$session" ATMUX_TEAM 2>/dev/null | sed -n 's/^ATMUX_TEAM=//p' || true)"
+  if [[ -n "$existing_adapter" ]]; then
+    export ATMUX_ADAPTER="$existing_adapter"
+  fi
+  if [[ -n "$existing_repo" ]]; then
+    export ATMUX_REPO="$existing_repo"
+  else
+    export ATMUX_REPO="$repo_name"
+  fi
+  export ATMUX_MANAGER="$existing_manager"
+  export ATMUX_ROLE="$existing_role"
+  export ATMUX_TEAM="$existing_team"
+  if [[ -n "$existing_source_root" && -d "$existing_source_root" ]]; then
+    export ATMUX_SOURCE_ROOT="$existing_source_root"
+  else
+    export ATMUX_SOURCE_ROOT="$repo_root"
+  fi
+  if [[ -n "$existing_worktree" && -d "$existing_worktree" ]]; then
+    inject_control_file "$existing_worktree"
+  else
+    inject_control_file "$repo_root"
+  fi
+  ensure_tmux_scroll_enabled
+  attach_or_switch "$session"
+}
+
+# === Team dashboard / status / task helpers (existing) ======================
 
 ensure_team_dashboard_for_agent() {
   local repo_root="$1"
@@ -556,70 +1543,6 @@ ensure_team_dashboard_for_agent() {
   apply_team_scroll_settings
 }
 
-matches_any_pattern() {
-  local value="$1"
-  shift || true
-  local pattern
-  for pattern in "$@"; do
-    case "$value" in
-      $pattern) return 0 ;;
-    esac
-  done
-  return 1
-}
-
-xml_escape() {
-  printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g' -e "s/'/\&apos;/g"
-}
-
-build_notification() {
-  "${ATMUX_SOURCE_ROOT:-$ATMUX_HOME/src/atmux}/bin/(atmux)/notify" build "$@"
-}
-
-get_session_env() {
-  local session="$1"
-  local key="$2"
-  tmux show-environment -t "$session" "$key" 2>/dev/null | sed -n "s/^${key}=//p" || true
-}
-
-primary_pane_for_session() {
-  local session="$1"
-  tmux list-panes -a -F '#{session_name} #{pane_id}' 2>/dev/null | awk -v s="$session" '$1==s { print $2; exit }'
-}
-
-resolve_adapter_cmd_for_session() {
-  local session="$1"
-  local adapter source_root
-  adapter="$(get_session_env "$session" ATMUX_ADAPTER)"
-  source_root="$(get_session_env "$session" ATMUX_SOURCE_ROOT)"
-  [[ -n "$adapter" ]] || adapter="codex"
-
-  if [[ -n "$source_root" && -x "$source_root/adapter/$adapter/cmd" ]]; then
-    printf '%s\n' "$source_root/adapter/$adapter/cmd"
-    return 0
-  fi
-  if [[ -n "${ATMUX_SOURCE_ROOT:-}" && -x "${ATMUX_SOURCE_ROOT}/adapter/$adapter/cmd" ]]; then
-    printf '%s\n' "${ATMUX_SOURCE_ROOT}/adapter/$adapter/cmd"
-    return 0
-  fi
-
-  local repo_root=""
-  if repo_root="$(git rev-parse --show-toplevel 2>/dev/null)"; then
-    if [[ -x "$repo_root/adapter/$adapter/cmd" ]]; then
-      printf '%s\n' "$repo_root/adapter/$adapter/cmd"
-      return 0
-    fi
-  fi
-
-  local atmux_home="${ATMUX_HOME:-$HOME/.atmux}"
-  if [[ -x "$atmux_home/adapters/$adapter/cmd" ]]; then
-    printf '%s\n' "$atmux_home/adapters/$adapter/cmd"
-    return 0
-  fi
-
-  return 1
-}
-
 status_node_for_session() {
   local session="$1"
   local passive_status="${2:-0}"
@@ -682,8 +1605,6 @@ send_task_to_agent() {
     fi
   fi
 
-  # Use `atmux issue create --assign-to` to store the task on disk; notification
-  # is sent by the assign step inside that command.
   local assign_cmd=("${ATMUX_SOURCE_ROOT:-$ATMUX_HOME/src/atmux}/bin/atmux" issue create --title "$description" --assign-to "$target_session")
   local todo
   while IFS= read -r todo; do
@@ -693,307 +1614,334 @@ send_task_to_agent() {
   ATMUX_NO_WRAP=1 "${assign_cmd[@]}" >/dev/null 2>&1 || true
 }
 
-valid_intelligence() {
-  local value="${1:-}"
-  [[ "$value" =~ ^[0-9]+$ ]] || return 1
-  (( value >= 0 && value <= 100 ))
+# === do_create: top-level entry that spawns a new agent =====================
+
+do_create() {
+  local manager="${ATMUX_AGENT_NAME:-}"
+  local top_level=0
+  if [[ -z "$manager" ]]; then
+    top_level=1
+  fi
+
+  local name=""
+  local role=""
+  local team="${ATMUX_TEAM:-}"
+  if [[ -z "$team" && -n "${TMUX:-}" ]]; then
+    current_session_name="$(tmux display-message -p '#S' 2>/dev/null || true)"
+    if [[ -n "$current_session_name" ]]; then
+      team="$(tmux show-environment -t "$current_session_name" ATMUX_TEAM 2>/dev/null | sed -n 's/^ATMUX_TEAM=//p' || true)"
+    fi
+  fi
+  local adapter="auto"
+  local adapters_list=""
+  local intelligence=""
+  local no_worktree=0
+  local task_mode=0
+  local task_description=""
+  local task_todos_blob=""
+  local start_cmd=""
+  local stop_cmd=""
+  local -a forward=()
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --name)
+        name="${2:-}"
+        shift 2
+        ;;
+      --adapter)
+        adapter="${2:-}"
+        shift 2
+        ;;
+      --adapters)
+        adapters_list="${2:-}"
+        shift 2
+        ;;
+      --role)
+        role="${2:-}"
+        shift 2
+        ;;
+      --team|-t)
+        team="${2:-}"
+        shift 2
+        ;;
+      --intelligence)
+        intelligence="${2:-}"
+        shift 2
+        ;;
+      --no-worktree)
+        no_worktree=1
+        shift
+        ;;
+      --task)
+        task_mode=1
+        shift
+        ;;
+      --description)
+        task_description="${2:-}"
+        shift 2
+        ;;
+      --todo|--todos)
+        task_todos_blob+="${2:-}"$'\n'
+        shift 2
+        ;;
+      --start)
+        start_cmd="${2:-}"
+        shift 2
+        ;;
+      --stop)
+        stop_cmd="${2:-}"
+        shift 2
+        ;;
+      --)
+        shift
+        forward=("$@")
+        break
+        ;;
+      -*)
+        echo "unknown flag: $1" >&2
+        exit 2
+        ;;
+      *)
+        if [[ -z "$name" ]]; then
+          name="$1"
+          shift
+        else
+          echo "unexpected argument: $1" >&2
+          exit 2
+        fi
+        ;;
+    esac
+  done
+
+  if [[ -z "$role" ]]; then
+    echo "missing required flag: --role" >&2
+    exit 2
+  fi
+
+  case "$start_cmd" in
+    *$'\n'*) echo "--start must be a single line; use a script file for multi-line commands" >&2; exit 2 ;;
+  esac
+  case "$stop_cmd" in
+    *$'\n'*) echo "--stop must be a single line; use a script file for multi-line commands" >&2; exit 2 ;;
+  esac
+
+  # Resolve role directory if a role name maps to one.
+  local role_dir=""
+  local role_adapters=""
+  if [[ -n "$role" ]]; then
+    if role_runner="$(resolve_role_runner || true)" && [[ -x "$role_runner" ]]; then
+      role_dir="$("$role_runner" resolve "$role" 2>/dev/null || true)"
+    fi
+  fi
+  if [[ -n "$role_dir" ]]; then
+    manifest_out="$(read_role_manifest "$role_dir/manifest" || true)"
+    if [[ -n "$manifest_out" ]]; then
+      manifest_intelligence="$(printf '%s\n' "$manifest_out" | sed -n 's/^INTELLIGENCE=//p')"
+      role_adapters="$(printf '%s\n' "$manifest_out" | sed -n 's/^ADAPTERS=//p')"
+      if [[ -z "$intelligence" && -n "$manifest_intelligence" ]]; then
+        intelligence="$manifest_intelligence"
+      fi
+    fi
+    if [[ -z "$start_cmd" && -x "$role_dir/start" ]]; then
+      start_cmd="$role_dir/start"
+    fi
+    if [[ -z "$stop_cmd" && -x "$role_dir/stop" ]]; then
+      stop_cmd="$role_dir/stop"
+    fi
+  fi
+
+  if [[ -n "$intelligence" ]] && ! valid_intelligence "$intelligence"; then
+    echo "invalid intelligence: $intelligence" >&2
+    echo "expected integer range: 0-100" >&2
+    exit 2
+  fi
+  if [[ -z "$intelligence" ]]; then
+    echo "missing required flag: --intelligence" >&2
+    exit 2
+  fi
+  if [[ "$task_mode" -eq 0 && ( -n "$task_description" || -n "$task_todos_blob" ) ]]; then
+    echo "--description/--todos require --task for agent create" >&2
+    exit 2
+  fi
+  if [[ "$task_mode" -eq 1 && -z "$task_description" && -z "$task_todos_blob" ]]; then
+    echo "--task requires --description and/or --todos" >&2
+    exit 2
+  fi
+
+  local repo_root="" repo_name=""
+  {
+    IFS= read -r repo_root
+    IFS= read -r repo_name
+  } < <(repo_context)
+  if [[ -n "$team" ]]; then
+    ensure_team_has_capacity "$repo_name" "$team"
+  fi
+
+  # Combine role-derived adapters with user-supplied --adapters (user wins).
+  local effective_adapters="${adapters_list:-$role_adapters}"
+
+  # Build the spawn args and call spawn_agent_session inline. This replaces
+  # the old `session start` re-exec — agent owns its lifecycle now.
+  local -a spawn_args=()
+  if [[ -n "$name" ]]; then
+    spawn_args+=(--name "$name")
+  fi
+  if [[ -n "$adapter" ]]; then
+    spawn_args+=(--adapter "$adapter")
+  fi
+  if [[ -n "$effective_adapters" ]]; then
+    spawn_args+=(--adapters "$effective_adapters")
+  fi
+  if [[ "$no_worktree" -eq 1 ]]; then
+    spawn_args+=(--no-worktree)
+  fi
+  if [[ ${#forward[@]} -gt 0 ]]; then
+    spawn_args+=(-- "${forward[@]}")
+  fi
+
+  # Top-level interactive create attaches; sub-agent create captures stdout
+  # for the XML envelope. spawn_agent_session prints the session name when
+  # not attached to a TTY (via attach_or_switch's TTY check) — that's what
+  # we need for the sub-agent path.
+  local create_out=""
+  if [[ "$top_level" -eq 1 ]]; then
+    # Top-level: run inline so attach_or_switch can take over the TTY.
+    ATMUX_MANAGER="" \
+    ATMUX_ROLE="$role" \
+    ATMUX_ROLE_DIR="$role_dir" \
+    ATMUX_ROLE_START="$start_cmd" \
+    ATMUX_ROLE_STOP="$stop_cmd" \
+    ATMUX_TEAM="$team" \
+    ATMUX_INTELLIGENCE="$intelligence" \
+      spawn_agent_session "${spawn_args[@]}"
+    return 0
+  fi
+
+  # Sub-agent: capture stdout; spawn_agent_session attaches read-only when
+  # interactive and prints the session name otherwise.
+  create_out="$(
+    ATMUX_MANAGER="$manager" \
+    ATMUX_ROLE="$role" \
+    ATMUX_ROLE_DIR="$role_dir" \
+    ATMUX_ROLE_START="$start_cmd" \
+    ATMUX_ROLE_STOP="$stop_cmd" \
+    ATMUX_TEAM="$team" \
+    ATMUX_INTELLIGENCE="$intelligence" \
+      spawn_agent_session "${spawn_args[@]}"
+  )"
+
+  local created_session
+  created_session="$(printf '%s\n' "$create_out" | awk 'NF { last=$0 } END { print last }')"
+  if [[ -z "$created_session" ]]; then
+    exit 0
+  fi
+
+  if [[ -n "$start_cmd" ]]; then
+    role_start_check_deadline=$(( $(date +%s) + ${ATMUX_ROLE_START_TIMEOUT:-60} + 2 ))
+    while (( $(date +%s) < role_start_check_deadline )); do
+      if ! tmux has-session -t "$created_session" 2>/dev/null; then
+        echo "atmux: agent aborted during role start (session gone)" >&2
+        exit 1
+      fi
+      role_state="$(get_session_env "$created_session" ATMUX_ROLE_START_STATE)"
+      if [[ "$role_state" == "failed" ]]; then
+        echo "atmux: agent aborted during role start (role start failed)" >&2
+        tmux kill-session -t "$created_session" >/dev/null 2>&1 || true
+        exit 1
+      fi
+      if [[ "$role_state" == "ready" ]]; then
+        break
+      fi
+      sleep 0.1
+    done
+  fi
+
+  local created_name
+  created_name="$(get_session_env "$created_session" ATMUX_AGENT_NAME)"
+  if [[ -z "$created_name" ]]; then
+    created_name="$name"
+  fi
+  if [[ -z "$created_name" ]]; then
+    session_prefix="atmux-${repo_name}-"
+    if [[ "$created_session" == "$session_prefix"* ]]; then
+      created_name="${created_session#"$session_prefix"}"
+    else
+      created_name="$created_session"
+    fi
+  fi
+
+  local created_repo
+  created_repo="$(get_session_env "$created_session" ATMUX_REPO)"
+  [[ -n "$created_repo" ]] || created_repo="$repo_name"
+
+  local created_manager
+  created_manager="$(get_session_env "$created_session" ATMUX_MANAGER)"
+  [[ -n "$created_manager" ]] || created_manager="$manager"
+  local created_team
+  created_team="$(get_session_env "$created_session" ATMUX_TEAM)"
+  [[ -n "$created_team" ]] || created_team="$team"
+
+  local created_adapter
+  created_adapter="$(get_session_env "$created_session" ATMUX_ADAPTER)"
+  if [[ "$created_adapter" == "auto" || -z "$created_adapter" ]]; then
+    for _ in $(seq 1 30); do
+      sleep 0.1
+      probe_adapter="$(get_session_env "$created_session" ATMUX_ADAPTER)"
+      if [[ -n "$probe_adapter" && "$probe_adapter" != "auto" ]]; then
+        created_adapter="$probe_adapter"
+        break
+      fi
+    done
+  fi
+  if [[ -z "$created_adapter" ]]; then
+    created_adapter="$adapter"
+  fi
+  if [[ -z "$created_adapter" ]]; then
+    created_adapter="auto"
+  fi
+
+  local created_adapter_requested
+  created_adapter_requested="$(get_session_env "$created_session" ATMUX_ADAPTER_REQUESTED)"
+  if [[ -z "$created_adapter_requested" ]]; then
+    created_adapter_requested="$adapter"
+  fi
+
+  local status_node
+  status_node="$(status_node_for_session "$created_session")"
+  if ! ensure_team_dashboard_for_agent "$repo_root" "$created_repo" "$created_team" "$created_session" "$created_name"; then
+    exit 1
+  fi
+  printf '<agent name="%s" session="%s" repo="%s" manager="%s" team="%s" adapter="%s" adapter_requested="%s" role="%s" intelligence="%s">\n' \
+    "$(xml_escape "$created_name")" \
+    "$(xml_escape "$created_session")" \
+    "$(xml_escape "$created_repo")" \
+    "$(xml_escape "$created_manager")" \
+    "$(xml_escape "$created_team")" \
+    "$(xml_escape "$created_adapter")" \
+    "$(xml_escape "$created_adapter_requested")" \
+    "$(xml_escape "$role")" \
+    "$(xml_escape "$intelligence")"
+  printf '  %s\n' "$status_node"
+  printf '</agent>\n'
 }
+
+# === Dispatch ===============================================================
 
 sub="${1:-}"
 shift || true
 
 case "$sub" in
   create|_create)
-    manager="${ATMUX_AGENT_NAME:-}"
-    if [[ -z "$manager" ]]; then
-      echo "ATMUX_AGENT_NAME is required for agent create" >&2
-      exit 2
-    fi
-
-    name=""
-    role=""
-    team="${ATMUX_TEAM:-}"
-    if [[ -z "$team" && -n "${TMUX:-}" ]]; then
-      current_session_name="$(tmux display-message -p '#S' 2>/dev/null || true)"
-      if [[ -n "$current_session_name" ]]; then
-        team="$(tmux show-environment -t "$current_session_name" ATMUX_TEAM 2>/dev/null | sed -n 's/^ATMUX_TEAM=//p' || true)"
-      fi
-    fi
-    adapter="auto"
-    intelligence=""
-    no_worktree=0
-    task_mode=0
-    task_description=""
-    task_todos_blob=""
-    start_cmd=""
-    stop_cmd=""
-    forward=()
-    while [[ $# -gt 0 ]]; do
-      case "$1" in
-        --name)
-          name="${2:-}"
-          shift 2
-          ;;
-        --adapter)
-          adapter="${2:-}"
-          shift 2
-          ;;
-        --role)
-          role="${2:-}"
-          shift 2
-          ;;
-        --team|-t)
-          team="${2:-}"
-          shift 2
-          ;;
-        --intelligence)
-          intelligence="${2:-}"
-          shift 2
-          ;;
-        --no-worktree)
-          no_worktree=1
-          shift
-          ;;
-        --task)
-          task_mode=1
-          shift
-          ;;
-        --description)
-          task_description="${2:-}"
-          shift 2
-          ;;
-        --todo|--todos)
-          task_todos_blob+="${2:-}"$'\n'
-          shift 2
-          ;;
-        --start)
-          start_cmd="${2:-}"
-          shift 2
-          ;;
-        --stop)
-          stop_cmd="${2:-}"
-          shift 2
-          ;;
-        --)
-          shift
-          forward=("$@")
-          break
-          ;;
-        -*)
-          echo "unknown flag: $1" >&2
-          exit 2
-          ;;
-        *)
-          # Positional agent name (allows `atmux agent create worker --role X`).
-          if [[ -z "$name" ]]; then
-            name="$1"
-            shift
-          else
-            echo "unexpected argument: $1" >&2
-            exit 2
-          fi
-          ;;
-      esac
-    done
-
-    if [[ -z "$role" ]]; then
-      echo "missing required flag: --role" >&2
-      exit 2
-    fi
-
-    # Hook commands are persisted on the tmux session via tmux set-environment,
-    # which truncates values at the first newline. Reject multi-line commands
-    # explicitly so the truncation never surprises anyone — use a script file
-    # if you need multi-line behavior.
-    case "$start_cmd" in
-      *$'\n'*) echo "--start must be a single line; use a script file for multi-line commands" >&2; exit 2 ;;
-    esac
-    case "$stop_cmd" in
-      *$'\n'*) echo "--stop must be a single line; use a script file for multi-line commands" >&2; exit 2 ;;
-    esac
-
-    # Resolve role directory if a role name maps to one. Apply manifest
-    # defaults (intelligence, adapters allow-list) and pick up start/stop
-    # scripts unless overridden by inline --start/--stop.
-    role_dir=""
-    role_adapters=""
-    if [[ -n "$role" ]]; then
-      if role_runner="$(resolve_role_runner || true)" && [[ -x "$role_runner" ]]; then
-        role_dir="$("$role_runner" resolve "$role" 2>/dev/null || true)"
-      fi
-    fi
-    if [[ -n "$role_dir" ]]; then
-      manifest_out="$(read_role_manifest "$role_dir/manifest" || true)"
-      if [[ -n "$manifest_out" ]]; then
-        manifest_intelligence="$(printf '%s\n' "$manifest_out" | sed -n 's/^INTELLIGENCE=//p')"
-        role_adapters="$(printf '%s\n' "$manifest_out" | sed -n 's/^ADAPTERS=//p')"
-        if [[ -z "$intelligence" && -n "$manifest_intelligence" ]]; then
-          intelligence="$manifest_intelligence"
-        fi
-      fi
-      if [[ -z "$start_cmd" && -x "$role_dir/start" ]]; then
-        start_cmd="$role_dir/start"
-      fi
-      if [[ -z "$stop_cmd" && -x "$role_dir/stop" ]]; then
-        stop_cmd="$role_dir/stop"
-      fi
-    fi
-
-    if [[ -n "$intelligence" ]] && ! valid_intelligence "$intelligence"; then
-      echo "invalid intelligence: $intelligence" >&2
-      echo "expected integer range: 0-100" >&2
-      exit 2
-    fi
-    if [[ -z "$intelligence" ]]; then
-      echo "missing required flag: --intelligence" >&2
-      exit 2
-    fi
-    if [[ "$task_mode" -eq 0 && ( -n "$task_description" || -n "$task_todos_blob" ) ]]; then
-      echo "--description/--todos require --task for agent create" >&2
-      exit 2
-    fi
-    if [[ "$task_mode" -eq 1 && -z "$task_description" && -z "$task_todos_blob" ]]; then
-      echo "--task requires --description and/or --todos" >&2
-      exit 2
-    fi
-
-    repo_root=""
-    repo_name=""
-    {
-      IFS= read -r repo_root
-      IFS= read -r repo_name
-    } < <(repo_context)
-    if [[ -n "$team" ]]; then
-      ensure_team_has_capacity "$repo_name" "$team"
-    fi
-
-    session_runner="$(resolve_session_runner)"
-    cmd=("$session_runner" start)
-    if [[ -n "$name" ]]; then
-      cmd+=(--name "$name")
-    fi
-    if [[ -n "$adapter" ]]; then
-      cmd+=(--adapter "$adapter")
-    fi
-    if [[ -n "$role_adapters" ]]; then
-      cmd+=(--adapters "$role_adapters")
-    fi
-    if [[ "$no_worktree" -eq 1 ]]; then
-      cmd+=(--no-worktree)
-    fi
-    if [[ ${#forward[@]} -gt 0 ]]; then
-      cmd+=(-- "${forward[@]}")
-    fi
-
-    create_out="$(
-      ATMUX_MANAGER="$manager" \
-      ATMUX_ROLE="$role" \
-      ATMUX_ROLE_DIR="$role_dir" \
-      ATMUX_ROLE_START="$start_cmd" \
-      ATMUX_ROLE_STOP="$stop_cmd" \
-      ATMUX_TEAM="$team" \
-      ATMUX_INTELLIGENCE="$intelligence" \
-      "${cmd[@]}"
-    )"
-
-    created_session="$(printf '%s\n' "$create_out" | awk 'NF { last=$0 } END { print last }')"
-    if [[ -z "$created_session" ]]; then
-      exit 0
-    fi
-
-    # If a role start hook is configured, watch briefly for an abort signal:
-    # session disappears (run_adapter killed it) or bootstrap state flips to
-    # "failed" (set by run_adapter on hook failure). Without this check, agent
-    # _create would print a success XML even when the session was torn down
-    # async because the role start hook returned non-zero.
-    if [[ -n "$start_cmd" ]]; then
-      # Wait up to ATMUX_ROLE_START_TIMEOUT+2s for run_adapter to publish the
-      # role start outcome via ATMUX_ROLE_START_STATE. Successful starts return
-      # as soon as the hook completes; fast failures return within the hook's
-      # exit time. Only slow-then-failed hooks (rare) hit the cap.
-      role_start_check_deadline=$(( $(date +%s) + ${ATMUX_ROLE_START_TIMEOUT:-60} + 2 ))
-      while (( $(date +%s) < role_start_check_deadline )); do
-        if ! tmux has-session -t "$created_session" 2>/dev/null; then
-          echo "atmux: agent aborted during role start (session gone)" >&2
-          exit 1
-        fi
-        role_state="$(get_session_env "$created_session" ATMUX_ROLE_START_STATE)"
-        if [[ "$role_state" == "failed" ]]; then
-          echo "atmux: agent aborted during role start (role start failed)" >&2
-          tmux kill-session -t "$created_session" >/dev/null 2>&1 || true
-          exit 1
-        fi
-        if [[ "$role_state" == "ready" ]]; then
-          break
-        fi
-        sleep 0.1
-      done
-    fi
-
-    created_name="$(get_session_env "$created_session" ATMUX_AGENT_NAME)"
-    if [[ -z "$created_name" ]]; then
-      created_name="$name"
-    fi
-    if [[ -z "$created_name" ]]; then
-      session_prefix="atmux-${repo_name}-"
-      if [[ "$created_session" == "$session_prefix"* ]]; then
-        created_name="${created_session#"$session_prefix"}"
-      else
-        created_name="$created_session"
-      fi
-    fi
-
-    created_repo="$(get_session_env "$created_session" ATMUX_REPO)"
-    [[ -n "$created_repo" ]] || created_repo="$repo_name"
-
-    created_manager="$(get_session_env "$created_session" ATMUX_MANAGER)"
-    [[ -n "$created_manager" ]] || created_manager="$manager"
-    created_team="$(get_session_env "$created_session" ATMUX_TEAM)"
-    [[ -n "$created_team" ]] || created_team="$team"
-
-    created_adapter="$(get_session_env "$created_session" ATMUX_ADAPTER)"
-    if [[ "$created_adapter" == "auto" || -z "$created_adapter" ]]; then
-      for _ in $(seq 1 30); do
-        sleep 0.1
-        probe_adapter="$(get_session_env "$created_session" ATMUX_ADAPTER)"
-        if [[ -n "$probe_adapter" && "$probe_adapter" != "auto" ]]; then
-          created_adapter="$probe_adapter"
-          break
-        fi
-      done
-    fi
-    if [[ -z "$created_adapter" ]]; then
-      created_adapter="$adapter"
-    fi
-    if [[ -z "$created_adapter" ]]; then
-      created_adapter="auto"
-    fi
-
-    created_adapter_requested="$(get_session_env "$created_session" ATMUX_ADAPTER_REQUESTED)"
-    if [[ -z "$created_adapter_requested" ]]; then
-      created_adapter_requested="$adapter"
-    fi
-
-    status_node="$(status_node_for_session "$created_session")"
-    if ! ensure_team_dashboard_for_agent "$repo_root" "$created_repo" "$created_team" "$created_session" "$created_name"; then
-      exit 1
-    fi
-    # Disabled for now: create should not auto-assign tasks.
-    # if [[ "$task_mode" -eq 1 ]]; then
-    #   send_task_to_agent "$created_repo" "$created_name" "$task_description" "$task_todos_blob"
-    # fi
-    printf '<agent name="%s" session="%s" repo="%s" manager="%s" team="%s" adapter="%s" adapter_requested="%s" role="%s" intelligence="%s">\n' \
-      "$(xml_escape "$created_name")" \
-      "$(xml_escape "$created_session")" \
-      "$(xml_escape "$created_repo")" \
-      "$(xml_escape "$created_manager")" \
-      "$(xml_escape "$created_team")" \
-      "$(xml_escape "$created_adapter")" \
-      "$(xml_escape "$created_adapter_requested")" \
-      "$(xml_escape "$role")" \
-      "$(xml_escape "$intelligence")"
-    printf '  %s\n' "$status_node"
-    printf '</agent>\n'
+    do_create "$@"
+    ;;
+  attach)
+    attach_agent "$@"
+    ;;
+  _run-adapter)
+    run_adapter "$@"
+    ;;
+  _bootstrap-unlock)
+    bootstrap_unlock_worker "$@"
     ;;
   list)
     here_agent="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"

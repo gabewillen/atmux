@@ -171,7 +171,7 @@ run_adapter_case() {
 
   worker_session="$(ATMUX_ALLOW_OUTSIDE_TMUX=1 ATMUX_HOME="$atmux_home" ATMUX_SOURCE_ROOT="$REPO_ROOT" ATMUX_REPO="$repo" \
     ATMUX_ROLE="implementer" ATMUX_INTELLIGENCE="50" ATMUX_MANAGER="manager" \
-    "$ATMUX_BIN" session start --name worker --adapter auto --adapters "$adapter" --no-worktree)"
+    "$ATMUX_BIN" agent create --name worker --role worker --intelligence 50 --adapter auto --adapters "$adapter" --no-worktree)"
   [[ -n "$worker_session" ]] || { echo "failed to create worker session for $adapter" >&2; exit 1; }
   SESSIONS+=("$worker_session")
 

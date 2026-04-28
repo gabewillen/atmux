@@ -204,7 +204,7 @@ trap cleanup EXIT
 snapshot_control_files
 
 manager_session="$(ATMUX_ALLOW_OUTSIDE_TMUX=1 ATMUX_HOME="$atmux_home" ATMUX_SOURCE_ROOT="$REPO_ROOT" ATMUX_REPO="$repo" \
-  "$ATMUX_BIN" session start --name manager --adapter codex --no-worktree)"
+  "$ATMUX_BIN" agent create --name manager --role manager --intelligence 50 --adapter codex --no-worktree)"
 [[ -n "$manager_session" ]] || { echo "failed to create Codex manager session" >&2; exit 1; }
 SESSIONS+=("$manager_session")
 

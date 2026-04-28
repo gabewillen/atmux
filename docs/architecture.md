@@ -24,11 +24,11 @@ System installs use:
 
 Examples:
 
-- `bin/(atmux)/session`
+- `bin/(atmux)/agent` (also owns session lifecycle: `create`, `attach`, plus the in-pane `_run-adapter` and `_bootstrap-unlock` workers)
 - `bin/(atmux)/send`
 - `bin/(atmux)/notify`
 - `bin/(atmux)/exec`
-- `bin/(atmux)/agent`, `team`, `issue`, `pr`, `process`, `pane`, `path`, `watcher` (resource scripts)
+- `bin/(atmux)/team`, `issue`, `pr`, `process`, `pane`, `path`, `watcher` (resource scripts)
 - `bin/(atmux)/[watch]/*` (per-resource watch backends, dispatched by the resource scripts)
 - `bin/(atmux)/(internal)/{kill,capture,comment}` (internal backends shared by resource scripts)
 

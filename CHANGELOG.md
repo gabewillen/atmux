@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.9.1
+
+- Rename built-in role `example-pr-reviewer` → `gh-pr-reviewer`. It's a real role, not an example.
+
 ## 0.9.0 — Resource-first CLI (BREAKING)
 
 The CLI is now noun-first. Most commands take the form `atmux <noun> <verb>`;

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Role start hook for example-pr-reviewer.
+# Role start hook for gh-pr-reviewer.
 #
 # Runs after the control file is rendered but before the AI CLI execs.
 # Registers a watcher for new PRs in the current repo and writes the
@@ -19,12 +19,12 @@ mkdir -p "$state"
 # `gh` isn't configured we just skip the watcher and let the prompt-only
 # behavior remain.
 if ! command -v gh >/dev/null 2>&1; then
-  echo "example-pr-reviewer: gh not installed; skipping PR watcher" >&2
+  echo "gh-pr-reviewer: gh not installed; skipping PR watcher" >&2
   exit 0
 fi
 gh_repo="$(gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null || true)"
 if [[ -z "$gh_repo" ]]; then
-  echo "example-pr-reviewer: not a GitHub repo (gh repo view failed); skipping" >&2
+  echo "gh-pr-reviewer: not a GitHub repo (gh repo view failed); skipping" >&2
   exit 0
 fi
 

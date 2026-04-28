@@ -1,4 +1,4 @@
-# Sourced by atmux when an agent is created with --role example-pr-reviewer.
+# Sourced by atmux when an agent is created with --role gh-pr-reviewer.
 # Anything exported here is visible during agent creation.
 
 # Default intelligence (caller's --intelligence flag still wins)

@@ -29,8 +29,8 @@ For project installs, `ATMUX_HOME` defaults to `<project>/.atmux`. For system in
 - Includes nested status per agent:
   `<agent ...><status ... /></agent>`
 
-### `atmux agent create <name> --role <role> --intelligence <0-100> [--team <team>]`
-- Creates a new agent session/worktree.
+### `atmux agent create [name] --role <role> --intelligence <0-100> [--team <team>]`
+- Creates a new agent session/worktree. If `name` is omitted, `atmux` auto-generates a name such as `agent-N`.
 - Works as a top-level command (no manager required) or as a sub-agent spawn from inside a manager. When run interactively without a manager, attaches to the new session; from a manager, prints an `<agent>...</agent>` XML record describing the new agent.
 - Creates a git worktree at `<ATMUX_HOME>/agents/{{repo}}-{{name}}` on branch `atmux-{{repo}}-{{name}}` (skip with `--no-worktree`), then initializes submodules recursively.
 - Starts the selected adapter in that session (`--adapter`, default `auto`; restrict candidates with `--adapters a,b,...`).

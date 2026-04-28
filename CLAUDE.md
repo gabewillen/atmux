@@ -96,12 +96,13 @@ for more information.
 #### `agent`
 
 ```sh
-atmux agent create <name> --role <role> --intelligence <0-100>
+atmux agent create [name] --role <role> --intelligence <0-100>
                    [--team <team>] [--adapter <adapter>] [--adapters <list>]
                    [--no-worktree] [--start <cmd>] [--stop <cmd>]
                    [--task --description <desc> --todo <todo>...]
                    [-- <adapter-args...>]
-  (or `--name <name>` instead of positional)
+  (or `--name <name>` instead of positional; if omitted, atmux
+   auto-generates `agent-N`.)
 atmux agent list [--all] [--status]
 atmux agent attach <name|session>
 atmux agent kill <name|pattern> [<name|pattern>...]

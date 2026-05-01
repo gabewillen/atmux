@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.10.1
+
+- `atmux process watch --stdio` now batches output events into a single digest notification per `--coalesce` window (default `60s`, pass `0` for the previous per-event behavior). Pending output flushes when the process exits or `--duration` / `--timeout` expires. Digest notifications carry `coalesced="true" events="N" window="<dur>s" reason="…"`.
+- `atmux path watch` now streams change events continuously by default with the same `--coalesce` semantics. New `--once` flag preserves the prior single-shot exit-0-on-first-change contract. `--timeout` is now an idle exit (matching `--stdio`); `--duration` was added as a hard cap.
+- Bug fix in the watcher helpers: never toggle `set -e` inside a function body — the new setting leaks to the caller, and a non-zero return then trips errexit before the rc can be read.
+
 ## 0.10.0 — Session command removed (BREAKING)
 
 The `atmux session` command has been removed. Its functionality is folded

@@ -6,22 +6,29 @@ HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 usage() {
   cat <<'USAGE'
 Usage:
-  atmux path watch <glob> [--timeout <seconds>] [--interval <seconds>]
-                          [--exec <cmd>]
+  atmux path watch <glob> [--timeout <seconds>] [--duration <seconds>]
+                          [--interval <seconds>] [--coalesce <seconds>]
+                          [--exec <cmd>] [--once]
 
 Description:
   Operate on filesystem paths matched by a glob. The only verb today is
-  `watch`, which exits 0 when the matched set or any matched file's metadata
-  changes. Uses fswatch or inotifywait when available; falls back to polling.
-  Exits 124 on timeout.
+  `watch`, which streams change events continuously, emitting one digest XML
+  line per --coalesce window (default 60s). Uses fswatch or inotifywait when
+  available; falls back to polling.
 
-  --exec  When supplied, the change-event XML is also piped into <cmd> via
-          `bash -c <cmd>` on stdin in addition to being printed to stdout.
+  --timeout    Idle exit: return 124 if no change is observed for N seconds
+               (0 = disabled, default 0).
+  --duration   Hard cap: return 124 after N seconds total (0 = no cap).
+  --coalesce   Batch change events into one digest line per N seconds
+               (default 60). Set 0 to emit per-event lines.
+  --once       Single-shot: emit one XML line on the first change and exit 0.
+               Disables coalescing.
+  --exec       Pipe each emitted XML line into `bash -c <cmd>`.
 
 Examples:
   atmux path watch 'src/**/*.sh'
-  atmux path watch '/tmp/build/*.log' --timeout 60
-  atmux path watch 'docs/**/*.md' --exec ./on-docs-changed
+  atmux path watch '/tmp/build/*.log' --once --timeout 60
+  atmux path watch 'docs/**/*.md' --exec ./on-docs-changed --coalesce 30
 USAGE
 }
 

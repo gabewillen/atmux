@@ -10,22 +10,28 @@ source "$HERE/../notify"
 usage() {
   cat <<'USAGE'
 Usage:
-  atmux process watch <pid> --stdio [--duration <seconds>] [--timeout <seconds>] [--interval <seconds>] [--lines <n>]
+  atmux process watch <pid> --stdio [--duration <seconds>] [--timeout <seconds>] [--interval <seconds>] [--lines <n>] [--coalesce <seconds>]
 
 Description:
-  Monitor a detached exec process pane for output changes. Each time new
-  output is detected, sends a notification to the calling agent's pane.
+  Monitor a detached exec process pane for output changes. Output events are
+  batched into a single digest notification per coalesce window; the digest
+  carries coalesced="true" events="N" window="<dur>s".
 
   --duration   Total time to watch (0 = until process exits, default 0).
   --timeout    Exit if no new output for this many seconds (0 = disabled, default 0).
   --interval   Poll interval in seconds (default 2).
   --lines      Number of scrollback lines to hash (default 200).
+  --coalesce   Batch output events into one notification per N seconds
+               (default 60). Set to 0 to send a notification per event.
+               Pending output is always flushed when the process exits or
+               --duration / --timeout expires.
 
   Exits 0 when the process exits, 124 on duration/timeout expiry.
 
 Examples:
   atmux process watch 12345 --stdio --duration 600 --timeout 30
-  atmux process watch 12345 --stdio --timeout 60
+  atmux process watch 12345 --stdio --timeout 60 --coalesce 30
+  atmux process watch 12345 --stdio --coalesce 0
 USAGE
 }
 
@@ -35,6 +41,7 @@ main() {
   local timeout_sec="0"
   local interval="2"
   local lines="200"
+  local coalesce="60"
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -61,6 +68,10 @@ main() {
         lines="${2:-}"
         shift 2
         ;;
+      --coalesce)
+        coalesce="${2:-}"
+        shift 2
+        ;;
       -h|--help|help)
         usage
         exit 0
@@ -74,6 +85,7 @@ main() {
   done
 
   [[ -n "$pid" ]] || { echo "missing --pid" >&2; exit 2; }
+  [[ "$coalesce" =~ ^[0-9]+$ ]] || { echo "invalid --coalesce: $coalesce" >&2; exit 2; }
 
   local repo_name
   repo_name="$(repo_name_from_context)"
@@ -140,23 +152,48 @@ main() {
   local last_output_ts
   last_output_ts="$now"
 
+  local pending=0 event_count=0 flush_at=0
+
+  flush_pending() {
+    local reason="${1:-window}"
+    (( pending == 1 )) || return 0
+    local notification_xml
+    if [[ "$coalesce" == "0" ]]; then
+      notification_xml="$(build_notification "exec_output" "$command_text" \
+        "tmux capture-pane -p -t $executor_pane -S -$lines" \
+        "pid=$pid" "pane=$executor_pane")"
+    else
+      notification_xml="$(build_notification "exec_output" "$command_text" \
+        "tmux capture-pane -p -t $executor_pane -S -$lines" \
+        "pid=$pid" "pane=$executor_pane" \
+        "coalesced=true" "events=$event_count" "window=${coalesce}s" "reason=$reason")"
+    fi
+    send_notification "$my_pane" "$notification_xml"
+    pending=0
+    event_count=0
+    flush_at=0
+  }
+
   while true; do
     local st next_deadline wait_for event
     now="$(date +%s)"
 
     st="$(read_state_field "$exec_dir/state" || true)"
     if [[ "$st" == "exited" ]]; then
+      flush_pending "exit"
       exit 0
     fi
 
     # Duration expiry
     if [[ "$duration_deadline" -gt 0 ]] && (( now >= duration_deadline )); then
+      flush_pending "duration"
       exit 124
     fi
 
     if [[ "$timeout_sec" != "0" ]]; then
       local idle_for=$(( now - last_output_ts ))
       if (( idle_for >= timeout_sec )); then
+        flush_pending "idle_timeout"
         exit 124
       fi
     fi
@@ -171,11 +208,20 @@ main() {
         next_deadline="$idle_deadline"
       fi
     fi
+    if (( pending == 1 )); then
+      if [[ "$next_deadline" -eq 0 || "$flush_at" -lt "$next_deadline" ]]; then
+        next_deadline="$flush_at"
+      fi
+    fi
 
     if [[ "$next_deadline" -gt 0 ]]; then
       wait_for=$(( next_deadline - now ))
       (( wait_for > 0 )) || wait_for=1
       if ! read -r -t "$wait_for" event <&8; then
+        now="$(date +%s)"
+        if (( pending == 1 )) && (( now >= flush_at )); then
+          flush_pending "window"
+        fi
         continue
       fi
     else
@@ -183,14 +229,26 @@ main() {
     fi
 
     st="$(read_state_field "$exec_dir/state" || true)"
-    [[ "$st" == "exited" ]] && exit 0
+    if [[ "$st" == "exited" ]]; then
+      if [[ "$event" == "output" ]]; then
+        event_count=$(( event_count + 1 ))
+        pending=1
+      fi
+      flush_pending "exit"
+      exit 0
+    fi
     if [[ "$event" == "output" ]]; then
       last_output_ts="$(date +%s)"
-      local notification_xml
-      notification_xml="$(build_notification "exec_output" "$command_text" \
-        "tmux capture-pane -p -t $executor_pane -S -$lines" \
-        "pid=$pid" "pane=$executor_pane")"
-      send_notification "$my_pane" "$notification_xml"
+      event_count=$(( event_count + 1 ))
+      if [[ "$coalesce" == "0" ]]; then
+        pending=1
+        flush_pending "immediate"
+      else
+        if (( pending == 0 )); then
+          pending=1
+          flush_at=$(( last_output_ts + coalesce ))
+        fi
+      fi
     fi
   done
 }

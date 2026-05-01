@@ -25,22 +25,27 @@ writer_pid=$!
 
 set +e
 watch_out="$(
-  ATMUX_ALLOW_OUTSIDE_TMUX=1 "$ATMUX_BIN" path watch "$tmp_dir/src/*.txt" --timeout 10 --interval 0.1
+  ATMUX_ALLOW_OUTSIDE_TMUX=1 "$ATMUX_BIN" path watch "$tmp_dir/src/*.txt" --once --timeout 10 --interval 0.1
 )"
 rc=$?
 set -e
 
 wait "$writer_pid"
 
-[[ "$rc" -eq 0 ]] || { echo "expected path watch to exit 0, got $rc" >&2; exit 1; }
+[[ "$rc" -eq 0 ]] || { echo "expected path watch --once to exit 0, got $rc" >&2; exit 1; }
 printf '%s\n' "$watch_out" | grep -Fq '<watch type="path"'
 printf '%s\n' "$watch_out" | grep -Fq 'changed="true"'
+# --once must not emit a coalesced digest.
+if printf '%s\n' "$watch_out" | grep -Fq 'coalesced="true"'; then
+  echo "expected --once not to emit coalesced attribute" >&2
+  exit 1
+fi
 
 set +e
-ATMUX_ALLOW_OUTSIDE_TMUX=1 "$ATMUX_BIN" path watch "$tmp_dir/src/*.missing" --timeout 1 --interval 0.1 >/dev/null
+ATMUX_ALLOW_OUTSIDE_TMUX=1 "$ATMUX_BIN" path watch "$tmp_dir/src/*.missing" --once --timeout 1 --interval 0.1 >/dev/null
 timeout_rc=$?
 set -e
 
 [[ "$timeout_rc" -eq 124 ]] || { echo "expected path watch timeout 124, got $timeout_rc" >&2; exit 1; }
 
-echo "ok: watch --path detects glob changes and times out"
+echo "ok: watch --path --once detects glob changes and times out"

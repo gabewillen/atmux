@@ -1,33 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Isolate the tmux socket so this test can never touch the developer's
-# default tmux server. Idempotent if the runner already isolated.
+# Verifies --coalesce 0 disables batching and produces a notification per
+# output event (the pre-coalesce contract).
 source "$(dirname "${BASH_SOURCE[0]}")/lib/isolate-tmux.sh"
 
 TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
 ATMUX_BIN="$REPO_ROOT/bin/atmux"
-
-wait_for_text() {
-  local target="$1"
-  local needle="$2"
-  local timeout="${3:-15}"
-  local deadline now snap compact
-  deadline=$(( $(date +%s) + timeout ))
-  while true; do
-    snap="$(tmux capture-pane -p -t "$target" -S -400 2>/dev/null || true)"
-    compact="$(printf '%s' "$snap" | tr -d '\r\n')"
-    if printf '%s' "$compact" | grep -Fq "$needle"; then
-      return 0
-    fi
-    now="$(date +%s)"
-    if (( now >= deadline )); then
-      return 1
-    fi
-    sleep 0.1
-  done
-}
 
 count_notifications() {
   local target="$1"
@@ -35,8 +15,8 @@ count_notifications() {
   tmux capture-pane -p -t "$target" -S -800 2>/dev/null | tr -d '\r\n' | { grep -o "type=\"${type}\"" || true; } | wc -l | tr -d ' '
 }
 
-tmp_home="$(mktemp -d "${TMPDIR:-/tmp}/atmux-stdio-waves.XXXXXX")"
-repo_name="sw${RANDOM}"
+tmp_home="$(mktemp -d "${TMPDIR:-/tmp}/atmux-stdio-c0.XXXXXX")"
+repo_name="c0${RANDOM}"
 session_exec="atmux-${repo_name}-exec"
 session_watch="atmux-${repo_name}-watch"
 atmux_home="$tmp_home/.atmux"
@@ -59,10 +39,8 @@ pane_exec="$(tmux list-panes -t "$session_exec" -F '#{pane_id}' 2>/dev/null | he
 pane_watch="$(tmux list-panes -t "$session_watch" -F '#{pane_id}' 2>/dev/null | head -n1)"
 [[ -n "$pane_exec" && -n "$pane_watch" ]] || { echo "missing panes" >&2; exit 1; }
 
-# Start detached exec that produces output in 3 distinct waves
 tmux send-keys -t "$pane_exec" "ATMUX_HOME=\"$atmux_home\" ATMUX_REPO=\"$repo_name\" ATMUX_AGENT_NAME=\"exec\" ATMUX_SESSION_NAME=\"$session_exec\" \"$ATMUX_BIN\" exec --detach -- bash -lc 'sleep 3; echo wave1; sleep 3; echo wave2; sleep 3; echo wave3; sleep 1'" C-m
 
-# Wait for exec metadata
 deadline=$(( $(date +%s) + 10 ))
 pid=""
 exec_entry=""
@@ -87,10 +65,9 @@ while [[ -z "$pid" ]]; do
   sleep 0.05
 done
 
-# Start stdio watcher with default --coalesce (60s) so all 3 waves batch into one digest
-tmux send-keys -t "$pane_watch" "ATMUX_HOME=\"$atmux_home\" ATMUX_REPO=\"$repo_name\" ATMUX_AGENT_NAME=\"watch\" ATMUX_SESSION_NAME=\"$session_watch\" \"$ATMUX_BIN\" process watch \"$pid\" --stdio --duration 30 --timeout 15 --interval 1" C-m
+# --coalesce 0 disables batching; expect a notification per output event.
+tmux send-keys -t "$pane_watch" "ATMUX_HOME=\"$atmux_home\" ATMUX_REPO=\"$repo_name\" ATMUX_AGENT_NAME=\"watch\" ATMUX_SESSION_NAME=\"$session_watch\" \"$ATMUX_BIN\" process watch \"$pid\" --stdio --duration 30 --timeout 15 --interval 1 --coalesce 0" C-m
 
-# Wait for watcher registration
 deadline=$(( $(date +%s) + 10 ))
 while true; do
   now="$(date +%s)"
@@ -109,7 +86,30 @@ while true; do
   sleep 0.05
 done
 
-# Wait for the detached exec to finish so the digest flushes on exit.
+# Wait for at least 2 distinct exec_output notifications (per-event delivery).
+deadline=$(( $(date +%s) + 30 ))
+while true; do
+  count="$(count_notifications "$pane_watch" "exec_output")"
+  if [[ "${count:-0}" -ge 2 ]]; then
+    break
+  fi
+  now="$(date +%s)"
+  if (( now >= deadline )); then
+    echo "expected >=2 exec_output notifications with --coalesce 0, got ${count:-0}" >&2
+    tmux capture-pane -p -t "$pane_watch" -S -200 >&2 || true
+    exit 1
+  fi
+  sleep 1
+done
+
+# Verify per-event notifications do NOT carry the coalesced attribute.
+snap="$(tmux capture-pane -p -t "$pane_watch" -S -800 2>/dev/null || true)"
+compact="$(printf '%s' "$snap" | tr -d '\r\n')"
+if printf '%s' "$compact" | grep -Fq 'coalesced="true"'; then
+  echo "expected no coalesced attribute when --coalesce 0" >&2
+  exit 1
+fi
+
 deadline=$(( $(date +%s) + 30 ))
 while true; do
   st="$(tr -d '\r\n' < "$exec_entry/state" 2>/dev/null || true)"
@@ -122,37 +122,8 @@ while true; do
   sleep 0.5
 done
 
-# Wait for the coalesced digest to arrive at the watcher pane.
-deadline=$(( $(date +%s) + 15 ))
-while true; do
-  count="$(count_notifications "$pane_watch" "exec_output")"
-  if [[ "${count:-0}" -ge 1 ]]; then
-    break
-  fi
-  now="$(date +%s)"
-  if (( now >= deadline )); then
-    echo "expected >=1 exec_output digest, got ${count:-0}" >&2
-    tmux capture-pane -p -t "$pane_watch" -S -200 >&2 || true
-    exit 1
-  fi
-  sleep 0.5
-done
-
-# Verify exactly one digest notification with coalesced="true" and events>=2.
-snap="$(tmux capture-pane -p -t "$pane_watch" -S -800 2>/dev/null || true)"
-compact="$(printf '%s' "$snap" | tr -d '\r\n')"
-
-count="$(count_notifications "$pane_watch" "exec_output")"
-[[ "${count:-0}" -eq 1 ]] || { echo "expected exactly 1 coalesced digest, got ${count:-0}" >&2; tmux capture-pane -p -t "$pane_watch" -S -200 >&2 || true; exit 1; }
-
-printf '%s' "$compact" | grep -Fq 'coalesced="true"' || { echo "digest missing coalesced=\"true\"" >&2; exit 1; }
-
-events_attr="$(printf '%s' "$compact" | sed -n 's/.*events="\([0-9]*\)".*/\1/p' | head -n1)"
-[[ "${events_attr:-0}" -ge 2 ]] || { echo "expected events>=2 in digest, got '${events_attr:-}'" >&2; exit 1; }
-
-# The stdio watcher should unregister itself once the process exits.
 sleep 1
 wcount="$(find "$exec_root/$pid/watchers" -mindepth 1 -maxdepth 1 -type f 2>/dev/null | wc -l | tr -d ' ')"
 [[ "${wcount:-0}" -eq 0 ]] || { echo "expected no watcher files left, found $wcount" >&2; exit 1; }
 
-echo "ok: watch --stdio coalesces multiple output waves into a single digest"
+echo "ok: watch --stdio --coalesce 0 sends per-event notifications without coalesced attribute"

@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Verifies path watch defaults to continuous coalesced mode: multiple changes
+# inside one --coalesce window emit a single digest XML line carrying
+# coalesced="true" and events>=2. After idle exceeds --timeout, exits 124.
+source "$(dirname "${BASH_SOURCE[0]}")/lib/isolate-tmux.sh"
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+ATMUX_BIN="$REPO_ROOT/bin/atmux"
+
+tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/atmux-watch-path-cont.XXXXXX")"
+out_file="$tmp_dir/watch.out"
+cleanup() {
+  rm -rf "$tmp_dir"
+}
+trap cleanup EXIT
+
+mkdir -p "$tmp_dir/src"
+
+# Writer makes 3 changes within ~3s, then stops. With --coalesce 5 and
+# --timeout 4, the watcher should buffer all 3 into one digest and exit 124
+# on idle a few seconds after the last change.
+(
+  sleep 1
+  printf 'a\n' > "$tmp_dir/src/a.txt"
+  sleep 1
+  printf 'b\n' > "$tmp_dir/src/b.txt"
+  sleep 1
+  printf 'c\n' > "$tmp_dir/src/c.txt"
+) &
+writer_pid=$!
+
+set +e
+ATMUX_ALLOW_OUTSIDE_TMUX=1 "$ATMUX_BIN" path watch "$tmp_dir/src/*.txt" \
+  --coalesce 5 --timeout 4 --interval 0.1 > "$out_file"
+rc=$?
+set -e
+
+wait "$writer_pid" 2>/dev/null || true
+
+[[ "$rc" -eq 124 ]] || { echo "expected continuous watcher to exit 124 on idle, got $rc" >&2; cat "$out_file" >&2; exit 1; }
+
+# Exactly one digest line.
+line_count="$(grep -c '<watch type="path"' "$out_file" || true)"
+[[ "${line_count:-0}" -eq 1 ]] || { echo "expected 1 digest line, got ${line_count:-0}" >&2; cat "$out_file" >&2; exit 1; }
+
+grep -Fq 'coalesced="true"' "$out_file" || { echo "digest missing coalesced=\"true\"" >&2; cat "$out_file" >&2; exit 1; }
+
+events_attr="$(sed -n 's/.*events="\([0-9]*\)".*/\1/p' "$out_file" | head -n1)"
+[[ "${events_attr:-0}" -ge 2 ]] || { echo "expected events>=2, got '${events_attr:-}'" >&2; cat "$out_file" >&2; exit 1; }
+
+grep -Fq 'reason="idle_timeout"' "$out_file" || grep -Fq 'reason="window"' "$out_file" \
+  || { echo "expected reason=idle_timeout or window in digest" >&2; cat "$out_file" >&2; exit 1; }
+
+echo "ok: path watch continuous default coalesces multiple changes into one digest"

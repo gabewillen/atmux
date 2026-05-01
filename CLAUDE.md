@@ -277,14 +277,15 @@ Watcher ids have the form <kind>:<key>:<watcher_name>, e.g.:
 ```sh
 atmux process watch <pid> [--timeout <seconds>] [--interval <seconds>]
 atmux process watch <pid> --stdio [--duration <seconds>] [--timeout <seconds>] \
-                                  [--interval <seconds>] [--lines <n>]
+                                  [--interval <seconds>] [--lines <n>] \
+                                  [--coalesce <seconds>]
 atmux process kill  <pid> [--timeout <seconds>] [--signal <NAME>]
 ```
 
 Operates on `atmux exec`-tracked child processes by pid (state at `~/.atmux/exec/<repo>/<pid>/`).
 
 - **`watch`** — wait for the process to finish; receive the same exit-notification XML the executor would have sent.
-- **`watch --stdio`** — monitor a detached exec process pane for output changes; sends a notification each time new output appears. Exits when `--duration` expires, `--timeout` (no new output) expires, or the process exits.
+- **`watch --stdio`** — monitor a detached exec process pane for output changes. Output events are batched into one digest notification per `--coalesce` window (default `60s`; pass `0` for per-event delivery). Pending output flushes when the process exits or `--duration` / `--timeout` expires.
 - **`kill`** — stop the tracked process, wait for executor and watcher fan-out notifications to drain, then remove its metadata.
 
 #### `pane`
@@ -307,22 +308,29 @@ atmux pane watch @3 --scope window --text "running tests" --timeout 20
 #### `path`
 
 ```sh
-atmux path watch <glob> [--timeout <seconds>] [--interval <seconds>]
-                        [--exec <cmd>]
+atmux path watch <glob> [--timeout <seconds>] [--duration <seconds>]
+                        [--interval <seconds>] [--coalesce <seconds>]
+                        [--exec <cmd>] [--once]
 ```
 
 Operate on filesystem paths matched by a glob. The only verb today is
-`watch`, which exits 0 when the matched set or any matched file's metadata
-changes. Uses fswatch or inotifywait when available; falls back to polling.
-Exits 124 on timeout.
+`watch`, which streams change events continuously, emitting one digest XML
+line per --coalesce window (default 60s). Uses fswatch or inotifywait when
+available; falls back to polling.
 
---exec  When supplied, the change-event XML is also piped into <cmd> via
-        `bash -c <cmd>` on stdin in addition to being printed to stdout.
+--timeout    Idle exit: return 124 if no change is observed for N seconds
+             (0 = disabled, default 0).
+--duration   Hard cap: return 124 after N seconds total (0 = no cap).
+--coalesce   Batch change events into one digest line per N seconds
+             (default 60). Set 0 to emit per-event lines.
+--once       Single-shot: emit one XML line on the first change and exit 0.
+             Disables coalescing.
+--exec       Pipe each emitted XML line into `bash -c <cmd>`.
 
 ```sh
 atmux path watch 'src/**/*.sh'
-atmux path watch '/tmp/build/*.log' --timeout 60
-atmux path watch 'docs/**/*.md' --exec ./on-docs-changed
+atmux path watch '/tmp/build/*.log' --once --timeout 60
+atmux path watch 'docs/**/*.md' --exec ./on-docs-changed --coalesce 30
 ```
 ## Cross-cutting verbs
 

@@ -9,6 +9,7 @@ Usage:
   atmux process watch <pid> [--timeout <seconds>] [--interval <seconds>]
   atmux process watch <pid> --stdio [--duration <seconds>] [--timeout <seconds>]
                                     [--interval <seconds>] [--lines <n>]
+                                    [--coalesce <seconds>]
   atmux process kill <pid> [--timeout <seconds>] [--signal <NAME>]
 
 Description:
@@ -17,9 +18,10 @@ Description:
   watch          Wait for the process to finish; receive the same exit
                  notification XML as the executor when it does.
   watch --stdio  Monitor a detached exec process pane for output changes.
-                 Sends a notification each time new output is detected.
-                 Exits when --duration expires, --timeout (no new output)
-                 expires, or the process exits.
+                 Output events are batched into one digest notification per
+                 --coalesce window (default 60s; pass 0 for per-event).
+                 Pending output is flushed when the process exits or
+                 --duration / --timeout expires.
   kill           Stop the tracked process, wait for executor notifications
                  (including watcher fan-out) to finish, then remove metadata.
 

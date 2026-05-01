@@ -4,20 +4,29 @@ set -euo pipefail
 usage() {
   cat <<'USAGE'
 Usage:
-  atmux path watch <glob> [--timeout <seconds>] [--interval <seconds>] [--exec <cmd>]
+  atmux path watch <glob> [--timeout <seconds>] [--duration <seconds>]
+                          [--interval <seconds>] [--coalesce <seconds>]
+                          [--exec <cmd>] [--once]
 
 Description:
-  Watch filesystem paths matching a glob and exit 0 when the matched set or
-  file metadata changes. Uses fswatch or inotifywait when available and falls
-  back to polling. Exits 124 on timeout.
+  Watch filesystem paths matching a glob continuously, emitting one digest
+  XML line per --coalesce window. Uses fswatch or inotifywait when available
+  and falls back to polling.
 
-  --exec  When supplied, the change-event XML is also piped into <cmd> via
-          `bash -c <cmd>` on stdin in addition to being printed to stdout.
+  --timeout    Idle exit: return 124 if no change is observed for N seconds
+               (0 = disabled, default 0).
+  --duration   Hard cap: return 124 after N seconds total (0 = no cap).
+  --interval   Poll interval (seconds) for the polling fallback (default 2).
+  --coalesce   Batch change events into one digest XML line per N seconds
+               (default 60). Set to 0 to emit per-event lines.
+  --exec       Pipe each emitted XML line into `bash -c <cmd>`.
+  --once       Single-shot: emit one XML line on the first change and exit 0.
+               Disables coalescing.
 
 Examples:
   atmux path watch 'src/**/*.sh'
-  atmux path watch '/tmp/build/*.log' --timeout 60
-  atmux path watch 'docs/**/*.md' --exec ./on-docs-changed
+  atmux path watch '/tmp/build/*.log' --timeout 60 --once
+  atmux path watch 'docs/**/*.md' --exec ./on-docs-changed --coalesce 30
 USAGE
 }
 
@@ -158,24 +167,49 @@ snapshot_paths() {
 
 EXEC_CMD=""
 
-emit_change() {
-  local backend="$1"
-  shift
-  local xml
-  xml="$(printf '<watch type="path" path="%s" changed="true" backend="%s" />' \
-    "$(xml_escape "$*")" \
-    "$(xml_escape "$backend")")"
+emit_change_xml() {
+  local xml="$1"
   printf '%s\n' "$xml"
   if [[ -n "$EXEC_CMD" ]]; then
     printf '%s' "$xml" | bash -c "$EXEC_CMD" >/dev/null 2>&1 || true
   fi
 }
 
-wait_for_process_exit_or_timeout() {
+emit_change_once() {
+  local backend="$1"
+  shift
+  local xml
+  xml="$(printf '<watch type="path" path="%s" changed="true" backend="%s" />' \
+    "$(xml_escape "$*")" \
+    "$(xml_escape "$backend")")"
+  emit_change_xml "$xml"
+}
+
+emit_change_coalesced() {
+  local backend="$1"
+  local events="$2"
+  local window="$3"
+  local reason="$4"
+  shift 4
+  local xml
+  xml="$(printf '<watch type="path" path="%s" changed="true" backend="%s" coalesced="true" events="%s" window="%ss" reason="%s" />' \
+    "$(xml_escape "$*")" \
+    "$(xml_escape "$backend")" \
+    "$(xml_escape "$events")" \
+    "$(xml_escape "$window")" \
+    "$(xml_escape "$reason")")"
+  emit_change_xml "$xml"
+}
+
+wait_for_process_exit_or_duration() {
   local pid="$1"
-  local deadline="$2"
+  local duration="$2"
   local interval="$3"
-  local now
+  local deadline=0 now
+
+  if [[ "$duration" -gt 0 ]]; then
+    deadline=$(( $(date +%s) + duration ))
+  fi
 
   while kill -0 "$pid" >/dev/null 2>&1; do
     if [[ "$deadline" -gt 0 ]]; then
@@ -194,7 +228,7 @@ wait_for_process_exit_or_timeout() {
 }
 
 wait_fswatch_event() {
-  local deadline="$1"
+  local duration="$1"
   local interval="$2"
   shift 2
   local roots=("$@")
@@ -202,11 +236,11 @@ wait_fswatch_event() {
 
   fswatch -1 "${roots[@]}" >/dev/null 2>&1 &
   pid=$!
-  wait_for_process_exit_or_timeout "$pid" "$deadline" "$interval"
+  wait_for_process_exit_or_duration "$pid" "$duration" "$interval"
 }
 
 wait_inotifywait_event() {
-  local deadline="$1"
+  local duration="$1"
   local interval="$2"
   shift 2
   local roots=("$@")
@@ -214,84 +248,41 @@ wait_inotifywait_event() {
 
   inotifywait -q -r -e create,modify,delete,move,attrib "${roots[@]}" >/dev/null 2>&1 &
   pid=$!
-  wait_for_process_exit_or_timeout "$pid" "$deadline" "$interval"
+  wait_for_process_exit_or_duration "$pid" "$duration" "$interval"
 }
 
-watch_event_backend() {
+# Wait for the next change event with a maximum wait of <duration> seconds.
+# Returns 0 if an event candidate occurred (caller must re-snapshot to confirm),
+# 124 if the wait expired, 1 if no usable backend.
+#
+# The caller is responsible for set +e / set -e bracketing this call: the
+# helpers below intentionally do not touch errexit, since toggling it inside
+# a function leaks the new setting back to the caller (a non-zero return then
+# trips errexit in the caller before it can read the rc).
+wait_next_event() {
   local backend="$1"
-  local before="$2"
-  local deadline="$3"
-  local interval="$4"
-  shift 4
-  local paths=("$@")
-  local roots=()
-  local after rc
-
-  while IFS= read -r root; do
-    [[ -n "$root" ]] || continue
-    roots+=("$root")
-  done < <(watch_roots "${paths[@]}")
-
-  [[ "${#roots[@]}" -gt 0 ]] || return 1
-
-  while true; do
-    case "$backend" in
-      fswatch)
-        set +e
-        wait_fswatch_event "$deadline" "$interval" "${roots[@]}"
-        rc=$?
-        set -e
-        ;;
-      inotifywait)
-        set +e
-        wait_inotifywait_event "$deadline" "$interval" "${roots[@]}"
-        rc=$?
-        set -e
-        ;;
-      *)
-        return 1
-        ;;
-    esac
-
-    [[ "$rc" -ne 124 ]] || return 124
-
-    after="$(snapshot_paths "${paths[@]}")"
-    if [[ "$after" != "$before" ]]; then
-      emit_change "$backend" "${paths[@]}"
-      return 0
-    fi
-  done
-}
-
-watch_poll_backend() {
-  local before="$1"
-  local deadline="$2"
+  local duration="$2"
   local interval="$3"
   shift 3
-  local paths=("$@")
-  local after now
+  local roots=("$@")
 
-  if [[ "${ATMUX_WATCH_PATH_POLL_WARNED:-0}" != "1" ]]; then
-    echo "atmux path watch: using polling fallback; install fswatch or inotifywait for event-driven watching" >&2
-    export ATMUX_WATCH_PATH_POLL_WARNED=1
-  fi
-
-  while true; do
-    after="$(snapshot_paths "${paths[@]}")"
-    if [[ "$after" != "$before" ]]; then
-      emit_change "poll" "${paths[@]}"
-      exit 0
-    fi
-
-    if [[ "$deadline" -gt 0 ]]; then
-      now="$(date +%s)"
-      if (( now >= deadline )); then
-        exit 124
-      fi
-    fi
-
-    sleep "$interval"
-  done
+  case "$backend" in
+    fswatch)
+      wait_fswatch_event "$duration" "$interval" "${roots[@]}"
+      return $?
+      ;;
+    inotifywait)
+      wait_inotifywait_event "$duration" "$interval" "${roots[@]}"
+      return $?
+      ;;
+    poll)
+      sleep "$interval"
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
 }
 
 select_backend() {
@@ -326,7 +317,10 @@ select_backend() {
 
 main() {
   local timeout_sec="0"
+  local duration="0"
   local interval="2"
+  local coalesce="60"
+  local once=0
   local paths=()
 
   while [[ $# -gt 0 ]]; do
@@ -339,13 +333,25 @@ main() {
         timeout_sec="${2:-}"
         shift 2
         ;;
+      --duration)
+        duration="${2:-}"
+        shift 2
+        ;;
       --interval)
         interval="${2:-}"
+        shift 2
+        ;;
+      --coalesce)
+        coalesce="${2:-}"
         shift 2
         ;;
       --exec)
         EXEC_CMD="${2:-}"
         shift 2
+        ;;
+      --once)
+        once=1
+        shift
         ;;
       -h|--help|help)
         usage
@@ -360,28 +366,136 @@ main() {
   done
 
   [[ "${#paths[@]}" -gt 0 ]] || { echo "missing --path" >&2; exit 2; }
+  [[ "$timeout_sec" =~ ^[0-9]+$ ]] || { echo "invalid --timeout: $timeout_sec" >&2; exit 2; }
+  [[ "$duration" =~ ^[0-9]+$ ]] || { echo "invalid --duration: $duration" >&2; exit 2; }
+  [[ "$coalesce" =~ ^[0-9]+$ ]] || { echo "invalid --coalesce: $coalesce" >&2; exit 2; }
 
-  local before deadline=0 backend rc
-  before="$(snapshot_paths "${paths[@]}")"
-
-  if [[ -n "$timeout_sec" && "$timeout_sec" != "0" ]]; then
-    deadline=$(( $(date +%s) + timeout_sec ))
+  local backend
+  backend="$(select_backend)"
+  if [[ "$backend" != "poll" && "$backend" != "fswatch" && "$backend" != "inotifywait" ]]; then
+    echo "atmux path watch: no usable backend" >&2
+    exit 2
   fi
 
-  backend="$(select_backend)"
-  case "$backend" in
-    fswatch|inotifywait)
-      set +e
-      watch_event_backend "$backend" "$before" "$deadline" "$interval" "${paths[@]}"
-      rc=$?
-      set -e
-      [[ "$rc" -eq 1 ]] || exit "$rc"
-      watch_poll_backend "$before" "$deadline" "$interval" "${paths[@]}"
-      ;;
-    poll)
-      watch_poll_backend "$before" "$deadline" "$interval" "${paths[@]}"
-      ;;
-  esac
+  if [[ "$backend" == "poll" && "${ATMUX_WATCH_PATH_POLL_WARNED:-0}" != "1" ]]; then
+    echo "atmux path watch: using polling fallback; install fswatch or inotifywait for event-driven watching" >&2
+    export ATMUX_WATCH_PATH_POLL_WARNED=1
+  fi
+
+  local roots=()
+  while IFS= read -r root; do
+    [[ -n "$root" ]] || continue
+    roots+=("$root")
+  done < <(watch_roots "${paths[@]}")
+
+  local before
+  before="$(snapshot_paths "${paths[@]}")"
+
+  local start_ts now last_event_ts duration_deadline=0
+  start_ts="$(date +%s)"
+  last_event_ts="$start_ts"
+  if [[ "$duration" -gt 0 ]]; then
+    duration_deadline=$(( start_ts + duration ))
+  fi
+
+  local pending=0 event_count=0 flush_at=0
+
+  flush_pending() {
+    local reason="${1:-window}"
+    (( pending == 1 )) || return 0
+    emit_change_coalesced "$backend" "$event_count" "$coalesce" "$reason" "${paths[@]}"
+    pending=0
+    event_count=0
+    flush_at=0
+  }
+
+  while true; do
+    local next_deadline=0 wait_for after rc
+
+    now="$(date +%s)"
+
+    if (( duration_deadline > 0 )) && (( now >= duration_deadline )); then
+      flush_pending "duration"
+      exit 124
+    fi
+
+    if [[ "$timeout_sec" != "0" ]]; then
+      if (( now - last_event_ts >= timeout_sec )); then
+        flush_pending "idle_timeout"
+        exit 124
+      fi
+    fi
+
+    if (( duration_deadline > 0 )); then
+      next_deadline="$duration_deadline"
+    fi
+    if [[ "$timeout_sec" != "0" ]]; then
+      local idle_deadline=$(( last_event_ts + timeout_sec ))
+      if (( next_deadline == 0 || idle_deadline < next_deadline )); then
+        next_deadline="$idle_deadline"
+      fi
+    fi
+    if (( pending == 1 )) && (( flush_at > 0 )); then
+      if (( next_deadline == 0 || flush_at < next_deadline )); then
+        next_deadline="$flush_at"
+      fi
+    fi
+
+    if (( next_deadline > 0 )); then
+      wait_for=$(( next_deadline - now ))
+      (( wait_for > 0 )) || wait_for=1
+    else
+      wait_for=3600
+    fi
+
+    if [[ "${#roots[@]}" -eq 0 && "$backend" != "poll" ]]; then
+      backend="poll"
+    fi
+
+    rc=0
+    set +e
+    wait_next_event "$backend" "$wait_for" "$interval" "${roots[@]}"
+    rc=$?
+    set -e
+
+    if (( rc == 124 )); then
+      now="$(date +%s)"
+      if (( pending == 1 )) && (( now >= flush_at )); then
+        flush_pending "window"
+      fi
+      continue
+    fi
+
+    if (( rc != 0 )); then
+      # Backend failed; degrade to polling for the rest of the run.
+      backend="poll"
+      continue
+    fi
+
+    after="$(snapshot_paths "${paths[@]}")"
+    if [[ "$after" == "$before" ]]; then
+      continue
+    fi
+    before="$after"
+    now="$(date +%s)"
+    last_event_ts="$now"
+    event_count=$(( event_count + 1 ))
+
+    if (( once == 1 )); then
+      emit_change_once "$backend" "${paths[@]}"
+      exit 0
+    fi
+
+    if [[ "$coalesce" == "0" ]]; then
+      emit_change_once "$backend" "${paths[@]}"
+      event_count=0
+    else
+      if (( pending == 0 )); then
+        pending=1
+        flush_at=$(( now + coalesce ))
+      fi
+    fi
+  done
 }
 
 main "$@"

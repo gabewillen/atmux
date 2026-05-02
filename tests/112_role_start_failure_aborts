@@ -33,6 +33,7 @@ cat > "$adapter_dir/cmd" <<'ADAPTER'
 set -euo pipefail
 case "${1:-}" in
   control-file) printf 'AGENTS.md\n' ;;
+  prepare-prompt) : ;;  # no-op
   start) sleep 600 ;;
   status) printf '<status adapter="mock" owner="agent" state="idle" model="" reasoning_level="" control_file="AGENTS.md" />\n' ;;
   model) printf 'mock\n' ;;

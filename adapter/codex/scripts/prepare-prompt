@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Reads atmux prompt content from stdin and emits a --config
+# developer_instructions=<TOML-string> argv pair (null-separated) to
+# ATMUX_PREP_ARGS_FILE. Codex appends developer_instructions after the
+# default system prompt and any AGENTS.md content, so this is purely
+# additive and never mutates files on disk.
+
+args_file="${ATMUX_PREP_ARGS_FILE:-}"
+[[ -n "$args_file" ]] || { echo "prepare-prompt: ATMUX_PREP_ARGS_FILE not set" >&2; exit 2; }
+
+content="$(cat)"
+[[ -n "$content" ]] || exit 0
+
+# TOML basic-string escape: backslash, quote, control chars, newlines, tabs.
+toml_escape() {
+  local s="$1"
+  s="${s//\\/\\\\}"
+  s="${s//\"/\\\"}"
+  s="${s//$'\t'/\\t}"
+  s="${s//$'\r'/\\r}"
+  s="${s//$'\n'/\\n}"
+  printf '"%s"' "$s"
+}
+
+quoted="$(toml_escape "$content")"
+
+{
+  printf '%s\0' '--config'
+  printf 'developer_instructions=%s\0' "$quoted"
+} >> "$args_file"

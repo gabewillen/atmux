@@ -8,11 +8,11 @@ sub="${1:-}"
 shift || true
 
 case "$sub" in
-  status|model|reasoning-level|control-file|start)
+  status|model|reasoning-level|control-file|prepare-prompt|start)
     exec "$scripts_dir/$sub" "$@"
     ;;
   *)
-    echo "usage: gemini/cmd status|model|reasoning-level|control-file|start" >&2
+    echo "usage: gemini/cmd status|model|reasoning-level|control-file|prepare-prompt|start" >&2
     exit 2
     ;;
 esac

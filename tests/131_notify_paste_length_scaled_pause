@@ -1,0 +1,136 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Verifies the length-scaled paste-to-submit bonus pause introduced to fix
+# large-notification submit drops:
+#   - small payloads (< ATMUX_SEND_PASTE_BONUS_MIN_BYTES) get NO bonus pause
+#   - large payloads get a bonus pause = (len/1024) * per_kb seconds
+#   - bonus is capped by ATMUX_SEND_PASTE_BONUS_MAX_SECONDS
+#   - per_kb=0 disables the feature
+
+source "$(dirname "${BASH_SOURCE[0]}")/lib/isolate-tmux.sh"
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+NOTIFY_SCRIPT="$REPO_ROOT/bin/(atmux)/notify"
+
+ATMUX_HOME="$(mktemp -d "${TMPDIR:-/tmp}/atmux-paste-bonus.XXXXXX")"
+ATMUX_SOURCE_ROOT="$REPO_ROOT"
+ATMUX_DEBUG_NOTIFY=1
+export ATMUX_HOME ATMUX_SOURCE_ROOT ATMUX_DEBUG_NOTIFY
+
+cleanup() { rm -rf "$ATMUX_HOME"; }
+trap cleanup EXIT
+
+# Minimize unrelated waits so the test runs fast and only the bonus pause
+# is observable in the captured sleep log.
+export ATMUX_SEND_SETTLE_SECONDS=0
+export ATMUX_SEND_PASTE_TO_SUBMIT_WAIT_SECONDS=0
+export ATMUX_SEND_SUBMIT_WAIT_SECONDS=0
+export ATMUX_SEND_NO_PROMPT_READY_SECONDS=0
+
+source "$NOTIFY_SCRIPT"
+
+# Stubs --------------------------------------------------------------------
+SLEEP_LOG="$ATMUX_HOME/sleeps.log"
+: > "$SLEEP_LOG"
+
+sleep() {
+  printf '%s\n' "$1" >> "$SLEEP_LOG"
+  return 0
+}
+
+tmux() {
+  if [[ "$1" == "send-keys" ]]; then return 0; fi
+  command tmux "$@"
+}
+
+wait_for_prompt_input_settled() { return 0; }
+submit_notification_input() { return 0; }
+
+run_case() {
+  local label="$1"
+  local payload="$2"
+  local log_file
+  log_file="$(debug_notify_log_file)"
+  mkdir -p "$(dirname "$log_file")"
+  : > "$SLEEP_LOG"
+  : > "$log_file"
+  deliver_notification_to_pane "%mock" "$payload" "Enter" ""
+}
+
+extract_bonus() {
+  # Pull the third sleep argument (matches the bonus position: settle=0,
+  # no_prompt_ready=0, then bonus). Since all other sleeps here are 0, the
+  # only non-zero entry IS the bonus.
+  awk '$1 != "0" && $1 != "0.0" && $1 != "0.000" { print; exit }' "$SLEEP_LOG"
+}
+
+debug_log_has_bonus() {
+  grep -q 'deliver:length_bonus' "$(debug_notify_log_file)" 2>/dev/null
+}
+
+# Case 1: small payload (under min) -> NO bonus -----------------------------
+small_payload="$(printf 'x%.0s' {1..512})"
+run_case small "$small_payload"
+if debug_log_has_bonus; then
+  echo "fail: small payload (512 bytes) should not trigger length bonus" >&2
+  cat "$(debug_notify_log_file)" >&2
+  exit 1
+fi
+bonus="$(extract_bonus)"
+if [[ -n "$bonus" ]]; then
+  echo "fail: small payload caused non-zero sleep: $bonus" >&2
+  exit 1
+fi
+
+# Case 2: large payload (10 KB) with default rate 0.05/KB -> ~0.500s --------
+large_payload="$(printf 'a%.0s' {1..10240})"
+run_case large_default "$large_payload"
+debug_log_has_bonus || {
+  echo "fail: 10KB payload should have triggered length bonus" >&2
+  cat "$(debug_notify_log_file)" >&2
+  exit 1
+}
+bonus="$(extract_bonus)"
+[[ -n "$bonus" ]] || { echo "fail: no bonus sleep recorded for 10KB payload" >&2; exit 1; }
+# Tolerate float fuzz: expect 0.500 +/- 0.001
+case "$bonus" in
+  0.500|0.499|0.501) ;;
+  *) echo "fail: 10KB payload bonus expected ~0.500s, got $bonus" >&2; exit 1 ;;
+esac
+
+# Case 3: large payload with custom rate -> scales linearly -----------------
+ATMUX_SEND_PASTE_PER_KB_SECONDS=0.1 run_case large_custom "$large_payload"
+bonus="$(extract_bonus)"
+case "$bonus" in
+  1.000|0.999|1.001) ;;
+  *) echo "fail: 10KB payload at 0.1s/KB expected ~1.000s, got $bonus" >&2; exit 1 ;;
+esac
+
+# Case 4: cap clamps a huge payload at the max ------------------------------
+huge_payload="$(printf 'b%.0s' {1..204800})"  # 200 KB
+ATMUX_SEND_PASTE_BONUS_MAX_SECONDS=2 run_case huge_capped "$huge_payload"
+bonus="$(extract_bonus)"
+case "$bonus" in
+  2.000|1.999|2.001) ;;
+  *) echo "fail: 200KB payload with max=2 expected ~2.000s, got $bonus" >&2; exit 1 ;;
+esac
+
+# Case 5: per_kb=0 disables the bonus entirely ------------------------------
+ATMUX_SEND_PASTE_PER_KB_SECONDS=0 run_case zero_rate "$large_payload"
+bonus="$(extract_bonus)"
+if [[ -n "$bonus" ]]; then
+  echo "fail: per_kb=0 should disable bonus, got $bonus" >&2
+  exit 1
+fi
+
+# Case 6: lower min threshold so a 256-byte payload now qualifies -----------
+ATMUX_SEND_PASTE_BONUS_MIN_BYTES=128 run_case lowered_min "$(printf 'c%.0s' {1..256})"
+debug_log_has_bonus || {
+  echo "fail: lowering bonus_min should opt a 256-byte payload into the bonus" >&2
+  cat "$(debug_notify_log_file)" >&2
+  exit 1
+}
+
+echo "ok: paste-to-submit length-scaled bonus respects min threshold, per-KB rate, cap, and disable=0"

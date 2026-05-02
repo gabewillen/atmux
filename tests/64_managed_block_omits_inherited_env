@@ -1,58 +1,37 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Isolate the tmux socket so this test can never touch the developer's
-# default tmux server. Idempotent if the runner already isolated.
-source "$(dirname "${BASH_SOURCE[0]}")/lib/isolate-tmux.sh"
+# Verifies that the rendered atmux managed block (the content prepare-prompt
+# hands to each adapter) never echoes inherited tmux/session env vars and
+# always includes the canonical "use plain atmux" rule and the manager-
+# specific delegation rules when ATMUX_MANAGER is set.
 
 TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
 AGENT_SCRIPT="$REPO_ROOT/bin/(atmux)/agent"
 
-repo_name="managed-envless-${RANDOM}"
-session="atmux-${repo_name}-worker"
 tmp_repo="$(mktemp -d)"
-
-cleanup() {
-  tmux kill-session -t "$session" >/dev/null 2>&1 || true
-  rm -rf "$tmp_repo"
-}
+cleanup() { rm -rf "$tmp_repo"; }
 trap cleanup EXIT
-
-tmux kill-session -t "$session" >/dev/null 2>&1 || true
 
 (
   cd "$tmp_repo"
   git init -q
 )
 
-cat > "$tmp_repo/AGENTS.md" <<'EOF'
-# Local Rules
-Keep this section.
-EOF
-
-tmux new-session -d -s "$session" -n "$session" -x 120 -y 30 -c "$tmp_repo" "cat"
-tmux set-environment -t "$session" ATMUX_ADAPTER "codex"
-tmux set-environment -t "$session" ATMUX_REPO "$repo_name"
-tmux set-environment -t "$session" ATMUX_MANAGER "boss"
-tmux set-environment -t "$session" ATMUX_WORKTREE "$tmp_repo"
-tmux set-environment -t "$session" ATMUX_SOURCE_ROOT "$REPO_ROOT"
-
-attach_out="$(
-  cd "$tmp_repo" && \
-  ATMUX_REPO="$repo_name" ATMUX_SOURCE_ROOT="$REPO_ROOT" "$AGENT_SCRIPT" attach "$session"
+control_text="$(
+  ATMUX_ADAPTER="codex" \
+  ATMUX_REPO="managed-envless-${RANDOM}" \
+  ATMUX_MANAGER="boss" \
+  ATMUX_WORKTREE="$tmp_repo" \
+  ATMUX_SOURCE_ROOT="$REPO_ROOT" \
+  ATMUX_ALLOW_OUTSIDE_TMUX=1 \
+    "$AGENT_SCRIPT" _render-prompt "$tmp_repo"
 )"
-
-[[ "$attach_out" == "$session" ]] || {
-  echo "unexpected attach output: $attach_out" >&2
-  exit 1
-}
-
-control_text="$(cat "$tmp_repo/AGENTS.md")"
 
 printf '%s\n' "$control_text" | grep -Fq '# atmux Rules'
 printf '%s\n' "$control_text" | grep -Fq 'Use plain `atmux ...` commands; do not prefix them with inherited session environment.'
-printf '%s\n' "$control_text" | grep -Fq "atmux send --to boss \"...\""
+printf '%s\n' "$control_text" | grep -Fq 'atmux send --to boss "..."'
 
 if printf '%s\n' "$control_text" | grep -Fq '# Agent TMUX env'; then
   echo "managed block still prints inherited env heading" >&2
@@ -71,4 +50,13 @@ if printf '%s\n' "$control_text" | grep -Fq '$ATMUX_MANAGER'; then
   exit 1
 fi
 
-echo "ok: managed control block omits inherited env vars"
+# After 0.11.0: the managed block must NOT be written to the project's
+# AGENTS.md/CLAUDE.md/GEMINI.md anywhere along the prompt-prep path.
+for f in AGENTS.md CLAUDE.md GEMINI.md; do
+  if [[ -e "$tmp_repo/$f" ]]; then
+    echo "fail: _render-prompt should not touch $tmp_repo/$f" >&2
+    exit 1
+  fi
+done
+
+echo "ok: managed control block omits inherited env vars and is never written to project memory files"

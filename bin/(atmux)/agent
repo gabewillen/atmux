@@ -774,7 +774,7 @@ render_managed_block() {
   }
 }
 
-inject_control_file() {
+prepare_atmux_prompt() {
   local repo_root="$1"
   local adapter="${ATMUX_ADAPTER:-codex}"
   local adapter_cmd=""
@@ -782,47 +782,19 @@ inject_control_file() {
   adapter_cmd="$(resolve_adapter_cmd_path "$adapter" || true)"
   [[ -x "$adapter_cmd" ]] || return 0
 
-  local control_file
-  control_file="$("$adapter_cmd" control-file 2>/dev/null || true)"
-  [[ -n "$control_file" ]] || return 0
+  local prep_dir="${ATMUX_HOME:-$HOME/.atmux}/agents/${ATMUX_REPO:-repo}/${ATMUX_AGENT_NAME:-agent}/prep"
+  mkdir -p "$prep_dir"
+  : > "$prep_dir/args"
+  : > "$prep_dir/env"
+  render_managed_block "$repo_root" > "$prep_dir/prompt.md"
 
-  local target_file="$repo_root/$control_file"
-  [[ -f "$target_file" ]] || : > "$target_file"
+  ATMUX_PREP_ARGS_FILE="$prep_dir/args" \
+  ATMUX_PREP_ENV_FILE="$prep_dir/env" \
+    "$adapter_cmd" prepare-prompt < "$prep_dir/prompt.md" || true
 
-  local tmp_base managed_file stripped_file
-  tmp_base="${TMPDIR:-/tmp}/atmux-control-$RANDOM-$$"
-  managed_file="${tmp_base}.managed"
-  stripped_file="${tmp_base}.stripped"
-
-  render_managed_block "$repo_root" > "$managed_file"
-
-  if grep -Eq '^(<!-- ATMUX:BEGIN -->|<atmux>)$' "$target_file" 2>/dev/null; then
-    awk '
-      BEGIN { in_block=0 }
-      /<!-- ATMUX:BEGIN -->/ { in_block=1; next }
-      /<!-- ATMUX:END -->/ { in_block=0; next }
-      /^<atmux>$/ { in_block=1; next }
-      /^<\/atmux>$/ { in_block=0; next }
-      in_block==0 { print }
-    ' "$target_file" > "$stripped_file"
-  else
-    awk '
-      /^# Default Rules$/ { exit }
-      /^# atmux help$/ { exit }
-      { print }
-    ' "$target_file" > "$stripped_file"
-  fi
-
-  {
-    cat "$stripped_file"
-    if [[ -s "$stripped_file" ]]; then
-      echo
-    fi
-    cat "$managed_file"
-    echo
-  } > "$target_file"
-
-  rm -f "$managed_file" "$stripped_file"
+  export ATMUX_PREP_DIR="$prep_dir"
+  export ATMUX_PREP_ARGS_FILE="$prep_dir/args"
+  export ATMUX_PREP_ENV_FILE="$prep_dir/env"
 }
 
 run_role_hook() {
@@ -997,7 +969,7 @@ run_adapter() {
       fi
     fi
 
-    inject_control_file "$(pwd)"
+    prepare_atmux_prompt "$(pwd)"
 
     if [[ -n "${ATMUX_ROLE_START:-}" ]]; then
       ATMUX_ROLE_STATE_DIR="${ATMUX_HOME}/agents/${ATMUX_REPO:-repo}/${ATMUX_AGENT_NAME:-agent}/role"
@@ -1046,8 +1018,31 @@ run_adapter() {
     rc=0
     (
       unset ATMUX_ALLOW_REAL_TMUX
-      if ((${#adapter_args[@]})); then
-        "$adapter_cmd" start "${adapter_args[@]}"
+
+      # Apply env directives produced by prepare-prompt so the adapter
+      # inherits them (e.g. GEMINI_SYSTEM_MD).
+      if [[ -n "${ATMUX_PREP_ENV_FILE:-}" && -s "$ATMUX_PREP_ENV_FILE" ]]; then
+        while IFS= read -r prep_env_line; do
+          [[ -n "$prep_env_line" ]] || continue
+          [[ "$prep_env_line" == *=* ]] || continue
+          export "${prep_env_line?}"
+        done < "$ATMUX_PREP_ENV_FILE"
+      fi
+
+      # Read null-separated argv from prepare-prompt and prepend.
+      declare -a prep_args=()
+      if [[ -n "${ATMUX_PREP_ARGS_FILE:-}" && -s "$ATMUX_PREP_ARGS_FILE" ]]; then
+        while IFS= read -r -d '' prep_arg; do
+          prep_args+=("$prep_arg")
+        done < "$ATMUX_PREP_ARGS_FILE"
+      fi
+
+      declare -a combined_args=()
+      ((${#prep_args[@]})) && combined_args+=("${prep_args[@]}")
+      ((${#adapter_args[@]})) && combined_args+=("${adapter_args[@]}")
+
+      if ((${#combined_args[@]})); then
+        "$adapter_cmd" start "${combined_args[@]}"
       else
         "$adapter_cmd" start
       fi
@@ -1178,9 +1173,8 @@ spawn_agent_session() {
   local branch="atmux-${repo_name}-${name}"
 
   if tmux has-session -t "$session" 2>/dev/null; then
-    local existing_adapter existing_worktree existing_source_root existing_manager existing_role existing_team existing_intelligence
+    local existing_adapter existing_source_root existing_manager existing_role existing_team existing_intelligence
     existing_adapter="$(tmux show-environment -t "$session" ATMUX_ADAPTER 2>/dev/null | sed -n 's/^ATMUX_ADAPTER=//p' || true)"
-    existing_worktree="$(tmux show-environment -t "$session" ATMUX_WORKTREE 2>/dev/null | sed -n 's/^ATMUX_WORKTREE=//p' || true)"
     existing_source_root="$(tmux show-environment -t "$session" ATMUX_SOURCE_ROOT 2>/dev/null | sed -n 's/^ATMUX_SOURCE_ROOT=//p' || true)"
     existing_manager="$(tmux show-environment -t "$session" ATMUX_MANAGER 2>/dev/null | sed -n 's/^ATMUX_MANAGER=//p' || true)"
     existing_role="$(tmux show-environment -t "$session" ATMUX_ROLE 2>/dev/null | sed -n 's/^ATMUX_ROLE=//p' || true)"
@@ -1208,11 +1202,6 @@ spawn_agent_session() {
       export ATMUX_SOURCE_ROOT="$existing_source_root"
     else
       export ATMUX_SOURCE_ROOT="$repo_root"
-    fi
-    if [[ -n "$existing_worktree" && -d "$existing_worktree" ]]; then
-      inject_control_file "$existing_worktree"
-    else
-      inject_control_file "$repo_root"
     fi
     ensure_tmux_scroll_enabled
     attach_or_switch "$session"
@@ -1353,9 +1342,8 @@ attach_agent() {
     exit 1
   fi
 
-  local existing_adapter existing_worktree existing_source_root existing_repo existing_manager existing_role existing_team
+  local existing_adapter existing_source_root existing_repo existing_manager existing_role existing_team
   existing_adapter="$(tmux show-environment -t "$session" ATMUX_ADAPTER 2>/dev/null | sed -n 's/^ATMUX_ADAPTER=//p' || true)"
-  existing_worktree="$(tmux show-environment -t "$session" ATMUX_WORKTREE 2>/dev/null | sed -n 's/^ATMUX_WORKTREE=//p' || true)"
   existing_source_root="$(tmux show-environment -t "$session" ATMUX_SOURCE_ROOT 2>/dev/null | sed -n 's/^ATMUX_SOURCE_ROOT=//p' || true)"
   existing_repo="$(tmux show-environment -t "$session" ATMUX_REPO 2>/dev/null | sed -n 's/^ATMUX_REPO=//p' || true)"
   existing_manager="$(tmux show-environment -t "$session" ATMUX_MANAGER 2>/dev/null | sed -n 's/^ATMUX_MANAGER=//p' || true)"
@@ -1376,11 +1364,6 @@ attach_agent() {
     export ATMUX_SOURCE_ROOT="$existing_source_root"
   else
     export ATMUX_SOURCE_ROOT="$repo_root"
-  fi
-  if [[ -n "$existing_worktree" && -d "$existing_worktree" ]]; then
-    inject_control_file "$existing_worktree"
-  else
-    inject_control_file "$repo_root"
   fi
   ensure_tmux_scroll_enabled
   attach_or_switch "$session"
@@ -1939,6 +1922,11 @@ case "$sub" in
     ;;
   _run-adapter)
     run_adapter "$@"
+    ;;
+  _render-prompt)
+    # Internal diagnostic: print the rendered atmux managed block to stdout.
+    # Honors ATMUX_ROLE / ATMUX_MANAGER / ATMUX_ROLE_DIR like the real flow.
+    render_managed_block "${1:-$(pwd)}"
     ;;
   _bootstrap-unlock)
     bootstrap_unlock_worker "$@"

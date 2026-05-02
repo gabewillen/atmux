@@ -49,6 +49,7 @@ cat > "$adapter_dir/cmd" <<'ADAPTER'
 set -euo pipefail
 case "${1:-}" in
   control-file) printf 'AGENTS.md\n' ;;
+  prepare-prompt) : ;;  # no-op: agent script reads prompt.md from prep dir
   start) sleep 600 ;;
   status) printf '<status adapter="mock" owner="agent" state="idle" model="" reasoning_level="" control_file="AGENTS.md" />\n' ;;
   model) printf 'mock\n' ;;
@@ -146,17 +147,21 @@ state_dir="$(grep '^ATMUX_ROLE_STATE_DIR=' "$MARKERS/start.env" | cut -d= -f2-)"
   exit 1
 }
 
-# Verify role.md injection
+# Verify role.md is rendered into the prep dir's prompt.md (the source-of-
+# truth atmux block that prepare-prompt hands each adapter). Also verify
+# the legacy AGENTS.md mutation has been removed.
 repo_norm="$(basename "$REPO_ROOT" | sed -E 's/[^A-Za-z0-9_-]+/_/g; s/_+/_/g; s/^_+//; s/_+$//')"
 worktree="$ATMUX_HOME/agents/${repo_norm}-$agent_name"
-[[ -f "$worktree/AGENTS.md" ]] || { echo "fail: control file missing" >&2; exit 1; }
-grep -q "Probe Role" "$worktree/AGENTS.md" || { echo "fail: role.md not injected" >&2; exit 1; }
+prompt_md="$ATMUX_HOME/agents/$repo_norm/$agent_name/prep/prompt.md"
+[[ -f "$prompt_md" ]] || { echo "fail: prep prompt.md missing at $prompt_md" >&2; exit 1; }
+grep -q "Probe Role" "$prompt_md" || { echo "fail: role.md not rendered into prep prompt" >&2; exit 1; }
 awk '
   /^<atmux>$/ { inb=1; next }
   /^<\/atmux>$/ { inb=0; next }
   inb==1 && /Probe Role/ { found=1 }
   END { exit (found?0:1) }
-' "$worktree/AGENTS.md" || { echo "fail: role.md outside <atmux> block" >&2; exit 1; }
+' "$prompt_md" || { echo "fail: role.md outside <atmux> block in prep prompt" >&2; exit 1; }
+[[ ! -e "$worktree/AGENTS.md" ]] || { echo "fail: AGENTS.md should not be created in worktree" >&2; exit 1; }
 
 # Verify all 5 ATMUX_ROLE_* vars persisted on session
 for var in ATMUX_ROLE ATMUX_ROLE_DIR ATMUX_ROLE_START ATMUX_ROLE_STOP ATMUX_ROLE_STATE_DIR; do

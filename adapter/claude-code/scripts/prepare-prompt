@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Reads atmux prompt content from stdin and emits one --append-system-prompt
+# argv pair (null-separated) to ATMUX_PREP_ARGS_FILE. No env directives, no
+# sidecar files: claude-code accepts the prompt directly on the command line.
+
+args_file="${ATMUX_PREP_ARGS_FILE:-}"
+[[ -n "$args_file" ]] || { echo "prepare-prompt: ATMUX_PREP_ARGS_FILE not set" >&2; exit 2; }
+
+content="$(cat)"
+[[ -n "$content" ]] || exit 0
+
+{
+  printf '%s\0' '--append-system-prompt'
+  printf '%s\0' "$content"
+} >> "$args_file"

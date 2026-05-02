@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.12.0 — Reporter system: humans get CLI text, agents get XML; remove read-only pane on agent create
+
+Until now, every `atmux` command wrapped its output in an `<atmux command="…">` XML envelope and listings emitted hand-rolled XML records, regardless of who invoked them. Humans running `atmux pr list` from a normal terminal saw raw XML.
+
+This release adds a reporter that picks the format based on the caller:
+
+- **Agent context** (`ATMUX_AGENT_NAME` set) → unchanged: full `<atmux …>` envelope, structured XML records.
+- **Human terminal** → plain-text CLI: `Usage:` heredoc for `--help`, column-aligned tables for listings, `(none)` for empty results.
+
+Override env vars:
+
+| Variable | Effect |
+|---|---|
+| `ATMUX_REPORTER=xml` | Force XML output regardless of caller |
+| `ATMUX_REPORTER=cli` | Force CLI text output regardless of caller |
+| `ATMUX_REPORTER=auto` (default) | Detect via `ATMUX_AGENT_NAME` |
+| `ATMUX_NO_WRAP=1` | Legacy alias for `ATMUX_REPORTER=cli` |
+
+Migrated commands: `agent list`, `team list`, `issue list`, `pr list`, `message list`. `role list`, `watcher list`, `config list`, and `env` were already plain text. Single-record commands (`pr create`, `agent create`, `pr show`, etc.) still emit XML in both modes — they're mostly agent-driven.
+
+Tests that specifically assert XML output set `ATMUX_REPORTER=xml`.
+
+### Read-only pane on agent create — removed
+
+Creating an agent attached the new pane in tmux read-only mode (controlled by `ATMUX_ATTACH_READONLY` and `ATMUX_BOOTSTRAP_STATE=pending`), with a background `_bootstrap-unlock` worker watching for adapter readiness before unlocking input. This made the pane feel frozen for the first few seconds after creation.
+
+`attach_or_switch` now always attaches read-write. The `ATMUX_ATTACH_READONLY` env var, the `bootstrap_unlock_*` helpers, the `_bootstrap-unlock` subcommand, and the read-only attach paths are gone. `ATMUX_BOOTSTRAP_STATE` is still set by adapter `start` scripts and still gates notification delivery in `notify` — that path is untouched.
+
 ## 0.11.1
 
 - `atmux send` / notify delivery: large payloads sometimes had their submit Enter swallowed because tmux flushes big pastes in chunks (the captured input briefly looks stable while more bytes are still in flight) and adapters need additional time to ingest the full input before submit. Adds a length-scaled pause between paste and submit. Tunable via:

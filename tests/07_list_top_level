@@ -11,11 +11,11 @@ SCRIPTS_DIR="$TESTS_DIR/scripts"
 eval "$("$SCRIPTS_DIR/setup")"
 trap "$SCRIPTS_DIR/teardown --team-session \"$TEAM_SESSION\" --agent1-session \"$AGENT1_SESSION\" --agent2-session \"$AGENT2_SESSION\"" EXIT
 
-teams_out="$(ATMUX_REPO="$REPO_NAME" "$ATMUX_BIN" team list)"
+teams_out="$(ATMUX_REPO="$REPO_NAME" ATMUX_REPORTER=xml "$ATMUX_BIN" team list)"
 printf '%s\n' "$teams_out" | grep -Fq "<teams repo=\"$REPO_NAME\">"
 printf '%s\n' "$teams_out" | grep -Fq "session=\"$TEAM_SESSION\""
 
-agents_out="$(ATMUX_REPO="$REPO_NAME" "$ATMUX_BIN" agent list --all)"
+agents_out="$(ATMUX_REPO="$REPO_NAME" ATMUX_REPORTER=xml "$ATMUX_BIN" agent list --all)"
 printf '%s\n' "$agents_out" | grep -Fq "<agents repo=\"$REPO_NAME\">"
 printf '%s\n' "$agents_out" | grep -Fq "session=\"$AGENT1_SESSION\""
 printf '%s\n' "$agents_out" | grep -Fq "session=\"$AGENT2_SESSION\""

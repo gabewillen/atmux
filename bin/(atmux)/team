@@ -4,6 +4,8 @@ set -euo pipefail
 HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=bin/(atmux)/notify
 source "$HERE/notify"
+# shellcheck source=bin/(atmux)/(internal)/reporter
+source "$HERE/(internal)/reporter"
 
 usage() {
   cat <<'USAGE'
@@ -97,18 +99,15 @@ list_teams() {
     IFS= read -r repo_name
   } < <(repo_context)
 
-  printf '<teams repo="%s">\n' "$(xml_escape "$repo_name")"
+  report_open teams repo="$repo_name"
   while IFS= read -r session; do
     [[ -z "$session" ]] && continue
     if [[ "$session" == "atmux-${repo_name}-team-"* ]]; then
       local name="${session#atmux-${repo_name}-team-}"
-      printf '  <team name="%s" repo="%s" session="%s" />\n' \
-        "$(xml_escape "$name")" \
-        "$(xml_escape "$repo_name")" \
-        "$(xml_escape "$session")"
+      report_record team name="$name" repo="$repo_name" session="$session"
     fi
   done < <(tmux list-sessions -F '#{session_name}' 2>/dev/null || true)
-  printf '</teams>\n'
+  report_close teams
 }
 
 is_team_session() {

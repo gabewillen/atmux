@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.11.1
+
+- `atmux send` / notify delivery: large payloads sometimes had their submit Enter swallowed because tmux flushes big pastes in chunks (the captured input briefly looks stable while more bytes are still in flight) and adapters need additional time to ingest the full input before submit. Adds a length-scaled pause between paste and submit. Tunable via:
+  - `ATMUX_SEND_PASTE_PER_KB_SECONDS` (default `0.05` — bonus seconds per KB)
+  - `ATMUX_SEND_PASTE_BONUS_MIN_BYTES` (default `1024` — payloads under this skip the bonus)
+  - `ATMUX_SEND_PASTE_BONUS_MAX_SECONDS` (default `5` — hard cap)
+
+  Set `ATMUX_SEND_PASTE_PER_KB_SECONDS=0` to disable.
+
 ## 0.11.0 — Adapter `prepare-prompt` contract; stop mutating project memory files (BREAKING)
 
 atmux no longer writes its `<atmux>` block into the project's

@@ -627,6 +627,34 @@ deliver_notification_to_pane() {
     return 1
   }
   wait_for_prompt_input_settled "$pane" "$prompt_prefix" "$paste_submit_wait"
+
+  # Large payloads can fool wait_for_prompt_input_settled: tmux flushes the
+  # paste in chunks, so the captured input briefly looks stable while more
+  # bytes are still in flight, and the adapter (claude/codex) needs extra
+  # time to ingest the full input before submit. Add a length-scaled pause
+  # before pressing Enter. Tunable via ATMUX_SEND_PASTE_PER_KB_SECONDS
+  # (default 0.05s/KB; capped via ATMUX_SEND_PASTE_BONUS_MAX_SECONDS at 5s).
+  # Skipped for payloads under ATMUX_SEND_PASTE_BONUS_MIN_BYTES (default 1024).
+  local payload_len=${#payload}
+  local bonus_min="${ATMUX_SEND_PASTE_BONUS_MIN_BYTES:-1024}"
+  local per_kb="${ATMUX_SEND_PASTE_PER_KB_SECONDS:-0.05}"
+  local bonus_max="${ATMUX_SEND_PASTE_BONUS_MAX_SECONDS:-5}"
+  [[ "$bonus_min" =~ ^[0-9]+$ ]] || bonus_min=1024
+  if (( payload_len >= bonus_min )); then
+    local bonus
+    bonus="$(awk -v len="$payload_len" -v rate="$per_kb" -v cap="$bonus_max" '
+      BEGIN {
+        b = (len / 1024) * rate
+        if (b > cap) b = cap
+        if (b < 0) b = 0
+        printf "%.3f", b
+      }')"
+    if [[ -n "$bonus" && "$bonus" != "0.000" ]]; then
+      debug_notify "deliver:length_bonus pane=$(printf '%q' "$pane") payload_len=$payload_len bonus=${bonus}s per_kb=${per_kb}s cap=${bonus_max}s"
+      sleep "$bonus"
+    fi
+  fi
+
   submit_notification_input "$pane" "$prompt_prefix" "$submit_keys" "$submit_wait" || return 1
   debug_notify "deliver:done pane=$(printf '%q' "$pane")"
   return 0

@@ -151,4 +151,48 @@ for adapter in claude-code codex gemini cursor-agent; do
     || { echo "fail: $adapter wrote prep output for empty stdin" >&2; exit 1; }
 done
 
-echo "ok: prepare-prompt contract holds for all four adapters and never touches AGENTS.md/CLAUDE.md/GEMINI.md"
+# === auto adapter delegates to ATMUX_ADAPTER_SELECTED =======================
+# Verifies the auto/scripts/prepare-prompt path actually execs the selected
+# adapter's prepare-prompt with the same env. We pick claude-code because
+# its output (a single null-separated --append-system-prompt arg pair) is
+# the easiest to assert byte-for-byte.
+worktree="$tmp_root/auto-wt"
+mkdir -p "$worktree"
+auto_args="$tmp_root/auto.args"; auto_env="$tmp_root/auto.env"
+direct_args="$tmp_root/auto.direct.args"; direct_env="$tmp_root/auto.direct.env"
+: > "$auto_args"; : > "$auto_env"
+: > "$direct_args"; : > "$direct_env"
+
+printf '%s' "$SAMPLE" \
+  | ATMUX_ADAPTER_SELECTED=claude-code \
+    ATMUX_SOURCE_ROOT="$REPO_ROOT" \
+    ATMUX_WORKTREE="$worktree" \
+    ATMUX_PREP_ARGS_FILE="$auto_args" ATMUX_PREP_ENV_FILE="$auto_env" \
+    "$REPO_ROOT/adapter/auto/scripts/prepare-prompt"
+
+printf '%s' "$SAMPLE" \
+  | ATMUX_WORKTREE="$worktree" \
+    ATMUX_PREP_ARGS_FILE="$direct_args" ATMUX_PREP_ENV_FILE="$direct_env" \
+    "$REPO_ROOT/adapter/claude-code/scripts/prepare-prompt"
+
+cmp "$auto_args" "$direct_args" \
+  || { echo "fail: auto delegation produced different args than direct claude-code" >&2; xxd "$auto_args" >&2; echo "---" >&2; xxd "$direct_args" >&2; exit 1; }
+cmp "$auto_env" "$direct_env" \
+  || { echo "fail: auto delegation produced different env than direct claude-code" >&2; cat "$auto_env" >&2; echo "---" >&2; cat "$direct_env" >&2; exit 1; }
+assert_no_pollution "$worktree"
+
+# When no adapter is selected and select fails (no ATMUX_ADAPTER_SELECTED,
+# no tmux sessions), auto's prepare-prompt should silently no-op (exit 0
+# with no output) rather than erroring.
+no_sel_args="$tmp_root/auto.nosel.args"
+no_sel_env="$tmp_root/auto.nosel.env"
+: > "$no_sel_args"; : > "$no_sel_env"
+printf '%s' "$SAMPLE" \
+  | ATMUX_HOME="$tmp_root/auto-empty-home" \
+    ATMUX_SOURCE_ROOT="$tmp_root/no-such-source-root" \
+    ATMUX_PREP_ARGS_FILE="$no_sel_args" ATMUX_PREP_ENV_FILE="$no_sel_env" \
+    "$REPO_ROOT/adapter/auto/scripts/prepare-prompt" || true
+[[ ! -s "$no_sel_args" && ! -s "$no_sel_env" ]] \
+  || { echo "fail: auto with no resolvable adapter should produce no prep output" >&2; exit 1; }
+
+echo "ok: prepare-prompt contract holds for all four adapters (and auto delegates correctly) and never touches AGENTS.md/CLAUDE.md/GEMINI.md"

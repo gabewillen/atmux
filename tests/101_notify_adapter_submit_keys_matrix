@@ -1,0 +1,98 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Isolate the tmux socket so this test can never touch the developer's
+# default tmux server. Idempotent if the runner already isolated.
+source "$(dirname "${BASH_SOURCE[0]}")/lib/isolate-tmux.sh"
+
+# Matrix sanity check: for every shipped adapter manifest, resolve_submit_keys
+# returns the expected queue + interrupt key strings. Catches manifest schema
+# regressions that would silently downgrade interrupt -> Enter.
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+NOTIFY_SCRIPT="$REPO_ROOT/bin/(atmux)/notify"
+
+ATMUX_HOME="${TMPDIR:-/tmp}/atmux-keys-${RANDOM}"
+ATMUX_SOURCE_ROOT="$REPO_ROOT"
+mkdir -p "$ATMUX_HOME"
+cleanup() { rm -rf "$ATMUX_HOME"; }
+trap cleanup EXIT
+
+source "$NOTIFY_SCRIPT"
+
+normalize_keys() {
+  # resolve_submit_keys may emit keys separated by newlines; normalise to
+  # a single comma-joined string for stable comparison.
+  tr '\n' ',' | sed 's/,$//'
+}
+
+check() {
+  local label="$1" got="$2" want="$3"
+  if [[ "$got" != "$want" ]]; then
+    echo "FAIL: $label: want=$want got=$got" >&2
+    exit 1
+  fi
+  printf '  ok: %-50s -> %s\n' "$label" "$got"
+}
+
+want_queue_for() {
+  case "$1" in
+    claude-code|codex|cursor-agent|gemini) printf 'Enter' ;;
+    *) return 1 ;;
+  esac
+}
+
+want_interrupt_for() {
+  case "$1" in
+    claude-code) printf 'Escape,Enter' ;;
+    codex)       printf 'Tab' ;;
+    cursor-agent) printf 'Enter' ;;
+    gemini)      printf 'Enter' ;;
+    *) return 1 ;;
+  esac
+}
+
+echo "matrix: every adapter manifest resolves to expected submit_keys" >&2
+
+for adapter in claude-code codex cursor-agent gemini; do
+  q="$(resolve_submit_keys "$adapter" queue | normalize_keys)"
+  i="$(resolve_submit_keys "$adapter" interrupt | normalize_keys)"
+  check "$adapter queue"     "$q" "$(want_queue_for "$adapter")"
+  check "$adapter interrupt" "$i" "$(want_interrupt_for "$adapter")"
+done
+
+# Fallback: unknown adapter must fall back to Enter for both modes (this
+# is what protects atmux from crashing when a user's session has a stale
+# ATMUX_ADAPTER pointing at a deleted adapter).
+unknown_q="$(resolve_submit_keys "this-adapter-does-not-exist" queue | normalize_keys)"
+unknown_i="$(resolve_submit_keys "this-adapter-does-not-exist" interrupt | normalize_keys)"
+check "unknown adapter queue"     "$unknown_q" "Enter"
+check "unknown adapter interrupt" "$unknown_i" "Enter"
+
+# Empty adapter name: same fallback. Otherwise an unset ATMUX_ADAPTER could
+# crash the worker on an unbounded printf or empty manifest read.
+empty_q="$(resolve_submit_keys "" queue | normalize_keys)"
+empty_i="$(resolve_submit_keys "" interrupt | normalize_keys)"
+check "empty adapter queue"     "$empty_q" "Enter"
+check "empty adapter interrupt" "$empty_i" "Enter"
+
+# Manifest with no submit_keys at all: must still fall back, never produce
+# an empty string (an empty submit-keys list would skip submit entirely
+# and leave the payload stuck in the input).
+fake_root="$(mktemp -d "${TMPDIR:-/tmp}/atmux-fake-adapter.XXXXXX")"
+mkdir -p "$fake_root/adapter/keysless"
+cat > "$fake_root/adapter/keysless/manifest.json" <<'EOF'
+{ "name": "keysless", "version": 1, "input_idle": { "prompt": "?" } }
+EOF
+(
+  ATMUX_SOURCE_ROOT="$fake_root"
+  q="$(resolve_submit_keys "keysless" queue | normalize_keys)"
+  i="$(resolve_submit_keys "keysless" interrupt | normalize_keys)"
+  [[ "$q" == "Enter" ]] || { echo "FAIL: keysless queue: $q" >&2; exit 1; }
+  [[ "$i" == "Enter" ]] || { echo "FAIL: keysless interrupt: $i" >&2; exit 1; }
+  echo "  ok: keysless manifest                                -> Enter / Enter"
+)
+rm -rf "$fake_root"
+
+echo "ok: all adapter manifests resolve to expected submit_keys"

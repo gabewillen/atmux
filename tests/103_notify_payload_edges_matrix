@@ -1,0 +1,229 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Isolate the tmux socket so this test can never touch the developer's
+# default tmux server. Idempotent if the runner already isolated.
+source "$(dirname "${BASH_SOURCE[0]}")/lib/isolate-tmux.sh"
+
+# Adversarial payloads x adapter matrix. Targets the two failure modes:
+#   - "not entered" (marker never reaches the pane)
+#   - "stuck in input" (marker reached pane but queue never drains —
+#     submit either failed or was retried indefinitely)
+#
+# Each payload is engineered to stress a specific code path:
+#   embedded_lf       -> tmux send-keys -l with multi-line text
+#   embedded_cr       -> CR may be interpreted as Enter by some terminals
+#   contains_prompt   -> extract_prompt_input scans backwards for prompt;
+#                        embedded prompt chars confuse the search
+#   leading_prompt    -> payload that LOOKS like a fresh prompt line
+#   giant             -> 4KB payload stresses paste buffer
+#   xml_specials      -> XML/shell metas; build_notification escapes them
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+NOTIFY_SCRIPT="$REPO_ROOT/bin/(atmux)/notify"
+
+ATMUX_HOME="${TMPDIR:-/tmp}/atmux-payload-edges-${RANDOM}"
+ATMUX_SOURCE_ROOT="$REPO_ROOT"
+mkdir -p "$ATMUX_HOME"
+
+export ATMUX_SEND_SETTLE_SECONDS=0.1
+export ATMUX_SEND_PASTE_TO_SUBMIT_WAIT_SECONDS=0.2
+export ATMUX_SEND_SUBMIT_WAIT_SECONDS=0.1
+export ATMUX_SEND_NO_PROMPT_READY_SECONDS=0.2
+export ATMUX_SEND_READY_TIMEOUT_SECONDS=20
+export ATMUX_SEND_PASTE_READY_TIMEOUT_SECONDS=4
+export ATMUX_SEND_SUBMIT_VERIFY_SECONDS=2
+
+source "$NOTIFY_SCRIPT"
+
+SESSIONS=()
+cleanup() {
+  local s
+  for s in "${SESSIONS[@]:-}"; do
+    [[ -n "$s" ]] || continue
+    tmux kill-session -t "$s" >/dev/null 2>&1 || true
+  done
+  rm -rf "$ATMUX_HOME"
+}
+trap cleanup EXIT
+
+prompt_for() {
+  case "$1" in
+    claude-code) printf '%s' '❯' ;;
+    codex)       printf '%s' '›' ;;
+    cursor-agent) printf '%s' '→' ;;
+    gemini)      printf '%s' '*' ;;
+    *) return 1 ;;
+  esac
+}
+
+wait_for_text_in_pane() {
+  local target="$1" needle="$2" timeout="${3:-15}"
+  local deadline now snap compact
+  deadline=$(( $(date +%s) + timeout ))
+  while true; do
+    snap="$(tmux capture-pane -p -t "$target" -S -600 2>/dev/null || true)"
+    compact="$(printf '%s' "$snap" | tr -d '\r\n')"
+    if printf '%s' "$compact" | grep -Fq "$needle"; then
+      return 0
+    fi
+    now="$(date +%s)"
+    (( now >= deadline )) && return 1
+    sleep 0.1
+  done
+}
+
+wait_for_queue_drained() {
+  local pane="$1" timeout="${2:-15}"
+  local qdir deadline now
+  qdir="$(notify_queue_dir "$pane")"
+  deadline=$(( $(date +%s) + timeout ))
+  while true; do
+    if [[ ! -d "$qdir/payloads" ]] || [[ -z "$(ls -A "$qdir/payloads" 2>/dev/null || true)" ]]; then
+      return 0
+    fi
+    now="$(date +%s)"
+    (( now >= deadline )) && return 1
+    sleep 0.1
+  done
+}
+
+# Construct payload for the named edge case. Echoes the marker we expect
+# to find in the pane (callers will grep for it after delivery).
+make_payload_and_marker() {
+  # Echoes "<marker>\t<payload>" on stdout. Avoids printf -v name-ref
+  # gymnastics (which broke once already because local-var shadowing
+  # silently zeroed the marker, making every probe trivially "pass").
+  local kind="$1" adapter="$2"
+  local mp_marker mp_payload mp_prompt mp_pad
+  mp_prompt="$(prompt_for "$adapter")"
+  mp_marker="MK-${kind}-${adapter//[^A-Za-z0-9-]/_}-${RANDOM}"
+  case "$kind" in
+    baseline)
+      mp_payload="$(build_notification "test" "$mp_marker" "")"
+      ;;
+    embedded_lf)
+      # Multi-line body. Worker reads payload via cat; embedded LF should
+      # not split into multiple sends or cause early submit.
+      mp_payload=$'<notification type="test" from="'"$mp_marker"$'-pre\n'"$mp_marker"$'-post" />'
+      ;;
+    embedded_cr)
+      # Embedded CR. Some pty layers re-interpret \r as Enter. The marker
+      # is split by the CR but our pane-read strips \r\n before grep so
+      # both halves should still be findable as a single concatenated
+      # blob. If the worker submits early, the queue still must drain.
+      mp_payload=$'<notification type="test" from="'"$mp_marker"$'-X\r'"$mp_marker"$'-Y" />'
+      ;;
+    contains_prompt)
+      # Payload contains the adapter's own prompt prefix. extract_prompt_input
+      # scans backwards looking for that exact char; an embedded copy can
+      # mis-anchor the saved-input region and cause submit verification to
+      # check the wrong cursor row.
+      mp_payload="$(build_notification "test" "$mp_marker" "" "text=before ${mp_prompt} after ${mp_prompt} done")"
+      ;;
+    leading_prompt)
+      # Payload starts with what looks like a fresh prompt line, so a
+      # naive prompt search would treat the pasted text as the prompt
+      # itself and try to extract input "after" it.
+      mp_payload="${mp_prompt} fake-prompt ${mp_marker}"
+      ;;
+    giant)
+      # 4 KB body of innocuous chars surrounding the marker. Paste buffer
+      # stress and slows wait_for_prompt_input_settled.
+      mp_pad="$(printf 'X%.0s' $(seq 1 2000))"
+      mp_payload="$(build_notification "test" "$mp_marker" "" "text=${mp_pad}-${mp_marker}-${mp_pad}")"
+      ;;
+    xml_specials)
+      # Build via build_notification so escaping happens; verify marker
+      # still survives.
+      mp_payload="$(build_notification "test" "$mp_marker" "" 'text=<one>&"two"</one>')"
+      ;;
+    *)
+      echo "unknown payload kind: $kind" >&2
+      return 1
+      ;;
+  esac
+  printf '%s\t%s' "$mp_marker" "$mp_payload"
+}
+
+probe() {
+  local adapter="$1" kind="$2"
+  local prompt session pane marker payload label
+  prompt="$(prompt_for "$adapter")"
+  session="atmux-edge-${adapter//[^A-Za-z0-9-]/_}-${kind}-$$-${RANDOM}"
+  SESSIONS+=("$session")
+  label="$adapter/$kind"
+
+  tmux kill-session -t "$session" >/dev/null 2>&1 || true
+  tmux new-session -d -s "$session" -n "$session" -x 160 -y 30 "cat"
+  tmux set-environment -t "$session" ATMUX_ADAPTER "$adapter"
+
+  pane="$(tmux list-panes -t "$session" -F '#{pane_id}' 2>/dev/null | head -n1)"
+  [[ -n "$pane" ]] || { echo "FAIL: $label: pane missing" >&2; return 1; }
+
+  sleep 0.2
+  tmux send-keys -t "$pane" -l "$prompt "
+  sleep 0.2
+
+  local mp_out
+  mp_out="$(make_payload_and_marker "$kind" "$adapter")" || {
+    echo "FAIL: $label: payload construction failed" >&2
+    return 1
+  }
+  marker="${mp_out%%$'\t'*}"
+  payload="${mp_out#*$'\t'}"
+  [[ -n "$marker" ]] || { echo "FAIL: $label: empty marker (test bug)" >&2; return 1; }
+  [[ -n "$payload" ]] || { echo "FAIL: $label: empty payload (test bug)" >&2; return 1; }
+
+  if ! send_notification "$pane" "$payload" Enter; then
+    echo "FAIL: $label: send_notification returned non-zero (marker=$marker)" >&2
+    return 1
+  fi
+
+  if ! wait_for_text_in_pane "$pane" "$marker" 25; then
+    echo "FAIL: $label: marker '$marker' never appeared in pane (NOT ENTERED)" >&2
+    tmux capture-pane -p -t "$pane" -S -200 >&2 || true
+    return 1
+  fi
+
+  if ! wait_for_queue_drained "$pane" 20; then
+    echo "FAIL: $label: queue stuck after delivery (STUCK IN INPUT) marker=$marker" >&2
+    qdir="$(notify_queue_dir "$pane")"
+    echo "--- queue dir contents ---" >&2
+    ls -la "$qdir/payloads" >&2 2>/dev/null || true
+    for item in "$qdir/payloads"/*; do
+      [[ -d "$item" ]] || continue
+      echo "--- $item ---" >&2
+      cat "$item/state" >&2 2>/dev/null || true
+      echo >&2
+      cat "$item/last_error" >&2 2>/dev/null || true
+      echo >&2
+    done
+    echo "--- pane snapshot ---" >&2
+    tmux capture-pane -p -t "$pane" -S -200 >&2 || true
+    return 1
+  fi
+
+  printf '  ok: %-50s marker=%s\n' "$label" "$marker"
+  tmux kill-session -t "$session" >/dev/null 2>&1 || true
+  return 0
+}
+
+echo "matrix: 4 adapters x 7 adversarial payloads -> 28 probes" >&2
+
+failures=0
+for adapter in claude-code codex cursor-agent gemini; do
+  for kind in baseline embedded_lf embedded_cr contains_prompt leading_prompt giant xml_specials; do
+    if ! probe "$adapter" "$kind"; then
+      failures=$((failures + 1))
+    fi
+  done
+done
+
+if (( failures > 0 )); then
+  echo "FAIL: $failures probe(s) failed in payload-edges matrix" >&2
+  exit 1
+fi
+
+echo "ok: payload edges survived for every adapter"

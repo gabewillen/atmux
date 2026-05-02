@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Delegates to the currently selected adapter's prepare-prompt, mirroring the
+# control-file delegation pattern.
+
+ATMUX_HOME="${ATMUX_HOME:-$HOME/.atmux}"
+if [[ -z "${ATMUX_SOURCE_ROOT:-}" ]]; then
+  if [[ -d "$ATMUX_HOME/src/atmux" ]]; then
+    ATMUX_SOURCE_ROOT="$ATMUX_HOME/src/atmux"
+  else
+    ATMUX_SOURCE_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../.." && pwd)"
+  fi
+fi
+
+root_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+select_script="$root_dir/scripts/select"
+
+resolve_adapter_cmd_path() {
+  local adapter="$1"
+  local repo_root=""
+
+  if [[ -x "$ATMUX_SOURCE_ROOT/adapter/$adapter/cmd" ]]; then
+    printf '%s\n' "$ATMUX_SOURCE_ROOT/adapter/$adapter/cmd"
+    return 0
+  fi
+
+  if repo_root="$(git rev-parse --show-toplevel 2>/dev/null)"; then
+    if [[ -x "$repo_root/adapter/$adapter/cmd" ]]; then
+      printf '%s\n' "$repo_root/adapter/$adapter/cmd"
+      return 0
+    fi
+  fi
+
+  if [[ -x "$ATMUX_HOME/adapters/$adapter/cmd" ]]; then
+    printf '%s\n' "$ATMUX_HOME/adapters/$adapter/cmd"
+    return 0
+  fi
+
+  return 1
+}
+
+selected="${ATMUX_ADAPTER_SELECTED:-}"
+if [[ -z "$selected" || "$selected" == "auto" ]]; then
+  selected="$(ATMUX_HOME="$ATMUX_HOME" ATMUX_SOURCE_ROOT="$ATMUX_SOURCE_ROOT" "$select_script" --peek 2>/dev/null || true)"
+fi
+[[ -n "$selected" ]] || exit 0
+
+adapter_cmd="$(resolve_adapter_cmd_path "$selected" || true)"
+[[ -x "$adapter_cmd" ]] || exit 0
+
+exec "$adapter_cmd" prepare-prompt "$@"

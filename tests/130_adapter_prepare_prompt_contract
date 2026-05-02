@@ -1,0 +1,154 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Verifies the `prepare-prompt` adapter contract introduced in 0.11.0:
+#   - claude-code  → adds null-separated --append-system-prompt <text> args.
+#   - codex        → adds --config developer_instructions=<TOML-quoted-text>.
+#   - gemini       → writes sidecar under $ATMUX_HOME, emits GEMINI_SYSTEM_MD env.
+#   - cursor-agent → writes <worktree>/.cursor/rules/atmux.mdc, no args/env.
+#   - none of them touch <worktree>/{AGENTS,CLAUDE,GEMINI}.md.
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+
+tmp_root="$(mktemp -d "${TMPDIR:-/tmp}/atmux-prep-test.XXXXXX")"
+cleanup() { rm -rf "$tmp_root"; }
+trap cleanup EXIT
+
+# Sample atmux content with characters that exercise TOML escaping
+# (backslash, double quote, newlines).
+read -r -d '' SAMPLE <<'EOF' || true
+<atmux>
+# Role
+- ROLE: tester
+- raw "quoted" text and a backslash\here
+multi
+line
+content
+</atmux>
+EOF
+
+assert_no_pollution() {
+  local worktree="$1"
+  for f in AGENTS.md CLAUDE.md GEMINI.md; do
+    if [[ -e "$worktree/$f" ]]; then
+      echo "fail: prepare-prompt should not touch $worktree/$f" >&2
+      exit 1
+    fi
+  done
+}
+
+# Bash 3.2 (macOS default) lacks `declare -g`, so each test section reads
+# the null-separated args inline into a local array.
+
+# === claude-code ============================================================
+worktree="$tmp_root/cc-wt"
+mkdir -p "$worktree"
+args="$tmp_root/cc.args"; envf="$tmp_root/cc.env"
+: > "$args"; : > "$envf"
+printf '%s' "$SAMPLE" \
+  | ATMUX_WORKTREE="$worktree" \
+    ATMUX_PREP_ARGS_FILE="$args" ATMUX_PREP_ENV_FILE="$envf" \
+    "$REPO_ROOT/adapter/claude-code/scripts/prepare-prompt"
+
+cc_args=()
+while IFS= read -r -d '' a; do cc_args+=("$a"); done < "$args"
+[[ "${#cc_args[@]}" -eq 2 ]] \
+  || { echo "fail: claude args count=${#cc_args[@]} (want 2)" >&2; exit 1; }
+[[ "${cc_args[0]}" == "--append-system-prompt" ]] \
+  || { echo "fail: claude arg[0]='${cc_args[0]}' (want --append-system-prompt)" >&2; exit 1; }
+[[ "${cc_args[1]}" == *'"quoted"'* && "${cc_args[1]}" == *'backslash\here'* ]] \
+  || { echo "fail: claude arg[1] missing literal text; got: ${cc_args[1]}" >&2; exit 1; }
+[[ ! -s "$envf" ]] \
+  || { echo "fail: claude should not emit env directives, got: $(cat "$envf")" >&2; exit 1; }
+assert_no_pollution "$worktree"
+
+# === codex ==================================================================
+worktree="$tmp_root/cx-wt"
+mkdir -p "$worktree"
+args="$tmp_root/cx.args"; envf="$tmp_root/cx.env"
+: > "$args"; : > "$envf"
+printf '%s' "$SAMPLE" \
+  | ATMUX_WORKTREE="$worktree" \
+    ATMUX_PREP_ARGS_FILE="$args" ATMUX_PREP_ENV_FILE="$envf" \
+    "$REPO_ROOT/adapter/codex/scripts/prepare-prompt"
+
+cx_args=()
+while IFS= read -r -d '' a; do cx_args+=("$a"); done < "$args"
+[[ "${#cx_args[@]}" -eq 2 ]] \
+  || { echo "fail: codex args count=${#cx_args[@]} (want 2)" >&2; exit 1; }
+[[ "${cx_args[0]}" == "--config" ]] \
+  || { echo "fail: codex arg[0]='${cx_args[0]}' (want --config)" >&2; exit 1; }
+[[ "${cx_args[1]}" == 'developer_instructions="'*'"' ]] \
+  || { echo "fail: codex arg[1] not TOML-quoted developer_instructions=...; got: ${cx_args[1]}" >&2; exit 1; }
+# TOML escapes: backslash -> \\, quote -> \", newline -> \n
+[[ "${cx_args[1]}" == *'\\here'* ]] \
+  || { echo "fail: codex arg[1] missing escaped backslash; got: ${cx_args[1]}" >&2; exit 1; }
+[[ "${cx_args[1]}" == *'\"quoted\"'* ]] \
+  || { echo "fail: codex arg[1] missing escaped double-quote; got: ${cx_args[1]}" >&2; exit 1; }
+[[ "${cx_args[1]}" == *'\n'* ]] \
+  || { echo "fail: codex arg[1] missing escaped newline; got: ${cx_args[1]}" >&2; exit 1; }
+[[ ! -s "$envf" ]] \
+  || { echo "fail: codex should not emit env directives, got: $(cat "$envf")" >&2; exit 1; }
+assert_no_pollution "$worktree"
+
+# === gemini =================================================================
+worktree="$tmp_root/gm-wt"
+mkdir -p "$worktree"
+gm_home="$tmp_root/gm-home"
+args="$tmp_root/gm.args"; envf="$tmp_root/gm.env"
+: > "$args"; : > "$envf"
+printf '%s' "$SAMPLE" \
+  | ATMUX_HOME="$gm_home" ATMUX_REPO=demo ATMUX_AGENT_NAME=worker \
+    ATMUX_WORKTREE="$worktree" \
+    ATMUX_PREP_ARGS_FILE="$args" ATMUX_PREP_ENV_FILE="$envf" \
+    "$REPO_ROOT/adapter/gemini/scripts/prepare-prompt"
+
+[[ ! -s "$args" ]] \
+  || { echo "fail: gemini should not emit args; got: $(xxd "$args")" >&2; exit 1; }
+expected_path="$gm_home/agents/demo/worker/gemini-system.md"
+grep -Fxq "GEMINI_SYSTEM_MD=$expected_path" "$envf" \
+  || { echo "fail: gemini env missing GEMINI_SYSTEM_MD=$expected_path; got: $(cat "$envf")" >&2; exit 1; }
+[[ -f "$expected_path" ]] \
+  || { echo "fail: gemini sidecar not written at $expected_path" >&2; exit 1; }
+grep -Fq 'ROLE: tester' "$expected_path" \
+  || { echo "fail: gemini sidecar missing role content" >&2; exit 1; }
+assert_no_pollution "$worktree"
+
+# === cursor-agent ===========================================================
+worktree="$tmp_root/cu-wt"
+mkdir -p "$worktree"
+args="$tmp_root/cu.args"; envf="$tmp_root/cu.env"
+: > "$args"; : > "$envf"
+printf '%s' "$SAMPLE" \
+  | ATMUX_WORKTREE="$worktree" \
+    ATMUX_PREP_ARGS_FILE="$args" ATMUX_PREP_ENV_FILE="$envf" \
+    "$REPO_ROOT/adapter/cursor-agent/scripts/prepare-prompt"
+
+[[ ! -s "$args" ]] \
+  || { echo "fail: cursor should not emit args; got: $(xxd "$args")" >&2; exit 1; }
+[[ ! -s "$envf" ]] \
+  || { echo "fail: cursor should not emit env directives; got: $(cat "$envf")" >&2; exit 1; }
+sidecar="$worktree/.cursor/rules/atmux.mdc"
+[[ -f "$sidecar" ]] \
+  || { echo "fail: cursor sidecar not written at $sidecar" >&2; exit 1; }
+grep -Fq 'alwaysApply: true' "$sidecar" \
+  || { echo "fail: cursor sidecar missing alwaysApply frontmatter" >&2; exit 1; }
+grep -Fq 'ROLE: tester' "$sidecar" \
+  || { echo "fail: cursor sidecar missing role content" >&2; exit 1; }
+assert_no_pollution "$worktree"
+
+# === empty stdin: no-op for every adapter ===================================
+for adapter in claude-code codex gemini cursor-agent; do
+  noop_args="$tmp_root/${adapter}.noop.args"
+  noop_env="$tmp_root/${adapter}.noop.env"
+  : > "$noop_args"; : > "$noop_env"
+  : | ATMUX_HOME="$tmp_root/noop-home" ATMUX_REPO=r ATMUX_AGENT_NAME=a \
+        ATMUX_WORKTREE="$tmp_root/noop-${adapter}-wt" \
+        ATMUX_PREP_ARGS_FILE="$noop_args" ATMUX_PREP_ENV_FILE="$noop_env" \
+        "$REPO_ROOT/adapter/$adapter/scripts/prepare-prompt"
+  [[ ! -s "$noop_args" && ! -s "$noop_env" ]] \
+    || { echo "fail: $adapter wrote prep output for empty stdin" >&2; exit 1; }
+done
+
+echo "ok: prepare-prompt contract holds for all four adapters and never touches AGENTS.md/CLAUDE.md/GEMINI.md"

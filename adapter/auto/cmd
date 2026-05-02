@@ -8,11 +8,11 @@ sub="${1:-}"
 shift || true
 
 case "$sub" in
-  select|status|start|control-file|model|reasoning-level)
+  select|status|start|control-file|prepare-prompt|model|reasoning-level)
     exec "$scripts_dir/$sub" "$@"
     ;;
   *)
-    echo "usage: auto/cmd select|status|start|control-file|model|reasoning-level" >&2
+    echo "usage: auto/cmd select|status|start|control-file|prepare-prompt|model|reasoning-level" >&2
     exit 2
     ;;
 esac

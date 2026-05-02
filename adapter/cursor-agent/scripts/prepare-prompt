@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Reads atmux prompt content from stdin and writes it to
+# <worktree>/.cursor/rules/atmux.mdc. cursor-agent auto-discovers everything
+# under .cursor/rules/ and applies it as rules, so no args or env directives
+# are needed. The worktree's AGENTS.md/CLAUDE.md are left untouched.
+#
+# An .mdc file with `alwaysApply: true` frontmatter ensures cursor loads it
+# for every request rather than gating on glob matches.
+
+content="$(cat)"
+[[ -n "$content" ]] || exit 0
+
+worktree="${ATMUX_WORKTREE:-$(pwd)}"
+rules_dir="$worktree/.cursor/rules"
+mkdir -p "$rules_dir"
+
+target="$rules_dir/atmux.mdc"
+{
+  printf -- '---\n'
+  printf 'description: atmux agent rules and CLI reference\n'
+  printf 'alwaysApply: true\n'
+  printf -- '---\n'
+  printf '%s\n' "$content"
+} > "$target"

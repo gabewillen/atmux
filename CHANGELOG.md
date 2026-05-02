@@ -1,5 +1,44 @@
 # Changelog
 
+## 0.11.0 — Adapter `prepare-prompt` contract; stop mutating project memory files (BREAKING)
+
+atmux no longer writes its `<atmux>` block into the project's
+`AGENTS.md` / `CLAUDE.md` / `GEMINI.md`. Each adapter now carries a
+`scripts/prepare-prompt` script that decides where atmux content goes —
+purely in-memory for adapters that support it, sidecar files in
+adapter-specific dotdirs for those that don't.
+
+Per-adapter mechanism:
+
+| Adapter | Mechanism | Mutates anything? |
+|---|---|---|
+| `claude-code` | `--append-system-prompt "<text>"` | No — pure CLI flag |
+| `codex` | `--config developer_instructions=<TOML-quoted-text>` (appends after defaults) | No — pure CLI flag |
+| `gemini` | sidecar at `$ATMUX_HOME/agents/<repo>/<agent>/gemini-system.md`, `GEMINI_SYSTEM_MD=<path>` env | Sidecar in `$ATMUX_HOME`, **not** `GEMINI.md` |
+| `cursor-agent` | sidecar at `<worktree>/.cursor/rules/atmux.mdc` (cursor auto-discovers it) | Sidecar in `.cursor/rules/`, **not** `AGENTS.md` |
+
+The new contract: each adapter's `cmd prepare-prompt` is invoked with the
+rendered atmux block on stdin and two output paths via env
+(`ATMUX_PREP_ARGS_FILE` for null-separated argv to prepend;
+`ATMUX_PREP_ENV_FILE` for `KEY=VALUE` env directives). The `auto`
+adapter delegates to the selected adapter, mirroring `control-file`.
+
+Migration notes:
+
+- Existing `<atmux>` blocks already injected into project `AGENTS.md` /
+  `CLAUDE.md` / `GEMINI.md` are no longer touched by atmux. Delete them
+  by hand if you want — they're harmless if left in place but they
+  duplicate context atmux now passes through the adapter directly.
+- For `gemini`, `GEMINI_SYSTEM_MD` is replace-only: the built-in gemini
+  prompt is dropped in favor of the atmux block. Run
+  `GEMINI_WRITE_SYSTEM_MD=1 gemini --version` once if you want to
+  capture the built-in for reference.
+- `atmux agent attach` no longer re-renders the prompt; the running
+  adapter already has it loaded from `agent create`.
+- The internal `inject_control_file` function is gone; an internal
+  `atmux _render-prompt` diagnostic command now prints the rendered
+  block for tests / debugging.
+
 ## 0.10.1
 
 - `atmux process watch --stdio` now batches output events into a single digest notification per `--coalesce` window (default `60s`, pass `0` for the previous per-event behavior). Pending output flushes when the process exits or `--duration` / `--timeout` expires. Digest notifications carry `coalesced="true" events="N" window="<dur>s" reason="…"`.

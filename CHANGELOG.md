@@ -73,7 +73,7 @@ Migration notes:
 - `atmux agent attach` no longer re-renders the prompt; the running
   adapter already has it loaded from `agent create`.
 - The internal `inject_control_file` function is gone; an internal
-  `atmux _render-prompt` diagnostic command now prints the rendered
+  `atmux agent _render-prompt` diagnostic command now prints the rendered
   block for tests / debugging.
 
 ## 0.10.1

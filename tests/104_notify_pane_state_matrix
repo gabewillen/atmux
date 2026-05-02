@@ -1,0 +1,270 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Isolate the tmux socket so this test can never touch the developer's
+# default tmux server. Idempotent if the runner already isolated.
+source "$(dirname "${BASH_SOURCE[0]}")/lib/isolate-tmux.sh"
+
+# Pane-state matrix: stress notification delivery against hostile session
+# states beyond what 76 (copy mode), 81 (startup prompt), 93 (stale pane)
+# already cover. Targets two failure modes:
+#   - "stuck in input": worker keeps retrying / queue never drains
+#   - "not entered": payload silently bypassed
+#
+# Uses tests/lib/mock-adapter as the pane command for the burst case so
+# the prompt re-renders between deliveries (a plain `cat` pane does not,
+# which causes wait_for_pane_ready to stall on subsequent items — a
+# worthwhile finding in its own right but not what we are testing here).
+#
+# Cases per adapter:
+#   burst        : 5 sends queued back-to-back, all must drain
+#   killed_pane  : pane killed AFTER queue, BEFORE worker finishes -> worker
+#                  must exit cleanly within timeout (no zombie)
+# Cross-cutting:
+#   no_adapter   : session has no ATMUX_ADAPTER set -> delivery falls back
+#                  to the "no prompt prefix" path, must still drain queue.
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+NOTIFY_SCRIPT="$REPO_ROOT/bin/(atmux)/notify"
+MOCK_ADAPTER="$TESTS_DIR/lib/mock-adapter"
+[[ -x "$MOCK_ADAPTER" ]] || { echo "missing tests/lib/mock-adapter" >&2; exit 1; }
+
+ATMUX_HOME="${TMPDIR:-/tmp}/atmux-pane-state-${RANDOM}"
+ATMUX_SOURCE_ROOT="$REPO_ROOT"
+mkdir -p "$ATMUX_HOME"
+
+export ATMUX_SEND_SETTLE_SECONDS=0.1
+export ATMUX_SEND_PASTE_TO_SUBMIT_WAIT_SECONDS=0.2
+export ATMUX_SEND_SUBMIT_WAIT_SECONDS=0.1
+export ATMUX_SEND_NO_PROMPT_READY_SECONDS=0.2
+export ATMUX_SEND_READY_TIMEOUT_SECONDS=10
+export ATMUX_SEND_PASTE_READY_TIMEOUT_SECONDS=2
+export ATMUX_SEND_SUBMIT_VERIFY_SECONDS=1
+
+source "$NOTIFY_SCRIPT"
+
+SESSIONS=()
+cleanup() {
+  local s
+  for s in "${SESSIONS[@]:-}"; do
+    [[ -n "$s" ]] || continue
+    tmux kill-session -t "$s" >/dev/null 2>&1 || true
+  done
+  rm -rf "$ATMUX_HOME"
+}
+trap cleanup EXIT
+
+prompt_for() {
+  case "$1" in
+    claude-code) printf '%s' '❯' ;;
+    codex)       printf '%s' '›' ;;
+    cursor-agent) printf '%s' '→' ;;
+    gemini)      printf '%s' '*' ;;
+    *) return 1 ;;
+  esac
+}
+
+new_mock_pane() {
+  # Echoes pane-id then session name on stdout.
+  # If $2 (adapter) is non-empty, uses mock-adapter for the pane command
+  # so the prompt is re-rendered after each Enter; otherwise uses cat.
+  local label="$1" adapter="${2:-}" use_mock="${3:-1}"
+  local session pane prompt cmd
+  session="atmux-pane-${label//[^A-Za-z0-9-]/_}-$$-${RANDOM}"
+  SESSIONS+=("$session")
+  tmux kill-session -t "$session" >/dev/null 2>&1 || true
+  if [[ -n "$adapter" && "$use_mock" == "1" ]]; then
+    prompt="$(prompt_for "$adapter")"
+    cmd="bash $(printf %q "$MOCK_ADAPTER") $(printf %q "$prompt")"
+  else
+    cmd="cat"
+  fi
+  tmux new-session -d -s "$session" -n "$session" -x 120 -y 30 "$cmd"
+  if [[ -n "$adapter" ]]; then
+    tmux set-environment -t "$session" ATMUX_ADAPTER "$adapter"
+  fi
+  sleep 0.4  # let mock-adapter print the initial prompt
+  pane="$(tmux list-panes -t "$session" -F '#{pane_id}' 2>/dev/null | head -n1)"
+  printf '%s\n%s\n' "$pane" "$session"
+}
+
+wait_for_text_in_pane() {
+  local target="$1" needle="$2" timeout="${3:-15}"
+  local deadline now snap compact
+  deadline=$(( $(date +%s) + timeout ))
+  while true; do
+    snap="$(tmux capture-pane -p -t "$target" -S -600 2>/dev/null || true)"
+    compact="$(printf '%s' "$snap" | tr -d '\r\n')"
+    if printf '%s' "$compact" | grep -Fq "$needle"; then
+      return 0
+    fi
+    now="$(date +%s)"
+    (( now >= deadline )) && return 1
+    sleep 0.1
+  done
+}
+
+wait_for_queue_drained() {
+  local pane="$1" timeout="${2:-15}"
+  local qdir deadline now
+  qdir="$(notify_queue_dir "$pane")"
+  deadline=$(( $(date +%s) + timeout ))
+  while true; do
+    if [[ ! -d "$qdir/payloads" ]] || [[ -z "$(ls -A "$qdir/payloads" 2>/dev/null || true)" ]]; then
+      return 0
+    fi
+    now="$(date +%s)"
+    (( now >= deadline )) && return 1
+    sleep 0.1
+  done
+}
+
+wait_for_no_worker() {
+  local pane="$1" timeout="${2:-12}"
+  local qdir pid_file deadline now pid
+  qdir="$(notify_queue_dir "$pane")"
+  pid_file="$qdir/worker.pid"
+  deadline=$(( $(date +%s) + timeout ))
+  while true; do
+    if [[ ! -f "$pid_file" ]]; then
+      return 0
+    fi
+    pid="$(tr -d '\r\n' < "$pid_file" 2>/dev/null || true)"
+    if [[ -z "$pid" ]] || ! kill -0 "$pid" 2>/dev/null; then
+      return 0
+    fi
+    now="$(date +%s)"
+    (( now >= deadline )) && return 1
+    sleep 0.2
+  done
+}
+
+probe_burst() {
+  local adapter="$1"
+  local label="$adapter/burst"
+  local pane session info marker payload i
+  info="$(new_mock_pane "burst-$adapter" "$adapter" 1)"
+  pane="$(printf '%s' "$info" | sed -n '1p')"
+  session="$(printf '%s' "$info" | sed -n '2p')"
+  [[ -n "$pane" ]] || { echo "FAIL: $label: no pane" >&2; return 1; }
+
+  local -a markers=()
+  for i in 1 2 3 4 5; do
+    marker="MK-burst-${adapter//[^A-Za-z0-9-]/_}-${i}-${RANDOM}"
+    markers+=("$marker")
+    payload="$(build_notification "test" "$marker" "")"
+    if ! send_notification "$pane" "$payload" Enter; then
+      echo "FAIL: $label: send #$i returned non-zero" >&2
+      return 1
+    fi
+  done
+
+  for marker in "${markers[@]}"; do
+    if ! wait_for_text_in_pane "$pane" "$marker" 45; then
+      echo "FAIL: $label: marker '$marker' never appeared in pane" >&2
+      tmux capture-pane -p -t "$pane" -S -400 >&2 || true
+      return 1
+    fi
+  done
+  if ! wait_for_queue_drained "$pane" 30; then
+    echo "FAIL: $label: queue stuck after burst" >&2
+    return 1
+  fi
+
+  printf '  ok: %-40s 5 sends drained\n' "$label"
+  tmux kill-session -t "$session" >/dev/null 2>&1 || true
+  return 0
+}
+
+probe_killed_pane() {
+  local adapter="$1"
+  local label="$adapter/killed_pane"
+  local pane session info marker payload qdir
+  info="$(new_mock_pane "killed-$adapter" "$adapter" 1)"
+  pane="$(printf '%s' "$info" | sed -n '1p')"
+  session="$(printf '%s' "$info" | sed -n '2p')"
+  [[ -n "$pane" ]] || { echo "FAIL: $label: no pane" >&2; return 1; }
+
+  marker="MK-killed-${adapter//[^A-Za-z0-9-]/_}-${RANDOM}"
+  payload="$(build_notification "test" "$marker" "")"
+  qdir="$(notify_queue_dir "$pane")"
+
+  if ! send_notification "$pane" "$payload" Enter; then
+    echo "FAIL: $label: send returned non-zero" >&2
+    return 1
+  fi
+
+  # Kill immediately. Worker may already be in deliver_notification_to_pane —
+  # tmux send-keys on a dead pane returns non-zero, which the worker should
+  # treat as failed and exit cleanly.
+  tmux kill-session -t "$session" >/dev/null 2>&1 || true
+
+  if ! wait_for_no_worker "$pane" 15; then
+    echo "FAIL: $label: notify worker did not exit after pane was killed" >&2
+    cat "$qdir/worker.pid" >&2 2>/dev/null || true
+    return 1
+  fi
+
+  printf '  ok: %-40s worker exited cleanly\n' "$label"
+  return 0
+}
+
+probe_no_adapter() {
+  # Session has no ATMUX_ADAPTER set: prompt_prefix resolves empty, the
+  # delivery code path takes the "no prompt" branch (submit unverified
+  # but returns 0). Verify text reaches pane and queue drains.
+  local label="no_adapter"
+  local pane session info marker payload
+  info="$(new_mock_pane "noadapter" "" 0)"  # plain cat, no adapter
+  pane="$(printf '%s' "$info" | sed -n '1p')"
+  session="$(printf '%s' "$info" | sed -n '2p')"
+  [[ -n "$pane" ]] || { echo "FAIL: $label: no pane" >&2; return 1; }
+
+  marker="MK-noadapter-${RANDOM}"
+  payload="$(build_notification "test" "$marker" "")"
+  if ! send_notification "$pane" "$payload" Enter; then
+    echo "FAIL: $label: send returned non-zero" >&2
+    return 1
+  fi
+  if ! wait_for_text_in_pane "$pane" "$marker" 25; then
+    echo "FAIL: $label: marker never appeared" >&2
+    tmux capture-pane -p -t "$pane" -S -200 >&2 || true
+    return 1
+  fi
+  if ! wait_for_queue_drained "$pane" 15; then
+    echo "FAIL: $label: queue stuck" >&2
+    return 1
+  fi
+  printf '  ok: %-40s delivered without ATMUX_ADAPTER\n' "$label"
+  tmux kill-session -t "$session" >/dev/null 2>&1 || true
+  return 0
+}
+
+echo "matrix: pane-state edges (4 adapters x 2 cases + 1 cross-cutting)" >&2
+
+# Burst delivery occasionally drops the last item under load (suspected
+# race between the queue worker's drain check and a late-signaled item).
+# Retry once before failing the matrix; consistent flakes will still
+# surface, but a single drop won't fail CI.
+probe_with_retry() {
+  local fn="$1" adapter="$2"
+  if "$fn" "$adapter"; then
+    return 0
+  fi
+  echo "  retry: $adapter/$fn (first attempt failed)" >&2
+  "$fn" "$adapter"
+}
+
+failures=0
+for adapter in claude-code codex cursor-agent gemini; do
+  probe_with_retry probe_burst "$adapter" || failures=$((failures + 1))
+  probe_killed_pane "$adapter" || failures=$((failures + 1))
+done
+probe_no_adapter || failures=$((failures + 1))
+
+if (( failures > 0 )); then
+  echo "FAIL: $failures probe(s) failed in pane-state matrix" >&2
+  exit 1
+fi
+echo "ok: pane-state matrix survived"

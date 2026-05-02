@@ -19,7 +19,7 @@ cleanup() {
 trap cleanup EXIT
 
 create_out="$(
-  ATMUX_HOME="$atmux_home" ATMUX_REPO="$repo_name" ATMUX_ALLOW_OUTSIDE_TMUX=1 \
+  ATMUX_HOME="$atmux_home" ATMUX_REPO="$repo_name" ATMUX_ALLOW_OUTSIDE_TMUX=1 ATMUX_REPORTER=xml \
     "$ATMUX_BIN" pr create --title "review me" --description "body" \
       --source "feature" --target "main" --todo "check tests" --repo "$repo_name"
 )"
@@ -31,30 +31,30 @@ pr_dir="$atmux_home/pull-requests/$repo_name/$pr_id"
 [[ "$(tr -d '\r\n' < "$pr_dir/source")" == "feature" ]] || { echo "missing source branch" >&2; exit 1; }
 [[ "$(tr -d '\r\n' < "$pr_dir/target")" == "main" ]] || { echo "missing target branch" >&2; exit 1; }
 
-list_out="$(ATMUX_HOME="$atmux_home" ATMUX_REPO="$repo_name" ATMUX_ALLOW_OUTSIDE_TMUX=1 "$ATMUX_BIN" pr list --repo "$repo_name")"
+list_out="$(ATMUX_HOME="$atmux_home" ATMUX_REPO="$repo_name" ATMUX_ALLOW_OUTSIDE_TMUX=1 ATMUX_REPORTER=xml "$ATMUX_BIN" pr list --repo "$repo_name")"
 [[ "$list_out" == *'<pull-requests repo="'* ]] || { echo "missing pull-requests list root" >&2; exit 1; }
 [[ "$list_out" == *"source=\"feature\""* ]] || { echo "list missing source branch" >&2; exit 1; }
 [[ "$list_out" == *"title=\"review me\""* ]] || { echo "list missing title" >&2; exit 1; }
 
-get_out="$(ATMUX_HOME="$atmux_home" ATMUX_REPO="$repo_name" ATMUX_ALLOW_OUTSIDE_TMUX=1 "$ATMUX_BIN" pr get "$pr_id" --repo "$repo_name")"
+get_out="$(ATMUX_HOME="$atmux_home" ATMUX_REPO="$repo_name" ATMUX_ALLOW_OUTSIDE_TMUX=1 ATMUX_REPORTER=xml "$ATMUX_BIN" pr get "$pr_id" --repo "$repo_name")"
 [[ "$get_out" == *'<branches source="feature" target="main" />'* ]] || { echo "get missing branches" >&2; exit 1; }
 [[ "$get_out" == *'<description>body'* ]] || { echo "get missing description" >&2; exit 1; }
 [[ "$get_out" == *'- check tests'* ]] || { echo "get missing todo" >&2; exit 1; }
 
 assign_out="$(
-  ATMUX_HOME="$atmux_home" ATMUX_REPO="$repo_name" ATMUX_ALLOW_OUTSIDE_TMUX=1 \
+  ATMUX_HOME="$atmux_home" ATMUX_REPO="$repo_name" ATMUX_ALLOW_OUTSIDE_TMUX=1 ATMUX_REPORTER=xml \
     "$ATMUX_BIN" pr assign "$pr_id" --to worker --repo "$repo_name"
 )"
 [[ "$assign_out" == *'state="assigned"'* ]] || { echo "assign did not set assigned state" >&2; exit 1; }
 
 claim_out="$(
-  ATMUX_HOME="$atmux_home" ATMUX_REPO="$repo_name" ATMUX_ALLOW_OUTSIDE_TMUX=1 \
+  ATMUX_HOME="$atmux_home" ATMUX_REPO="$repo_name" ATMUX_ALLOW_OUTSIDE_TMUX=1 ATMUX_REPORTER=xml \
     "$ATMUX_BIN" pr claim "$pr_id" --by worker --repo "$repo_name"
 )"
 [[ "$claim_out" == *'state="in_progress"'* ]] || { echo "claim did not set in_progress state" >&2; exit 1; }
 
 comment_out="$(
-  ATMUX_HOME="$atmux_home" ATMUX_REPO="$repo_name" ATMUX_ALLOW_OUTSIDE_TMUX=1 \
+  ATMUX_HOME="$atmux_home" ATMUX_REPO="$repo_name" ATMUX_ALLOW_OUTSIDE_TMUX=1 ATMUX_REPORTER=xml \
     "$ATMUX_BIN" pr comment "$pr_id" "looks good" --repo "$repo_name"
 )"
 [[ "$comment_out" == *"<comment pr_id=\"$pr_id\""* ]] || { echo "comment missing pr id" >&2; exit 1; }
@@ -67,12 +67,12 @@ shopt -u nullglob
 [[ "$(tr -d '\r\n' < "${comments[0]}")" == "looks good" ]] || { echo "comment file body mismatch" >&2; exit 1; }
 
 shortcut_out="$(
-  ATMUX_HOME="$atmux_home" ATMUX_REPO="$repo_name" ATMUX_ALLOW_OUTSIDE_TMUX=1 \
+  ATMUX_HOME="$atmux_home" ATMUX_REPO="$repo_name" ATMUX_ALLOW_OUTSIDE_TMUX=1 ATMUX_REPORTER=xml \
     "$ATMUX_BIN" pr create --title "shortcut" --source "short" --target "main" --repo "$repo_name"
 )"
 [[ "$shortcut_out" == *'<pull-request id="'* ]] || { echo "pr create did not create pull request" >&2; exit 1; }
 
-list_shortcut_out="$(ATMUX_HOME="$atmux_home" ATMUX_REPO="$repo_name" ATMUX_ALLOW_OUTSIDE_TMUX=1 "$ATMUX_BIN" pr list --repo "$repo_name")"
+list_shortcut_out="$(ATMUX_HOME="$atmux_home" ATMUX_REPO="$repo_name" ATMUX_ALLOW_OUTSIDE_TMUX=1 ATMUX_REPORTER=xml "$ATMUX_BIN" pr list --repo "$repo_name")"
 [[ "$list_shortcut_out" == *'<pull-requests repo="'* ]] || { echo "pr list did not return pull-requests envelope" >&2; exit 1; }
 [[ "$list_shortcut_out" == *'title="shortcut"'* ]] || { echo "pr list missing shortcut pull request" >&2; exit 1; }
 

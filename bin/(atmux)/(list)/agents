@@ -4,6 +4,8 @@ set -euo pipefail
 HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=bin/(atmux)/notify
 source "$HERE/../notify"
+# shellcheck source=bin/(atmux)/(internal)/reporter
+source "$HERE/../(internal)/reporter"
 
 repo_context() {
   local repo_root repo_name
@@ -138,15 +140,49 @@ main() {
     scoped=1
   fi
 
-  printf '<agents repo="%s">\n' "$(xml_escape "$repo_name")"
+  local mode
+  mode="$(reporter_mode)"
 
+  if [[ "$mode" == "xml" ]]; then
+    # XML mode: keep the existing nested format byte-for-byte.
+    printf '<agents repo="%s">\n' "$(xml_escape "$repo_name")"
+    while IFS= read -r session; do
+      [[ -z "$session" ]] && continue
+      [[ "$session" == "$prefix"* ]] || continue
+      if is_team_session "$repo_name" "$session"; then
+        continue
+      fi
+      if [[ "$scoped" -eq 1 ]]; then
+        local mgr=""
+        mgr="$(get_session_env "$session" ATMUX_MANAGER)"
+        [[ "$mgr" == "$current_agent" ]] || continue
+        if [[ -n "$current_session" && "$session" == "$current_session" ]]; then
+          continue
+        fi
+      fi
+      local aname
+      aname="$(agent_local_name "$repo_name" "$session")"
+      if [[ "$status" -eq 1 ]]; then
+        printf '  <agent name="%s" session="%s">\n' "$(xml_escape "$aname")" "$(xml_escape "$session")"
+        printf '    %s\n' "$(status_node_for_session "$session" 1)"
+        printf '  </agent>\n'
+      else
+        printf '  <agent name="%s" session="%s" />\n' "$(xml_escape "$aname")" "$(xml_escape "$session")"
+      fi
+    done < <(tmux list-sessions -F '#{session_name}' 2>/dev/null | sort -u || true)
+    printf '</agents>\n'
+    return
+  fi
+
+  # CLI mode: flat table via reporter. With --status, status attrs become
+  # extra columns on the agent row.
+  report_open agents repo="$repo_name"
   while IFS= read -r session; do
     [[ -z "$session" ]] && continue
     [[ "$session" == "$prefix"* ]] || continue
     if is_team_session "$repo_name" "$session"; then
       continue
     fi
-
     if [[ "$scoped" -eq 1 ]]; then
       local mgr=""
       mgr="$(get_session_env "$session" ATMUX_MANAGER)"
@@ -155,19 +191,25 @@ main() {
         continue
       fi
     fi
-
     local aname
     aname="$(agent_local_name "$repo_name" "$session")"
     if [[ "$status" -eq 1 ]]; then
-      printf '  <agent name="%s" session="%s">\n' "$(xml_escape "$aname")" "$(xml_escape "$session")"
-      printf '    %s\n' "$(status_node_for_session "$session" 1)"
-      printf '  </agent>\n'
+      local snode state model reasoning
+      snode="$(status_node_for_session "$session" 1)"
+      state="$(printf '%s' "$snode"  | sed -n 's/.*state="\([^"]*\)".*/\1/p')"
+      model="$(printf '%s' "$snode"  | sed -n 's/.*model="\([^"]*\)".*/\1/p')"
+      reasoning="$(printf '%s' "$snode" | sed -n 's/.*reasoning_level="\([^"]*\)".*/\1/p')"
+      report_record agent \
+        name="$aname" \
+        session="$session" \
+        state="$state" \
+        model="$model" \
+        reasoning="$reasoning"
     else
-      printf '  <agent name="%s" session="%s" />\n' "$(xml_escape "$aname")" "$(xml_escape "$session")"
+      report_record agent name="$aname" session="$session"
     fi
   done < <(tmux list-sessions -F '#{session_name}' 2>/dev/null | sort -u || true)
-
-  printf '</agents>\n'
+  report_close agents
 }
 
 main "$@"

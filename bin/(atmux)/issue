@@ -5,6 +5,8 @@ ATMUX_HOME="${ATMUX_HOME:-$HOME/.atmux}"
 HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=bin/(atmux)/notify
 source "$HERE/notify"
+# shellcheck source=bin/(atmux)/(internal)/reporter
+source "$HERE/(internal)/reporter"
 
 TEMPLATE_DIR="$(cd -- "$HERE/../.." && pwd)/templates"
 
@@ -253,7 +255,7 @@ list_issues() {
   repo="$(resolve_repo_name "$explicit_repo")"
   root="$(issue_root_for_repo "$repo")"
 
-  printf '<issues repo="%s">\n' "$(xml_escape "$repo")"
+  report_open issues repo="$repo"
   if [[ -d "$root" ]]; then
     while IFS= read -r dir; do
       [[ -d "$dir" ]] || continue
@@ -264,17 +266,17 @@ list_issues() {
       updated_at="$(read_field "$dir/updated_at")"
       assigned_to="$(read_field "$dir/assigned_to")"
       claimed_by="$(read_field "$dir/claimed_by")"
-      printf '  <issue id="%s" state="%s" created_at="%s" updated_at="%s" assigned_to="%s" claimed_by="%s" title="%s" />\n' \
-        "$(xml_escape "$id")" \
-        "$(xml_escape "$state")" \
-        "$(xml_escape "$created_at")" \
-        "$(xml_escape "$updated_at")" \
-        "$(xml_escape "$assigned_to")" \
-        "$(xml_escape "$claimed_by")" \
-        "$(xml_escape "$title")"
+      report_record issue \
+        id="$id" \
+        state="$state" \
+        created_at="$created_at" \
+        updated_at="$updated_at" \
+        assigned_to="$assigned_to" \
+        claimed_by="$claimed_by" \
+        title="$title"
     done < <(find "$root" -mindepth 1 -maxdepth 1 -type d | sort)
   fi
-  printf '</issues>\n'
+  report_close issues
 }
 
 get_issue() {

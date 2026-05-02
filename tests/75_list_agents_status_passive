@@ -44,6 +44,7 @@ tmux set-environment -t "$AGENT2_SESSION" ATMUX_SOURCE_ROOT "$tmp_root"
 out="$(
   ATMUX_REPO="$REPO_NAME" \
   ATMUX_PASSIVE_LOG="$probe_log" \
+  ATMUX_REPORTER=xml \
   "$ATMUX_BIN" agent list --all --status
 )"
 

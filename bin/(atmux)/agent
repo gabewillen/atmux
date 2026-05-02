@@ -527,48 +527,15 @@ valid_intelligence() {
 
 attach_or_switch() {
   local session="$1"
-  local readonly="${ATMUX_ATTACH_READONLY:-auto}"
-  local bootstrap_state=""
   if [[ ! -t 0 || ! -t 1 ]]; then
     printf '%s\n' "$session"
     return
   fi
 
-  case "$readonly" in
-    auto|AUTO|"")
-      local manager=""
-      manager="$(tmux show-environment -t "$session" ATMUX_MANAGER 2>/dev/null | sed -n 's/^ATMUX_MANAGER=//p' || true)"
-      if [[ -n "$manager" ]]; then
-        readonly="1"
-      else
-        readonly="0"
-      fi
-      ;;
-  esac
-
-  bootstrap_state="$(get_session_env "$session" ATMUX_BOOTSTRAP_STATE)"
-  if [[ "$bootstrap_state" == "pending" ]]; then
-    readonly="1"
-  fi
-
-  case "$readonly" in
-    0|false|FALSE|no|NO)
-      if [[ -n "${TMUX:-}" ]]; then
-        tmux switch-client -t "$session"
-      else
-        tmux attach-session -t "$session"
-      fi
-      return
-      ;;
-  esac
-
-  start_bootstrap_unlock_if_needed "$session"
-
   if [[ -n "${TMUX:-}" ]]; then
-    tmux refresh-client -f read-only >/dev/null 2>&1 || true
-    tmux switch-client -r -t "$session" 2>/dev/null || tmux switch-client -t "$session"
+    tmux switch-client -t "$session"
   else
-    tmux attach-session -r -t "$session"
+    tmux attach-session -t "$session"
   fi
 }
 
@@ -596,88 +563,6 @@ initialize_worktree_submodules() {
     printf '%s\n' "$submodule_err" >&2
     exit 1
   }
-}
-
-bootstrap_unlock_pid_matches_session() {
-  local pid="$1"
-  local session="$2"
-  local cmd=""
-
-  [[ "$pid" =~ ^[0-9]+$ ]] || return 1
-  kill -0 "$pid" >/dev/null 2>&1 || return 1
-  cmd="$(ps -p "$pid" -o command= 2>/dev/null || true)"
-  [[ -n "$cmd" ]] || return 1
-  [[ "$cmd" == *"bin/(atmux)/agent"*"_bootstrap-unlock ${session}"* ]] || return 1
-  return 0
-}
-
-unlock_session_clients() {
-  local session="$1"
-  local client is_readonly
-  while read -r client is_readonly; do
-    [[ -n "$client" ]] || continue
-    if [[ "$is_readonly" == "1" ]]; then
-      tmux switch-client -c "$client" -t "$session" -r >/dev/null 2>&1 || true
-    fi
-    tmux refresh-client -t "$client" -f '!ignore-size' >/dev/null 2>&1 || true
-    tmux display-message -t "$client" "atmux bootstrap complete; input unlocked" >/dev/null 2>&1 || true
-  done < <(tmux list-clients -t "$session" -F '#{client_tty} #{client_readonly}' 2>/dev/null || true)
-}
-
-bootstrap_unlock_worker() {
-  local session="$1"
-  local interval timeout start_ts now state elapsed
-
-  interval="${ATMUX_BOOTSTRAP_UNLOCK_INTERVAL_SECONDS:-1}"
-  timeout="${ATMUX_BOOTSTRAP_UNLOCK_TIMEOUT_SECONDS:-120}"
-  start_ts="$(date +%s)"
-
-  while tmux has-session -t "$session" 2>/dev/null; do
-    state="$(get_session_env "$session" ATMUX_BOOTSTRAP_STATE)"
-    if [[ "$state" != "pending" && -n "$state" ]]; then
-      break
-    fi
-
-    now="$(date +%s)"
-    elapsed=$((now - start_ts))
-    if (( elapsed >= timeout )); then
-      tmux set-environment -t "$session" ATMUX_BOOTSTRAP_STATE failed >/dev/null 2>&1 || true
-      state="failed"
-      break
-    fi
-
-    sleep "$interval"
-  done
-
-  if tmux has-session -t "$session" 2>/dev/null; then
-    unlock_session_clients "$session"
-    tmux set-environment -t "$session" -u ATMUX_BOOTSTRAP_UNLOCK_PID >/dev/null 2>&1 || true
-  fi
-}
-
-start_bootstrap_unlock_if_needed() {
-  local session="$1"
-  local state pid log_file new_pid
-
-  state="$(get_session_env "$session" ATMUX_BOOTSTRAP_STATE)"
-  [[ "$state" == "pending" ]] || return 0
-
-  pid="$(get_session_env "$session" ATMUX_BOOTSTRAP_UNLOCK_PID)"
-  if [[ -n "$pid" ]] && bootstrap_unlock_pid_matches_session "$pid" "$session"; then
-    return 0
-  fi
-  if [[ -n "$pid" ]] && kill -0 "$pid" >/dev/null 2>&1; then
-    kill "$pid" >/dev/null 2>&1 || true
-  fi
-  tmux set-environment -t "$session" -u ATMUX_BOOTSTRAP_UNLOCK_PID >/dev/null 2>&1 || true
-
-  log_file="${TMPDIR:-/tmp}/atmux-bootstrap-${session}.log"
-  nohup "$0" _bootstrap-unlock "$session" >>"$log_file" 2>&1 </dev/null &
-  new_pid="$!"
-  sleep 0.05
-  if bootstrap_unlock_pid_matches_session "$new_pid" "$session"; then
-    tmux set-environment -t "$session" ATMUX_BOOTSTRAP_UNLOCK_PID "$new_pid"
-  fi
 }
 
 # === Control file injection (from old session) ==============================
@@ -1006,7 +891,6 @@ run_adapter() {
         fi
         if [[ -n "$fail_session" ]] && tmux has-session -t "$fail_session" 2>/dev/null; then
           tmux set-environment -t "$fail_session" ATMUX_ROLE_START_STATE failed >/dev/null 2>&1 || true
-          tmux set-environment -t "$fail_session" ATMUX_BOOTSTRAP_STATE failed >/dev/null 2>&1 || true
         fi
         if [[ -n "$fail_session" ]] && tmux has-session -t "$fail_session" 2>/dev/null; then
           tmux kill-session -t "$fail_session" >/dev/null 2>&1 || true
@@ -1264,11 +1148,6 @@ spawn_agent_session() {
     tmux set-environment -t "$session" ATMUX_ADAPTERS_ALLOWED "$adapters_list"
   fi
   tmux set-environment -t "$session" ATMUX_INTELLIGENCE "$intelligence"
-  if [[ "$adapter" == "codex" || "$adapter" == "auto" ]]; then
-    tmux set-environment -t "$session" ATMUX_BOOTSTRAP_STATE pending
-  else
-    tmux set-environment -t "$session" ATMUX_BOOTSTRAP_STATE ready
-  fi
   if [[ -n "${ATMUX_ROLE:-}" ]]; then
     tmux set-environment -t "$session" ATMUX_ROLE "$ATMUX_ROLE"
   fi
@@ -1927,9 +1806,6 @@ case "$sub" in
     # Internal diagnostic: print the rendered atmux managed block to stdout.
     # Honors ATMUX_ROLE / ATMUX_MANAGER / ATMUX_ROLE_DIR like the real flow.
     render_managed_block "${1:-$(pwd)}"
-    ;;
-  _bootstrap-unlock)
-    bootstrap_unlock_worker "$@"
     ;;
   list)
     here_agent="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"

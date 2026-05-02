@@ -5,6 +5,8 @@ ATMUX_HOME="${ATMUX_HOME:-$HOME/.atmux}"
 HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=bin/(atmux)/notify
 source "$HERE/notify"
+# shellcheck source=bin/(atmux)/(internal)/reporter
+source "$HERE/(internal)/reporter"
 
 usage() {
   cat <<'USAGE'
@@ -225,7 +227,7 @@ list_prs() {
   repo="$(resolve_repo_name "$explicit_repo")"
   root="$(pull_request_root_for_repo "$repo")"
 
-  printf '<pull-requests repo="%s">\n' "$(xml_escape "$repo")"
+  report_open pull-requests repo="$repo"
   if [[ -d "$root" ]]; then
     while IFS= read -r dir; do
       [[ -d "$dir" ]] || continue
@@ -238,20 +240,20 @@ list_prs() {
       claimed_by="$(read_field "$dir/claimed_by")"
       source_branch="$(read_field "$dir/source")"
       target_branch="$(read_field "$dir/target")"
-      printf '  <pull-request id="%s" state="%s" created_at="%s" updated_at="%s" assigned_to="%s" claimed_by="%s" source="%s" target="%s" uri="%s" title="%s" />\n' \
-        "$(xml_escape "$id")" \
-        "$(xml_escape "$state")" \
-        "$(xml_escape "$created_at")" \
-        "$(xml_escape "$updated_at")" \
-        "$(xml_escape "$assigned_to")" \
-        "$(xml_escape "$claimed_by")" \
-        "$(xml_escape "$source_branch")" \
-        "$(xml_escape "$target_branch")" \
-        "$(xml_escape "atmux://pull-request/$repo/$id")" \
-        "$(xml_escape "$title")"
+      report_record pull-request \
+        id="$id" \
+        state="$state" \
+        created_at="$created_at" \
+        updated_at="$updated_at" \
+        assigned_to="$assigned_to" \
+        claimed_by="$claimed_by" \
+        source="$source_branch" \
+        target="$target_branch" \
+        uri="atmux://pull-request/$repo/$id" \
+        title="$title"
     done < <(find "$root" -mindepth 1 -maxdepth 1 -type d | sort)
   fi
-  printf '</pull-requests>\n'
+  report_close pull-requests
 }
 
 get_pr() {

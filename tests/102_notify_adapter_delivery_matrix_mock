@@ -1,0 +1,163 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Isolate the tmux socket so this test can never touch the developer's
+# default tmux server. Idempotent if the runner already isolated.
+source "$(dirname "${BASH_SOURCE[0]}")/lib/isolate-tmux.sh"
+
+# Full matrix: every shipped adapter (claude-code, codex, cursor-agent,
+# gemini) x {queue, interrupt} mode, delivered against a mock `cat` pane
+# primed with the adapter's real input_idle.prompt. Verifies:
+#   1. Payload text reaches the pane (notification was "entered").
+#   2. Submit happens (cursor advances past the prompt line == "submitted").
+#   3. The notify-queue dir for the pane drains after delivery (no stuck items).
+# Targets the two failure modes the user cares about: not-entered and
+# stuck-in-input.
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+NOTIFY_SCRIPT="$REPO_ROOT/bin/(atmux)/notify"
+
+ATMUX_HOME="${TMPDIR:-/tmp}/atmux-deliver-matrix-${RANDOM}"
+ATMUX_SOURCE_ROOT="$REPO_ROOT"
+mkdir -p "$ATMUX_HOME"
+
+# Faster delivery loop so the mock test runs in seconds, not minutes.
+export ATMUX_SEND_SETTLE_SECONDS=0.1
+export ATMUX_SEND_PASTE_TO_SUBMIT_WAIT_SECONDS=0.2
+export ATMUX_SEND_SUBMIT_WAIT_SECONDS=0.1
+export ATMUX_SEND_NO_PROMPT_READY_SECONDS=0.2
+export ATMUX_SEND_READY_TIMEOUT_SECONDS=20
+export ATMUX_SEND_PASTE_READY_TIMEOUT_SECONDS=4
+export ATMUX_SEND_SUBMIT_VERIFY_SECONDS=2
+
+source "$NOTIFY_SCRIPT"
+
+SESSIONS=()
+cleanup() {
+  local s
+  for s in "${SESSIONS[@]:-}"; do
+    [[ -n "$s" ]] || continue
+    tmux kill-session -t "$s" >/dev/null 2>&1 || true
+  done
+  rm -rf "$ATMUX_HOME"
+}
+trap cleanup EXIT
+
+prompt_for() {
+  case "$1" in
+    claude-code) printf '%s' '❯' ;;
+    codex)       printf '%s' '›' ;;
+    cursor-agent) printf '%s' '→' ;;
+    gemini)      printf '%s' '*' ;;
+    *) return 1 ;;
+  esac
+}
+
+submit_keys_for_mode() {
+  # Print whitespace-separated submit key list for the given mode.
+  local adapter="$1" mode="$2"
+  resolve_submit_keys "$adapter" "$mode" | tr '\n' ' '
+}
+
+wait_for_text_in_pane() {
+  local target="$1" needle="$2" timeout="${3:-15}"
+  local deadline now snap compact
+  deadline=$(( $(date +%s) + timeout ))
+  while true; do
+    snap="$(tmux capture-pane -p -t "$target" -S -600 2>/dev/null || true)"
+    compact="$(printf '%s' "$snap" | tr -d '\r\n')"
+    if printf '%s' "$compact" | grep -Fq "$needle"; then
+      return 0
+    fi
+    now="$(date +%s)"
+    (( now >= deadline )) && return 1
+    sleep 0.1
+  done
+}
+
+wait_for_queue_drained() {
+  local pane="$1" timeout="${2:-15}"
+  local qdir deadline now
+  qdir="$(notify_queue_dir "$pane")"
+  deadline=$(( $(date +%s) + timeout ))
+  while true; do
+    if [[ ! -d "$qdir/payloads" ]] || [[ -z "$(ls -A "$qdir/payloads" 2>/dev/null || true)" ]]; then
+      return 0
+    fi
+    now="$(date +%s)"
+    (( now >= deadline )) && return 1
+    sleep 0.1
+  done
+}
+
+probe() {
+  local adapter="$1" mode="$2"
+  local prompt session pane marker payload submit_keys label
+  prompt="$(prompt_for "$adapter")"
+  session="atmux-deliver-${adapter//[^A-Za-z0-9-]/_}-${mode}-$$-${RANDOM}"
+  SESSIONS+=("$session")
+
+  tmux kill-session -t "$session" >/dev/null 2>&1 || true
+  tmux new-session -d -s "$session" -n "$session" -x 120 -y 30 "cat"
+  tmux set-environment -t "$session" ATMUX_ADAPTER "$adapter"
+
+  pane="$(tmux list-panes -t "$session" -F '#{pane_id}' 2>/dev/null | head -n1)"
+  [[ -n "$pane" ]] || { echo "FAIL: $adapter/$mode: pane missing" >&2; return 1; }
+
+  # Let cat boot, then prime the prompt line so pane_has_prompt_line() sees
+  # the adapter's idle prompt above the cursor (matching how a real adapter
+  # idle screen looks). NOT followed by Enter — the prompt stays current.
+  sleep 0.2
+  tmux send-keys -t "$pane" -l "$prompt "
+  sleep 0.2
+
+  marker="probe-${adapter}-${mode}-${RANDOM}"
+  payload="$(build_notification "test" "$marker" "")"
+  submit_keys="$(submit_keys_for_mode "$adapter" "$mode")"
+  label="$adapter/$mode"
+
+  # Spawn the worker with the same key list the real CLI would dispatch.
+  if ! send_notification "$pane" "$payload" $submit_keys; then
+    echo "FAIL: $label: send_notification returned non-zero" >&2
+    return 1
+  fi
+
+  # Failure mode 1: notification text never enters the pane.
+  if ! wait_for_text_in_pane "$pane" "$marker" 25; then
+    echo "FAIL: $label: marker '$marker' never appeared in pane" >&2
+    tmux capture-pane -p -t "$pane" -S -200 >&2 || true
+    return 1
+  fi
+
+  # Failure mode 2: payload entered but never drained from the queue
+  # (worker stuck redelivering, or item left as 'delivery_unverified'
+  # forever). A stuck queue is the on-disk signature of stuck-in-input.
+  if ! wait_for_queue_drained "$pane" 15; then
+    echo "FAIL: $label: notify queue still has pending items" >&2
+    ls -la "$(notify_queue_dir "$pane")/payloads" >&2 || true
+    return 1
+  fi
+
+  printf '  ok: %-32s submit_keys=[%s]\n' "$label" "$(printf '%s' "$submit_keys" | sed 's/  */,/g; s/^,//; s/,$//')"
+  tmux kill-session -t "$session" >/dev/null 2>&1 || true
+  return 0
+}
+
+echo "matrix: 4 adapters x 2 modes -> 8 mock-pane deliveries" >&2
+
+failures=0
+for adapter in claude-code codex cursor-agent gemini; do
+  for mode in queue interrupt; do
+    if ! probe "$adapter" "$mode"; then
+      failures=$((failures + 1))
+    fi
+  done
+done
+
+if (( failures > 0 )); then
+  echo "FAIL: $failures probe(s) failed in matrix" >&2
+  exit 1
+fi
+
+echo "ok: every adapter delivers in queue + interrupt mode against a mock pane"

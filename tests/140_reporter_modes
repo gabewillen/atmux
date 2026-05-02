@@ -1,0 +1,122 @@
+#!/usr/bin/env bash
+# Verifies the reporter system: humans (no agent context) get plain CLI
+# output, agents (ATMUX_AGENT_NAME set) get XML, and ATMUX_REPORTER /
+# ATMUX_NO_WRAP overrides flip the behavior either way.
+set -euo pipefail
+
+source "$(dirname "${BASH_SOURCE[0]}")/lib/isolate-tmux.sh"
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+ATMUX_BIN="$REPO_ROOT/bin/atmux"
+
+tmp_root="$(mktemp -d "${TMPDIR:-/tmp}/atmux-reporter.XXXXXX")"
+atmux_home="$tmp_root/.atmux"
+repo="reporter${RANDOM}"
+
+cleanup() { rm -rf "$tmp_root"; }
+trap cleanup EXIT
+
+# Sanitize ambient env so the test doesn't inherit agent context from
+# whatever shell ran it.
+unset ATMUX_AGENT_NAME ATMUX_REPORTER ATMUX_NO_WRAP
+
+run_atmux() {
+  ATMUX_HOME="$atmux_home" ATMUX_REPO="$repo" ATMUX_ALLOW_OUTSIDE_TMUX=1 "$ATMUX_BIN" "$@"
+}
+
+assert_contains() {
+  local label="$1" needle="$2" hay="$3"
+  if [[ "$hay" != *"$needle"* ]]; then
+    echo "FAIL [$label]: missing '$needle' in:" >&2
+    printf '%s\n' "$hay" >&2
+    exit 1
+  fi
+}
+
+assert_not_contains() {
+  local label="$1" needle="$2" hay="$3"
+  if [[ "$hay" == *"$needle"* ]]; then
+    echo "FAIL [$label]: should not contain '$needle' in:" >&2
+    printf '%s\n' "$hay" >&2
+    exit 1
+  fi
+}
+
+# --- help / --- mode dispatch ----------------------------------------------
+
+# Human help: no XML envelope, just the heredoc.
+help_cli="$(run_atmux --help)"
+assert_contains   "help cli: usage line"     "atmux is an agent multiplexer" "$help_cli"
+assert_not_contains "help cli: no envelope"  "<atmux command="            "$help_cli"
+
+# Agent help: wrapped envelope.
+help_xml="$(ATMUX_AGENT_NAME=tester run_atmux --help)"
+assert_contains "help xml: envelope" '<atmux command="help"' "$help_xml"
+assert_contains "help xml: payload"  "atmux is an agent multiplexer"      "$help_xml"
+
+# Override: ATMUX_REPORTER=cli wins over agent context.
+help_forced_cli="$(ATMUX_AGENT_NAME=tester ATMUX_REPORTER=cli run_atmux --help)"
+assert_not_contains "help forced cli: no envelope" "<atmux command="    "$help_forced_cli"
+assert_contains     "help forced cli: payload"     "atmux is an agent"  "$help_forced_cli"
+
+# Override: ATMUX_REPORTER=xml wraps even without agent context.
+help_forced_xml="$(ATMUX_REPORTER=xml run_atmux --help)"
+assert_contains "help forced xml: envelope" '<atmux command="help"' "$help_forced_xml"
+
+# Legacy alias: ATMUX_NO_WRAP=1 forces CLI.
+help_legacy="$(ATMUX_AGENT_NAME=tester ATMUX_NO_WRAP=1 run_atmux --help)"
+assert_not_contains "help legacy alias: no envelope" "<atmux command=" "$help_legacy"
+
+# --- list commands: CLI mode -----------------------------------------------
+
+# Seed two PRs so the listing has something to render. Use ATMUX_REPORTER=xml
+# during seeding so we don't have to parse human text to extract the IDs (and
+# so seeding output doesn't leak into stdout when piped).
+ATMUX_HOME="$atmux_home" ATMUX_REPO="$repo" ATMUX_ALLOW_OUTSIDE_TMUX=1 ATMUX_REPORTER=xml \
+  "$ATMUX_BIN" pr create --title "human readable" --source feat --target main --repo "$repo" >/dev/null
+ATMUX_HOME="$atmux_home" ATMUX_REPO="$repo" ATMUX_ALLOW_OUTSIDE_TMUX=1 ATMUX_REPORTER=xml \
+  "$ATMUX_BIN" pr create --title "second one" --source x --target main --repo "$repo" >/dev/null
+
+# Human gets a column header + plain text rows, no XML tags.
+list_cli="$(run_atmux pr list --repo "$repo")"
+assert_contains     "pr list cli: header"     "ID"                 "$list_cli"
+assert_contains     "pr list cli: title col"  "TITLE"              "$list_cli"
+assert_contains     "pr list cli: scope line" "pull-requests (repo: $repo)" "$list_cli"
+assert_contains     "pr list cli: row"        "human readable"     "$list_cli"
+assert_not_contains "pr list cli: no xml"     "<pull-request"      "$list_cli"
+assert_not_contains "pr list cli: no envelope" "<atmux command="   "$list_cli"
+
+# Agent gets XML, with both the outer envelope and inner records.
+list_xml="$(ATMUX_AGENT_NAME=tester run_atmux pr list --repo "$repo")"
+assert_contains "pr list xml: envelope"  '<atmux command="pr list'         "$list_xml"
+assert_contains "pr list xml: root"      '<pull-requests repo="'           "$list_xml"
+assert_contains "pr list xml: record"    'title="human readable"'          "$list_xml"
+assert_contains "pr list xml: branches"  'source="feat" target="main"'     "$list_xml"
+
+# --- empty listing rendering -----------------------------------------------
+
+empty_cli="$(run_atmux pr list --repo "absent_${RANDOM}")"
+assert_contains "empty cli: scope line" "pull-requests (repo: absent_" "$empty_cli"
+assert_contains "empty cli: none marker" "(none)"                      "$empty_cli"
+assert_not_contains "empty cli: no xml" "<pull-requests"               "$empty_cli"
+
+empty_xml="$(ATMUX_AGENT_NAME=tester run_atmux pr list --repo "absent_${RANDOM}")"
+assert_contains "empty xml: open tag"  '<pull-requests repo="absent_'  "$empty_xml"
+assert_contains "empty xml: close tag" '</pull-requests>'              "$empty_xml"
+
+# --- issue list: CLI columns + XML records ---------------------------------
+
+ATMUX_HOME="$atmux_home" ATMUX_REPO="$repo" ATMUX_ALLOW_OUTSIDE_TMUX=1 ATMUX_REPORTER=xml \
+  "$ATMUX_BIN" issue create --title "track this" --repo "$repo" >/dev/null
+
+issues_cli="$(run_atmux issue list --repo "$repo")"
+assert_contains     "issue list cli: header"  "ID"                "$issues_cli"
+assert_contains     "issue list cli: title"   "track this"        "$issues_cli"
+assert_not_contains "issue list cli: no xml"  "<issue id="        "$issues_cli"
+
+issues_xml="$(ATMUX_AGENT_NAME=tester run_atmux issue list --repo "$repo")"
+assert_contains "issue list xml: root"   '<issues repo="'    "$issues_xml"
+assert_contains "issue list xml: record" '<issue id="'       "$issues_xml"
+
+echo "ok: reporter modes (CLI/XML, env overrides, list/help/empty)"

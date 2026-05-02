@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# Minimal stand-in for an AI-CLI adapter pane. Prints a prompt prefix, then
+# re-prints it after every line of input. Used by notification-matrix tests
+# so we can deliver multiple notifications in a row without a real adapter
+# binary on PATH.
+#
+# Differences from `cat`:
+#   - Re-renders the prompt after each Enter (so pane_has_prompt_line()
+#     keeps returning true between deliveries).
+#   - Disables tty echo of the input line so the pane buffer doesn't show
+#     each marker twice (which would defeat the assertion that submit
+#     actually flushed the input).
+#
+# Usage: mock-adapter <prompt-char>
+# Example: tmux new-session -d -s s -- bash mock-adapter '❯'
+
+set -u
+
+prompt="${1:-> }"
+
+# Best-effort: silence tty echo so worker pastes don't appear before our
+# explicit prints. If stty fails (no controlling tty for some reason),
+# fall through; the marker still ends up in the pane via our printf.
+stty -echo 2>/dev/null || true
+
+printf '%s ' "$prompt"
+while IFS= read -r line; do
+  # Print the received line, then re-render the prompt for the next item.
+  # Trailing space matches the live-prompt convention used by the real
+  # adapter manifests' input_idle.prompt + a separating space.
+  printf '%s\n%s ' "$line" "$prompt"
+done

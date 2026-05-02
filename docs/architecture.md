@@ -24,7 +24,7 @@ System installs use:
 
 Examples:
 
-- `bin/(atmux)/agent` (also owns session lifecycle: `create`, `attach`, plus the in-pane `_run-adapter` and `_bootstrap-unlock` workers)
+- `bin/(atmux)/agent` (also owns session lifecycle: `create`, `attach`, plus the in-pane `_run-adapter` worker)
 - `bin/(atmux)/send`
 - `bin/(atmux)/notify`
 - `bin/(atmux)/exec`

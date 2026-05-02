@@ -78,40 +78,15 @@ xml_escape() {
 
 attach_or_switch() {
   local session="$1"
-  local readonly="${ATMUX_ATTACH_READONLY:-auto}"
   if [[ ! -t 0 || ! -t 1 ]]; then
     printf '%s\n' "$session"
     return
   fi
 
-  case "$readonly" in
-    auto|AUTO|"")
-      local manager=""
-      manager="$(tmux show-environment -t "$session" ATMUX_MANAGER 2>/dev/null | sed -n 's/^ATMUX_MANAGER=//p' || true)"
-      if [[ -n "$manager" ]]; then
-        readonly="1"
-      else
-        readonly="0"
-      fi
-      ;;
-  esac
-
-  case "$readonly" in
-    0|false|FALSE|no|NO)
-      if [[ -n "${TMUX:-}" ]]; then
-        tmux switch-client -t "$session"
-      else
-        tmux attach-session -t "$session"
-      fi
-      return
-      ;;
-  esac
-
   if [[ -n "${TMUX:-}" ]]; then
-    tmux refresh-client -f read-only >/dev/null 2>&1 || true
-    tmux switch-client -r -t "$session" 2>/dev/null || tmux switch-client -t "$session"
+    tmux switch-client -t "$session"
   else
-    tmux attach-session -r -t "$session"
+    tmux attach-session -t "$session"
   fi
 }
 
@@ -162,11 +137,37 @@ resolve_script_subcommand() {
   return 1
 }
 
+is_agent_context() {
+  # An "agent" is any caller that has the ATMUX_AGENT_NAME export set —
+  # this is how managed agents and their child processes identify themselves.
+  [[ -n "${ATMUX_AGENT_NAME:-}" ]]
+}
+
+reporter_mode() {
+  case "${ATMUX_REPORTER:-}" in
+    xml|cli) printf '%s\n' "$ATMUX_REPORTER"; return ;;
+  esac
+  if [[ "${ATMUX_NO_WRAP:-}" == "1" ]]; then
+    printf 'cli\n'
+    return
+  fi
+  if is_agent_context; then
+    printf 'xml\n'
+  else
+    printf 'cli\n'
+  fi
+}
+
 should_wrap_command() {
   local cmd="${1:-}"
   shift || true
 
   if [[ "${ATMUX_NO_WRAP:-}" == "1" ]]; then
+    return 1
+  fi
+
+  # Humans get raw CLI output; only wrap when the caller is an agent.
+  if [[ "$(reporter_mode)" != "xml" ]]; then
     return 1
   fi
 
@@ -176,7 +177,7 @@ should_wrap_command() {
       ;;
     agent)
       case "${1:-}" in
-        attach|_run-adapter|_bootstrap-unlock)
+        attach|_run-adapter)
           return 1
           ;;
         create|_create)
@@ -301,11 +302,15 @@ main() {
 
   case "$1" in
     -h|--help|help)
-      out_file="$(mktemp "${TMPDIR:-/tmp}/atmux-out.XXXXXX")"
-      err_file="$(mktemp "${TMPDIR:-/tmp}/atmux-err.XXXXXX")"
-      trap 'rm -f "$out_file" "$err_file"' EXIT
-      usage >"$out_file"
-      emit_atmux_wrapper "help" "$out_file" "$err_file" 0
+      if [[ "$(reporter_mode)" == "xml" ]]; then
+        out_file="$(mktemp "${TMPDIR:-/tmp}/atmux-out.XXXXXX")"
+        err_file="$(mktemp "${TMPDIR:-/tmp}/atmux-err.XXXXXX")"
+        trap 'rm -f "$out_file" "$err_file"' EXIT
+        usage >"$out_file"
+        emit_atmux_wrapper "help" "$out_file" "$err_file" 0
+      else
+        usage
+      fi
       ;;
     *)
       cmd="$1"
@@ -314,12 +319,17 @@ main() {
       # as "unknown command" rather than the confusing "must be run inside
       # tmux" message.
       if ! script_path="$(resolve_script_subcommand "$cmd")"; then
-        out_file="$(mktemp "${TMPDIR:-/tmp}/atmux-out.XXXXXX")"
-        err_file="$(mktemp "${TMPDIR:-/tmp}/atmux-err.XXXXXX")"
-        trap 'rm -f "$out_file" "$err_file"' EXIT
-        usage >"$out_file"
-        printf 'unknown command: %s\n' "$cmd" >"$err_file"
-        emit_atmux_wrapper "$cmd $*" "$out_file" "$err_file" 1
+        if [[ "$(reporter_mode)" == "xml" ]]; then
+          out_file="$(mktemp "${TMPDIR:-/tmp}/atmux-out.XXXXXX")"
+          err_file="$(mktemp "${TMPDIR:-/tmp}/atmux-err.XXXXXX")"
+          trap 'rm -f "$out_file" "$err_file"' EXIT
+          usage >"$out_file"
+          printf 'unknown command: %s\n' "$cmd" >"$err_file"
+          emit_atmux_wrapper "$cmd $*" "$out_file" "$err_file" 1
+        else
+          printf 'unknown command: %s\n' "$cmd" >&2
+          usage >&2
+        fi
         exit 1
       fi
       # Most resource nouns and self-update/bootstrap commands are safe to run

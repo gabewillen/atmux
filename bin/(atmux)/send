@@ -230,11 +230,13 @@ if [[ -n "$team_session" ]]; then
     members+=("$s")
   done < <(tmux list-panes -t "${team_session}:0" -F '#{@atmux_agent_session}' 2>/dev/null | awk 'NF' | sort -u)
   filtered_members=()
-  while IFS= read -r s; do
-    [[ -n "$s" ]] || continue
-    filtered_members+=("$s")
-  done < <(filter_nonself_members "$from_session" "${members[@]}")
-  members=("${filtered_members[@]}")
+  if [[ "${#members[@]}" -gt 0 ]]; then
+    while IFS= read -r s; do
+      [[ -n "$s" ]] || continue
+      filtered_members+=("$s")
+    done < <(filter_nonself_members "$from_session" "${members[@]}")
+  fi
+  members=("${filtered_members[@]+"${filtered_members[@]}"}")
 
   if [[ "${#members[@]}" -eq 0 ]]; then
     self_send_error

@@ -208,22 +208,19 @@ run_adapter_case() {
     return 1
   fi
 
-  # 5) kill pane → status reports pane_alive=no.
+  # 5) kill pane → status either drops the agent (no session) or, if
+  # the pane lingered, must report pane_alive=no.
   tmux kill-session -t "$worker_session" >/dev/null 2>&1 || true
   status_xml="$(
     ATMUX_ALLOW_OUTSIDE_TMUX=1 ATMUX_HOME="$atmux_home" ATMUX_SOURCE_ROOT="$REPO_ROOT" \
     ATMUX_REPO="$repo" ATMUX_REPORTER=xml \
     "$ATMUX_BIN" agent status
   )"
-  # After kill, the agent should no longer appear (no session anymore).
-  if grep -Fq 'name="worker"' <<<"$list_xml"; then
-    : # pre-kill listing — fine
-  fi
   if grep -Fq 'name="worker"' <<<"$status_xml"; then
-    # If somehow it still appears, pane_alive must be "no".
     pa="$(xml_attr "$status_xml" pane_alive)"
     if [[ "$pa" == "yes" ]]; then
       echo "FAIL [$adapter]: pane_alive still yes after kill" >&2
+      printf '%s\n' "$status_xml" >&2
       return 1
     fi
   fi

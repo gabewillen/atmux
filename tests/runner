@@ -83,11 +83,52 @@ purge_between_tests() {
   purge_test_notify_queues
 }
 
+parse_shard() {
+  # Accept N/TOTAL (1-indexed N). Sets SHARD_INDEX, SHARD_TOTAL.
+  local spec="$1"
+  if [[ ! "$spec" =~ ^([0-9]+)/([0-9]+)$ ]]; then
+    echo "error: --shard expects N/TOTAL (e.g. 3/8), got '$spec'" >&2
+    exit 2
+  fi
+  SHARD_INDEX="${BASH_REMATCH[1]}"
+  SHARD_TOTAL="${BASH_REMATCH[2]}"
+  if (( SHARD_INDEX < 1 || SHARD_INDEX > SHARD_TOTAL || SHARD_TOTAL < 1 )); then
+    echo "error: --shard $spec is out of range" >&2
+    exit 2
+  fi
+}
+
 main() {
-  local test_script
+  local SHARD_INDEX=1
+  local SHARD_TOTAL=1
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --shard)
+        parse_shard "${2:-}"
+        shift 2
+        ;;
+      --shard=*)
+        parse_shard "${1#--shard=}"
+        shift
+        ;;
+      *)
+        echo "error: unknown argument: $1" >&2
+        exit 2
+        ;;
+    esac
+  done
+
+  local test_script i=0
   for test_script in "$TESTS_DIR"/[0-9]*_*; do
     [[ -f "$test_script" ]] || continue
     [[ -x "$test_script" ]] || chmod +x "$test_script"
+    # Round-robin shard assignment: spreads slow tests across shards.
+    # Tests at index i are owned by shard (i % SHARD_TOTAL) + 1.
+    local owner=$(( i % SHARD_TOTAL + 1 ))
+    i=$(( i + 1 ))
+    if (( owner != SHARD_INDEX )); then
+      continue
+    fi
     [[ ! -x "$CLEANUP_ORPHANS" ]] || "$CLEANUP_ORPHANS" || true
     purge_between_tests
     if should_skip_test "$(basename "$test_script")"; then
@@ -103,7 +144,11 @@ main() {
     [[ ! -x "$CLEANUP_ORPHANS" ]] || "$CLEANUP_ORPHANS" || true
     purge_between_tests
   done
-  log "suite complete"
+  if (( SHARD_TOTAL > 1 )); then
+    log "shard $SHARD_INDEX/$SHARD_TOTAL complete"
+  else
+    log "suite complete"
+  fi
 }
 
 main "$@"

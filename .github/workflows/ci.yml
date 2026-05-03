@@ -21,9 +21,15 @@ jobs:
           find bin install.sh -type f -not -path '*/.git/*' \
             | xargs shellcheck --severity=error -e SC1091
 
-  test:
-    name: Integration tests
+  test-shard:
+    # Each shard runs ~1/8 of the suite via round-robin. The "Run tests" step
+    # has a 1-minute hard cap so any shard that overshoots fails the PR.
+    name: Integration tests (shard ${{ matrix.shard }}/8)
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
     steps:
       - uses: actions/checkout@v4
 
@@ -34,6 +40,23 @@ jobs:
         run: tmux start-server
 
       - name: Run tests
+        timeout-minutes: 1
         env:
           ATMUX_ALLOW_OUTSIDE_TMUX: "1"
-        run: ./tests/runner
+        run: ./tests/runner --shard ${{ matrix.shard }}/8
+
+  test:
+    # Aggregator: pass iff every shard passes. This is the job to mark as
+    # the required PR check; matrix runs aren't individually addressable.
+    name: Integration tests
+    runs-on: ubuntu-latest
+    needs: test-shard
+    if: always()
+    steps:
+      - name: Verify all shards passed
+        run: |
+          if [[ "${{ needs.test-shard.result }}" != "success" ]]; then
+            echo "one or more integration-test shards failed (result=${{ needs.test-shard.result }})" >&2
+            exit 1
+          fi
+          echo "all 8 shards passed"

@@ -11,7 +11,7 @@ jobs:
     name: Shellcheck
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install shellcheck
         run: sudo apt-get install -y shellcheck
@@ -22,16 +22,16 @@ jobs:
             | xargs shellcheck --severity=error -e SC1091
 
   test-shard:
-    # Each shard runs ~1/8 of the suite via round-robin. The "Run tests" step
+    # Each shard runs ~1/12 of the suite via round-robin. The "Run tests" step
     # has a 1-minute hard cap so any shard that overshoots fails the PR.
-    name: Integration tests (shard ${{ matrix.shard }}/8)
+    name: Integration tests (shard ${{ matrix.shard }}/12)
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install tmux
         run: sudo apt-get install -y tmux
@@ -43,7 +43,7 @@ jobs:
         timeout-minutes: 1
         env:
           ATMUX_ALLOW_OUTSIDE_TMUX: "1"
-        run: ./tests/runner --shard ${{ matrix.shard }}/8
+        run: ./tests/runner --shard ${{ matrix.shard }}/12
 
   test:
     # Aggregator: pass iff every shard passes. This is the job to mark as
@@ -59,4 +59,4 @@ jobs:
             echo "one or more integration-test shards failed (result=${{ needs.test-shard.result }})" >&2
             exit 1
           fi
-          echo "all 8 shards passed"
+          echo "all 12 shards passed"

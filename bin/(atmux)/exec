@@ -10,21 +10,28 @@ source "$HERE/notify"
 usage() {
   cat <<'USAGE'
 Usage:
-  atmux exec [--detach] [--] <command> [args...]
+  atmux exec [--detach | --shared] [--] <command> [args...]
 
 Description:
   Execute a command with passthrough stdio and unchanged exit behavior.
   After the command exits or is interrupted, send an ATMUX notification back
   to the current agent pane with the exit code.
 
-  --detach  Run the command in a new tmux window. Returns immediately.
-            The process pane is stored so watchers can capture its output.
-            Notification is sent to the agent pane when the process exits.
+  --detach   Run the command in a new tmux window inside the current
+             agent's session. Returns immediately. Tmux ties the window
+             to the session — when the session is killed, the window
+             (and the command) die with it. No nohup, no orphans.
+  --shared   Run in a new tmux window inside the per-repo
+             `atmux-<repo>-workers` session (lazy-created if missing).
+             Use for long-running workers that aren't owned by any
+             single agent (e.g. PR/issue feed watchers fanning events
+             out to multiple subscribers). Implies --detach.
 
 Examples:
   atmux exec sleep 30
   atmux exec -- make test
   atmux exec --detach -- make test
+  atmux exec --shared -- atmux pr watch 123
 USAGE
 }
 
@@ -215,11 +222,47 @@ exec_foreground() {
 }
 
 exec_detached() {
-  local session="${ATMUX_SESSION_NAME:-}"
-  if [[ -z "$session" ]]; then
-    echo "--detach requires an atmux session (ATMUX_SESSION_NAME not set)" >&2
-    exit 2
+  # Target session for the new tmux window:
+  #
+  #   --shared   →  atmux-<repo>-workers (repo-shared bg session,
+  #                 lazy-created if missing). Use for long-running
+  #                 workers that aren't owned by any single agent —
+  #                 e.g. PR/issue feed watchers fanning events out
+  #                 across multiple subscribing agents.
+  #   default    →  current agent's session (ATMUX_SESSION_NAME).
+  #                 Used for tracked foreground-style execs that
+  #                 should die when the agent does.
+  local session=""
+  if (( shared == 1 )); then
+    if [[ -z "${repo_name:-}" ]]; then
+      echo "--shared requires a repo context (no ATMUX_REPO and no git repo at cwd)" >&2
+      exit 2
+    fi
+    session="atmux-${repo_name}-workers"
+    if ! tmux has-session -t "$session" 2>/dev/null; then
+      # Lazy-create. The placeholder window holds the session open;
+      # `sleep infinity` doesn't fork (it's a builtin in some
+      # shells, but `sh -c "exec sleep infinity"` is fine because
+      # tmux only needs the pane shell alive).
+      tmux new-session -d -s "$session" -n holder \
+        "exec sleep infinity" 2>/dev/null || true
+      if ! tmux has-session -t "$session" 2>/dev/null; then
+        echo "--shared: failed to create session $session" >&2
+        exit 2
+      fi
+    fi
+  else
+    session="${ATMUX_SESSION_NAME:-}"
+    if [[ -z "$session" ]]; then
+      echo "--detach requires an atmux session (ATMUX_SESSION_NAME not set; use --shared for a repo-scoped workers session)" >&2
+      exit 2
+    fi
+    if ! tmux has-session -t "$session" 2>/dev/null; then
+      echo "--detach: session not found: $session" >&2
+      exit 2
+    fi
   fi
+  local window="exec-$$"
 
   # Store argv null-delimited to avoid quoting issues across tmux shells
   mkdir -p "${ATMUX_HOME}/tmp"
@@ -247,9 +290,11 @@ exec '${self}' _run '${argv_file}' '${notify_pane}' '${repo_name}' '${exec_dir}'
 RUNNER
   chmod +x "$runner"
 
-  # Launch in a new tmux window
+  # Launch in a new tmux window. `-a` appends after the current
+  # window so we never collide with a session whose base-index is 0
+  # and is already occupied by the adapter pane.
   local process_pane
-  process_pane="$(tmux new-window -d -t "$session:" -n "exec-$$" -P -F '#{pane_id}' "$runner")"
+  process_pane="$(tmux new-window -a -d -t "$session:" -n "$window" -P -F '#{pane_id}' "$runner")"
 
   write_field "$exec_dir/executor_pane" "$process_pane"
 
@@ -340,6 +385,8 @@ if [[ "$1" == "_run" ]]; then
   exit $?
 fi
 
+shared=0
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -h|--help|help)
@@ -347,6 +394,11 @@ while [[ $# -gt 0 ]]; do
       exit 0
       ;;
     --detach)
+      detach=1
+      shift
+      ;;
+    --shared)
+      shared=1
       detach=1
       shift
       ;;

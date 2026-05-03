@@ -1141,14 +1141,66 @@ ensure_notification_worker() {
   fi
 
   notify_script="$(resolve_notify_script_path "$source_root")"
-  debug_notify "worker:spawn pane=$(printf '%q' "$pane") qdir=$(printf '%q' "$qdir")"
-  nohup env \
-    ATMUX_HOME="$ATMUX_HOME" \
-    ATMUX_SOURCE_ROOT="$source_root" \
-    ATMUX_REAL_TMUX="${ATMUX_REAL_TMUX:-}" \
-    ATMUX_ALLOW_REAL_TMUX=1 \
-    ATMUX_DEBUG_NOTIFY="${ATMUX_DEBUG_NOTIFY:-0}" \
-    "$notify_script" __serve-queue --pane "$pane" --source-root "$source_root" >/dev/null 2>&1 &
+
+  # Resolve the recipient pane's session so the worker lives there.
+  # The worker is keyed to a specific recipient pane: it polls that
+  # pane's queue and `tmux send-keys`-delivers messages to it. If the
+  # recipient is killed, the worker has nothing useful to do, so
+  # binding its lifetime to the recipient's session is correct —
+  # session-kill cascade-kills the worker, no orphan.
+  local recipient_session=""
+  recipient_session="$(tmux display-message -p -t "$pane" '#{session_name}' 2>/dev/null || true)"
+
+  debug_notify "worker:spawn pane=$(printf '%q' "$pane") qdir=$(printf '%q' "$qdir") session=$(printf '%q' "${recipient_session:-<none>}")"
+
+  if [[ -n "$recipient_session" ]] && tmux has-session -t "$recipient_session" 2>/dev/null; then
+    # Build a small launcher script (avoids quoting issues across
+    # tmux's `sh -c` re-parse) and spawn it as a tmux window in the
+    # recipient's session. `-a` appends after the current window so
+    # we never collide with the adapter pane at index 0.
+    mkdir -p "$qdir"
+    local runner="$qdir/worker-runner.sh"
+    cat > "$runner" <<RUNNER
+#!/usr/bin/env bash
+export ATMUX_HOME='${ATMUX_HOME}'
+export ATMUX_SOURCE_ROOT='${source_root}'
+export ATMUX_REAL_TMUX='${ATMUX_REAL_TMUX:-}'
+export ATMUX_ALLOW_REAL_TMUX=1
+export ATMUX_DEBUG_NOTIFY='${ATMUX_DEBUG_NOTIFY:-0}'
+exec '${notify_script}' __serve-queue --pane '${pane}' --source-root '${source_root}'
+RUNNER
+    chmod +x "$runner"
+
+    local window_name="notify-${pane#%}"
+    if ! tmux new-window -a -d \
+            -t "${recipient_session}:" \
+            -n "$window_name" \
+            "$runner" 2>/dev/null; then
+      # Fallback: if new-window failed (e.g. session torn down mid-
+      # call), fall back to nohup so the message still gets through.
+      # Better delivery without lifetime guarantee than no delivery.
+      nohup env \
+        ATMUX_HOME="$ATMUX_HOME" \
+        ATMUX_SOURCE_ROOT="$source_root" \
+        ATMUX_REAL_TMUX="${ATMUX_REAL_TMUX:-}" \
+        ATMUX_ALLOW_REAL_TMUX=1 \
+        ATMUX_DEBUG_NOTIFY="${ATMUX_DEBUG_NOTIFY:-0}" \
+        "$notify_script" __serve-queue --pane "$pane" --source-root "$source_root" \
+        >/dev/null 2>&1 &
+    fi
+  else
+    # No tmux session for the pane (e.g. notify --pane invocation
+    # against a pane that lives outside any atmux session). Fall back
+    # to nohup so delivery still works.
+    nohup env \
+      ATMUX_HOME="$ATMUX_HOME" \
+      ATMUX_SOURCE_ROOT="$source_root" \
+      ATMUX_REAL_TMUX="${ATMUX_REAL_TMUX:-}" \
+      ATMUX_ALLOW_REAL_TMUX=1 \
+      ATMUX_DEBUG_NOTIFY="${ATMUX_DEBUG_NOTIFY:-0}" \
+      "$notify_script" __serve-queue --pane "$pane" --source-root "$source_root" \
+      >/dev/null 2>&1 &
+  fi
 
   for (( attempt=0; attempt<20; attempt++ )); do
     if notification_worker_running "$qdir"; then

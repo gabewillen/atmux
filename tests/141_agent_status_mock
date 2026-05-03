@@ -1,0 +1,197 @@
+#!/usr/bin/env bash
+# Verifies `atmux agent status` reads from tmux + the notify-queue
+# directory and renders both XML and CLI output. No live adapters: all
+# panes are `cat`, all worker pids are forged so we can drive every
+# branch (alive/dead/none/queued/errored) without flakiness.
+set -euo pipefail
+
+source "$(dirname "${BASH_SOURCE[0]}")/lib/isolate-tmux.sh"
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+ATMUX_BIN="$REPO_ROOT/bin/atmux"
+
+tmp_root="$(mktemp -d "${TMPDIR:-/tmp}/atmux-status.XXXXXX")"
+ATMUX_HOME="$tmp_root/.atmux"
+mkdir -p "$ATMUX_HOME/notify-queue"
+repo="status${RANDOM}"
+
+# A long-lived pid we can keep alive for the duration of the test so
+# `kill -0` reports the worker as alive. Must be a child of this test
+# process so the test reaper cleans it up if we die mid-way.
+sleeper_pid=""
+sessions=()
+
+cleanup() {
+  local s
+  for s in "${sessions[@]:-}"; do
+    [[ -n "$s" ]] || continue
+    tmux kill-session -t "$s" >/dev/null 2>&1 || true
+  done
+  if [[ -n "$sleeper_pid" ]]; then
+    kill "$sleeper_pid" 2>/dev/null || true
+  fi
+  rm -rf "$tmp_root"
+}
+trap cleanup EXIT
+
+unset ATMUX_AGENT_NAME ATMUX_REPORTER ATMUX_NO_WRAP
+
+run_atmux() {
+  # Allow callers to override ATMUX_REPO via env (used to test missing
+  # repos); fall back to the test's repo otherwise.
+  local effective_repo="${ATMUX_REPO_OVERRIDE:-$repo}"
+  ATMUX_HOME="$ATMUX_HOME" ATMUX_REPO="$effective_repo" ATMUX_ALLOW_OUTSIDE_TMUX=1 \
+    "$ATMUX_BIN" "$@"
+}
+
+assert_contains() {
+  local label="$1" needle="$2" hay="$3"
+  if [[ "$hay" != *"$needle"* ]]; then
+    echo "FAIL [$label]: missing '$needle' in:" >&2
+    printf '%s\n' "$hay" >&2
+    exit 1
+  fi
+}
+
+assert_not_contains() {
+  local label="$1" needle="$2" hay="$3"
+  if [[ "$hay" == *"$needle"* ]]; then
+    echo "FAIL [$label]: should not contain '$needle' in:" >&2
+    printf '%s\n' "$hay" >&2
+    exit 1
+  fi
+}
+
+# Compute the same notify-queue key path that bin/(atmux)/notify uses.
+queue_key() {
+  local pane="$1" session="$2"
+  printf '%s\n' "${session}-${pane}" | sed 's/[^A-Za-z0-9_.-]/_/g'
+}
+
+# Spawn an agent-shaped session and return its pane id.
+spawn_agent() {
+  local name="$1" adapter="${2:-claude-code}"
+  local session="atmux-${repo}-${name}"
+  sessions+=("$session")
+  tmux kill-session -t "$session" >/dev/null 2>&1 || true
+  tmux new-session -d -s "$session" -n "$session" -x 120 -y 30 "cat"
+  tmux set-environment -t "$session" ATMUX_REPO "$repo"
+  tmux set-environment -t "$session" ATMUX_ADAPTER "$adapter"
+  tmux set-environment -t "$session" ATMUX_AGENT_NAME "$name"
+  tmux list-panes -t "$session" -F '#{pane_id}' | head -n1
+}
+
+# Long-running sleeper as a "live worker pid" stand-in.
+sleep 3600 &
+sleeper_pid=$!
+
+# === Scenario layout ========================================================
+# alpha   live pane, alive worker, queue depth 2, oldest ~5s, no error
+# beta    live pane, dead worker (pid that doesn't exist), queue depth 0
+# gamma   live pane, no worker.pid at all, no queue dir
+# delta   live pane, alive worker, depth 1, last_error written
+
+alpha_pane="$(spawn_agent alpha claude-code)"
+beta_pane="$(spawn_agent beta codex)"
+gamma_pane="$(spawn_agent gamma cursor-agent)"
+delta_pane="$(spawn_agent delta gemini)"
+
+# Helper to seed a queue layout for a pane.
+seed_queue() {
+  local pane="$1" session="$2" worker_pid="$3" queue_count="$4" age="${5:-0}" err="${6:-}"
+  local key qdir i payload_dir
+  key="$(queue_key "$pane" "$session")"
+  qdir="$ATMUX_HOME/notify-queue/$key"
+  mkdir -p "$qdir"
+  if [[ -n "$worker_pid" ]]; then
+    printf '%s\n' "$worker_pid" > "$qdir/worker.pid"
+  fi
+  if (( queue_count > 0 )); then
+    mkdir -p "$qdir/payloads"
+    for (( i=1; i<=queue_count; i++ )); do
+      payload_dir="$qdir/payloads/p$i"
+      mkdir -p "$payload_dir"
+      : > "$payload_dir/state"
+      if (( i == 1 && age > 0 )); then
+        # Backdate the oldest payload by $age seconds so format_age has
+        # a non-trivial value to format.
+        local target_ts
+        target_ts="$(( $(date +%s) - age ))"
+        if touch -m -t "$(date -r "$target_ts" '+%Y%m%d%H%M.%S' 2>/dev/null || \
+                          date -d "@$target_ts" '+%Y%m%d%H%M.%S')" "$payload_dir" 2>/dev/null; then
+          :
+        fi
+      fi
+    done
+  fi
+  if [[ -n "$err" ]]; then
+    printf '%s\n' "$err" > "$qdir/last_error"
+  fi
+}
+
+seed_queue "$alpha_pane" "atmux-${repo}-alpha"  "$sleeper_pid"          2 5  ""
+seed_queue "$beta_pane"  "atmux-${repo}-beta"   "999999"                0 0  ""
+# gamma: no queue dir at all (no seed call)
+seed_queue "$delta_pane" "atmux-${repo}-delta"  "$sleeper_pid"          1 0  "send_keys: pane unavailable"
+
+# === CLI mode: full listing =================================================
+
+cli_all="$(run_atmux agent status)"
+assert_contains     "all cli: scope line"   "agents-status (repo: $repo)"  "$cli_all"
+assert_contains     "all cli: header"       "NAME"                          "$cli_all"
+assert_contains     "all cli: alpha"        "alpha"                         "$cli_all"
+assert_contains     "all cli: beta"         "beta"                          "$cli_all"
+assert_contains     "all cli: gamma"        "gamma"                         "$cli_all"
+assert_contains     "all cli: delta"        "delta"                         "$cli_all"
+assert_contains     "all cli: alive worker" "alive"                         "$cli_all"
+assert_contains     "all cli: dead worker"  "dead"                          "$cli_all"
+assert_contains     "all cli: none worker"  "none"                          "$cli_all"
+assert_contains     "all cli: error text"   "send_keys: pane unavailable"   "$cli_all"
+assert_not_contains "all cli: no xml"       "<agents-status"                "$cli_all"
+
+# alpha row should show queue=2 and a non-dash oldest age.
+alpha_row="$(printf '%s\n' "$cli_all" | awk '/^alpha[[:space:]]/')"
+assert_contains "alpha row exists"       "alpha"        "$alpha_row"
+assert_contains "alpha row queue depth"  "2"            "$alpha_row"
+assert_not_contains "alpha row not none" "none"         "$alpha_row"
+
+# === XML mode ===============================================================
+
+xml_all="$(ATMUX_AGENT_NAME=tester run_atmux agent status)"
+assert_contains "xml: envelope"           '<atmux command="agent status"' "$xml_all"
+assert_contains "xml: root"               '<agents-status repo="'         "$xml_all"
+assert_contains "xml: alpha record"       'name="alpha"'                  "$xml_all"
+assert_contains "xml: queue_depth attr"   'queue_depth='                  "$xml_all"
+assert_contains "xml: oldest_age_seconds" 'oldest_age_seconds='           "$xml_all"
+assert_contains "xml: dead worker attr"   'worker="dead"'                 "$xml_all"
+assert_contains "xml: none worker attr"   'worker="none"'                 "$xml_all"
+assert_contains "xml: last_error attr"    'last_error="send_keys'         "$xml_all"
+assert_contains "xml: closes"             '</agents-status>'              "$xml_all"
+
+# === Filter by name =========================================================
+
+cli_one="$(run_atmux agent status alpha)"
+assert_contains     "filter cli: alpha"   "alpha"  "$cli_one"
+assert_not_contains "filter cli: not beta"  "beta"  "$cli_one"
+assert_not_contains "filter cli: not gamma" "gamma" "$cli_one"
+
+# Missing agent -> non-zero exit.
+if run_atmux agent status nonexistent_${RANDOM} >/dev/null 2>err.log; then
+  echo "FAIL: status for missing agent should return non-zero" >&2
+  exit 1
+fi
+grep -Fq "no agent named" err.log || {
+  echo "FAIL: missing-agent error should mention 'no agent named'" >&2
+  cat err.log >&2 || true
+  exit 1
+}
+rm -f err.log
+
+# === Empty repo =============================================================
+
+empty_cli="$(ATMUX_REPO_OVERRIDE="absent_${RANDOM}" run_atmux agent status)"
+assert_contains "empty: scope line"   "agents-status (repo: absent_" "$empty_cli"
+assert_contains "empty: none marker"  "(none)"                       "$empty_cli"
+
+echo "ok: agent status (mock pane state, all worker liveness branches, queue + error rendering)"

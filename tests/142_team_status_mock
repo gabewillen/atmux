@@ -1,0 +1,212 @@
+#!/usr/bin/env bash
+# Verifies `atmux team status` rolls up across team members. Members
+# are registered by tagging panes in the team session with
+# `@atmux_agent_session`; this is what `agent create --team` does for
+# real, mocked here so we don't need real adapters.
+set -euo pipefail
+
+source "$(dirname "${BASH_SOURCE[0]}")/lib/isolate-tmux.sh"
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+ATMUX_BIN="$REPO_ROOT/bin/atmux"
+
+tmp_root="$(mktemp -d "${TMPDIR:-/tmp}/atmux-team-status.XXXXXX")"
+ATMUX_HOME="$tmp_root/.atmux"
+mkdir -p "$ATMUX_HOME/notify-queue"
+repo="tstatus${RANDOM}"
+
+sleeper_pid=""
+sessions=()
+
+cleanup() {
+  local s
+  for s in "${sessions[@]:-}"; do
+    [[ -n "$s" ]] || continue
+    tmux kill-session -t "$s" >/dev/null 2>&1 || true
+  done
+  if [[ -n "$sleeper_pid" ]]; then kill "$sleeper_pid" 2>/dev/null || true; fi
+  rm -rf "$tmp_root"
+}
+trap cleanup EXIT
+
+unset ATMUX_AGENT_NAME ATMUX_REPORTER ATMUX_NO_WRAP
+
+run_atmux() {
+  local effective_repo="${ATMUX_REPO_OVERRIDE:-$repo}"
+  ATMUX_HOME="$ATMUX_HOME" ATMUX_REPO="$effective_repo" ATMUX_ALLOW_OUTSIDE_TMUX=1 \
+    "$ATMUX_BIN" "$@"
+}
+
+assert_contains() {
+  local label="$1" needle="$2" hay="$3"
+  if [[ "$hay" != *"$needle"* ]]; then
+    echo "FAIL [$label]: missing '$needle' in:" >&2
+    printf '%s\n' "$hay" >&2
+    exit 1
+  fi
+}
+
+assert_not_contains() {
+  local label="$1" needle="$2" hay="$3"
+  if [[ "$hay" == *"$needle"* ]]; then
+    echo "FAIL [$label]: should not contain '$needle' in:" >&2
+    printf '%s\n' "$hay" >&2
+    exit 1
+  fi
+}
+
+queue_key() {
+  local pane="$1" session="$2"
+  printf '%s\n' "${session}-${pane}" | sed 's/[^A-Za-z0-9_.-]/_/g'
+}
+
+spawn_agent() {
+  local name="$1" adapter="${2:-claude-code}" team="${3:-}"
+  local session="atmux-${repo}-${name}"
+  sessions+=("$session")
+  tmux kill-session -t "$session" >/dev/null 2>&1 || true
+  tmux new-session -d -s "$session" -n "$session" -x 120 -y 30 "cat"
+  tmux set-environment -t "$session" ATMUX_REPO "$repo"
+  tmux set-environment -t "$session" ATMUX_ADAPTER "$adapter"
+  tmux set-environment -t "$session" ATMUX_AGENT_NAME "$name"
+  [[ -n "$team" ]] && tmux set-environment -t "$session" ATMUX_TEAM "$team"
+  tmux list-panes -t "$session" -F '#{pane_id}' | head -n1
+}
+
+# Spawn a team session and tag its single window's panes with member
+# session names. agent create normally splits the team window into
+# multiple panes, one per member; we mimic that with split-window.
+spawn_team() {
+  local team_name="$1"; shift
+  local session="atmux-${repo}-team-${team_name}"
+  sessions+=("$session")
+  tmux kill-session -t "$session" >/dev/null 2>&1 || true
+  tmux new-session -d -s "$session" -n "$session" -x 120 -y 30 "cat"
+  tmux set-environment -t "$session" ATMUX_REPO "$repo"
+  tmux set-environment -t "$session" ATMUX_TEAM "$team_name"
+  tmux set-environment -t "$session" ATMUX_SESSION_KIND "team"
+
+  local pane member i=0
+  for member in "$@"; do
+    if (( i == 0 )); then
+      pane="$(tmux list-panes -t "$session" -F '#{pane_id}' | head -n1)"
+    else
+      # `-P -F '#{pane_id}'` returns the *new* pane id deterministically;
+      # `list-panes | tail` sorts by position and is unreliable.
+      pane="$(tmux split-window -t "$session" -d -P -F '#{pane_id}' "cat")"
+    fi
+    tmux set-option -p -t "$pane" @atmux_agent_session "atmux-${repo}-${member}" \
+      >/dev/null 2>&1
+    i=$((i + 1))
+  done
+}
+
+seed_queue() {
+  local pane="$1" session="$2" worker_pid="$3" queue_count="$4" err="${5:-}"
+  local key qdir
+  key="$(queue_key "$pane" "$session")"
+  qdir="$ATMUX_HOME/notify-queue/$key"
+  mkdir -p "$qdir"
+  if [[ -n "$worker_pid" ]]; then
+    printf '%s\n' "$worker_pid" > "$qdir/worker.pid"
+  fi
+  if (( queue_count > 0 )); then
+    mkdir -p "$qdir/payloads"
+    local i
+    for (( i=1; i<=queue_count; i++ )); do
+      mkdir -p "$qdir/payloads/p$i"
+      : > "$qdir/payloads/p$i/state"
+    done
+  fi
+  if [[ -n "$err" ]]; then
+    printf '%s\n' "$err" > "$qdir/last_error"
+  fi
+}
+
+sleep 3600 &
+sleeper_pid=$!
+
+# === Layout ================================================================
+# Team alpha: 3 members, all alive, varied queue depths
+#   alpha-1: alive worker, queue=2
+#   alpha-2: alive worker, queue=0
+#   alpha-3: alive worker, queue=3
+# Team beta:  2 members, one with a worker error, one with no agent session
+#   beta-1: alive worker, no error, queue=0
+#   beta-2: agent session NOT created → counts as member but not alive
+
+alpha1_pane="$(spawn_agent alpha-1 claude-code alpha)"
+alpha2_pane="$(spawn_agent alpha-2 codex        alpha)"
+alpha3_pane="$(spawn_agent alpha-3 cursor-agent alpha)"
+beta1_pane="$(spawn_agent  beta-1  gemini       beta)"
+# beta-2: deliberately not spawned
+
+seed_queue "$alpha1_pane" "atmux-${repo}-alpha-1" "$sleeper_pid" 2 ""
+seed_queue "$alpha2_pane" "atmux-${repo}-alpha-2" "$sleeper_pid" 0 ""
+seed_queue "$alpha3_pane" "atmux-${repo}-alpha-3" "$sleeper_pid" 3 ""
+seed_queue "$beta1_pane"  "atmux-${repo}-beta-1"  "$sleeper_pid" 0 "stuck-pane error from worker"
+
+spawn_team alpha alpha-1 alpha-2 alpha-3
+spawn_team beta  beta-1  beta-2
+
+# === Rollup mode ===========================================================
+
+cli="$(run_atmux team status)"
+assert_contains "rollup cli: scope"   "teams-status (repo: $repo)" "$cli"
+assert_contains "rollup cli: alpha"   "alpha"                       "$cli"
+assert_contains "rollup cli: beta"    "beta"                        "$cli"
+assert_contains "rollup cli: members" "MEMBERS"                     "$cli"
+
+# alpha team: 3 members, 3 alive, queue_total=5, errors=0
+alpha_row="$(printf '%s\n' "$cli" | awk '$1 == "alpha" { print }')"
+[[ -n "$alpha_row" ]] || { echo "FAIL: no alpha row" >&2; printf '%s\n' "$cli" >&2; exit 1; }
+read -r _name _session members alive queue_total errors <<<"$alpha_row"
+[[ "$members" == "3" ]]      || { echo "FAIL: alpha members=$members (want 3)" >&2; exit 1; }
+[[ "$alive" == "3" ]]        || { echo "FAIL: alpha alive=$alive (want 3)" >&2; exit 1; }
+[[ "$queue_total" == "5" ]]  || { echo "FAIL: alpha queue_total=$queue_total (want 5)" >&2; exit 1; }
+[[ "$errors" == "0" ]]       || { echo "FAIL: alpha errors=$errors (want 0)" >&2; exit 1; }
+
+# beta team: 2 members, 1 alive, queue_total=0, errors=1 (last_error on beta-1)
+beta_row="$(printf '%s\n' "$cli" | awk '$1 == "beta" { print }')"
+[[ -n "$beta_row" ]] || { echo "FAIL: no beta row" >&2; printf '%s\n' "$cli" >&2; exit 1; }
+read -r _name _session members alive queue_total errors <<<"$beta_row"
+[[ "$members" == "2" ]] || { echo "FAIL: beta members=$members (want 2)" >&2; exit 1; }
+[[ "$alive" == "1" ]]   || { echo "FAIL: beta alive=$alive (want 1)" >&2; exit 1; }
+[[ "$errors" == "1" ]]  || { echo "FAIL: beta errors=$errors (want 1)" >&2; exit 1; }
+
+# === XML rollup ============================================================
+
+xml="$(ATMUX_AGENT_NAME=tester run_atmux team status)"
+assert_contains "rollup xml: envelope" '<atmux command="team status"' "$xml"
+assert_contains "rollup xml: alpha"    'name="alpha"'                  "$xml"
+assert_contains "rollup xml: members"  'members="3"'                   "$xml"
+assert_contains "rollup xml: errors"   'errors="0"'                    "$xml"
+assert_contains "rollup xml: beta err" 'errors="1"'                    "$xml"
+
+# === Drill-in mode =========================================================
+
+drill="$(run_atmux team status alpha)"
+assert_contains "drill cli: scope"       "team-status (repo: $repo, team: alpha)" "$drill"
+assert_contains "drill cli: alpha-1"     "alpha-1" "$drill"
+assert_contains "drill cli: alpha-2"     "alpha-2" "$drill"
+assert_contains "drill cli: alpha-3"     "alpha-3" "$drill"
+assert_not_contains "drill cli: no beta" "beta-1"  "$drill"
+
+# beta drill-in: should show both members, beta-2 with pane=no
+drill_beta="$(run_atmux team status beta)"
+assert_contains "drill beta: beta-1" "beta-1" "$drill_beta"
+assert_contains "drill beta: beta-2" "beta-2" "$drill_beta"
+beta2_row="$(printf '%s\n' "$drill_beta" | awk '$1 == "beta-2" { print }')"
+[[ -n "$beta2_row" ]] || { echo "FAIL: no beta-2 row in drill" >&2; exit 1; }
+[[ "$beta2_row" == *"no"* ]] || { echo "FAIL: beta-2 should show pane=no in: $beta2_row" >&2; exit 1; }
+
+# missing team -> non-zero
+if run_atmux team status nonexistent_${RANDOM} >/dev/null 2>err.log; then
+  echo "FAIL: status for missing team should return non-zero" >&2
+  exit 1
+fi
+grep -Fq "no team named" err.log || { echo "FAIL: expected 'no team named' in error" >&2; cat err.log >&2; exit 1; }
+rm -f err.log
+
+echo "ok: team status rollup + drill-in (3-member alpha, 2-member beta with absent member)"

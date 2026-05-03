@@ -22,15 +22,17 @@ jobs:
             | xargs shellcheck --severity=error -e SC1091
 
   test-shard:
-    # 12 shards in parallel. Each runs ~10 tests via round-robin
+    # 16 shards in parallel. Each runs ~7 tests via round-robin
     # selection (see tests/runner --shard). Per-shard timeout caps at
     # 1 minute so any individual shard that overshoots fails the PR.
-    name: Integration tests (shard ${{ matrix.shard }}/12)
+    # Was 12; bumped because adding tests reshuffled the round-robin
+    # and three slow watch/notify tests landed on the same shard.
+    name: Integration tests (shard ${{ matrix.shard }}/16)
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
     steps:
       - uses: actions/checkout@v6
 
@@ -41,7 +43,7 @@ jobs:
         timeout-minutes: 1
         env:
           ATMUX_ALLOW_OUTSIDE_TMUX: "1"
-        run: ./tests/runner --shard ${{ matrix.shard }}/12
+        run: ./tests/runner --shard ${{ matrix.shard }}/16
 
   test:
     # Aggregator: pass iff every shard passes. This is the job to mark
@@ -58,4 +60,4 @@ jobs:
             echo "one or more integration-test shards failed (result=${{ needs.test-shard.result }})" >&2
             exit 1
           fi
-          echo "all 12 shards passed"
+          echo "all 16 shards passed"

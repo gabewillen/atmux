@@ -22,7 +22,7 @@ Install by piping `curl` into `sh`, or clone the repo and run `./install.sh`. Th
 - **You can actually see the agents work.** It's just tmux. Attach to any session, watch the agent think in real time, detach and come back later. No custom TUI, no web dashboard, no log tailing.
 - **Git worktree per agent.** Each agent gets its own branch and working directory under `ATMUX_HOME/agents/`. Parallel agents can't stomp each other's changes, and cleanup is a single `atmux agent kill`.
 
-> **Experimental** — this project is under active development (current version: `0.12.1`). APIs, commands, and behavior may change without notice. Use at your own risk.
+> **Experimental** — this project is under active development (current version: `0.13.0`). APIs, commands, and behavior may change without notice. Use at your own risk.
 
 ## Install
 
@@ -185,6 +185,7 @@ atmux agent create [name] --role <role> --intelligence <0-100>
   (or `--name <name>` instead of positional; if omitted, atmux
    auto-generates `agent-N`.)
 atmux agent list [--all] [--status]
+atmux agent status [<name>]
 atmux agent attach <name|session>
 atmux agent kill <name|pattern> [<name|pattern>...]
 atmux agent kill --all [--yes]
@@ -208,6 +209,7 @@ agent attach must be run outside tmux.
 atmux team create <name>
 atmux team list
 atmux team ls
+atmux team status [<name>]
 atmux team capture <name> [--lines <n>]
 atmux team kill <name|pattern> [...]
 atmux team resolve <name> [<repo_name>]

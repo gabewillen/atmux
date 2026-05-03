@@ -94,7 +94,10 @@ read_team_role_manifest() {
   # Echoes manifest fields for a team-kind role. Output lines:
   #   KIND=<agent|team>
   #   MEMBER=<args>     (one line per MEMBERS entry, in declared order)
-  # Sources in a subshell so manifest side-effects can't leak into the caller.
+  # Sources in a subshell so manifest side-effects can't leak into the
+  # caller. Caller pre-exports ATMUX_TEAM and ATMUX_REPO so manifests can
+  # parameterize MEMBERS — e.g. `${ATMUX_TEAM}-driver` to get
+  # team-unique session names without templating support.
   local manifest_path="$1"
   if [[ ! -f "$manifest_path" ]]; then
     printf 'KIND=agent\n'
@@ -348,7 +351,8 @@ create_team() {
       echo "atmux team create: role not found: $role" >&2
       exit 1
     fi
-    manifest_out="$(read_team_role_manifest "$role_dir/manifest" || true)"
+    manifest_out="$(ATMUX_TEAM="$team_name" ATMUX_REPO="$repo_name" \
+                       read_team_role_manifest "$role_dir/manifest" || true)"
     role_kind="$(printf '%s\n' "$manifest_out" | sed -n 's/^KIND=//p')"
     if [[ "$role_kind" != "team" ]]; then
       echo "atmux team create: role '$role' is KIND=${role_kind:-agent}; use 'atmux agent create --role $role' instead" >&2

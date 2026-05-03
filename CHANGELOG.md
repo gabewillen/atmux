@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.18.0 — Pair-programming team role
+
+Adds three new roles that compose into a driver/navigator pair-programming team. Goal: see how far a fast low-intelligence model can go with smart oversight from a high-intelligence model.
+
+**`pair-program`** (KIND=team). Spawns two members in the same fresh worktree (the team-worktree default from 0.17.0):
+
+- **`driver`** — `cursor-agent` at intelligence 20 (composer-2-fast). Picks up the task, writes code, runs tests, iterates quickly.
+- **`navigator`** — `codex` at intelligence 80 (gpt-5.5 high). Watches the worktree via `atmux git watch` and routes each rolling diff back to its own pane via `atmux notify --pane`. Reviews each diff against the task, the agent file (`AGENTS.md`/`CLAUDE.md`), and any planning docs; sends `atmux send --to <team>-driver --interrupt` with a corrective note when the driver veers, errors, takes a shortcut, or drifts off-scope.
+
+Usage:
+
+```sh
+atmux team create <name> --role pair-program
+atmux send --to <name>-driver "<your task>"
+```
+
+Multiple pair-program teams can coexist in one repo. Member names are templated as `${ATMUX_TEAM}-driver` / `${ATMUX_TEAM}-navigator` (e.g. team `feat-a` → agents `feat-a-driver` / `feat-a-navigator`). The role manifests' `MEMBERS` arrays are sourced bash; atmux pre-exports `ATMUX_TEAM` and `ATMUX_REPO` before sourcing so the prefix expands at parse time. A team-of-teams primitive ([#17](https://github.com/gabewillen/atmux/issues/17)) is the next-step generalization.
+
+### Framework changes used by this role
+- **`role.md` templating**: the agent script now substitutes a curated set of `${ATMUX_*}` variables (`ATMUX_TEAM`, `ATMUX_REPO`, `ATMUX_AGENT_NAME`, `ATMUX_WORKTREE`, `ATMUX_ROLE`) when it dumps `role.md` into the agent's control file. Lets prompts reference peer agent names like `${ATMUX_TEAM}-driver` so each LLM sees its actual peer's name instead of a placeholder. `${VAR}` form only — bare `$VAR` isn't supported (avoids accidental matches against unrelated env vars).
+- **Team-manifest sourcing env**: `atmux team create` now pre-exports `ATMUX_TEAM` and `ATMUX_REPO` before sourcing the role's manifest, so team-kind manifests can parameterize `MEMBERS` with `${ATMUX_TEAM}` to get team-unique session names without templating support inside atmux's spawn path.
+
+The team's fresh worktree, `--shared-worktree` env-aware behavior, cursor-agent workspace pre-trust, and rolling `atmux git watch` are all 0.17.0/0.16.0 primitives this role composes.
+
 ## 0.17.0 — Teams own a worktree by default
 
 **Behavior change**: `atmux team create <name>` now creates a fresh git worktree by default — at `$ATMUX_HOME/teams/<repo>/<team>/worktree` on a new branch `atmux-<repo>-team-<name>`. Members spawned with `--shared-worktree` inherit it via `ATMUX_WORKTREE`, so a pair of agents can edit the same worktree without stomping the user's checkout. `team kill` removes the worktree and branch.

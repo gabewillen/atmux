@@ -628,7 +628,20 @@ render_managed_block() {
       echo "- ROLE: $role_name"
       if [[ -n "${ATMUX_ROLE_DIR:-}" && -f "$ATMUX_ROLE_DIR/role.md" ]]; then
         echo
-        sed -E 's@^</?atmux>$@@' "$ATMUX_ROLE_DIR/role.md"
+        # role.md supports a small templating vocabulary so prompts can
+        # reference team-specific identifiers (e.g. peer agent names like
+        # `${ATMUX_TEAM}-driver` for a multi-instance team role). Only a
+        # curated whitelist of ATMUX_* vars is substituted to avoid
+        # surprise expansion of unrelated env. ${VAR} form only — the
+        # bare $VAR form is intentionally not supported because it
+        # makes accidental matches against PATH-like prefixes too easy.
+        sed -E 's@^</?atmux>$@@' "$ATMUX_ROLE_DIR/role.md" \
+          | sed \
+              -e "s|\${ATMUX_TEAM}|${ATMUX_TEAM:-}|g" \
+              -e "s|\${ATMUX_REPO}|${ATMUX_REPO:-}|g" \
+              -e "s|\${ATMUX_AGENT_NAME}|${ATMUX_AGENT_NAME:-}|g" \
+              -e "s|\${ATMUX_WORKTREE}|${ATMUX_WORKTREE:-}|g" \
+              -e "s|\${ATMUX_ROLE}|${ATMUX_ROLE:-}|g"
       fi
       echo
     fi

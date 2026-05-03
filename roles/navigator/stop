@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Navigator stop hook: kill the git watcher armed by start.
+set -euo pipefail
+
+state="${ATMUX_ROLE_STATE_DIR:-}"
+[[ -n "$state" && -d "$state" ]] || exit 0
+
+if [[ -f "$state/watcher-pid" ]]; then
+  pid="$(cat "$state/watcher-pid")"
+  if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+    kill "$pid" 2>/dev/null || true
+    # Give the watcher a moment to exit cleanly before SIGKILL.
+    for _ in 1 2 3 4 5; do
+      kill -0 "$pid" 2>/dev/null || break
+      sleep 0.5
+    done
+    kill -9 "$pid" 2>/dev/null || true
+  fi
+fi
+
+rm -rf "$state"

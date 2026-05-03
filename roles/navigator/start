@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# Navigator start hook: arms `atmux git watch` against the shared
+# worktree and routes each emitted diff back to the navigator's own
+# pane via `atmux notify`. With --coalesce 0, every detected change
+# becomes a distinct review trigger before more changes pile on top —
+# keeps the review window per-change instead of per-burst.
+#
+# Env provided by atmux:
+#   ATMUX_ROLE_STATE_DIR  - private state dir for this (agent, role) pair
+#   ATMUX_AGENT_NAME      - the agent's short name (= "navigator")
+#   ATMUX_REPO            - normalized repo name
+#   ATMUX_WORKTREE        - the agent's worktree (shared with driver)
+set -euo pipefail
+
+state="$ATMUX_ROLE_STATE_DIR"
+mkdir -p "$state"
+
+# `atmux send --to <self>` is blocked, so route each watcher emit via
+# `atmux notify --pane` against the navigator's own pane. Pane id is
+# stable for the session's lifetime — resolve it once here and pass it
+# to the watcher via env.
+nav_session="atmux-${ATMUX_REPO}-${ATMUX_AGENT_NAME}"
+nav_pane="$(tmux list-panes -t "$nav_session" -F '#{pane_id}' 2>/dev/null | head -n1)"
+if [[ -z "$nav_pane" ]]; then
+  echo "navigator start: could not resolve pane for session $nav_session; watcher not armed" >&2
+  exit 0
+fi
+
+# shellcheck disable=SC2016
+# The --exec value must stay single-quoted: $ATMUX_NAVIGATOR_PANE and
+# $(cat) are evaluated by the deferred bash -c that runs on each watcher
+# emit, not by this start-hook shell.
+ATMUX_NAVIGATOR_PANE="$nav_pane" \
+  nohup atmux git watch \
+    --id "${ATMUX_AGENT_NAME}-watch" \
+    --interval 10 \
+    --coalesce 0 \
+    --exec 'atmux notify --pane "$ATMUX_NAVIGATOR_PANE" --xml "$(cat)"' \
+    </dev/null >"$state/watcher.log" 2>&1 &
+
+watcher_pid=$!
+disown "$watcher_pid" 2>/dev/null || true
+printf '%s\n' "$watcher_pid" > "$state/watcher-pid"

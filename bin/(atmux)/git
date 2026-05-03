@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+
+usage() {
+  cat <<'USAGE'
+Usage:
+  atmux git watch [--id <id>] [--coalesce <seconds>] [--interval <seconds>]
+                  [--timeout <seconds>] [--duration <seconds>]
+                  [--exec <cmd>] [--once]
+
+Description:
+  Watch a git worktree for changes and emit rolling diffs. Each notification
+  contains only the diff since the previous notification — never the full
+  dirty state. Uses `git stash create` for snapshots (non-mutating: nothing
+  is added to the stash list, the working tree and index are untouched), so
+  it is safe to run against a worktree shared with other agents.
+
+  Empty diffs are suppressed (a change that reverts to the prior baseline
+  produces nothing).
+
+  --id         Persistent watcher id. Baseline SHA is stored at
+               $ATMUX_HOME/git/watch/<repo>/<id>/last so the watcher can
+               resume from its last emit across restarts. Defaults to a
+               derived id from $ATMUX_AGENT_NAME (or hostname-pid outside
+               an agent).
+  --coalesce   Batch changes into one digest per N seconds (default 0,
+               i.e. emit per detected change). Set >0 to wait that long
+               after the last change before emitting, grouping bursts.
+  --interval   Poll interval in seconds (default 10).
+  --timeout    Idle exit: return 124 if no change is observed for N seconds
+               (0 = disabled, default 0).
+  --duration   Hard cap: return 124 after N seconds total (0 = no cap).
+  --exec       Pipe each emitted XML line into `bash -c <cmd>`.
+  --once       Single-shot: emit one diff on the first change and exit 0.
+
+Examples:
+  atmux git watch
+  atmux git watch --id navigator --coalesce 5
+  atmux git watch --once --timeout 600
+USAGE
+}
+
+verb="${1:-}"
+shift || true
+
+case "$verb" in
+  watch)
+    exec "$HERE/[watch]/git" "$@"
+    ;;
+  -h|--help|help|"")
+    usage
+    ;;
+  *)
+    echo "unknown git command: $verb" >&2
+    usage >&2
+    exit 2
+    ;;
+esac

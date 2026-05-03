@@ -22,7 +22,7 @@ Install by piping `curl` into `sh`, or clone the repo and run `./install.sh`. Th
 - **You can actually see the agents work.** It's just tmux. Attach to any session, watch the agent think in real time, detach and come back later. No custom TUI, no web dashboard, no log tailing.
 - **Git worktree per agent.** Each agent gets its own branch and working directory under `ATMUX_HOME/agents/`. Parallel agents can't stomp each other's changes, and cleanup is a single `atmux agent kill`.
 
-> **Experimental** — this project is under active development (current version: `0.15.0`). APIs, commands, and behavior may change without notice. Use at your own risk.
+> **Experimental** — this project is under active development (current version: `0.16.0`). APIs, commands, and behavior may change without notice. Use at your own risk.
 
 ## Install
 
@@ -158,6 +158,7 @@ Resources (use `atmux <noun> --help` for verbs):
   process    atmux exec-tracked processes (watch, kill)
   pane       tmux pane operations (watch)
   path       filesystem path operations (watch)
+  git        git working tree operations (watch)
 
 Verbs (no resource home):
   send       message another agent or team
@@ -429,6 +430,44 @@ available; falls back to polling.
 atmux path watch 'src/**/*.sh'
 atmux path watch '/tmp/build/*.log' --once --timeout 60
 atmux path watch 'docs/**/*.md' --exec ./on-docs-changed --coalesce 30
+```
+
+#### `git`
+
+```sh
+atmux git watch [--id <id>] [--coalesce <seconds>] [--interval <seconds>]
+                [--timeout <seconds>] [--duration <seconds>]
+                [--exec <cmd>] [--once]
+```
+
+Watch a git worktree for changes and emit rolling diffs. Each notification
+contains only the diff since the previous notification — never the full
+dirty state. Uses `git stash create` for snapshots (non-mutating: nothing
+is added to the stash list, the working tree and index are untouched), so
+it is safe to run against a worktree shared with other agents.
+
+Empty diffs are suppressed (a change that reverts to the prior baseline
+produces nothing).
+
+--id         Persistent watcher id. Baseline SHA is stored at
+             $ATMUX_HOME/git/watch/<repo>/<id>/last so the watcher can
+             resume from its last emit across restarts. Defaults to a
+             derived id from $ATMUX_AGENT_NAME (or hostname-pid outside
+             an agent).
+--coalesce   Batch changes into one digest per N seconds (default 0,
+             i.e. emit per detected change). Set >0 to wait that long
+             after the last change before emitting, grouping bursts.
+--interval   Poll interval in seconds (default 10).
+--timeout    Idle exit: return 124 if no change is observed for N seconds
+             (0 = disabled, default 0).
+--duration   Hard cap: return 124 after N seconds total (0 = no cap).
+--exec       Pipe each emitted XML line into `bash -c <cmd>`.
+--once       Single-shot: emit one diff on the first change and exit 0.
+
+```sh
+atmux git watch
+atmux git watch --id navigator --coalesce 5
+atmux git watch --once --timeout 600
 ```
 
 ### Cross-cutting verbs

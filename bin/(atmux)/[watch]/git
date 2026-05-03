@@ -1,0 +1,232 @@
+#!/usr/bin/env bash
+# Rolling-diff git watcher. On each tick, snapshots the worktree via
+# `git stash create` (non-mutating — creates a commit object referencing
+# index+worktree, prints SHA, leaves both untouched). Emits one XML digest
+# per --coalesce window containing `git diff <baseline_sha>..<current_sha>`,
+# where baseline_sha is the SHA from the previous emit. Suppresses empty
+# diffs, persists the baseline at $ATMUX_HOME/git/watch/<id>/last so the
+# watcher can resume from its last emit across restarts.
+set -euo pipefail
+
+ATMUX_HOME="${ATMUX_HOME:-$HOME/.atmux}"
+
+usage() {
+  cat <<'USAGE'
+Usage:
+  atmux git watch [--id <id>] [--coalesce <seconds>] [--interval <seconds>]
+                  [--timeout <seconds>] [--duration <seconds>]
+                  [--exec <cmd>] [--once]
+
+Description:
+  Watch the current repo for worktree changes; emit `git diff` as XML for
+  the change *since the previous notification*. Empty diffs are suppressed.
+  Snapshots are non-mutating (`git stash create`) so this is safe to run
+  against a worktree shared with other agents.
+USAGE
+}
+
+xml_escape() {
+  printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g' -e "s/'/\&apos;/g"
+}
+
+derive_default_id() {
+  if [[ -n "${ATMUX_AGENT_NAME:-}" ]]; then
+    printf '%s\n' "$ATMUX_AGENT_NAME"
+  else
+    printf '%s-%s\n' "$(hostname -s 2>/dev/null || echo host)" "$$"
+  fi
+}
+
+# Snapshot: returns the *tree* SHA of the current index+worktree. We take
+# `git stash create`'s output (a commit-ish whose tree captures the dirty
+# state) and resolve it to its tree SHA. Tree SHAs are content-addressed —
+# identical worktrees produce identical SHAs across calls, so equality
+# checks correctly detect "no change". (Stash create's *commit* SHA embeds
+# a timestamp and would change every poll.) When the tree is clean,
+# `git stash create` prints nothing; fall back to HEAD's tree, then to the
+# empty tree on a brand-new repo with no commits.
+EMPTY_TREE="4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+
+make_snapshot() {
+  local commitish=""
+  commitish="$(git stash create 2>/dev/null || true)"
+  if [[ -z "$commitish" ]]; then
+    commitish="$(git rev-parse --verify HEAD 2>/dev/null || true)"
+  fi
+  if [[ -z "$commitish" ]]; then
+    printf '%s\n' "$EMPTY_TREE"
+    return 0
+  fi
+  local tree
+  tree="$(git rev-parse --verify "${commitish}^{tree}" 2>/dev/null || true)"
+  if [[ -z "$tree" ]]; then
+    printf '%s\n' "$EMPTY_TREE"
+    return 0
+  fi
+  printf '%s\n' "$tree"
+}
+
+EXEC_CMD=""
+
+emit_diff() {
+  local baseline="$1" current="$2" events="$3" window="$4" reason="$5" id="$6"
+  local diff_text
+  diff_text="$(git diff "$baseline" "$current" 2>/dev/null || true)"
+  if [[ -z "$diff_text" ]]; then
+    return 1
+  fi
+
+  local xml
+  xml="$(printf '<watch type="git" id="%s" prev="%s" new="%s" events="%s" window="%ss" reason="%s"><diff>%s</diff></watch>' \
+    "$(xml_escape "$id")" \
+    "$(xml_escape "$baseline")" \
+    "$(xml_escape "$current")" \
+    "$(xml_escape "$events")" \
+    "$(xml_escape "$window")" \
+    "$(xml_escape "$reason")" \
+    "$(xml_escape "$diff_text")")"
+  printf '%s\n' "$xml"
+  if [[ -n "$EXEC_CMD" ]]; then
+    printf '%s' "$xml" | bash -c "$EXEC_CMD" >/dev/null 2>&1 || true
+  fi
+  return 0
+}
+
+main() {
+  local id=""
+  local coalesce="0"
+  local interval="10"
+  local timeout_sec="0"
+  local duration="0"
+  local once=0
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --id)        id="${2:-}"; shift 2 ;;
+      --coalesce)  coalesce="${2:-}"; shift 2 ;;
+      --interval)  interval="${2:-}"; shift 2 ;;
+      --timeout)   timeout_sec="${2:-}"; shift 2 ;;
+      --duration)  duration="${2:-}"; shift 2 ;;
+      --exec)      EXEC_CMD="${2:-}"; shift 2 ;;
+      --once)      once=1; shift ;;
+      -h|--help|help) usage; exit 0 ;;
+      *) echo "unknown flag: $1" >&2; usage >&2; exit 2 ;;
+    esac
+  done
+
+  [[ "$coalesce"    =~ ^[0-9]+$ ]] || { echo "invalid --coalesce: $coalesce" >&2; exit 2; }
+  [[ "$interval"    =~ ^[0-9]+(\.[0-9]+)?$ ]] || { echo "invalid --interval: $interval" >&2; exit 2; }
+  [[ "$timeout_sec" =~ ^[0-9]+$ ]] || { echo "invalid --timeout: $timeout_sec" >&2; exit 2; }
+  [[ "$duration"    =~ ^[0-9]+$ ]] || { echo "invalid --duration: $duration" >&2; exit 2; }
+
+  if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    echo "atmux git watch: not inside a git working tree" >&2
+    exit 2
+  fi
+
+  [[ -n "$id" ]] || id="$(derive_default_id)"
+
+  # Pick a per-repo state dir. ATMUX_REPO is set inside agent sessions; out of
+  # that context, fall back to the current repo's basename so stand-alone
+  # invocations still work.
+  local repo_key="${ATMUX_REPO:-}"
+  if [[ -z "$repo_key" ]]; then
+    repo_key="$(basename "$(git rev-parse --show-toplevel)" \
+      | sed -E 's/[^A-Za-z0-9_-]+/_/g; s/_+/_/g; s/^_+//; s/_+$//')"
+  fi
+  local state_dir="$ATMUX_HOME/git/watch/$repo_key/$id"
+  mkdir -p "$state_dir"
+  local last_file="$state_dir/last"
+
+  local baseline_sha=""
+  if [[ -f "$last_file" ]]; then
+    baseline_sha="$(cat "$last_file" 2>/dev/null || true)"
+    # If the persisted SHA is no longer reachable (gc, fresh clone), drop it
+    # and reseed from the current snapshot.
+    if [[ -n "$baseline_sha" ]] && ! git rev-parse --verify "${baseline_sha}^{tree}" >/dev/null 2>&1; then
+      baseline_sha=""
+    fi
+  fi
+  if [[ -z "$baseline_sha" ]]; then
+    baseline_sha="$(make_snapshot)"
+    printf '%s\n' "$baseline_sha" > "$last_file"
+  fi
+
+  local current_sha="$baseline_sha"
+  local start_ts now last_event_ts duration_deadline=0
+  start_ts="$(date +%s)"
+  last_event_ts="$start_ts"
+  if [[ "$duration" -gt 0 ]]; then
+    duration_deadline=$(( start_ts + duration ))
+  fi
+
+  local pending=0 event_count=0 flush_at=0
+
+  flush_pending() {
+    local reason="${1:-window}"
+    (( pending == 1 )) || return 0
+    if emit_diff "$baseline_sha" "$current_sha" "$event_count" "$coalesce" "$reason" "$id"; then
+      baseline_sha="$current_sha"
+      printf '%s\n' "$baseline_sha" > "$last_file"
+    fi
+    pending=0
+    event_count=0
+    flush_at=0
+  }
+
+  while true; do
+    now="$(date +%s)"
+
+    if (( duration_deadline > 0 )) && (( now >= duration_deadline )); then
+      flush_pending "duration"
+      exit 124
+    fi
+    if [[ "$timeout_sec" != "0" ]] && (( now - last_event_ts >= timeout_sec )); then
+      flush_pending "idle_timeout"
+      exit 124
+    fi
+
+    local new_sha
+    new_sha="$(make_snapshot)"
+
+    if [[ "$new_sha" != "$current_sha" ]]; then
+      current_sha="$new_sha"
+      last_event_ts="$now"
+      event_count=$(( event_count + 1 ))
+
+      if (( once == 1 )); then
+        if emit_diff "$baseline_sha" "$current_sha" "$event_count" "0" "once" "$id"; then
+          printf '%s\n' "$current_sha" > "$last_file"
+          exit 0
+        fi
+        # Snapshot SHA changed but diff is empty (e.g. revert); keep waiting.
+        baseline_sha="$current_sha"
+        printf '%s\n' "$baseline_sha" > "$last_file"
+        event_count=0
+      elif [[ "$coalesce" == "0" ]]; then
+        if emit_diff "$baseline_sha" "$current_sha" "$event_count" "0" "change" "$id"; then
+          baseline_sha="$current_sha"
+          printf '%s\n' "$baseline_sha" > "$last_file"
+        else
+          # Empty diff: still advance the baseline so we don't re-evaluate.
+          baseline_sha="$current_sha"
+          printf '%s\n' "$baseline_sha" > "$last_file"
+        fi
+        event_count=0
+      else
+        if (( pending == 0 )); then
+          pending=1
+          flush_at=$(( now + coalesce ))
+        fi
+      fi
+    fi
+
+    if (( pending == 1 )) && (( now >= flush_at )); then
+      flush_pending "window"
+    fi
+
+    sleep "$interval"
+  done
+}
+
+main "$@"

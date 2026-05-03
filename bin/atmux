@@ -53,6 +53,7 @@ Resources (use `atmux <noun> --help` for verbs):
   process    atmux exec-tracked processes (watch, kill)
   pane       tmux pane operations (watch)
   path       filesystem path operations (watch)
+  git        git working tree operations (watch)
 
 Verbs (no resource home):
   send       message another agent or team
@@ -132,6 +133,18 @@ resolve_script_subcommand() {
   if [[ -f "$p" && -x "$p" ]]; then
     printf '%s\n' "$p"
     return 0
+  fi
+
+  # Fall back to the launcher's own source tree. This makes new commands
+  # work when atmux is invoked from outside its source repo and not yet
+  # installed (otherwise resolution would only see the cwd's repo and the
+  # ~/.atmux install, both of which may lack the new command).
+  if [[ -n "${ATMUX_SOURCE_ROOT:-}" ]]; then
+    p="$ATMUX_SOURCE_ROOT/bin/(atmux)/${cmd}"
+    if [[ -f "$p" && -x "$p" ]]; then
+      printf '%s\n' "$p"
+      return 0
+    fi
   fi
 
   return 1
@@ -337,7 +350,7 @@ main() {
       # needs it). `send`, `exec`, `schedule`, `notify` need tmux to deliver
       # notifications or attach to panes.
       case "$cmd" in
-        update|install|env|message|config|adapter|role|agent|team|issue|pr|watcher|process|pane|path) ;;
+        update|install|env|message|config|adapter|role|agent|team|issue|pr|watcher|process|pane|path|git) ;;
         *) require_tmux ;;
       esac
 

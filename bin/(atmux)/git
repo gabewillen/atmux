@@ -99,16 +99,21 @@ hook_worktree_add() {
   # any option that's known to take one. `--flag=value` consumes
   # nothing extra; `--flag value` consumes one. `--` ends options.
   local skip_next=0
+  local end_of_options=0
   local arg
   for arg in "$@"; do
     if (( skip_next == 1 )); then
       skip_next=0
       continue
     fi
+    if (( end_of_options == 1 )); then
+      # Past `--`: first arg is the path, regardless of leading dash.
+      target_path="$arg"
+      break
+    fi
     case "$arg" in
       --)
-        # Everything after `--` is positional.
-        skip_next=0
+        end_of_options=1
         continue
         ;;
       -b|-B|--orphan|--reason)

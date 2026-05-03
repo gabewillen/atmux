@@ -1168,15 +1168,16 @@ ensure_notification_worker() {
   # with the adapter pane at index 0.
   mkdir -p "$qdir"
   local runner="$qdir/worker-runner.sh"
-  cat > "$runner" <<RUNNER
-#!/usr/bin/env bash
-export ATMUX_HOME='${ATMUX_HOME}'
-export ATMUX_SOURCE_ROOT='${source_root}'
-export ATMUX_REAL_TMUX='${ATMUX_REAL_TMUX:-}'
-export ATMUX_ALLOW_REAL_TMUX=1
-export ATMUX_DEBUG_NOTIFY='${ATMUX_DEBUG_NOTIFY:-0}'
-exec '${notify_script}' __serve-queue --pane '${pane}' --source-root '${source_root}'
-RUNNER
+  {
+    printf '#!/usr/bin/env bash\n'
+    printf 'export ATMUX_HOME=%q\n' "$ATMUX_HOME"
+    printf 'export ATMUX_SOURCE_ROOT=%q\n' "$source_root"
+    printf 'export ATMUX_REAL_TMUX=%q\n' "${ATMUX_REAL_TMUX:-}"
+    printf 'export ATMUX_ALLOW_REAL_TMUX=1\n'
+    printf 'export ATMUX_DEBUG_NOTIFY=%q\n' "${ATMUX_DEBUG_NOTIFY:-0}"
+    printf 'exec %q __serve-queue --pane %q --source-root %q\n' \
+      "$notify_script" "$pane" "$source_root"
+  } > "$runner"
   chmod +x "$runner"
 
   local window_name="notify-${pane#%}"

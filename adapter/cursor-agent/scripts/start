@@ -197,7 +197,23 @@ mark_workspace_trusted() {
 
   local project_dir="$HOME/.cursor/projects/$key"
   mkdir -p "$project_dir" 2>/dev/null || return 0
-  : > "$project_dir/.workspace-trusted" 2>/dev/null || true
+
+  # cursor-agent ≥ 2026.05.01 reads .workspace-trusted as JSON:
+  # `{"trustedAt": "<iso8601>", "workspacePath": "<abs-path>"}`. An
+  # empty file fails parsing and cursor-agent re-prompts ("Trust this
+  # workspace") — a TUI dialog that captures stdin and renders to
+  # alternate-screen, invisible to non-interactive callers and to
+  # tmux capture-pane, so a managed agent watching the pane sees
+  # silence and sits forever.
+  local trusted_at
+  trusted_at="$(date -u +%Y-%m-%dT%H:%M:%S.000Z 2>/dev/null || echo '1970-01-01T00:00:00.000Z')"
+  # Escape backslash and quote in workspace path (rare in practice but
+  # cheap to defend; JSON otherwise allows arbitrary chars in strings).
+  local workspace_json
+  workspace_json="$(printf '%s' "$workspace" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g')"
+  printf '{"trustedAt":"%s","workspacePath":"%s"}\n' \
+    "$trusted_at" "$workspace_json" \
+    > "$project_dir/.workspace-trusted" 2>/dev/null || true
 }
 
 mark_workspace_trusted

@@ -161,13 +161,13 @@ probe_burst() {
   done
 
   for marker in "${markers[@]}"; do
-    if ! wait_for_text_in_pane "$pane" "$marker" 45; then
+    if ! wait_for_text_in_pane "$pane" "$marker" 12; then
       echo "FAIL: $label: marker '$marker' never appeared in pane" >&2
       tmux capture-pane -p -t "$pane" -S -400 >&2 || true
       return 1
     fi
   done
-  if ! wait_for_queue_drained "$pane" 30; then
+  if ! wait_for_queue_drained "$pane" 10; then
     echo "FAIL: $label: queue stuck after burst" >&2
     return 1
   fi
@@ -256,12 +256,40 @@ probe_with_retry() {
   "$fn" "$adapter"
 }
 
-failures=0
+# Each probe creates its own pane in its own session, so probes are
+# independent — fan them out to background jobs and join. Each probe's
+# output is captured to a temp file and replayed in order so the matrix
+# log stays readable.
+probe_outs=()
+probe_pids=()
+
+launch_probe() {
+  local probe_fn="$1" arg="$2" label="$3"
+  local out
+  out="$(mktemp "${TMPDIR:-/tmp}/atmux-probe-${label}-XXX.log")"
+  ( "$probe_fn" "$arg" >"$out" 2>&1 ) &
+  probe_pids+=($!)
+  probe_outs+=("$out")
+}
+
+probe_burst_with_retry() { probe_with_retry probe_burst "$1"; }
+
 for adapter in claude-code codex cursor-agent gemini; do
-  probe_with_retry probe_burst "$adapter" || failures=$((failures + 1))
-  probe_killed_pane "$adapter" || failures=$((failures + 1))
+  launch_probe probe_burst_with_retry "$adapter" "burst-${adapter}"
+  launch_probe probe_killed_pane "$adapter" "killed-${adapter}"
 done
-probe_no_adapter || failures=$((failures + 1))
+launch_probe probe_no_adapter "" "noadapter"
+
+failures=0
+for i in "${!probe_pids[@]}"; do
+  pid="${probe_pids[$i]}"
+  out="${probe_outs[$i]}"
+  if ! wait "$pid"; then
+    failures=$((failures + 1))
+  fi
+  cat "$out" >&2
+  rm -f "$out"
+done
 
 if (( failures > 0 )); then
   echo "FAIL: $failures probe(s) failed in pane-state matrix" >&2

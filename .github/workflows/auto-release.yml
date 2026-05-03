@@ -1,0 +1,119 @@
+name: Auto-release on VERSION bump
+
+# When a push to main changes the VERSION file (e.g. a release PR is merged),
+# tag the new commit `vX.Y.Z` and cut a GitHub release with the same tarball
+# layout as `release.yml` produces for manual tag-pushes.
+#
+# Tags pushed using GITHUB_TOKEN do NOT recursively trigger `release.yml`, so
+# this workflow has to do the tag push *and* the release in one job.
+
+on:
+  push:
+    branches: [main]
+    paths: ['VERSION']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Auto-tag and release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Read and validate version
+        id: ver
+        run: |
+          version="$(tr -d '[:space:]' < VERSION)"
+          if [[ -z "$version" ]]; then
+            echo "error: VERSION file is empty" >&2
+            exit 1
+          fi
+          # Reject leading 'v' (would produce 'vv0.12.0') and require a
+          # numeric semver-ish shape so we can never tag arbitrary strings.
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+            echo "error: VERSION must be MAJOR.MINOR.PATCH (got '$version'); the 'v' prefix is added automatically" >&2
+            exit 1
+          fi
+          tag="v${version}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Decide what to do
+        id: plan
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="${{ steps.ver.outputs.tag }}"
+
+          # Check the remote, not just the local checkout — the runner's
+          # tag set could lag behind, and we must not try to push a tag
+          # that already exists remotely.
+          tag_exists=0
+          if [[ -n "$(git ls-remote --tags origin "refs/tags/$tag" 2>/dev/null)" ]]; then
+            tag_exists=1
+          fi
+
+          release_exists=0
+          if gh release view "$tag" >/dev/null 2>&1; then
+            release_exists=1
+          fi
+
+          # Four cases:
+          #   tag + release         → already done, skip cleanly
+          #   tag, no release       → recover: build release for existing tag, don't re-tag
+          #   no tag, release       → unexpected (release without tag); fail loudly
+          #   no tag, no release    → normal path: create both
+          if (( tag_exists == 1 && release_exists == 1 )); then
+            echo "tag $tag and release already exist; nothing to do"
+            echo "action=skip" >> "$GITHUB_OUTPUT"
+          elif (( tag_exists == 1 && release_exists == 0 )); then
+            echo "tag $tag exists but release is missing; will create the release for the existing tag"
+            echo "action=release-only" >> "$GITHUB_OUTPUT"
+          elif (( tag_exists == 0 && release_exists == 1 )); then
+            echo "error: release $tag exists with no matching tag; refusing to proceed (delete the orphan release or create the tag manually)" >&2
+            exit 1
+          else
+            echo "neither tag nor release exists; will create both"
+            echo "action=create" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create tag
+        if: steps.plan.outputs.action == 'create'
+        run: |
+          tag="${{ steps.ver.outputs.tag }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$tag" -m "Release $tag"
+          git push origin "$tag"
+
+      - name: Create release tarball
+        if: steps.plan.outputs.action == 'create' || steps.plan.outputs.action == 'release-only'
+        run: |
+          tag="${{ steps.ver.outputs.tag }}"
+          version="${{ steps.ver.outputs.version }}"
+          # In release-only recovery, archive from the existing tag (not HEAD)
+          # so the tarball matches what the tag points at.
+          if [[ "${{ steps.plan.outputs.action }}" == "release-only" ]]; then
+            git fetch origin "refs/tags/$tag:refs/tags/$tag" >/dev/null 2>&1 || true
+            ref="$tag"
+          else
+            ref="HEAD"
+          fi
+          git archive \
+            --format=tar.gz \
+            --prefix="atmux-${version}/" \
+            -o "atmux-${version}.tar.gz" \
+            "$ref"
+
+      - name: Create GitHub release
+        if: steps.plan.outputs.action == 'create' || steps.plan.outputs.action == 'release-only'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ver.outputs.tag }}
+          generate_release_notes: true
+          files: atmux-${{ steps.ver.outputs.version }}.tar.gz
+          fail_on_unmatched_files: true

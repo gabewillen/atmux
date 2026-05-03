@@ -15,7 +15,6 @@ if [[ -z "${ATMUX_TESTS_TMUX_TMPDIR:-}" ]]; then
   ATMUX_TESTS_TMUX_TMPDIR="$(mktemp -d "${TMPDIR:-/tmp}/atmux-tests-tmux.XXXXXX")"
   export ATMUX_TESTS_TMUX_TMPDIR
   cleanup_isolated_tmux() {
-    # Tear down only the isolated tmux server, never the developer's.
     if [[ -n "${ATMUX_TESTS_TMUX_TMPDIR:-}" && -d "$ATMUX_TESTS_TMUX_TMPDIR" ]]; then
       TMUX_TMPDIR="$ATMUX_TESTS_TMUX_TMPDIR" tmux kill-server >/dev/null 2>&1 || true
       rm -rf "$ATMUX_TESTS_TMUX_TMPDIR"
@@ -52,21 +51,54 @@ log() {
   printf '[atmux-tests] %s\n' "$*"
 }
 
+usage() {
+  cat <<'USAGE'
+Usage: tests/runner [--shard N/TOTAL]
+
+  --shard N/TOTAL  Run only the Nth slice of TOTAL using round-robin
+                   selection across the test list. Used by CI to spread
+                   the suite over a matrix of GitHub Actions runners.
+                   Default: 1/1 (entire suite).
+
+Live tests (suffix "_live") are skipped unless
+ATMUX_RUN_LIVE_ADAPTER_TESTS=1 is exported.
+USAGE
+}
+
+SHARD_INDEX=1
+SHARD_TOTAL=1
+
+parse_shard() {
+  local spec="$1"
+  if [[ ! "$spec" =~ ^([0-9]+)/([0-9]+)$ ]]; then
+    echo "error: --shard expects N/TOTAL (e.g. 3/8), got '$spec'" >&2
+    exit 2
+  fi
+  SHARD_INDEX="${BASH_REMATCH[1]}"
+  SHARD_TOTAL="${BASH_REMATCH[2]}"
+  if (( SHARD_INDEX < 1 || SHARD_INDEX > SHARD_TOTAL || SHARD_TOTAL < 1 )); then
+    echo "error: --shard $spec is out of range" >&2
+    exit 2
+  fi
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --shard)       parse_shard "${2:-}"; shift 2 ;;
+    --shard=*)     parse_shard "${1#--shard=}"; shift ;;
+    -h|--help)     usage; exit 0 ;;
+    *)             echo "error: unknown argument: $1" >&2; usage >&2; exit 2 ;;
+  esac
+done
+
 should_skip_test() {
   local test_name="$1"
-
   case "${ATMUX_RUN_LIVE_ADAPTER_TESTS:-0}" in
-    1|true|TRUE|yes|YES)
-      return 1
-      ;;
+    1|true|TRUE|yes|YES) return 1 ;;
   esac
-
   case "$test_name" in
-    *_live)
-      return 0
-      ;;
+    *_live) return 0 ;;
   esac
-
   return 1
 }
 
@@ -84,10 +116,15 @@ purge_between_tests() {
 }
 
 main() {
-  local test_script
+  local test_script i=0 owner ran=0
   for test_script in "$TESTS_DIR"/[0-9]*_*; do
     [[ -f "$test_script" ]] || continue
     [[ -x "$test_script" ]] || chmod +x "$test_script"
+    owner=$(( i % SHARD_TOTAL + 1 ))
+    i=$(( i + 1 ))
+    if (( owner != SHARD_INDEX )); then
+      continue
+    fi
     [[ ! -x "$CLEANUP_ORPHANS" ]] || "$CLEANUP_ORPHANS" || true
     purge_between_tests
     if should_skip_test "$(basename "$test_script")"; then
@@ -102,8 +139,13 @@ main() {
     fi
     [[ ! -x "$CLEANUP_ORPHANS" ]] || "$CLEANUP_ORPHANS" || true
     purge_between_tests
+    ran=$((ran + 1))
   done
-  log "suite complete"
+  if (( SHARD_TOTAL > 1 )); then
+    log "shard $SHARD_INDEX/$SHARD_TOTAL complete ($ran tests)"
+  else
+    log "suite complete ($ran tests)"
+  fi
 }
 
 main "$@"

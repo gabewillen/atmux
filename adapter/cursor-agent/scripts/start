@@ -159,6 +159,23 @@ fi
 
 ensure_cursor_atmux_allowlist
 
+# Pre-trust the current workspace so cursor-agent doesn't block on its
+# "Workspace Trust Required" TUI prompt the first time it runs in a
+# fresh dir. cursor-agent's check is just `existsSync(<git_root>/.workspace-trusted)`
+# — the file's contents don't matter. atmux's agent / team worktrees are
+# always fresh dirs (one per agent / team), so without this every spawn
+# would block until a human dismisses the dialog.
+mark_workspace_trusted() {
+  local target=""
+  if target="$(git rev-parse --show-toplevel 2>/dev/null)" && [[ -n "$target" && -d "$target" ]]; then
+    : > "$target/.workspace-trusted" 2>/dev/null || true
+  else
+    : > "./.workspace-trusted" 2>/dev/null || true
+  fi
+}
+
+mark_workspace_trusted
+
 set_bootstrap_state ready
 echo "starting $agent_bin in $(pwd)"
 exec "$agent_bin" "${args[@]-}"

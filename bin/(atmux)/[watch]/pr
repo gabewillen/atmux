@@ -383,11 +383,18 @@ ensure_pr_watch_worker() {
   # to that session — no nohup, no orphans across atmux runs. The
   # workers session holds itself open so `atmux watcher kill` (or
   # session kill) is the single teardown point.
-  ATMUX_HOME="$ATMUX_HOME" \
-    ATMUX_SOURCE_ROOT="${ATMUX_SOURCE_ROOT:-${ATMUX_HOME}/src/atmux}" \
+  #
+  # Use the atmux dispatcher from the same source tree that's running
+  # this script. Bare `atmux` from PATH would route through
+  # ~/.atmux/bin/atmux (a thin launcher that requires
+  # $ATMUX_HOME/src/atmux to exist) and breaks tests / install
+  # scenarios that pin ATMUX_HOME elsewhere. $HERE/../../atmux is
+  # always the source-tree dispatcher of the script we're running in.
+  local atmux_bin="$HERE/../../atmux"
+  ATMUX_SOURCE_ROOT="${ATMUX_SOURCE_ROOT:-${ATMUX_HOME}/src/atmux}" \
     ATMUX_GH_BIN="${ATMUX_GH_BIN:-}" \
     ATMUX_EXEC_SUPPRESS_NOTIFY=1 \
-    atmux exec --shared -- \
+    "$atmux_bin" exec --shared -- \
       "$0" __serve-pr-watch \
         --key "$key" \
         --pr "$pr_url" \

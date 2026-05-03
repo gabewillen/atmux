@@ -288,13 +288,13 @@ ensure_issues_watch_worker() {
     return 0
   fi
 
-  # See the matching block in [watch]/pr for why this uses `atmux exec
-  # --shared` instead of nohup.
-  ATMUX_HOME="$ATMUX_HOME" \
-    ATMUX_SOURCE_ROOT="${ATMUX_SOURCE_ROOT:-${ATMUX_HOME}/src/atmux}" \
+  # See the matching block in [watch]/pr for why we resolve atmux via
+  # the script's own source tree instead of PATH.
+  local atmux_bin="$HERE/../../atmux"
+  ATMUX_SOURCE_ROOT="${ATMUX_SOURCE_ROOT:-${ATMUX_HOME}/src/atmux}" \
     ATMUX_GH_BIN="${ATMUX_GH_BIN:-}" \
     ATMUX_EXEC_SUPPRESS_NOTIFY=1 \
-    atmux exec --shared -- \
+    "$atmux_bin" exec --shared -- \
       "$0" __serve-issues-watch \
         --key "$key" \
         --owner "$owner" \

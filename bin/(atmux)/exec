@@ -240,12 +240,13 @@ exec_detached() {
     fi
     session="atmux-${repo_name}-workers"
     if ! tmux has-session -t "$session" 2>/dev/null; then
-      # Lazy-create. The placeholder window holds the session open;
-      # `sleep infinity` doesn't fork (it's a builtin in some
-      # shells, but `sh -c "exec sleep infinity"` is fine because
-      # tmux only needs the pane shell alive).
+      # Lazy-create. The placeholder window holds the session open
+      # via `tail -f /dev/null` — portable across macOS BSD and Linux
+      # GNU userlands (vs `sleep infinity`, which BSD sleep rejects;
+      # the BSD shell would exit immediately and tmux would close
+      # the empty session).
       tmux new-session -d -s "$session" -n holder \
-        "exec sleep infinity" 2>/dev/null || true
+        "exec tail -f /dev/null" 2>/dev/null || true
       if ! tmux has-session -t "$session" 2>/dev/null; then
         echo "--shared: failed to create session $session" >&2
         exit 2
@@ -279,15 +280,26 @@ exec_detached() {
   record_exec_start "$detach_id" "$repo_name" "$command_text" "$(timestamp_utc)" "$notify_pane"
   write_field "$exec_dir/detached" "1"
 
-  # Write a runner script to avoid quoting issues across tmux's default shell
+  # Write a runner script to avoid quoting issues across tmux's default
+  # shell. Forward every exported env var from the caller so the
+  # spawned worker sees the same environment it would have under nohup
+  # (ATMUX_HOME, ATMUX_GH_BIN, test-specific overrides, etc). A few
+  # tmux-internal vars are skipped because tmux re-derives them in the
+  # new window.
   local runner="$argv_file.run"
   local self="${BASH_SOURCE[0]}"
-  cat > "$runner" <<RUNNER
-#!/usr/bin/env bash
-export ATMUX_HOME='${ATMUX_HOME}'
-export ATMUX_EXEC_SUPPRESS_NOTIFY='${ATMUX_EXEC_SUPPRESS_NOTIFY:-}'
-exec '${self}' _run '${argv_file}' '${notify_pane}' '${repo_name}' '${exec_dir}' '${pid_fifo}'
-RUNNER
+  {
+    printf '#!/usr/bin/env bash\n'
+    while IFS= read -r __exec_env_name; do
+      [[ -n "$__exec_env_name" ]] || continue
+      case "$__exec_env_name" in
+        TMUX|TMUX_PANE|_) continue ;;
+      esac
+      printf 'export %s=%q\n' "$__exec_env_name" "${!__exec_env_name-}"
+    done < <(compgen -e)
+    printf "exec %q _run %q %q %q %q %q\n" \
+      "$self" "$argv_file" "$notify_pane" "$repo_name" "$exec_dir" "$pid_fifo"
+  } > "$runner"
   chmod +x "$runner"
 
   # Launch in a new tmux window. `-a` appends after the current

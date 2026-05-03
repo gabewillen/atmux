@@ -22,9 +22,11 @@ Description:
   Manage repo-scoped team tmux sessions.
   Team session format: atmux-<repo>-team-<name>
 
-  --role <name>   Apply a KIND=team role: opens the session, then runs the
-                  role's start hook to spawn members and register watchers.
-                  The matching stop hook runs on `atmux team kill`.
+  --role <name>   Apply a KIND=team role: opens the session, spawns each
+                  MEMBERS entry from the role manifest, then runs the
+                  role's optional `start` hook for any cross-cutting wiring.
+                  `team kill` auto-kills the spawned members and runs the
+                  matching `stop` hook.
 USAGE
 }
 
@@ -172,11 +174,16 @@ spawn_team_members() {
   local entry
   while IFS= read -r entry; do
     [[ -z "$entry" ]] && continue
-    # Tokenize via `read -ra` (no eval) — quoted-arg edge cases aren't
-    # supported, but the agent create flag surface doesn't need them today.
+    # Tokenize via `eval set --` so quoted args survive (e.g. a member
+    # entry with `--description "multi word"`). The manifest is already
+    # sourced bash — anyone who can write MEMBERS can also run arbitrary
+    # code at source time — so this `eval` adds no new attack surface.
     local -a tokens=()
-    # shellcheck disable=SC2162
-    read -ra tokens <<< "$entry"
+    if ! eval "set -- $entry" 2>/dev/null; then
+      echo "atmux team create: malformed MEMBERS entry: $entry" >&2
+      return 1
+    fi
+    tokens=("$@")
     if [[ "${#tokens[@]}" -eq 0 ]]; then
       continue
     fi

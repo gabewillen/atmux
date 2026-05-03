@@ -4,7 +4,7 @@
 
 Roles previously only described agents. This release extends the role mechanism so a single role definition can target either an agent (default) or a team — same directory contract (`role.md` + `manifest` + optional `start`/`stop`), one new `KIND` field in the manifest. Setup work for the upcoming driver+navigator paired-programming team, which lands in a follow-up release.
 
-**Manifest gains `KIND=agent|team`** (default `agent`). For `KIND=team` roles, the manifest can also declare `MEMBERS=("<agent create args>" ...)` — each entry is the tail of an `atmux agent create` call, and atmux iterates the array to spawn each member with `--team <team>` injected. Conditionals fall out for free because the manifest is already sourced bash:
+**Manifest gains `KIND=agent|team`** (default `agent`). For `KIND=team` roles, the manifest can also declare `MEMBERS=("<agent create args>" ...)` — each entry is the tail of an `atmux agent create` call. atmux shell-tokenizes each entry (so `--description "multi word"` survives) and runs `atmux agent create <tokens> --team <team>`. Conditionals fall out for free because the manifest is already sourced bash:
 
 ```bash
 KIND=team

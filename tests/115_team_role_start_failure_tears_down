@@ -4,8 +4,8 @@
 # leftover member sessions/worktrees/branches, no leftover state dir.
 #
 # Two scenarios:
-#   A) Member spawn fails (member role doesn't exist) — team session gets
-#      killed, no member sessions remain.
+#   A) Member spawn rejects an invalid `agent create` flag — team session
+#      gets killed, no member sessions remain.
 #   B) Members spawn OK but start hook exits non-zero — team session AND
 #      members both get killed, state dir removed.
 set -euo pipefail

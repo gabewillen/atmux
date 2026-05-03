@@ -12,9 +12,9 @@ TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
 NOTIFY_SCRIPT="$REPO_ROOT/bin/(atmux)/notify"
 
-N="${ATMUX_TEST_PARALLEL_ENQUEUE:-20}"
-[[ "$N" =~ ^[0-9]+$ ]] || N=20
-(( N > 0 )) && (( N <= 200 )) || N=20
+N="${ATMUX_TEST_PARALLEL_ENQUEUE:-10}"
+[[ "$N" =~ ^[0-9]+$ ]] || N=10
+(( N > 0 )) && (( N <= 200 )) || N=10
 
 # Strip all whitespace so that mid-word line wrapping in the captured
 # pane (Linux CI often gives us a narrower pane than the requested

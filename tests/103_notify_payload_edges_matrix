@@ -212,13 +212,28 @@ probe() {
 
 echo "matrix: 4 adapters x 7 adversarial payloads -> 28 probes" >&2
 
-failures=0
+# Each probe builds its own session/pane, so they're independent. Run all
+# 28 probes concurrently (in 4 adapter-batches of 7) and join.
+probe_pids=()
+probe_outs=()
 for adapter in claude-code codex cursor-agent gemini; do
   for kind in baseline embedded_lf embedded_cr contains_prompt leading_prompt giant xml_specials; do
-    if ! probe "$adapter" "$kind"; then
-      failures=$((failures + 1))
-    fi
+    out="$(mktemp "${TMPDIR:-/tmp}/atmux-probe-${adapter}-${kind}-XXX.log")"
+    ( probe "$adapter" "$kind" >"$out" 2>&1 ) &
+    probe_pids+=($!)
+    probe_outs+=("$out")
   done
+done
+
+failures=0
+for i in "${!probe_pids[@]}"; do
+  pid="${probe_pids[$i]}"
+  out="${probe_outs[$i]}"
+  if ! wait "$pid"; then
+    failures=$((failures + 1))
+  fi
+  cat "$out" >&2
+  rm -f "$out"
 done
 
 if (( failures > 0 )); then

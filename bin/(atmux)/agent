@@ -635,13 +635,28 @@ render_managed_block() {
         # surprise expansion of unrelated env. ${VAR} form only — the
         # bare $VAR form is intentionally not supported because it
         # makes accidental matches against PATH-like prefixes too easy.
+        # Values are escaped before interpolation so sed metacharacters
+        # in them (`&`, `\`, the delimiter `|`) substitute literally —
+        # ATMUX_WORKTREE is a filesystem path and could plausibly carry
+        # any of these in user-chosen checkout locations.
+        sed_escape_replacement() {
+          # Escapes \, &, and | (our chosen sed delimiter) for use in
+          # the replacement side of `s|pat|repl|`.
+          printf '%s' "$1" | sed -e 's/[\\&|]/\\&/g'
+        }
+        local _t _r _a _w _ro
+        _t="$(sed_escape_replacement "${ATMUX_TEAM:-}")"
+        _r="$(sed_escape_replacement "${ATMUX_REPO:-}")"
+        _a="$(sed_escape_replacement "${ATMUX_AGENT_NAME:-}")"
+        _w="$(sed_escape_replacement "${ATMUX_WORKTREE:-}")"
+        _ro="$(sed_escape_replacement "${ATMUX_ROLE:-}")"
         sed -E 's@^</?atmux>$@@' "$ATMUX_ROLE_DIR/role.md" \
           | sed \
-              -e "s|\${ATMUX_TEAM}|${ATMUX_TEAM:-}|g" \
-              -e "s|\${ATMUX_REPO}|${ATMUX_REPO:-}|g" \
-              -e "s|\${ATMUX_AGENT_NAME}|${ATMUX_AGENT_NAME:-}|g" \
-              -e "s|\${ATMUX_WORKTREE}|${ATMUX_WORKTREE:-}|g" \
-              -e "s|\${ATMUX_ROLE}|${ATMUX_ROLE:-}|g"
+              -e "s|\${ATMUX_TEAM}|${_t}|g" \
+              -e "s|\${ATMUX_REPO}|${_r}|g" \
+              -e "s|\${ATMUX_AGENT_NAME}|${_a}|g" \
+              -e "s|\${ATMUX_WORKTREE}|${_w}|g" \
+              -e "s|\${ATMUX_ROLE}|${_ro}|g"
       fi
       echo
     fi

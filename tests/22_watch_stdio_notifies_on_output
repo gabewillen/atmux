@@ -39,6 +39,31 @@ exec_root="$atmux_home/exec/$repo_name"
 cleanup() {
   tmux kill-session -t "$session_exec" >/dev/null 2>&1 || true
   tmux kill-session -t "$session_watch" >/dev/null 2>&1 || true
+  # Notify-queue workers run as separate processes and can keep writing
+  # to $atmux_home/notify-queue/*/payloads after the tmux sessions die,
+  # which races `rm -rf` and trips "Directory not empty". Kill them first.
+  if [[ -d "$atmux_home/notify-queue" ]]; then
+    while IFS= read -r -d '' pid_file; do
+      local pid
+      pid="$(tr -d '\r\n' < "$pid_file" 2>/dev/null || true)"
+      [[ -n "$pid" ]] && kill "$pid" 2>/dev/null || true
+    done < <(find "$atmux_home/notify-queue" -name worker.pid -print0 2>/dev/null)
+    local deadline alive
+    deadline=$(( $(date +%s) + 3 ))
+    while (( $(date +%s) < deadline )); do
+      alive=0
+      while IFS= read -r -d '' pid_file; do
+        local pid
+        pid="$(tr -d '\r\n' < "$pid_file" 2>/dev/null || true)"
+        if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+          alive=1
+          break
+        fi
+      done < <(find "$atmux_home/notify-queue" -name worker.pid -print0 2>/dev/null)
+      (( alive == 0 )) && break
+      sleep 0.1
+    done
+  fi
   rm -rf "$tmp_home"
 }
 trap cleanup EXIT

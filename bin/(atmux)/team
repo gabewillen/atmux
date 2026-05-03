@@ -306,6 +306,14 @@ create_team() {
   local fresh_session=0
   if ! tmux has-session -t "$session" 2>/dev/null; then
     tmux new-session -d -s "$session" -n "$session" -c "$repo_root"
+    # Pin the default pane to a stable holder so the session can't die
+    # mid-lifecycle. The bare default shell `tmux new-session` spawns
+    # exits unpredictably in non-interactive environments (CI runners,
+    # ssh -T), and once its only pane exits the session — and on a
+    # solo-session isolated tmux server, the server itself — disappears.
+    # `remain-on-exit on` keeps the pane around even if its process
+    # dies, so the session always survives until `team kill`.
+    tmux set-window-option -t "${session}:0" remain-on-exit on >/dev/null 2>&1 || true
     fresh_session=1
     ensure_tmux_scroll_enabled
     tmux set-environment -t "$session" ATMUX_REPO "$repo_name"

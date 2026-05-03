@@ -450,9 +450,10 @@ Empty diffs are suppressed (a change that reverts to the prior baseline
 produces nothing).
 
 --id         Persistent watcher id. Baseline SHA is stored at
-             $ATMUX_HOME/git/watch/<id>/last so the watcher can resume
-             from its last emit across restarts. Defaults to a derived id
-             from $ATMUX_AGENT_NAME (or hostname-pid outside an agent).
+             $ATMUX_HOME/git/watch/<repo>/<id>/last so the watcher can
+             resume from its last emit across restarts. Defaults to a
+             derived id from $ATMUX_AGENT_NAME (or hostname-pid outside
+             an agent).
 --coalesce   Batch changes into one digest per N seconds (default 0,
              i.e. emit per detected change). Set >0 to wait that long
              after the last change before emitting, grouping bursts.

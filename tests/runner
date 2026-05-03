@@ -7,27 +7,64 @@ export ATMUX_ALLOW_OUTSIDE_TMUX="${ATMUX_ALLOW_OUTSIDE_TMUX:-1}"
 TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 CLEANUP_ORPHANS="$TESTS_DIR/scripts/cleanup-orphans"
 
+# Isolate the tmux socket so tests never touch the developer's real tmux server.
+# Setting TMUX_TMPDIR redirects where tmux looks for/creates its socket; any
+# child `tmux ...` invocation in this process tree spawns/uses a private server
+# at $TMUX_TMPDIR/tmux-$UID/default instead of the user's default socket.
+if [[ -z "${ATMUX_TESTS_TMUX_TMPDIR:-}" ]]; then
+  ATMUX_TESTS_TMUX_TMPDIR="$(mktemp -d "${TMPDIR:-/tmp}/atmux-tests-tmux.XXXXXX")"
+  export ATMUX_TESTS_TMUX_TMPDIR
+  cleanup_isolated_tmux() {
+    if [[ -n "${ATMUX_TESTS_TMUX_TMPDIR:-}" && -d "$ATMUX_TESTS_TMUX_TMPDIR" ]]; then
+      TMUX_TMPDIR="$ATMUX_TESTS_TMUX_TMPDIR" tmux kill-server >/dev/null 2>&1 || true
+      rm -rf "$ATMUX_TESTS_TMUX_TMPDIR"
+    fi
+  }
+  trap cleanup_isolated_tmux EXIT INT TERM
+fi
+export TMUX_TMPDIR="$ATMUX_TESTS_TMUX_TMPDIR"
+
+# Notify-queue state in the developer's ~/.atmux/notify-queue/ is keyed on
+# (session_name, pane_id). With an isolated tmux server, pane ids reset to
+# %0,%1,... and collide with stale entries left by previous test runs that
+# used the same session names (atmux-<repo>-sender, etc). Wipe queue dirs
+# matching test session prefixes before the suite runs, but never touch
+# anything else under ~/.atmux.
+purge_test_notify_queues() {
+  local home_atmux="${ATMUX_HOME:-$HOME/.atmux}"
+  local queues="$home_atmux/notify-queue"
+  [[ -d "$queues" ]] || return 0
+  local d base
+  for d in "$queues"/atmux-*-_*; do
+    [[ -d "$d" ]] || continue
+    base="$(basename "$d")"
+    case "$base" in
+      atmux-*-sender-_*|atmux-*-receiver-_*|atmux-*-team-*-_*|atmux-*-par-_*|atmux-*-worker-_*|atmux-*-manager-_*)
+        rm -rf "$d"
+        ;;
+    esac
+  done
+}
+purge_test_notify_queues
+
+log() {
+  printf '[atmux-tests] %s\n' "$*"
+}
+
 usage() {
   cat <<'USAGE'
-Usage: tests/runner [--parallel N] [--shard N/TOTAL]
+Usage: tests/runner [--shard N/TOTAL]
 
-  --parallel N    Run up to N tests concurrently. Each parallel test gets
-                  its own ATMUX_HOME and its own tmux server (via a
-                  per-test TMUX_TMPDIR), so tests with hardcoded session
-                  names don't collide across workers.
-                  Default: 1 (serial).
-
-  --shard N/TOTAL Run only the Nth slice of TOTAL using round-robin
-                  assignment. Useful for matrix-style CI sharding when
-                  --parallel isn't enough on a single runner.
-                  Default: 1/1 (entire suite).
+  --shard N/TOTAL  Run only the Nth slice of TOTAL using round-robin
+                   selection across the test list. Used by CI to spread
+                   the suite over a matrix of GitHub Actions runners.
+                   Default: 1/1 (entire suite).
 
 Live tests (suffix "_live") are skipped unless
 ATMUX_RUN_LIVE_ADAPTER_TESTS=1 is exported.
 USAGE
 }
 
-PARALLEL=1
 SHARD_INDEX=1
 SHARD_TOTAL=1
 
@@ -47,40 +84,12 @@ parse_shard() {
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --parallel)
-      PARALLEL="${2:-}"
-      [[ "$PARALLEL" =~ ^[0-9]+$ ]] || { echo "error: --parallel expects an integer" >&2; exit 2; }
-      shift 2
-      ;;
-    --parallel=*)
-      PARALLEL="${1#--parallel=}"
-      [[ "$PARALLEL" =~ ^[0-9]+$ ]] || { echo "error: --parallel expects an integer" >&2; exit 2; }
-      shift
-      ;;
-    --shard)
-      parse_shard "${2:-}"
-      shift 2
-      ;;
-    --shard=*)
-      parse_shard "${1#--shard=}"
-      shift
-      ;;
-    -h|--help)
-      usage
-      exit 0
-      ;;
-    *)
-      echo "error: unknown argument: $1" >&2
-      usage >&2
-      exit 2
-      ;;
+    --shard)       parse_shard "${2:-}"; shift 2 ;;
+    --shard=*)     parse_shard "${1#--shard=}"; shift ;;
+    -h|--help)     usage; exit 0 ;;
+    *)             echo "error: unknown argument: $1" >&2; usage >&2; exit 2 ;;
   esac
 done
-(( PARALLEL >= 1 )) || PARALLEL=1
-
-log() {
-  printf '[atmux-tests] %s\n' "$*"
-}
 
 should_skip_test() {
   local test_name="$1"
@@ -93,104 +102,50 @@ should_skip_test() {
   return 1
 }
 
-# Run a single test in a fully isolated sandbox: own ATMUX_HOME and own
-# TMUX_TMPDIR. The test's own `lib/isolate-tmux.sh` will pick up the
-# unset ATMUX_TESTS_TMUX_TMPDIR (because we unset it below) and create
-# its own private tmux server inside the sandbox. Stdout/stderr are
-# captured to a per-test log; on success the log is dropped, on failure
-# it's emitted in full so CI logs show the cause.
-run_one() {
-  local test_script="$1"
-  local name
-  name="$(basename "$test_script")"
-  [[ -x "$test_script" ]] || chmod +x "$test_script"
-
-  if should_skip_test "$name"; then
-    log "skipping $name (set ATMUX_RUN_LIVE_ADAPTER_TESTS=1 to include live adapter tests)"
-    return 0
-  fi
-
-  local sandbox log_file
-  sandbox="$(mktemp -d "${TMPDIR:-/tmp}/atmux-test-sandbox.XXXXXX")"
-  log_file="$sandbox/run.log"
-  mkdir -p "$sandbox/atmux"
-
-  log "running $name"
-  local rc=0
-  (
-    # Each parallel worker gets its own ATMUX_HOME.
-    export ATMUX_HOME="$sandbox/atmux"
-    # Force the test's isolate-tmux lib to provision a fresh tmux
-    # server in the sandbox instead of reusing a runner-wide socket.
-    unset ATMUX_TESTS_TMUX_TMPDIR
-    exec "$test_script"
-  ) >"$log_file" 2>&1 || rc=$?
-
-  if (( rc == 0 )); then
-    log "ok $name"
-  else
-    log "FAIL $name (rc=$rc)"
-    sed 's/^/    | /' "$log_file" >&2
-  fi
-  rm -rf "$sandbox"
-  return $rc
-}
-
-# Build the test list, applying shard filter.
-collect_tests() {
-  local i=0 owner test_script
-  for test_script in "$TESTS_DIR"/[0-9]*_*; do
-    [[ -f "$test_script" ]] || continue
-    owner=$(( i % SHARD_TOTAL + 1 ))
-    i=$(( i + 1 ))
-    if (( owner == SHARD_INDEX )); then
-      printf '%s\n' "$test_script"
-    fi
-  done
+# Kill any leftover detached `atmux schedule` and notify workers between
+# tests so stale notifications can't leak into a later test's pane.
+# Also re-purge the test notify queue dirs — items written before a
+# session was killed survive in the filesystem and tmux often reuses
+# pane ids when a session is recreated, so the next test's worker would
+# pick up stale items keyed on the same (session, pane_id) pair.
+purge_between_tests() {
+  pkill -TERM -f 'atmux/exec _run .*atmux schedule' 2>/dev/null || true
+  pkill -TERM -f 'bin/atmux schedule --no-detach --interval' 2>/dev/null || true
+  pkill -TERM -f 'bin/atmux schedule --no-detach --once' 2>/dev/null || true
+  purge_test_notify_queues
 }
 
 main() {
-  local tests=()
-  while IFS= read -r line; do
-    tests+=("$line")
-  done < <(collect_tests)
-
-  local total="${#tests[@]}"
-  if (( total == 0 )); then
-    log "no tests selected"
-    return 0
-  fi
-
-  if (( PARALLEL == 1 )); then
-    local t
-    for t in "${tests[@]}"; do
-      run_one "$t" || return 1
-    done
-  else
-    # Bounded-parallel runner. Spawn up to PARALLEL workers; track each
-    # worker's PID and its associated test name so failures are
-    # attributable in the log.
-    export -f run_one log should_skip_test
-    export TESTS_DIR ATMUX_RUN_LIVE_ADAPTER_TESTS ATMUX_ALLOW_OUTSIDE_TMUX
-    local fail=0
-    printf '%s\n' "${tests[@]}" \
-      | xargs -n 1 -P "$PARALLEL" -I {} bash -c 'run_one "$@"' _ {} \
-      || fail=$?
-    if (( fail != 0 )); then
+  local test_script i=0 owner ran=0
+  for test_script in "$TESTS_DIR"/[0-9]*_*; do
+    [[ -f "$test_script" ]] || continue
+    [[ -x "$test_script" ]] || chmod +x "$test_script"
+    owner=$(( i % SHARD_TOTAL + 1 ))
+    i=$(( i + 1 ))
+    if (( owner != SHARD_INDEX )); then
+      continue
+    fi
+    [[ ! -x "$CLEANUP_ORPHANS" ]] || "$CLEANUP_ORPHANS" || true
+    purge_between_tests
+    if should_skip_test "$(basename "$test_script")"; then
+      log "skipping $(basename "$test_script") (set ATMUX_RUN_LIVE_ADAPTER_TESTS=1 to include live adapter tests)"
+      continue
+    fi
+    log "running $(basename "$test_script")"
+    if ! "$test_script"; then
+      [[ ! -x "$CLEANUP_ORPHANS" ]] || "$CLEANUP_ORPHANS" || true
+      purge_between_tests
       return 1
     fi
-  fi
-
+    [[ ! -x "$CLEANUP_ORPHANS" ]] || "$CLEANUP_ORPHANS" || true
+    purge_between_tests
+    ran=$((ran + 1))
+  done
   if (( SHARD_TOTAL > 1 )); then
-    log "shard $SHARD_INDEX/$SHARD_TOTAL complete ($total tests)"
+    log "shard $SHARD_INDEX/$SHARD_TOTAL complete ($ran tests)"
   else
-    log "suite complete ($total tests)"
+    log "suite complete ($ran tests)"
   fi
 }
-
-# Final cleanup: nuke any stragglers from `atmux schedule --detach` and
-# the like that the per-test sandboxing didn't catch. (Per-sandbox tmux
-# servers and ATMUX_HOMEs already get torn down inside run_one.)
-[[ ! -x "$CLEANUP_ORPHANS" ]] || "$CLEANUP_ORPHANS" || true
 
 main "$@"

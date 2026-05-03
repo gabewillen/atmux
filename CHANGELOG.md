@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.16.0 — `atmux git watch` rolling-diff worktree watcher
+
+Adds a new `git` resource so an agent can subscribe to worktree changes and receive **rolling diffs** — each notification contains only the diff *since the previous notification*, never the full dirty state. Setup work for the upcoming pair-programming team's navigator agent, which will watch the shared worktree and steer the driver when it goes off-track.
+
+**`atmux git watch [--id <id>] [--coalesce <s>] [--interval <s>] [--timeout <s>] [--duration <s>] [--exec <cmd>] [--once]`**. Polls the current repo on `--interval` (default 10s), snapshots the index+worktree via `git stash create` (non-mutating — produces a commit object referencing the dirty state without touching the working tree, the index, or the stash list), resolves it to its tree SHA, and emits one digest per `--coalesce` window (default 60s):
+
+```xml
+<watch type="git" id="navigator" prev="<tree>" new="<tree>" events="2" window="60s" reason="window">
+  <diff>diff --git a/f b/f
+  ...</diff>
+</watch>
+```
+
+The baseline persists at `$ATMUX_HOME/git/watch/<repo>/<id>/last`, so a watcher restart resumes from its last emit instead of replaying the cumulative diff. Empty diffs (e.g. a change reverted within the coalesce window) are suppressed.
+
+Snapshots are content-addressed at the tree level — comparing tree SHAs (not stash *commit* SHAs, whose timestamp metadata changes every call) means equality genuinely means "no change." Safe to run against a worktree shared with other agents.
+
+### Other changes
+- `bin/atmux`'s `resolve_script_subcommand` now falls back to `$ATMUX_SOURCE_ROOT/bin/(atmux)/<cmd>` after the cwd-repo and `~/.atmux` install lookups. New subcommands work the moment they land in the source tree, regardless of cwd or whether the user has run `atmux install`. Fixes a latent gap that would have hit any future top-level noun.
+- Tests: `116_watch_git_rolling_diff`.
+
 ## 0.15.0 — Roles can now apply to teams
 
 Roles previously only described agents. This release extends the role mechanism so a single role definition can target either an agent (default) or a team — same directory contract (`role.md` + `manifest` + optional `start`/`stop`), one new `KIND` field in the manifest. Setup work for the upcoming driver+navigator paired-programming team, which lands in a follow-up release.

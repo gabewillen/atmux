@@ -1,0 +1,101 @@
+#!/usr/bin/env bash
+# Verifies `atmux git watch` semantics:
+#   - emits a digest per change (rolling baseline — each emit's `prev`
+#     equals the previous emit's `new`)
+#   - the second emit's diff body contains ONLY the second change, not the
+#     cumulative diff from the original baseline
+#   - empty/no-change windows do not emit
+#   - working tree and stash list are untouched (non-mutating snapshot)
+#   - persists baseline so a second invocation resumes from the last emit
+set -euo pipefail
+
+source "$(dirname "${BASH_SOURCE[0]}")/lib/isolate-tmux.sh"
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+ATMUX_BIN="$REPO_ROOT/bin/atmux"
+
+WORK="$(mktemp -d "${TMPDIR:-/tmp}/atmux-git-watch.XXXXXX")"
+trap 'rm -rf "$WORK"' EXIT
+
+REPO="$WORK/repo"
+git init -q "$REPO"
+git -C "$REPO" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
+echo "a" > "$REPO/f"
+git -C "$REPO" add f
+git -C "$REPO" -c user.email=t@t -c user.name=t commit -q -m "add f"
+
+export ATMUX_HOME="$WORK/atmux-home"
+mkdir -p "$ATMUX_HOME"
+
+cd "$REPO"
+
+OUT="$WORK/run1.out"
+
+# Make changes after the watcher starts so its initial baseline is the
+# clean tree. With --coalesce 1 each change should produce its own emit.
+( sleep 2; echo "first change" >> f; sleep 4; echo "second change" >> f ) &
+writer=$!
+
+rc=0
+ATMUX_ALLOW_OUTSIDE_TMUX=1 "$ATMUX_BIN" git watch \
+  --id rolling --interval 1 --coalesce 1 --duration 8 > "$OUT" 2>&1 || rc=$?
+wait "$writer" 2>/dev/null || true
+
+[[ "$rc" -eq 124 ]] || { echo "expected duration exit 124, got $rc" >&2; cat "$OUT" >&2; exit 1; }
+
+# Emits span multiple lines (diff body contains real newlines). Split on
+# <watch ...> opening tags and group each emit into its own block file.
+awk '
+  /<watch type="git"/ { n++; out=sprintf("'"$WORK"'/emit-%d", n) }
+  n>0 { print > out }
+' "$OUT"
+
+emit_count=$(ls "$WORK"/emit-* 2>/dev/null | wc -l | tr -d ' ')
+[[ "$emit_count" -eq 2 ]] || { echo "expected 2 emits, got $emit_count" >&2; cat "$OUT" >&2; exit 1; }
+
+extract_attr() { sed -n "s/.*$2=\"\\([^\"]*\\)\".*/\\1/p" "$1" | head -n1; }
+
+first_new="$(extract_attr "$WORK/emit-1" new)"
+second_prev="$(extract_attr "$WORK/emit-2" prev)"
+[[ -n "$first_new" && "$first_new" == "$second_prev" ]] \
+  || { echo "rolling baseline broken: first.new=$first_new second.prev=$second_prev" >&2; cat "$OUT" >&2; exit 1; }
+
+# Each emit's diff body must contain only its own change, not the cumulative diff.
+grep -Fq '+first change' "$WORK/emit-1" \
+  || { echo "first emit missing 'first change'" >&2; cat "$WORK/emit-1" >&2; exit 1; }
+grep -Fq 'second change' "$WORK/emit-1" \
+  && { echo "first emit leaked 'second change'" >&2; cat "$WORK/emit-1" >&2; exit 1; } || true
+
+grep -Fq '+second change' "$WORK/emit-2" \
+  || { echo "second emit missing 'second change'" >&2; cat "$WORK/emit-2" >&2; exit 1; }
+# Cumulative diff would mark 'first change' as ADDED ('+first change');
+# rolling shows it only as context (' first change'). Reject the '+' form.
+grep -q '^\+first change' "$WORK/emit-2" \
+  && { echo "second emit shows cumulative diff, not rolling" >&2; cat "$WORK/emit-2" >&2; exit 1; } || true
+
+# Snapshot is non-mutating: worktree still dirty, stash list empty.
+[[ "$(git -C "$REPO" status --porcelain)" == " M f" ]] \
+  || { echo "worktree state changed unexpectedly" >&2; git -C "$REPO" status --short >&2; exit 1; }
+[[ -z "$(git -C "$REPO" stash list)" ]] \
+  || { echo "stash list should be empty (snapshot must not push)" >&2; git -C "$REPO" stash list >&2; exit 1; }
+
+# Baseline persisted — second emit's `new` should match the file at
+# $ATMUX_HOME/git/watch/<repo>/<id>/last
+last_file="$(find "$ATMUX_HOME/git/watch" -type f -name last | head -n1)"
+[[ -n "$last_file" && -f "$last_file" ]] \
+  || { echo "baseline state file missing under $ATMUX_HOME/git/watch" >&2; ls -R "$ATMUX_HOME/git" >&2; exit 1; }
+persisted="$(cat "$last_file")"
+expected="$(extract_attr "$WORK/emit-2" new)"
+[[ "$persisted" == "$expected" ]] \
+  || { echo "persisted baseline=$persisted expected=$expected" >&2; exit 1; }
+
+# Second run with no changes must emit nothing and exit 124 on duration.
+OUT2="$WORK/run2.out"
+rc2=0
+ATMUX_ALLOW_OUTSIDE_TMUX=1 "$ATMUX_BIN" git watch \
+  --id rolling --interval 1 --coalesce 1 --duration 3 > "$OUT2" 2>&1 || rc2=$?
+[[ "$rc2" -eq 124 ]] || { echo "second run: expected 124, got $rc2" >&2; cat "$OUT2" >&2; exit 1; }
+[[ ! -s "$OUT2" ]] || { echo "second run should be silent, got:" >&2; cat "$OUT2" >&2; exit 1; }
+
+echo "ok: git watch emits rolling diffs, suppresses empties, leaves worktree intact"

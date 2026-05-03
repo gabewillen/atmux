@@ -161,15 +161,35 @@ for _ in $(seq 1 40); do
   sleep 0.1
 done
 if [[ "$seen_alpha" != "1" || "$seen_beta" != "1" ]]; then
-  echo "fail: members not visible — alpha=$seen_alpha beta=$seen_beta team=$team_short" >&2
-  echo "  sessions in repo:" >&2
-  tmux list-sessions -F '  #{session_name}' 2>/dev/null | grep '^  atmux-amux_sh-' >&2 || true
-  while IFS= read -r s; do
-    [[ -z "$s" ]] && continue
-    mt="$(tmux show-environment -t "$s" ATMUX_TEAM 2>/dev/null | sed -n 's/^ATMUX_TEAM=//p' || true)"
-    an="$(tmux show-environment -t "$s" ATMUX_AGENT_NAME 2>/dev/null | sed -n 's/^ATMUX_AGENT_NAME=//p' || true)"
-    echo "    $s  ATMUX_TEAM=${mt:-<unset>}  ATMUX_AGENT_NAME=${an:-<unset>}" >&2
-  done < <(tmux list-sessions -F '#{session_name}' 2>/dev/null | grep '^atmux-amux_sh-' || true)
+  {
+    echo "fail: members not visible — alpha=$seen_alpha beta=$seen_beta team=$team_short"
+    echo "  team create stdout/stderr:"
+    printf '%s\n' "$out" | sed 's/^/    /'
+    echo "  team session ($team_session):"
+    if tmux has-session -t "$team_session" 2>/dev/null; then
+      echo "    EXISTS"
+      tmux show-environment -t "$team_session" 2>/dev/null | grep '^ATMUX_' | sed 's/^/      /'
+    else
+      echo "    MISSING (probably exited or tmux server died)"
+    fi
+    echo "  ALL sessions on tmux server:"
+    tmux list-sessions -F '    #{session_name}' 2>/dev/null || echo "    <list-sessions failed — tmux server may be dead>"
+    echo "  per-session ATMUX env (atmux- prefix):"
+    while IFS= read -r s; do
+      [[ -z "$s" ]] && continue
+      mt="$(tmux show-environment -t "$s" ATMUX_TEAM 2>/dev/null | sed -n 's/^ATMUX_TEAM=//p' || true)"
+      an="$(tmux show-environment -t "$s" ATMUX_AGENT_NAME 2>/dev/null | sed -n 's/^ATMUX_AGENT_NAME=//p' || true)"
+      echo "    $s  ATMUX_TEAM=${mt:-<unset>}  ATMUX_AGENT_NAME=${an:-<unset>}"
+    done < <(tmux list-sessions -F '#{session_name}' 2>/dev/null | grep '^atmux-' || true)
+    echo "  worktrees in ATMUX_HOME:"
+    ls -la "$ATMUX_HOME/agents/" 2>/dev/null | sed 's/^/    /' || echo "    <no agents dir>"
+    echo "  team-started marker:"
+    [[ -f "$MARKERS/team-started" ]] && echo "    present" || echo "    MISSING"
+    echo "  team-start.env:"
+    [[ -f "$MARKERS/team-start.env" ]] && sed 's/^/    /' "$MARKERS/team-start.env" || echo "    MISSING"
+    echo "  member-stops:"
+    [[ -f "$MARKERS/member-stops" ]] && sed 's/^/    /' "$MARKERS/member-stops" || echo "    <none>"
+  } >&2
   exit 1
 fi
 

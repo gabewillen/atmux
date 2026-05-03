@@ -449,40 +449,29 @@ atmux path watch 'docs/**/*.md' --exec ./on-docs-changed --coalesce 30
 #### `git`
 
 ```sh
+atmux git <git-args...>
 atmux git watch [--id <id>] [--coalesce <seconds>] [--interval <seconds>]
                 [--timeout <seconds>] [--duration <seconds>]
                 [--exec <cmd>] [--once]
 ```
 
-Watch a git worktree for changes and emit rolling diffs. Each notification
-contains only the diff since the previous notification — never the full
-dirty state. Uses `git stash create` for snapshots (non-mutating: nothing
-is added to the stash list, the working tree and index are untouched), so
-it is safe to run against a worktree shared with other agents.
+Transparent wrapper around `git`. Every verb except `watch` is
+forwarded to the real git executable — `atmux git status`, `atmux git
+log --oneline`, `atmux git worktree add <path>` all behave exactly
+like the underlying git command and exit with git's exit code.
 
-Empty diffs are suppressed (a change that reverts to the prior baseline
-produces nothing).
+`atmux git watch` is the only verb atmux owns: a rolling-diff watcher
+that emits XML notifications on each change since the last emit. See
+`atmux git watch --help` for details.
 
---id         Persistent watcher id. Baseline SHA is stored at
-             $ATMUX_HOME/git/watch/<repo>/<id>/last so the watcher can
-             resume from its last emit across restarts. Defaults to a
-             derived id from $ATMUX_AGENT_NAME (or hostname-pid outside
-             an agent).
---coalesce   Batch changes into one digest per N seconds (default 0,
-             i.e. emit per detected change). Set >0 to wait that long
-             after the last change before emitting, grouping bursts.
---interval   Poll interval in seconds (default 10).
---timeout    Idle exit: return 124 if no change is observed for N seconds
-             (0 = disabled, default 0).
---duration   Hard cap: return 124 after N seconds total (0 = no cap).
---exec       Pipe each emitted XML line into `bash -c <cmd>`.
---once       Single-shot: emit one diff on the first change and exit 0.
+Wrapping git lets atmux react to specific operations. The current set
+of hooks is hardcoded; a configurable hooks system is planned.
 
-```sh
-atmux git watch
-atmux git watch --id navigator --coalesce 5
-atmux git watch --once --timeout 600
-```
+Hooks (current):
+worktree add  Records the new worktree's absolute path at
+              $ATMUX_HOME/agents/<repo>/<agent>/git-hooks/last-worktree-add
+              on success. Pair-program's navigator uses this to
+              follow the driver's worktree.
 
 ### Cross-cutting verbs
 
@@ -512,21 +501,28 @@ atmux send --to worker --interrupt "stop, that's wrong"
 #### `exec`
 
 ```sh
-atmux exec [--detach] [--] <command> [args...]
+atmux exec [--detach | --shared] [--] <command> [args...]
 ```
 
 Execute a command with passthrough stdio and unchanged exit behavior.
 After the command exits or is interrupted, send an ATMUX notification back
 to the current agent pane with the exit code.
 
---detach  Run the command in a new tmux window. Returns immediately.
-          The process pane is stored so watchers can capture its output.
-          Notification is sent to the agent pane when the process exits.
+--detach   Run the command in a new tmux window inside the current
+           agent's session. Returns immediately. Tmux ties the window
+           to the session — when the session is killed, the window
+           (and the command) die with it. No nohup, no orphans.
+--shared   Run in a new tmux window inside the per-repo
+           `atmux-<repo>-workers` session (lazy-created if missing).
+           Use for long-running workers that aren't owned by any
+           single agent (e.g. PR/issue feed watchers fanning events
+           out to multiple subscribers). Implies --detach.
 
 ```sh
 atmux exec sleep 30
 atmux exec -- make test
 atmux exec --detach -- make test
+atmux exec --shared -- atmux pr watch 123
 ```
 
 #### `schedule`

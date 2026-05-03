@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# `git` shim: forwards to `atmux git`, which is a transparent wrapper
+# around the real git executable plus a small set of atmux hooks (e.g.
+# recording the path of a newly-created worktree so the navigator can
+# follow it).
+#
+# Adapter start hooks prepend this shim's directory to PATH so `git`
+# invocations from inside the agent's session route through atmux.
+# Subprocesses that bypass PATH and look up git themselves still work
+# — they find the real git directly. Hooks only fire for routes that
+# go through this shim.
+#
+# We resolve the real git here (stripping the shim's own directory from
+# PATH) and pass it via $ATMUX_REAL_GIT so `atmux git`'s resolver
+# doesn't re-discover this shim and loop.
+set -e
+
+shim_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+
+if [[ -z "${ATMUX_REAL_GIT:-}" ]]; then
+  # Strip our own directory from PATH and look up git there. Use awk
+  # for the strip so it survives unusual PATH separators.
+  stripped="$(printf '%s' "$PATH" \
+    | awk -v d="$shim_dir" 'BEGIN{RS=":";ORS=":"}{ if($0!=d) print }' \
+    | sed -E 's/:+$//')"
+  resolved="$(PATH="$stripped" command -v git 2>/dev/null || true)"
+  if [[ -z "$resolved" ]]; then
+    for fallback in /usr/bin/git /usr/local/bin/git /opt/homebrew/bin/git; do
+      [[ -x "$fallback" ]] && { resolved="$fallback"; break; }
+    done
+  fi
+  if [[ -z "$resolved" ]]; then
+    echo "atmux git shim: cannot find real git executable" >&2
+    exit 127
+  fi
+  export ATMUX_REAL_GIT="$resolved"
+fi
+
+exec atmux git "$@"

@@ -1,60 +1,200 @@
 #!/usr/bin/env bash
+# atmux git — transparent wrapper around `git`.
+#
+# Forwards every git invocation to the real git executable so callers
+# (and a `git` shim that re-points $PATH at this wrapper) can use atmux
+# git interchangeably with git. The only verb atmux owns is `watch`,
+# which is the atmux-specific rolling-diff watcher and never reaches
+# real git.
+#
+# Wrapping git lets atmux observe specific git operations and fire
+# hooks. For now only one hook exists, hardcoded:
+#
+#   git worktree add <path>   (on success)
+#     -> writes the absolute new-worktree path to
+#        $ATMUX_HOME/agents/<repo>/<agent>/git-hooks/last-worktree-add
+#        so the navigator's worktree-tracker can detect it and re-arm
+#        `atmux git watch` against the agent's chosen worktree.
+#
+# A general user-configurable hooks system is a deferred feature; see
+# the project's GitHub issues for the proposal.
 set -euo pipefail
 
+ATMUX_HOME="${ATMUX_HOME:-$HOME/.atmux}"
 HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 usage() {
   cat <<'USAGE'
 Usage:
+  atmux git <git-args...>
   atmux git watch [--id <id>] [--coalesce <seconds>] [--interval <seconds>]
                   [--timeout <seconds>] [--duration <seconds>]
                   [--exec <cmd>] [--once]
 
 Description:
-  Watch a git worktree for changes and emit rolling diffs. Each notification
-  contains only the diff since the previous notification — never the full
-  dirty state. Uses `git stash create` for snapshots (non-mutating: nothing
-  is added to the stash list, the working tree and index are untouched), so
-  it is safe to run against a worktree shared with other agents.
+  Transparent wrapper around `git`. Every verb except `watch` is
+  forwarded to the real git executable — `atmux git status`, `atmux git
+  log --oneline`, `atmux git worktree add <path>` all behave exactly
+  like the underlying git command and exit with git's exit code.
 
-  Empty diffs are suppressed (a change that reverts to the prior baseline
-  produces nothing).
+  `atmux git watch` is the only verb atmux owns: a rolling-diff watcher
+  that emits XML notifications on each change since the last emit. See
+  `atmux git watch --help` for details.
 
-  --id         Persistent watcher id. Baseline SHA is stored at
-               $ATMUX_HOME/git/watch/<repo>/<id>/last so the watcher can
-               resume from its last emit across restarts. Defaults to a
-               derived id from $ATMUX_AGENT_NAME (or hostname-pid outside
-               an agent).
-  --coalesce   Batch changes into one digest per N seconds (default 0,
-               i.e. emit per detected change). Set >0 to wait that long
-               after the last change before emitting, grouping bursts.
-  --interval   Poll interval in seconds (default 10).
-  --timeout    Idle exit: return 124 if no change is observed for N seconds
-               (0 = disabled, default 0).
-  --duration   Hard cap: return 124 after N seconds total (0 = no cap).
-  --exec       Pipe each emitted XML line into `bash -c <cmd>`.
-  --once       Single-shot: emit one diff on the first change and exit 0.
+  Wrapping git lets atmux react to specific operations. The current set
+  of hooks is hardcoded; a configurable hooks system is planned.
 
-Examples:
-  atmux git watch
-  atmux git watch --id navigator --coalesce 5
-  atmux git watch --once --timeout 600
+Hooks (current):
+  worktree add  Records the new worktree's absolute path at
+                $ATMUX_HOME/agents/<repo>/<agent>/git-hooks/last-worktree-add
+                on success. Pair-program's navigator uses this to
+                follow the driver's worktree.
 USAGE
 }
 
-verb="${1:-}"
-shift || true
+# Resolve the *real* git executable, bypassing any `git` shim that may
+# be on PATH ahead of it (the cursor-agent adapter prepends a shim dir
+# specifically so `git` routes through atmux). We try in order:
+#   1) $ATMUX_REAL_GIT (escape hatch)
+#   2) the first `git` on PATH whose realpath is NOT this script
+#   3) common system locations (/usr/bin/git, /opt/homebrew/bin/git)
+resolve_real_git() {
+  if [[ -n "${ATMUX_REAL_GIT:-}" && -x "$ATMUX_REAL_GIT" ]]; then
+    printf '%s\n' "$ATMUX_REAL_GIT"
+    return 0
+  fi
 
-case "$verb" in
-  watch)
-    exec "$HERE/[watch]/git" "$@"
-    ;;
-  -h|--help|help|"")
-    usage
-    ;;
-  *)
-    echo "unknown git command: $verb" >&2
+  local self
+  self="$(cd -- "$HERE" && pwd -P)/git"
+
+  local candidate
+  while IFS= read -r candidate; do
+    [[ -n "$candidate" && -x "$candidate" ]] || continue
+    local resolved
+    resolved="$(cd -- "$(dirname -- "$candidate")" 2>/dev/null && pwd -P)/$(basename -- "$candidate")"
+    [[ "$resolved" != "$self" ]] || continue
+    # Reject anything that ends in `(atmux)/git` — defends against PATH
+    # entries that point at the source tree's own bin/(atmux) dir.
+    [[ "$resolved" != *'(atmux)/git' ]] || continue
+    # Reject our git shim (it would call us right back).
+    [[ "$resolved" != *'/git-shim/git' ]] || continue
+    printf '%s\n' "$candidate"
+    return 0
+  done < <(PATH="$PATH" command -v -p git 2>/dev/null
+           which -a git 2>/dev/null
+           printf '%s\n' /usr/bin/git /usr/local/bin/git /opt/homebrew/bin/git)
+
+  echo "atmux git: cannot find real git executable" >&2
+  return 1
+}
+
+# Hook: `git worktree add` succeeded. argv after `worktree add`.
+hook_worktree_add() {
+  local target_path=""
+  # Find the first positional after `worktree add`. The shape is:
+  #   git worktree add [<options>] <path> [<commit-ish>]
+  # but several options consume a following value, so we can't just
+  # take the first non-`-` arg — `git worktree add -b feature ../wt`
+  # would otherwise pick `feature` as the path. Skip the value of
+  # any option that's known to take one. `--flag=value` consumes
+  # nothing extra; `--flag value` consumes one. `--` ends options.
+  local skip_next=0
+  local end_of_options=0
+  local arg
+  for arg in "$@"; do
+    if (( skip_next == 1 )); then
+      skip_next=0
+      continue
+    fi
+    if (( end_of_options == 1 )); then
+      # Past `--`: first arg is the path, regardless of leading dash.
+      target_path="$arg"
+      break
+    fi
+    case "$arg" in
+      --)
+        end_of_options=1
+        continue
+        ;;
+      -b|-B|--orphan|--reason)
+        # Short forms `-b`/`-B` and `--orphan`/`--reason` only accept
+        # the separated form (`-b feature`, `--reason "..."`); git
+        # does not parse `-b=feature`. So we only need to handle the
+        # `--long=value` shape for the long-options that actually
+        # support it.
+        skip_next=1
+        ;;
+      --orphan=*|--reason=*)
+        # Inline form takes no extra arg.
+        ;;
+      -*)
+        # Other flags (--detach, --force, --no-checkout, --quiet, etc)
+        # take no value.
+        ;;
+      *)
+        target_path="$arg"
+        break
+        ;;
+    esac
+  done
+  [[ -n "$target_path" ]] || return 0
+
+  # Resolve to absolute. The agent may have passed a relative path.
+  local abs
+  abs="$(cd -- "$target_path" 2>/dev/null && pwd -P)" || return 0
+
+  # Write to the agent's state dir. We write under
+  #   $ATMUX_HOME/agents/<repo>/<agent>/git-hooks/last-worktree-add
+  # which is a stable convention any subscriber (e.g. the navigator's
+  # worktree-tracker) can stat or inotify on.
+  local agent="${ATMUX_AGENT_NAME:-}"
+  local repo="${ATMUX_REPO:-}"
+  [[ -n "$agent" && -n "$repo" ]] || return 0
+
+  local hook_dir="$ATMUX_HOME/agents/$repo/$agent/git-hooks"
+  mkdir -p "$hook_dir" 2>/dev/null || return 0
+  printf '%s\n' "$abs" > "$hook_dir/last-worktree-add" 2>/dev/null || return 0
+}
+
+main() {
+  local verb="${1:-}"
+
+  if [[ -z "$verb" ]]; then
     usage >&2
     exit 2
-    ;;
-esac
+  fi
+
+  if [[ "$verb" == "watch" ]]; then
+    shift
+    exec "$HERE/[watch]/git" "$@"
+  fi
+
+  # Anything else: forward to real git. (`git help`, `git --help`,
+  # `git -h` etc all go to real git so the caller gets git's normal
+  # help output. `atmux git --help` works the same because it parses
+  # to argv[0]="--help".)
+  local real_git
+  real_git="$(resolve_real_git)" || exit 1
+
+  # Detect `worktree add` so we can fire the post-success hook.
+  local is_worktree_add=0
+  if [[ "$verb" == "worktree" && "${2:-}" == "add" ]]; then
+    is_worktree_add=1
+  fi
+
+  # Forward to real git, preserving exit code.
+  set +e
+  "$real_git" "$@"
+  local rc=$?
+  set -e
+
+  if (( is_worktree_add )) && (( rc == 0 )); then
+    # Skip leading `worktree add` so the hook only sees options + args.
+    shift 2 || true
+    hook_worktree_add "$@" || true
+  fi
+
+  exit "$rc"
+}
+
+main "$@"

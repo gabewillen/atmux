@@ -10,21 +10,28 @@ source "$HERE/notify"
 usage() {
   cat <<'USAGE'
 Usage:
-  atmux exec [--detach] [--] <command> [args...]
+  atmux exec [--detach | --shared] [--] <command> [args...]
 
 Description:
   Execute a command with passthrough stdio and unchanged exit behavior.
   After the command exits or is interrupted, send an ATMUX notification back
   to the current agent pane with the exit code.
 
-  --detach  Run the command in a new tmux window. Returns immediately.
-            The process pane is stored so watchers can capture its output.
-            Notification is sent to the agent pane when the process exits.
+  --detach   Run the command in a new tmux window inside the current
+             agent's session. Returns immediately. Tmux ties the window
+             to the session — when the session is killed, the window
+             (and the command) die with it. No nohup, no orphans.
+  --shared   Run in a new tmux window inside the per-repo
+             `atmux-<repo>-workers` session (lazy-created if missing).
+             Use for long-running workers that aren't owned by any
+             single agent (e.g. PR/issue feed watchers fanning events
+             out to multiple subscribers). Implies --detach.
 
 Examples:
   atmux exec sleep 30
   atmux exec -- make test
   atmux exec --detach -- make test
+  atmux exec --shared -- atmux pr watch 123
 USAGE
 }
 
@@ -215,11 +222,48 @@ exec_foreground() {
 }
 
 exec_detached() {
-  local session="${ATMUX_SESSION_NAME:-}"
-  if [[ -z "$session" ]]; then
-    echo "--detach requires an atmux session (ATMUX_SESSION_NAME not set)" >&2
-    exit 2
+  # Target session for the new tmux window:
+  #
+  #   --shared   →  atmux-<repo>-workers (repo-shared bg session,
+  #                 lazy-created if missing). Use for long-running
+  #                 workers that aren't owned by any single agent —
+  #                 e.g. PR/issue feed watchers fanning events out
+  #                 across multiple subscribing agents.
+  #   default    →  current agent's session (ATMUX_SESSION_NAME).
+  #                 Used for tracked foreground-style execs that
+  #                 should die when the agent does.
+  local session=""
+  if (( shared == 1 )); then
+    if [[ -z "${repo_name:-}" ]]; then
+      echo "--shared requires a repo context (no ATMUX_REPO and no git repo at cwd)" >&2
+      exit 2
+    fi
+    session="atmux-${repo_name}-workers"
+    if ! tmux has-session -t "$session" 2>/dev/null; then
+      # Lazy-create. The placeholder window holds the session open
+      # via `tail -f /dev/null` — portable across macOS BSD and Linux
+      # GNU userlands (vs `sleep infinity`, which BSD sleep rejects;
+      # the BSD shell would exit immediately and tmux would close
+      # the empty session).
+      tmux new-session -d -s "$session" -n holder \
+        "exec tail -f /dev/null" 2>/dev/null || true
+      if ! tmux has-session -t "$session" 2>/dev/null; then
+        echo "--shared: failed to create session $session" >&2
+        exit 2
+      fi
+    fi
+  else
+    session="${ATMUX_SESSION_NAME:-}"
+    if [[ -z "$session" ]]; then
+      echo "--detach requires an atmux session (ATMUX_SESSION_NAME not set; use --shared for a repo-scoped workers session)" >&2
+      exit 2
+    fi
+    if ! tmux has-session -t "$session" 2>/dev/null; then
+      echo "--detach: session not found: $session" >&2
+      exit 2
+    fi
   fi
+  local window="exec-$$"
 
   # Store argv null-delimited to avoid quoting issues across tmux shells
   mkdir -p "${ATMUX_HOME}/tmp"
@@ -236,20 +280,41 @@ exec_detached() {
   record_exec_start "$detach_id" "$repo_name" "$command_text" "$(timestamp_utc)" "$notify_pane"
   write_field "$exec_dir/detached" "1"
 
-  # Write a runner script to avoid quoting issues across tmux's default shell
+  # Write a runner script to avoid quoting issues across tmux's default
+  # shell. Forward every exported env var from the caller so the
+  # spawned worker sees the same environment it would have under nohup
+  # (ATMUX_HOME, ATMUX_GH_BIN, test-specific overrides, etc). A few
+  # tmux-internal vars are skipped because tmux re-derives them in the
+  # new window.
   local runner="$argv_file.run"
   local self="${BASH_SOURCE[0]}"
-  cat > "$runner" <<RUNNER
-#!/usr/bin/env bash
-export ATMUX_HOME='${ATMUX_HOME}'
-export ATMUX_EXEC_SUPPRESS_NOTIFY='${ATMUX_EXEC_SUPPRESS_NOTIFY:-}'
-exec '${self}' _run '${argv_file}' '${notify_pane}' '${repo_name}' '${exec_dir}' '${pid_fifo}'
-RUNNER
+  {
+    printf '#!/usr/bin/env bash\n'
+    # Always forward ATMUX_HOME explicitly. The script-local
+    # `ATMUX_HOME="${ATMUX_HOME:-...}"` assignment near the top of
+    # `atmux exec` is *not* exported, so it doesn't appear in
+    # `compgen -e` unless a parent process already exported it. Some
+    # callers (e.g. test harnesses, ad-hoc shells) leave it unexported,
+    # which would otherwise silently let the worker fall back to
+    # `$HOME/.atmux` instead of the caller's intended ATMUX_HOME.
+    printf 'export ATMUX_HOME=%q\n' "$ATMUX_HOME"
+    while IFS= read -r __exec_env_name; do
+      [[ -n "$__exec_env_name" ]] || continue
+      case "$__exec_env_name" in
+        TMUX|TMUX_PANE|_|ATMUX_HOME) continue ;;
+      esac
+      printf 'export %s=%q\n' "$__exec_env_name" "${!__exec_env_name-}"
+    done < <(compgen -e)
+    printf "exec %q _run %q %q %q %q %q\n" \
+      "$self" "$argv_file" "$notify_pane" "$repo_name" "$exec_dir" "$pid_fifo"
+  } > "$runner"
   chmod +x "$runner"
 
-  # Launch in a new tmux window
+  # Launch in a new tmux window. `-a` appends after the current
+  # window so we never collide with a session whose base-index is 0
+  # and is already occupied by the adapter pane.
   local process_pane
-  process_pane="$(tmux new-window -d -t "$session:" -n "exec-$$" -P -F '#{pane_id}' "$runner")"
+  process_pane="$(tmux new-window -a -d -t "$session:" -n "$window" -P -F '#{pane_id}' "$runner")"
 
   write_field "$exec_dir/executor_pane" "$process_pane"
 
@@ -340,6 +405,8 @@ if [[ "$1" == "_run" ]]; then
   exit $?
 fi
 
+shared=0
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -h|--help|help)
@@ -347,6 +414,11 @@ while [[ $# -gt 0 ]]; do
       exit 0
       ;;
     --detach)
+      detach=1
+      shift
+      ;;
+    --shared)
+      shared=1
       detach=1
       shift
       ;;

@@ -1141,14 +1141,53 @@ ensure_notification_worker() {
   fi
 
   notify_script="$(resolve_notify_script_path "$source_root")"
-  debug_notify "worker:spawn pane=$(printf '%q' "$pane") qdir=$(printf '%q' "$qdir")"
-  nohup env \
-    ATMUX_HOME="$ATMUX_HOME" \
-    ATMUX_SOURCE_ROOT="$source_root" \
-    ATMUX_REAL_TMUX="${ATMUX_REAL_TMUX:-}" \
-    ATMUX_ALLOW_REAL_TMUX=1 \
-    ATMUX_DEBUG_NOTIFY="${ATMUX_DEBUG_NOTIFY:-0}" \
-    "$notify_script" __serve-queue --pane "$pane" --source-root "$source_root" >/dev/null 2>&1 &
+
+  # The queue worker MUST live in the recipient pane's session. The
+  # worker is keyed to that pane (polls its queue and tmux send-keys
+  # to it). When the recipient session is killed the worker has
+  # nothing useful to do, so binding its lifetime to that session is
+  # correct — kill-session cascade-kills the worker, no orphan.
+  #
+  # If we can't resolve the recipient's session (the pane id is bogus
+  # or the session is already gone), we fail to spawn rather than
+  # falling back to a nohup'd worker — that fallback would either
+  # deliver to a dead pane (pointless) or accumulate as an orphan.
+  local recipient_session=""
+  recipient_session="$(tmux display-message -p -t "$pane" '#{session_name}' 2>/dev/null || true)"
+
+  debug_notify "worker:spawn pane=$(printf '%q' "$pane") qdir=$(printf '%q' "$qdir") session=$(printf '%q' "${recipient_session:-<none>}")"
+
+  if [[ -z "$recipient_session" ]] || ! tmux has-session -t "$recipient_session" 2>/dev/null; then
+    debug_notify "worker:spawn_failed pane=$(printf '%q' "$pane") reason=no_recipient_session"
+    return 1
+  fi
+
+  # Build a small launcher script (avoids quoting issues across tmux's
+  # `sh -c` re-parse) and spawn it as a tmux window in the recipient's
+  # session. `-a` appends after the current window so we never collide
+  # with the adapter pane at index 0.
+  mkdir -p "$qdir"
+  local runner="$qdir/worker-runner.sh"
+  {
+    printf '#!/usr/bin/env bash\n'
+    printf 'export ATMUX_HOME=%q\n' "$ATMUX_HOME"
+    printf 'export ATMUX_SOURCE_ROOT=%q\n' "$source_root"
+    printf 'export ATMUX_REAL_TMUX=%q\n' "${ATMUX_REAL_TMUX:-}"
+    printf 'export ATMUX_ALLOW_REAL_TMUX=1\n'
+    printf 'export ATMUX_DEBUG_NOTIFY=%q\n' "${ATMUX_DEBUG_NOTIFY:-0}"
+    printf 'exec %q __serve-queue --pane %q --source-root %q\n' \
+      "$notify_script" "$pane" "$source_root"
+  } > "$runner"
+  chmod +x "$runner"
+
+  local window_name="notify-${pane#%}"
+  if ! tmux new-window -a -d \
+          -t "${recipient_session}:" \
+          -n "$window_name" \
+          "$runner" 2>/dev/null; then
+    debug_notify "worker:spawn_failed pane=$(printf '%q' "$pane") reason=tmux_new_window_failed session=$(printf '%q' "$recipient_session")"
+    return 1
+  fi
 
   for (( attempt=0; attempt<20; attempt++ )); do
     if notification_worker_running "$qdir"; then

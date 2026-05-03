@@ -4,10 +4,10 @@
 
 Adds a new `git` resource so an agent can subscribe to worktree changes and receive **rolling diffs** — each notification contains only the diff *since the previous notification*, never the full dirty state. Setup work for the upcoming pair-programming team's navigator agent, which will watch the shared worktree and steer the driver when it goes off-track.
 
-**`atmux git watch [--id <id>] [--coalesce <s>] [--interval <s>] [--timeout <s>] [--duration <s>] [--exec <cmd>] [--once]`**. Polls the current repo on `--interval` (default 10s), snapshots the index+worktree via `git stash create` (non-mutating — produces a commit object referencing the dirty state without touching the working tree, the index, or the stash list), resolves it to its tree SHA, and emits one digest per `--coalesce` window (default 60s):
+**`atmux git watch [--id <id>] [--coalesce <s>] [--interval <s>] [--timeout <s>] [--duration <s>] [--exec <cmd>] [--once]`**. Polls the current repo on `--interval` (default 10s), snapshots the index+worktree via `git stash create` (non-mutating — produces a commit object referencing the dirty state without touching the working tree, the index, or the stash list), resolves it to its tree SHA, and emits a digest per detected change (or per `--coalesce` window if set):
 
 ```xml
-<watch type="git" id="navigator" prev="<tree>" new="<tree>" events="2" window="60s" reason="window">
+<watch type="git" id="navigator" prev="<tree>" new="<tree>" events="1" window="0s" reason="change">
   <diff>diff --git a/f b/f
   ...</diff>
 </watch>

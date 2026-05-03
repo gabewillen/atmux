@@ -94,7 +94,7 @@ emit_diff() {
 
 main() {
   local id=""
-  local coalesce="60"
+  local coalesce="0"
   local interval="10"
   local timeout_sec="0"
   local duration="0"

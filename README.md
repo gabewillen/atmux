@@ -453,8 +453,9 @@ produces nothing).
              $ATMUX_HOME/git/watch/<id>/last so the watcher can resume
              from its last emit across restarts. Defaults to a derived id
              from $ATMUX_AGENT_NAME (or hostname-pid outside an agent).
---coalesce   Batch changes into one digest per N seconds (default 60).
-             Set to 0 to emit per-change.
+--coalesce   Batch changes into one digest per N seconds (default 0,
+             i.e. emit per detected change). Set >0 to wait that long
+             after the last change before emitting, grouping bursts.
 --interval   Poll interval in seconds (default 10).
 --timeout    Idle exit: return 124 if no change is observed for N seconds
              (0 = disabled, default 0).

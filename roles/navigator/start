@@ -94,7 +94,7 @@ spawn_window() {
   if ! tmux new-window -a -d \
         -c "${ATMUX_WORKTREE:-$HOME}" \
         -n "$window_name" -t "$nav_session" \
-        "${env_args[@]}" \
+        ${env_args[@]+"${env_args[@]}"} \
         "${quoted}>$(printf '%q' "$log") 2>&1" \
         2>>"$state/spawn-window.log"; then
     printf '[%s] tmux new-window failed for %s (target=%s)\n' \

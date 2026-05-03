@@ -130,6 +130,7 @@ agent attach must be run outside tmux.
 
 ```sh
 atmux team create <name> [--role <role>] [--start <cmd>] [--stop <cmd>]
+                         [--worktree [<path>]]
 atmux team list
 atmux team ls
 atmux team status [<name>]
@@ -141,11 +142,20 @@ atmux team resolve <name> [<repo_name>]
 Manage repo-scoped team tmux sessions.
 Team session format: atmux-<repo>-team-<name>
 
---role <name>   Apply a KIND=team role: opens the session, spawns each
-                MEMBERS entry from the role manifest, then runs the
-                role's optional `start` hook for any cross-cutting wiring.
-                `team kill` auto-kills the spawned members and runs the
-                matching `stop` hook.
+--role <name>      Apply a KIND=team role: opens the session, spawns each
+                   MEMBERS entry from the role manifest, then runs the
+                   role's optional `start` hook for any cross-cutting
+                   wiring. `team kill` auto-kills the spawned members
+                   and runs the matching `stop` hook.
+
+--worktree [path]  Create a fresh git worktree for the team and open the
+                   session in it. Members spawned with `--shared-worktree`
+                   inherit this path via the team session's
+                   ATMUX_WORKTREE env (so a pair of agents can edit the
+                   same worktree without stomping the user's checkout).
+                   Path defaults to $ATMUX_HOME/teams/<repo>/<team>/worktree
+                   on a new branch atmux-<repo>-team-<team>. `team kill`
+                   removes the worktree and branch.
 
 #### `role`
 

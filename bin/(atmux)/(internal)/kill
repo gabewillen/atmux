@@ -452,6 +452,10 @@ kill_agents() {
     local removed_branch="false"
     local note=""
 
+    # Team sessions can own a worktree they created at team-create time.
+    # Capture that path BEFORE killing the session so we can remove it
+    # afterward (env reads need the session to still exist).
+    local team_owned_worktree=""
     if tmux has-session -t "$session" 2>/dev/null; then
       session_kind="$(get_session_env "$session" ATMUX_SESSION_KIND)"
       # Wind the adapter down first so the role.stop hook below sees the
@@ -460,6 +464,12 @@ kill_agents() {
       # signal an unrelated shell.
       if [[ "$session_kind" != "team" ]]; then
         signal_adapter_pane "$session" 5
+      fi
+      if [[ "$session_kind" == "team" ]]; then
+        team_owned_flag="$(get_session_env "$session" ATMUX_TEAM_WORKTREE_OWNED)"
+        if [[ "$team_owned_flag" == "1" ]]; then
+          team_owned_worktree="$(get_session_env "$session" ATMUX_WORKTREE)"
+        fi
       fi
       role_stop="$(get_session_env "$session" ATMUX_ROLE_STOP)"
       if [[ -n "$role_stop" ]]; then
@@ -480,6 +490,32 @@ kill_agents() {
       fi
       tmux kill-session -t "$session"
       removed_session="true"
+    fi
+
+    # Team-owned worktree teardown. Mirrors the per-agent worktree removal
+    # below but targets the explicit path captured from the team session
+    # (team worktrees live under ~/.atmux/teams/<repo>/<team>/worktree, not
+    # under ~/.atmux/agents/<suffix>). Pruning is required afterward so the
+    # subsequent `git branch -D` doesn't think the branch is still checked
+    # out in a stale `.git/worktrees/<name>` entry.
+    if [[ -n "$team_owned_worktree" && -d "$team_owned_worktree" ]]; then
+      if git -C "$repo_root" worktree list --porcelain 2>/dev/null \
+         | grep -Fqx "worktree $team_owned_worktree"; then
+        git -C "$repo_root" worktree remove -f "$team_owned_worktree" >/dev/null 2>&1 || true
+      fi
+      if [[ -d "$team_owned_worktree" ]]; then
+        rm -rf -- "$team_owned_worktree" 2>/dev/null || true
+      fi
+      git -C "$repo_root" worktree prune >/dev/null 2>&1 || true
+      if [[ -d "$team_owned_worktree" ]]; then
+        state="errored"
+      else
+        removed_worktree="true"
+      fi
+      # Drop the owner marker file so a re-create starts cleanly.
+      local owner_meta
+      owner_meta="$(dirname -- "$team_owned_worktree")/owned-worktree"
+      [[ -f "$owner_meta" ]] && rm -f -- "$owner_meta" 2>/dev/null || true
     fi
 
     local suffix="${session#atmux-}"

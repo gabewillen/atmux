@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.17.0 — Teams can own a worktree
+
+A team can now create and own a fresh git worktree that all of its members share. Setup work for the upcoming pair-programming team — driver and navigator must edit the same worktree without stomping the user's checkout.
+
+**`atmux team create <name> [--worktree [<path>]]`**. When `--worktree` is passed, atmux runs `git worktree add -B atmux-<repo>-team-<name> <path> HEAD` and opens the team session there. Path defaults to `$ATMUX_HOME/teams/<repo>/<team>/worktree`. The team session's env carries `ATMUX_WORKTREE=<path>` and an `ATMUX_TEAM_WORKTREE_OWNED=1` marker.
+
+**`atmux agent create --shared-worktree`** is now env-aware: it picks up `ATMUX_WORKTREE` from env when set, falling back to the repo root only when unset. Members spawned by `team create --worktree` inherit the team's worktree automatically (the team's spawn path injects the worktree env into each `agent create` call). Standalone `--shared-worktree` from a bare shell is unchanged.
+
+**`atmux team kill`** removes the team's worktree and prunes git's metadata when the owner marker is set, then deletes the team branch. Per-member worktrees are still removed by the existing per-agent path; only the team-owned worktree is new.
+
+### Other changes
+- `team create`'s teardown path (when member spawn or start hook fails) also removes the worktree if the failed create_team had already created it.
+- Tests: `117_team_worktree_lifecycle`.
+
 ## 0.16.0 — `atmux git watch` rolling-diff worktree watcher
 
 Adds a new `git` resource so an agent can subscribe to worktree changes and receive **rolling diffs** — each notification contains only the diff *since the previous notification*, never the full dirty state. Setup work for the upcoming pair-programming team's navigator agent, which will watch the shared worktree and steer the driver when it goes off-track.

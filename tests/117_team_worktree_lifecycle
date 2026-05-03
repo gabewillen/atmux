@@ -1,0 +1,154 @@
+#!/usr/bin/env bash
+# Verifies `atmux team create --worktree` lifecycle:
+#   - team create --worktree creates a fresh git worktree at the expected
+#     path and points the team session's ATMUX_WORKTREE at it
+#   - members spawned with --shared-worktree inherit that worktree (env
+#     propagation through spawn_team_members)
+#   - team kill removes the worktree, prunes git's metadata, and deletes
+#     the team branch
+set -euo pipefail
+
+source "$(dirname "${BASH_SOURCE[0]}")/lib/isolate-tmux.sh"
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+ATMUX_BIN="$REPO_ROOT/bin/atmux"
+
+# Mirror atmux's normalize_name so session names line up regardless of
+# whether the local checkout is `amux.sh` or the CI checkout `atmux`.
+REPO_NORM="$(basename "$REPO_ROOT" | sed -E 's/[^A-Za-z0-9_-]+/_/g; s/_+/_/g; s/^_+//; s/_+$//')"
+SESSION_PREFIX="atmux-${REPO_NORM}-"
+
+WORK="$(mktemp -d "${TMPDIR:-/tmp}/atmux-team-wt.XXXXXX")"
+export ATMUX_HOME="$WORK/atmux-home"
+mkdir -p "$ATMUX_HOME"
+
+# Random suffix keeps agent / team names unique across re-runs that share
+# the same isolated tmux server.
+SUFFIX="$$"
+TEAM_SHORT="wt${SUFFIX}"
+TEAM_SESSION="${SESSION_PREFIX}team-${TEAM_SHORT}"
+ALPHA_NAME="alpha${SUFFIX}"
+ALPHA_SESSION="${SESSION_PREFIX}${ALPHA_NAME}"
+EXPECTED_WT="$ATMUX_HOME/teams/$REPO_NORM/$TEAM_SHORT/worktree"
+# git records the canonical (symlink-resolved) path in `worktree list` —
+# on macOS /var → /private/var, so the literal-path comparison there
+# needs the resolved form. The tmux env vars use the unresolved form
+# (matching what atmux team create wrote).
+mkdir -p "$ATMUX_HOME/teams/$REPO_NORM/$TEAM_SHORT"
+EXPECTED_WT_REAL="$(cd "$ATMUX_HOME/teams/$REPO_NORM/$TEAM_SHORT" && pwd -P)/worktree"
+TEAM_BRANCH="atmux-${REPO_NORM}-team-${TEAM_SHORT}"
+
+cleanup() {
+  set +e
+  "$ATMUX_BIN" team kill "$TEAM_SHORT" >/dev/null 2>&1 || true
+  "$ATMUX_BIN" agent kill "$ALPHA_NAME" >/dev/null 2>&1 || true
+  rm -rf "$WORK"
+}
+trap cleanup EXIT
+
+# Mock adapter — the lifecycle under test doesn't need a real CLI to run.
+adapter_dir="$ATMUX_HOME/adapters/mock"
+mkdir -p "$adapter_dir"
+cat > "$adapter_dir/cmd" <<'ADAPTER'
+#!/usr/bin/env bash
+case "${1:-}" in
+  control-file) printf 'AGENTS.md\n' ;;
+  prepare-prompt) : ;;
+  start) sleep 600 ;;
+  status) printf '<status adapter="mock" owner="agent" state="idle" model="" reasoning_level="" control_file="AGENTS.md" />\n' ;;
+  model) printf 'mock\n' ;;
+  reasoning-level) printf 'medium\n' ;;
+  *) exit 2 ;;
+esac
+ADAPTER
+chmod +x "$adapter_dir/cmd"
+
+mkdir -p "$ATMUX_HOME/roles/member-ok"
+cat > "$ATMUX_HOME/roles/member-ok/role.md" <<EOF
+# Member OK
+EOF
+cat > "$ATMUX_HOME/roles/member-ok/manifest" <<EOF
+KIND=agent
+INTELLIGENCE=20
+ADAPTERS=(mock)
+EOF
+
+mkdir -p "$ATMUX_HOME/roles/wt-team-${SUFFIX}"
+cat > "$ATMUX_HOME/roles/wt-team-${SUFFIX}/role.md" <<EOF
+# WT team
+EOF
+cat > "$ATMUX_HOME/roles/wt-team-${SUFFIX}/manifest" <<EOF
+KIND=team
+MEMBERS=(
+  "$ALPHA_NAME --role member-ok --intelligence 20 --adapter mock --shared-worktree"
+)
+EOF
+
+cd "$REPO_ROOT"
+ATMUX_ALLOW_OUTSIDE_TMUX=1 "$ATMUX_BIN" team create "$TEAM_SHORT" \
+  --role "wt-team-${SUFFIX}" --worktree >/dev/null
+
+# Worktree should exist on disk.
+[[ -d "$EXPECTED_WT" ]] \
+  || { echo "fail: worktree not created at $EXPECTED_WT" >&2; ls -R "$ATMUX_HOME/teams" >&2; exit 1; }
+
+# git should know about the worktree (compare against the realpath form
+# since git stores the canonical path).
+git -C "$REPO_ROOT" worktree list --porcelain | grep -Fqx "worktree $EXPECTED_WT_REAL" \
+  || { echo "fail: git worktree list missing $EXPECTED_WT_REAL" >&2; git -C "$REPO_ROOT" worktree list >&2; exit 1; }
+
+# Team session env should point at the new worktree and carry the
+# owner marker.
+team_env_wt="$(tmux show-environment -t "$TEAM_SESSION" ATMUX_WORKTREE 2>/dev/null | sed -n 's/^ATMUX_WORKTREE=//p' || true)"
+[[ "$team_env_wt" == "$EXPECTED_WT" ]] \
+  || { echo "fail: team ATMUX_WORKTREE=$team_env_wt expected $EXPECTED_WT" >&2; exit 1; }
+team_owned="$(tmux show-environment -t "$TEAM_SESSION" ATMUX_TEAM_WORKTREE_OWNED 2>/dev/null | sed -n 's/^ATMUX_TEAM_WORKTREE_OWNED=//p' || true)"
+[[ "$team_owned" == "1" ]] \
+  || { echo "fail: ATMUX_TEAM_WORKTREE_OWNED=$team_owned (expected 1)" >&2; exit 1; }
+
+# Member spawned with --shared-worktree should have inherited the team's
+# worktree, NOT the repo root. This is the env-aware --shared-worktree
+# behavior that makes pair-program-style teams work.
+poll=0
+member_wt=""
+while (( poll < 80 )); do
+  member_wt="$(tmux show-environment -t "$ALPHA_SESSION" ATMUX_WORKTREE 2>/dev/null | sed -n 's/^ATMUX_WORKTREE=//p' || true)"
+  [[ -n "$member_wt" ]] && break
+  sleep 0.1
+  poll=$(( poll + 1 ))
+done
+[[ "$member_wt" == "$EXPECTED_WT" ]] \
+  || { echo "fail: member ATMUX_WORKTREE=$member_wt expected $EXPECTED_WT (--shared-worktree should inherit team's)" >&2; exit 1; }
+
+# Tear down.
+ATMUX_ALLOW_OUTSIDE_TMUX=1 "$ATMUX_BIN" team kill "$TEAM_SHORT" >/dev/null
+
+# Worktree dir gone.
+[[ ! -d "$EXPECTED_WT" ]] \
+  || { echo "fail: team kill left worktree at $EXPECTED_WT" >&2; exit 1; }
+
+# git worktree metadata pruned.
+if git -C "$REPO_ROOT" worktree list --porcelain | grep -Fqx "worktree $EXPECTED_WT_REAL"; then
+  echo "fail: git worktree list still has $EXPECTED_WT_REAL" >&2
+  git -C "$REPO_ROOT" worktree list >&2
+  exit 1
+fi
+
+# Team branch removed.
+if git -C "$REPO_ROOT" show-ref --verify --quiet "refs/heads/$TEAM_BRANCH"; then
+  echo "fail: branch $TEAM_BRANCH not deleted" >&2
+  exit 1
+fi
+
+# Sessions gone.
+if tmux has-session -t "$TEAM_SESSION" 2>/dev/null; then
+  echo "fail: team session $TEAM_SESSION survived kill" >&2
+  exit 1
+fi
+if tmux has-session -t "$ALPHA_SESSION" 2>/dev/null; then
+  echo "fail: member session $ALPHA_SESSION survived kill" >&2
+  exit 1
+fi
+
+echo "ok: team --worktree creates, members share, kill removes worktree+branch"

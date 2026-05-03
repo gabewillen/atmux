@@ -10,7 +10,7 @@ source "$HERE/(internal)/reporter"
 usage() {
   cat <<'USAGE'
 Usage:
-  atmux team create <name>
+  atmux team create <name> [--role <role>] [--start <cmd>] [--stop <cmd>]
   atmux team list
   atmux team ls
   atmux team status [<name>]
@@ -21,6 +21,10 @@ Usage:
 Description:
   Manage repo-scoped team tmux sessions.
   Team session format: atmux-<repo>-team-<name>
+
+  --role <name>   Apply a KIND=team role: opens the session, then runs the
+                  role's start hook to spawn members and register watchers.
+                  The matching stop hook runs on `atmux team kill`.
 USAGE
 }
 
@@ -49,12 +53,220 @@ ensure_tmux_scroll_enabled() {
   tmux set-window-option -g history-limit "$history_limit" >/dev/null 2>&1 || true
 }
 
+resolve_role_runner() {
+  # Mirrors agent:resolve_role_runner so team create can locate the `role`
+  # subcommand in the same install layouts.
+  local here_role
+  here_role="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+  if [[ -x "$here_role/role" ]]; then
+    printf '%s\n' "$here_role/role"
+    return 0
+  fi
+  if [[ -n "${ATMUX_SOURCE_ROOT:-}" && -x "${ATMUX_SOURCE_ROOT}/bin/(atmux)/role" ]]; then
+    printf '%s\n' "${ATMUX_SOURCE_ROOT}/bin/(atmux)/role"
+    return 0
+  fi
+  local atmux_home="${ATMUX_HOME:-$HOME/.atmux}"
+  if [[ -x "$atmux_home/src/atmux/bin/(atmux)/role" ]]; then
+    printf '%s\n' "$atmux_home/src/atmux/bin/(atmux)/role"
+    return 0
+  fi
+  return 1
+}
+
+read_team_role_manifest() {
+  # Echoes manifest fields for a team-kind role. Output lines:
+  #   KIND=<agent|team>
+  #   MEMBER=<args>     (one line per MEMBERS entry, in declared order)
+  # Sources in a subshell so manifest side-effects can't leak into the caller.
+  local manifest_path="$1"
+  if [[ ! -f "$manifest_path" ]]; then
+    printf 'KIND=agent\n'
+    return 0
+  fi
+  (
+    KIND=""
+    MEMBERS=()
+    # shellcheck source=/dev/null
+    source "$manifest_path" 2>/dev/null || true
+    case "$KIND" in
+      agent|team) printf 'KIND=%s\n' "$KIND" ;;
+      *)          printf 'KIND=agent\n' ;;
+    esac
+    if [[ "${#MEMBERS[@]}" -gt 0 ]]; then
+      local entry
+      for entry in "${MEMBERS[@]}"; do
+        # One MEMBER per line; entry text is the tail of `atmux agent create`.
+        # Strip embedded newlines defensively so the line protocol stays sound.
+        printf 'MEMBER=%s\n' "${entry//$'\n'/ }"
+      done
+    fi
+  )
+}
+
+resolve_atmux_runner_for_team() {
+  # Locate the `atmux` front-end so the team can spawn members. Mirrors the
+  # path search used inside agent create.
+  if [[ -n "${ATMUX_SOURCE_ROOT:-}" && -x "${ATMUX_SOURCE_ROOT}/bin/atmux" ]]; then
+    printf '%s\n' "${ATMUX_SOURCE_ROOT}/bin/atmux"
+    return 0
+  fi
+  local repo_root=""
+  if repo_root="$(git rev-parse --show-toplevel 2>/dev/null)"; then
+    if [[ -x "$repo_root/bin/atmux" ]]; then
+      printf '%s\n' "$repo_root/bin/atmux"
+      return 0
+    fi
+  fi
+  if command -v atmux >/dev/null 2>&1; then
+    printf '%s\n' atmux
+    return 0
+  fi
+  return 1
+}
+
+teardown_team() {
+  # Best-effort cleanup when team create fails partway through. Kills any
+  # already-spawned members via `atmux agent kill` (so their worktrees and
+  # branches get cleaned up too), then the team session, then the role
+  # state dir.
+  # Args: <repo_name> <team_name> <session> <role_state_dir>
+  local repo="$1" team="$2" session="$3" state_dir="${4:-}"
+  local prefix="atmux-${repo}-"
+  local atmux_bin member_session member_team member_short
+  atmux_bin="$(resolve_atmux_runner_for_team || true)"
+  local -a member_shorts=()
+  while IFS= read -r member_session; do
+    [[ -z "$member_session" ]] && continue
+    [[ "$member_session" == "$session" ]] && continue
+    member_team="$(get_session_env "$member_session" ATMUX_TEAM)"
+    [[ "$member_team" == "$team" ]] || continue
+    member_short="${member_session#"$prefix"}"
+    member_shorts+=("$member_short")
+  done < <(tmux list-sessions -F '#{session_name}' 2>/dev/null \
+            | awk -v p="$prefix" 'index($0,p)==1 { print }')
+  if [[ "${#member_shorts[@]}" -gt 0 && -n "$atmux_bin" ]]; then
+    "$atmux_bin" agent kill "${member_shorts[@]}" >/dev/null 2>&1 || true
+  fi
+  tmux kill-session -t "$session" >/dev/null 2>&1 || true
+  if [[ -n "$state_dir" && -d "$state_dir" ]]; then
+    rm -rf -- "$state_dir" 2>/dev/null || true
+  fi
+}
+
+spawn_team_members() {
+  # Spawns each MEMBER from the manifest via `atmux agent create <args>
+  # --team <team>`. Returns non-zero on the first spawn failure so the caller
+  # can tear down the partially-built team.
+  # Args: <repo_name> <team_name> <member_lines>
+  local _repo="$1" team="$2" lines="$3"
+  [[ -n "$lines" ]] || return 0
+
+  local atmux_bin
+  atmux_bin="$(resolve_atmux_runner_for_team || true)"
+  if [[ -z "$atmux_bin" ]]; then
+    echo "atmux team create: cannot locate the atmux binary to spawn members" >&2
+    return 127
+  fi
+
+  local entry
+  while IFS= read -r entry; do
+    [[ -z "$entry" ]] && continue
+    # Tokenize via `read -ra` (no eval) — quoted-arg edge cases aren't
+    # supported, but the agent create flag surface doesn't need them today.
+    local -a tokens=()
+    # shellcheck disable=SC2162
+    read -ra tokens <<< "$entry"
+    if [[ "${#tokens[@]}" -eq 0 ]]; then
+      continue
+    fi
+    if ! "$atmux_bin" agent create "${tokens[@]}" --team "$team" >/dev/null; then
+      echo "atmux team create: spawning member failed: agent create $entry" >&2
+      return 1
+    fi
+  done <<< "$lines"
+  return 0
+}
+
+run_team_role_hook() {
+  local cmd="$1"
+  [[ -n "$cmd" ]] || return 0
+  if [[ -x "$cmd" && -f "$cmd" ]]; then
+    "$cmd"
+  else
+    bash -c "$cmd"
+  fi
+}
+
+run_team_role_hook_bounded() {
+  # Caps wall-clock so a misbehaving start hook can't wedge `team create`.
+  local cmd="$1"
+  local budget_secs="${2:-60}"
+  local pid deadline now
+  [[ -n "$cmd" ]] || return 0
+  ( run_team_role_hook "$cmd" ) &
+  pid=$!
+  deadline=$(( $(date +%s) + budget_secs ))
+  while kill -0 "$pid" 2>/dev/null; do
+    now="$(date +%s)"
+    if (( now >= deadline )); then
+      kill -TERM "$pid" 2>/dev/null || true
+      sleep 0.5
+      kill -KILL "$pid" 2>/dev/null || true
+      wait "$pid" 2>/dev/null || true
+      return 124
+    fi
+    sleep 0.2
+  done
+  wait "$pid"
+}
+
 create_team() {
-  local raw_name="${1:-}"
+  local raw_name=""
+  local role=""
+  local start_cmd=""
+  local stop_cmd=""
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --role)    role="${2:-}"; shift 2 ;;
+      --role=*)  role="${1#--role=}"; shift ;;
+      --start)   start_cmd="${2:-}"; shift 2 ;;
+      --start=*) start_cmd="${1#--start=}"; shift ;;
+      --stop)    stop_cmd="${2:-}"; shift 2 ;;
+      --stop=*)  stop_cmd="${1#--stop=}"; shift ;;
+      -h|--help)
+        echo "usage: atmux team create <name> [--role <role>] [--start <cmd>] [--stop <cmd>]"
+        return 0
+        ;;
+      --) shift ;;
+      -*)
+        echo "atmux team create: unknown flag: $1" >&2
+        exit 2
+        ;;
+      *)
+        if [[ -z "$raw_name" ]]; then
+          raw_name="$1"
+          shift
+        else
+          echo "atmux team create: unexpected argument: $1" >&2
+          exit 2
+        fi
+        ;;
+    esac
+  done
+
   if [[ -z "$raw_name" ]]; then
-    echo "usage: atmux team create <name>" >&2
+    echo "usage: atmux team create <name> [--role <role>]" >&2
     exit 2
   fi
+
+  case "$start_cmd" in
+    *$'\n'*) echo "atmux team create: --start must be a single line; use a script file for multi-line commands" >&2; exit 2 ;;
+  esac
+  case "$stop_cmd" in
+    *$'\n'*) echo "atmux team create: --stop must be a single line; use a script file for multi-line commands" >&2; exit 2 ;;
+  esac
 
   local repo_root repo_name team_name session
   {
@@ -65,13 +277,101 @@ create_team() {
   team_name="$(normalize_name "$raw_name")"
   session="atmux-${repo_name}-team-${team_name}"
 
+  # Resolve role first so we can fail before opening the session if the role
+  # is missing or wrong-kind.
+  local role_dir=""
+  if [[ -n "$role" ]]; then
+    if role_runner="$(resolve_role_runner || true)" && [[ -x "$role_runner" ]]; then
+      role_dir="$("$role_runner" resolve "$role" 2>/dev/null || true)"
+    fi
+    if [[ -z "$role_dir" ]]; then
+      echo "atmux team create: role not found: $role" >&2
+      exit 1
+    fi
+    manifest_out="$(read_team_role_manifest "$role_dir/manifest" || true)"
+    role_kind="$(printf '%s\n' "$manifest_out" | sed -n 's/^KIND=//p')"
+    if [[ "$role_kind" != "team" ]]; then
+      echo "atmux team create: role '$role' is KIND=${role_kind:-agent}; use 'atmux agent create --role $role' instead" >&2
+      exit 2
+    fi
+    member_lines="$(printf '%s\n' "$manifest_out" | sed -n 's/^MEMBER=//p')"
+    if [[ -z "$start_cmd" && -x "$role_dir/start" ]]; then
+      start_cmd="$role_dir/start"
+    fi
+    if [[ -z "$stop_cmd" && -x "$role_dir/stop" ]]; then
+      stop_cmd="$role_dir/stop"
+    fi
+  fi
+
+  local fresh_session=0
   if ! tmux has-session -t "$session" 2>/dev/null; then
     tmux new-session -d -s "$session" -n "$session" -c "$repo_root"
+    fresh_session=1
     ensure_tmux_scroll_enabled
     tmux set-environment -t "$session" ATMUX_REPO "$repo_name"
     tmux set-environment -t "$session" ATMUX_TEAM "$team_name"
     tmux set-environment -t "$session" ATMUX_SESSION_NAME "$session"
     tmux set-environment -t "$session" ATMUX_SESSION_KIND "team"
+    tmux set-environment -t "$session" ATMUX_WORKTREE "$repo_root"
+    if [[ -n "${ATMUX_SOURCE_ROOT:-}" ]]; then
+      tmux set-environment -t "$session" ATMUX_SOURCE_ROOT "$ATMUX_SOURCE_ROOT"
+    fi
+  else
+    if [[ -n "$role" || -n "$start_cmd" || -n "$stop_cmd" ]]; then
+      echo "atmux team create: team '$team_name' already exists; --role/--start/--stop only apply to fresh sessions" >&2
+      exit 1
+    fi
+  fi
+
+  if [[ "$fresh_session" -eq 1 && ( -n "$role" || -n "$start_cmd" || -n "$stop_cmd" ) ]]; then
+    local atmux_home="${ATMUX_HOME:-$HOME/.atmux}"
+    local role_state_dir="$atmux_home/teams/$repo_name/$team_name/role"
+    mkdir -p "$role_state_dir"
+    if [[ -n "$role" ]]; then
+      tmux set-environment -t "$session" ATMUX_ROLE "$role"
+    fi
+    if [[ -n "$role_dir" ]]; then
+      tmux set-environment -t "$session" ATMUX_ROLE_DIR "$role_dir"
+    fi
+    if [[ -n "$start_cmd" ]]; then
+      tmux set-environment -t "$session" ATMUX_ROLE_START "$start_cmd"
+    fi
+    if [[ -n "$stop_cmd" ]]; then
+      tmux set-environment -t "$session" ATMUX_ROLE_STOP "$stop_cmd"
+    fi
+    tmux set-environment -t "$session" ATMUX_ROLE_STATE_DIR "$role_state_dir"
+
+    # 1) Spawn declared MEMBERS first. Atmux owns these — `team kill` will
+    #    auto-kill any agent whose ATMUX_TEAM matches this team's name.
+    if [[ -n "${member_lines:-}" ]]; then
+      if ! spawn_team_members "$repo_name" "$team_name" "$member_lines"; then
+        echo "atmux team create: tearing down team after member spawn failure" >&2
+        teardown_team "$repo_name" "$team_name" "$session" "$role_state_dir"
+        exit 1
+      fi
+    fi
+
+    # 2) Run optional start hook (cross-cutting wiring; most team roles won't
+    #    need this — reactive logic typically lives in the member roles).
+    if [[ -n "$start_cmd" ]]; then
+      local role_start_rc=0
+      ATMUX_ROLE="$role" \
+      ATMUX_ROLE_DIR="$role_dir" \
+      ATMUX_ROLE_STATE_DIR="$role_state_dir" \
+      ATMUX_TEAM="$team_name" \
+      ATMUX_REPO="$repo_name" \
+      ATMUX_WORKTREE="$repo_root" \
+        run_team_role_hook_bounded "$start_cmd" "${ATMUX_ROLE_START_TIMEOUT:-60}" || role_start_rc=$?
+      if [[ "$role_start_rc" -ne 0 ]]; then
+        if [[ "$role_start_rc" -eq 124 ]]; then
+          echo "atmux team create: role start timed out after ${ATMUX_ROLE_START_TIMEOUT:-60}s; tearing down team" >&2
+        else
+          echo "atmux team create: role start failed (rc=$role_start_rc); tearing down team" >&2
+        fi
+        teardown_team "$repo_name" "$team_name" "$session" "$role_state_dir"
+        exit 1
+      fi
+    fi
   fi
 
   # When invoked from within a repo agent session, remember this as the
@@ -87,10 +387,11 @@ create_team() {
     fi
   fi
 
-  printf '<team name="%s" repo="%s" session="%s" />\n' \
+  printf '<team name="%s" repo="%s" session="%s"%s />\n' \
     "$(xml_escape "$team_name")" \
     "$(xml_escape "$repo_name")" \
-    "$(xml_escape "$session")"
+    "$(xml_escape "$session")" \
+    "$([[ -n "$role" ]] && printf ' role="%s"' "$(xml_escape "$role")")"
 }
 
 list_teams() {
@@ -134,7 +435,7 @@ shift || true
 
 case "$sub" in
   create|_create)
-    create_team "${1:-}"
+    create_team "$@"
     ;;
   list|ls)
     list_teams
@@ -171,7 +472,36 @@ case "$sub" in
         resolved+=("$tname")
       fi
     done
-    exec "$here_team/(internal)/kill" --agent "${resolved[@]}"
+
+    # Auto-kill team members before the team session itself. A member is any
+    # agent session in this repo whose ATMUX_TEAM matches the team's name.
+    # Killing members first means each member's own role stop hook runs while
+    # the team session still exists, so cross-member coordination (if any)
+    # has somewhere to log to.
+    expanded=()
+    if [[ -n "$r_repo" ]]; then
+      member_prefix="atmux-${r_repo}-"
+      for tsession in "${resolved[@]}"; do
+        team_short="$(get_session_env "$tsession" ATMUX_TEAM)"
+        if [[ -z "$team_short" && "$tsession" == "atmux-${r_repo}-team-"* ]]; then
+          team_short="${tsession#atmux-${r_repo}-team-}"
+        fi
+        if [[ -n "$team_short" ]]; then
+          while IFS= read -r maybe_member; do
+            [[ -z "$maybe_member" ]] && continue
+            [[ "$maybe_member" == "$tsession" ]] && continue
+            mteam="$(get_session_env "$maybe_member" ATMUX_TEAM)"
+            [[ "$mteam" == "$team_short" ]] || continue
+            mkind="$(get_session_env "$maybe_member" ATMUX_SESSION_KIND)"
+            [[ "$mkind" == "team" ]] && continue
+            expanded+=("$maybe_member")
+          done < <(tmux list-sessions -F '#{session_name}' 2>/dev/null \
+                    | awk -v p="$member_prefix" 'index($0,p)==1 { print }')
+        fi
+      done
+    fi
+    expanded+=("${resolved[@]}")
+    exec "$here_team/(internal)/kill" --agent "${expanded[@]}"
     ;;
   resolve)
     target="${1:-}"

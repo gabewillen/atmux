@@ -1,0 +1,140 @@
+#!/usr/bin/env bash
+# When a team role's start hook fails (or a member fails to spawn), `team
+# create` must tear down the partial team — no leftover team session, no
+# leftover member sessions/worktrees/branches, no leftover state dir.
+#
+# Two scenarios:
+#   A) Member spawn fails (member role doesn't exist) — team session gets
+#      killed, no member sessions remain.
+#   B) Members spawn OK but start hook exits non-zero — team session AND
+#      members both get killed, state dir removed.
+set -euo pipefail
+
+source "$(dirname "${BASH_SOURCE[0]}")/lib/isolate-tmux.sh"
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+ATMUX_BIN="$REPO_ROOT/bin/atmux"
+
+WORK_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/amux-team-fail.XXXXXX")"
+ATMUX_HOME="$WORK_ROOT/atmux-home"
+mkdir -p "$ATMUX_HOME"
+export ATMUX_HOME
+
+team_short_a=""
+team_short_b=""
+member_for_b=""
+cleanup() {
+  set +e
+  for t in "$team_short_a" "$team_short_b"; do
+    [[ -n "$t" ]] && "$ATMUX_BIN" team kill "$t" >/dev/null 2>&1 || true
+  done
+  [[ -n "$member_for_b" ]] && "$ATMUX_BIN" agent kill "$member_for_b" >/dev/null 2>&1 || true
+  rm -rf "$WORK_ROOT"
+}
+trap cleanup EXIT
+
+# Mock adapter for the scenarios that do spawn members
+adapter_dir="$ATMUX_HOME/adapters/mock"
+mkdir -p "$adapter_dir"
+cat > "$adapter_dir/cmd" <<'ADAPTER'
+#!/usr/bin/env bash
+set -euo pipefail
+case "${1:-}" in
+  control-file) printf 'AGENTS.md\n' ;;
+  prepare-prompt) : ;;
+  start) sleep 600 ;;
+  status) printf '<status adapter="mock" owner="agent" state="idle" model="" reasoning_level="" control_file="AGENTS.md" />\n' ;;
+  model) printf 'mock\n' ;;
+  reasoning-level) printf 'medium\n' ;;
+  *) exit 2 ;;
+esac
+ADAPTER
+chmod +x "$adapter_dir/cmd"
+
+# A working member role for scenario B
+mkdir -p "$ATMUX_HOME/roles/member-ok"
+cat > "$ATMUX_HOME/roles/member-ok/role.md" <<EOF
+# Member OK
+EOF
+cat > "$ATMUX_HOME/roles/member-ok/manifest" <<EOF
+KIND=agent
+INTELLIGENCE=20
+ADAPTERS=(mock)
+EOF
+
+# --- Scenario A: member spawn rejects an invalid flag → team torn down ---
+# `--bogus-flag` is unknown to `atmux agent create` and forces a non-zero
+# exit before any tmux/worktree state is created.
+team_short_a="failmemberspawn$$"
+team_session_a="atmux-amux_sh-team-${team_short_a}"
+mkdir -p "$ATMUX_HOME/roles/bad-flag-team"
+cat > "$ATMUX_HOME/roles/bad-flag-team/role.md" <<EOF
+# Bad-flag team role
+EOF
+cat > "$ATMUX_HOME/roles/bad-flag-team/manifest" <<EOF
+KIND=team
+MEMBERS=(
+  "ghost$$ --role member-ok --intelligence 20 --adapter mock --bogus-flag"
+)
+EOF
+
+cd "$REPO_ROOT"
+out_a="$( ATMUX_ALLOW_OUTSIDE_TMUX=1 "$ATMUX_BIN" team create "$team_short_a" --role bad-flag-team 2>&1 || true )"
+
+if tmux has-session -t "$team_session_a" 2>/dev/null; then
+  echo "fail: scenario A — team session survived member spawn failure: $team_session_a" >&2
+  echo "$out_a" >&2
+  exit 1
+fi
+if tmux list-sessions -F '#{session_name}' 2>/dev/null | grep -Fq "ghost$$"; then
+  echo "fail: scenario A — member session leaked despite spawn failure" >&2
+  exit 1
+fi
+echo "$out_a" | grep -q "tearing down team" \
+  || { echo "fail: scenario A — expected 'tearing down team' message; got: $out_a" >&2; exit 1; }
+team_short_a=""
+
+# --- Scenario B: start hook exits non-zero → members + team torn down ----
+team_short_b="failstart$$"
+team_session_b="atmux-amux_sh-team-${team_short_b}"
+member_for_b="memberB$$"
+state_dir_b="$ATMUX_HOME/teams/amux_sh/${team_short_b}/role"
+
+mkdir -p "$ATMUX_HOME/roles/failing-start-team"
+cat > "$ATMUX_HOME/roles/failing-start-team/role.md" <<EOF
+# Failing-start team role
+EOF
+cat > "$ATMUX_HOME/roles/failing-start-team/manifest" <<EOF
+KIND=team
+MEMBERS=(
+  "$member_for_b --role member-ok --intelligence 20 --adapter mock"
+)
+EOF
+cat > "$ATMUX_HOME/roles/failing-start-team/start" <<'EOF'
+#!/usr/bin/env bash
+exit 17
+EOF
+chmod +x "$ATMUX_HOME/roles/failing-start-team/start"
+
+out_b="$( ATMUX_ALLOW_OUTSIDE_TMUX=1 "$ATMUX_BIN" team create "$team_short_b" --role failing-start-team 2>&1 || true )"
+
+if tmux has-session -t "$team_session_b" 2>/dev/null; then
+  echo "fail: scenario B — team session survived start hook failure" >&2
+  echo "$out_b" >&2
+  exit 1
+fi
+if tmux has-session -t "atmux-amux_sh-${member_for_b}" 2>/dev/null; then
+  echo "fail: scenario B — spawned member survived start hook failure" >&2
+  exit 1
+fi
+if [[ -d "$state_dir_b" ]]; then
+  echo "fail: scenario B — role state dir not removed: $state_dir_b" >&2
+  exit 1
+fi
+echo "$out_b" | grep -q "rc=17" \
+  || { echo "fail: scenario B — start failure should report rc; got: $out_b" >&2; exit 1; }
+team_short_b=""
+member_for_b=""
+
+echo "ok: team role start failure tears down both members and team session"

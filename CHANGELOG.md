@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.15.0 — Roles can now apply to teams
+
+Roles previously only described agents. This release extends the role mechanism so a single role definition can target either an agent (default) or a team — same directory contract (`role.md` + `manifest` + optional `start`/`stop`), one new `KIND` field in the manifest. Setup work for the upcoming driver+navigator paired-programming team, which lands in a follow-up release.
+
+**Manifest gains `KIND=agent|team`** (default `agent`). For `KIND=team` roles, the manifest can also declare `MEMBERS=("<agent create args>" ...)` — each entry is the tail of an `atmux agent create` call, and atmux iterates the array to spawn each member with `--team <team>` injected. Conditionals fall out for free because the manifest is already sourced bash:
+
+```bash
+KIND=team
+MEMBERS=(
+  "driver    --role driver    --intelligence ${DRIVER_IQ:-20} --shared-worktree"
+  "navigator --role navigator --intelligence ${NAV_IQ:-95}    --shared-worktree"
+)
+```
+
+**`atmux team create <name> --role <role>`** resolves a `KIND=team` role, opens the team session, spawns each `MEMBERS` entry, then runs the optional `start` hook for cross-cutting wiring. Hook env contract: `ATMUX_TEAM`, `ATMUX_REPO`, `ATMUX_WORKTREE`, `ATMUX_ROLE`, `ATMUX_ROLE_DIR`, `ATMUX_ROLE_STATE_DIR` (`~/.atmux/teams/<repo>/<team>/role/`).
+
+**Auto-kill of team members.** `atmux team kill` enumerates every agent session whose `ATMUX_TEAM` matches and forwards them through the regular agent-kill flow, so each member's own role-stop hook still fires. The team role's `start`/`stop` are reserved for scripted services (watchers, message buses) — most team roles won't need either, since member-level reactive logic belongs in member roles.
+
+**Kind-mismatch rejection.** `atmux team create --role <agent-kind-role>` fails with `role 'X' is KIND=agent; use 'atmux agent create --role X' instead`. Symmetric error from `atmux agent create --role <team-kind-role>`.
+
+### Other changes
+- New `atmux role kind <name>` subcommand reports the resolved kind. `atmux role list` gains a kind column.
+- `atmux role create --kind team` scaffolds a team-kind role; the generated `start`/`stop` stubs differ from the agent-kind stubs (members + watchers vs. adapter setup).
+- `atmux role create` rejects `--intelligence` and `--adapters` for `--kind team` (those flags only mean something for agents).
+- `atmux team create` now accepts `--start <cmd>` / `--stop <cmd>` directly, mirroring `atmux agent create`. `--role` is the usual path; the explicit flags are for one-off teams that don't deserve a named role.
+- Internal: `bin/(atmux)/(internal)/kill` propagates `ATMUX_TEAM` and `ATMUX_WORKTREE` to the role-stop hook for team sessions, and skips the adapter wind-down for `ATMUX_SESSION_KIND=team` (no adapter to signal).
+- Tests: `113_team_role_kind_validation`, `114_team_role_lifecycle`, `115_team_role_start_failure_tears_down`.
+
 ## 0.14.0 — Breaking: `--interrupt` is now a hard abort
 
 `atmux send --interrupt` and `atmux notify --interrupt` previously meant "submit during work using the adapter's interrupt key" — a soft steer. The keys themselves were inconsistent across adapters (`Tab` for codex, `Escape+Enter` for claude-code, plain `Enter` for cursor-agent and gemini), so the flag's behavior also varied. Setup work for an upcoming driver+navigator paired-programming feature needs a real abort, so the flag's semantics are being repurposed.

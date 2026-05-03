@@ -6,14 +6,21 @@ set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/isolate-tmux.sh"
 
 # Full matrix: every shipped adapter (claude-code, codex, cursor-agent,
-# gemini) x {queue, interrupt} mode, delivered against a mock `cat` pane
+# gemini) x {steer, interrupt} mode, delivered against a mock `cat` pane
 # primed with the adapter's real input_idle.prompt. Verifies:
 #   1. Payload text reaches the pane (notification was "entered").
 #   2. Submit happens (cursor advances past the prompt line == "submitted").
 #   3. The notify-queue dir for the pane drains after delivery (no stuck items).
 #   4. For interrupt mode, the adapter's abort prefix keys (resolve_submit_keys
-#      "interrupt") are sent before the payload as pre_keys, then the queue
-#      submit key follows.
+#      "interrupt") are sent before the payload as pre_keys, then the submit
+#      key (`submit_keys.queue` in the manifest) follows.
+# Modes:
+#   steer     — default `atmux send` path: deliver at next idle prompt. Mid-
+#               tool injection where the adapter supports it. NOT a true queue
+#               (which would wait for the agent to finish all current todos);
+#               that mode doesn't exist yet.
+#   interrupt — hard abort + submit. Sends `submit_keys.interrupt` (abort key)
+#               before the payload, settles, then submits with `submit_keys.queue`.
 # Targets the two failure modes the user cares about: not-entered and
 # stuck-in-input.
 
@@ -58,9 +65,11 @@ prompt_for() {
 }
 
 submit_keys_for_adapter() {
-  # Both modes (queue, interrupt) share the same submit-keys path: the
-  # adapter's queue keys (e.g. Enter). The difference is whether bypass_idle
-  # is set and whether pre_keys (abort prefix) are sent.
+  # Both modes (steer, interrupt) share the same submit-keys path: the
+  # adapter's `submit_keys.queue` (typically Enter). The difference is whether
+  # bypass_idle is set and whether pre_keys (abort prefix) are sent. The
+  # manifest field is named `queue` for historical reasons, but in mode
+  # terminology this is the steer (next-idle-prompt) path.
   local adapter="$1"
   resolve_submit_keys "$adapter" queue | tr '\n' ' '
 }
@@ -134,7 +143,7 @@ probe() {
   pre_keys=""
   bypass=""
   case "$mode" in
-    queue)     ;;
+    steer)     ;;
     interrupt) bypass=1; pre_keys="$(pre_keys_for_adapter "$adapter")" ;;
   esac
   label="$adapter/$mode"
@@ -175,7 +184,7 @@ echo "matrix: 4 adapters x 2 modes -> 8 mock-pane deliveries" >&2
 
 failures=0
 for adapter in claude-code codex cursor-agent gemini; do
-  for mode in queue interrupt; do
+  for mode in steer interrupt; do
     if ! probe "$adapter" "$mode"; then
       failures=$((failures + 1))
     fi
@@ -187,4 +196,4 @@ if (( failures > 0 )); then
   exit 1
 fi
 
-echo "ok: every adapter delivers in queue + interrupt mode against a mock pane"
+echo "ok: every adapter delivers in steer + interrupt mode against a mock pane"

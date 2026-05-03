@@ -1,0 +1,6 @@
+# navigator: pair-programming navigator. High-intelligence model that
+# watches the shared worktree and steers the driver in real time.
+
+KIND=agent
+INTELLIGENCE=80
+ADAPTERS=(codex)

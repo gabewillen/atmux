@@ -1,0 +1,25 @@
+# pair-program: a driver-and-navigator pair-programming team.
+#
+# A fast low-intelligence model writes code while a high-intelligence
+# model watches the worktree in real time and steers the driver when it
+# goes off-track. The navigator hooks `atmux git watch` and uses
+# `--interrupt` messages to course-correct.
+
+KIND=team
+
+# Both members run in the same shared worktree (--shared-worktree) so
+# the navigator sees the driver's edits without copying. The team's
+# default fresh-worktree behavior gives them somewhere safe to edit;
+# pass `--worktree <path>` on `team create` to override the location.
+#
+# Member names are prefixed with ${ATMUX_TEAM} so multiple pair-program
+# teams can coexist in one repo (e.g. team `feat-a` gets agents
+# `feat-a-driver` and `feat-a-navigator`). atmux pre-exports ATMUX_TEAM
+# before sourcing this manifest, so the expansion happens at parse time.
+# The driver and navigator role.md prompts reference the same
+# ${ATMUX_TEAM}-* names; atmux substitutes them at agent-create time so
+# each LLM sees its actual peer's name in its prompt, not a placeholder.
+MEMBERS=(
+  "${ATMUX_TEAM}-driver    --role driver    --intelligence 20 --adapter cursor-agent --shared-worktree"
+  "${ATMUX_TEAM}-navigator --role navigator --intelligence 80 --adapter codex        --shared-worktree"
+)

@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# Navigator stop hook: clean up persistent state.
+#
+# We deliberately don't try to kill the watcher processes here. The
+# start hook spawns each watcher as a tmux window inside the
+# navigator's own session, so when the navigator session is killed
+# (by atmux on team kill or agent kill, after this stop hook runs)
+# tmux destroys every window in the session — and with them every
+# watcher process. No `nohup`, no orphans, no manual pkill cleanup.
+set -euo pipefail
+
+state="${ATMUX_ROLE_STATE_DIR:-}"
+[[ -n "$state" && -d "$state" ]] || exit 0
+
+# Drop the git-watch baseline state dir so a same-named team's next
+# spawn can't inherit a stale baseline. Each spawn's id is unique
+# (`<agent>-watch-<epoch>-<rand>`) so this only removes this
+# incarnation's state, not any peer team's.
+ATMUX_HOME="${ATMUX_HOME:-$HOME/.atmux}"
+if [[ -f "$state/git-watch-id" && -n "${ATMUX_REPO:-}" ]]; then
+  watch_id="$(cat "$state/git-watch-id" 2>/dev/null || true)"
+  if [[ -n "$watch_id" ]]; then
+    rm -rf "$ATMUX_HOME/git/watch/$ATMUX_REPO/$watch_id" 2>/dev/null || true
+  fi
+fi
+
+rm -rf "$state"

@@ -1,0 +1,161 @@
+#!/usr/bin/env bash
+# Navigator start hook: arms three background watchers and routes their
+# emissions to the navigator's own pane via `atmux notify`.
+#
+#   1. `atmux git watch` against the shared worktree — emits a
+#      `<watch type="git">` XML for each detected diff. Per-change
+#      (--coalesce 0) so every edit is its own review trigger.
+#   2. An edge-triggered idle watcher against the driver's pane — emits
+#      ONE `<watch type="agent" reason="idle">` when the driver
+#      transitions from active to idle. Polling lives in this background
+#      loop (free); only the edge fires a notification (paid). Stays
+#      silent until the driver becomes active and idle again, so a
+#      stuck driver gets exactly one nudge per stall, not one per tick.
+#   3. A worktree tracker that watches the driver's pane for evidence
+#      they've moved into a different git worktree (e.g. a sibling
+#      checkout under ~/.cursor/worktrees/ created by cursor-agent's
+#      `/worktree` slash command). When detected, it tears down (1) and
+#      re-arms the git watcher pointed at the driver's actual worktree.
+#      That keeps pair-program's review premise intact regardless of
+#      whether the driver works in the team-provisioned worktree or
+#      isolates itself in a sibling.
+#
+# Env provided by atmux:
+#   ATMUX_ROLE_STATE_DIR  - private state dir for this (agent, role) pair
+#   ATMUX_AGENT_NAME      - the agent's short name (= "<team>-navigator")
+#   ATMUX_REPO            - normalized repo name
+#   ATMUX_TEAM            - team name (used to derive the driver's name)
+#   ATMUX_WORKTREE        - the agent's worktree (shared with driver)
+set -euo pipefail
+
+state="$ATMUX_ROLE_STATE_DIR"
+mkdir -p "$state"
+
+# `atmux send --to <self>` is blocked, so route each watcher emit via
+# `atmux notify --pane` against the navigator's own pane. Pane id is
+# stable for the session's lifetime — resolve it once here and pass it
+# to the watchers via env.
+nav_session="atmux-${ATMUX_REPO}-${ATMUX_AGENT_NAME}"
+nav_pane="$(tmux list-panes -t "$nav_session" -F '#{pane_id}' 2>/dev/null | head -n1)"
+if [[ -z "$nav_pane" ]]; then
+  echo "navigator start: could not resolve pane for session $nav_session; watchers not armed" >&2
+  exit 0
+fi
+
+# Build a watcher id unique to this spawn so a kill/recreate cycle of the
+# same-named team can never share state with the prior incarnation. The
+# watcher persists baseline state at $ATMUX_HOME/git/watch/<repo>/<id>/,
+# and a colliding id either races a still-running stale watcher on the
+# same file or boots from a stale baseline that no longer matches the
+# fresh worktree's actual state. Both lead to silently-wrong emits.
+spawn_token="$(date +%s)-$(od -An -N2 -tx1 /dev/urandom 2>/dev/null | tr -d ' \n' || printf '%04x' $$)"
+git_watch_id="${ATMUX_AGENT_NAME}-watch-${spawn_token}"
+printf '%s\n' "$git_watch_id" > "$state/git-watch-id"
+
+# Both watchers run as background tmux windows inside the navigator's
+# own session rather than as `nohup` shell descendants. Tmux ties the
+# windows' lifetimes to the session — when the team is killed and the
+# session is destroyed, every window in it is destroyed too, so the
+# watcher processes can't leak into orphaned background workers.
+spawn_window() {
+  local window_name="$1"
+  local log="$2"
+  shift 2
+
+  # `-e KEY=VALUE` args set window-scoped env. Collect them off the
+  # front of argv before reading the command.
+  local env_args=()
+  while [[ "${1:-}" == -e ]]; do
+    env_args+=(-e "$2")
+    shift 2
+  done
+
+  # Build a single shell-command string with each argv element shell-
+  # quoted so values with spaces/quotes survive tmux's `sh -c` re-parse.
+  local quoted=""
+  local arg
+  for arg in "$@"; do
+    quoted+="$(printf '%q ' "$arg")"
+  done
+
+  # Capture tmux's stderr so we can diagnose new-window failures from
+  # the navigator's role state dir. Without `|| true`, a failure here
+  # would abort the start hook (set -e) and atmux would tear the agent
+  # down — masking the cause.
+  # `-a` appends after the current window instead of trying to take the
+  # default base-index slot (which is 0 and already taken by the
+  # adapter pane). Without it, `new-window` errors with
+  # "create window failed: index 0 in use".
+  #
+  # `-c "$ATMUX_WORKTREE"` pins the new window's cwd to the team
+  # worktree. Without it tmux inherits cwd from whatever spawned this
+  # start hook, which can be a transiently-deleted directory if tmux's
+  # source-pane cwd hasn't been updated yet.
+  if ! tmux new-window -a -d \
+        -c "${ATMUX_WORKTREE:-$HOME}" \
+        -n "$window_name" -t "$nav_session" \
+        ${env_args[@]+"${env_args[@]}"} \
+        "${quoted}>$(printf '%q' "$log") 2>&1" \
+        2>>"$state/spawn-window.log"; then
+    printf '[%s] tmux new-window failed for %s (target=%s)\n' \
+      "$(date +%H:%M:%S)" "$window_name" "$nav_session" \
+      >> "$state/spawn-window.log"
+    return 1
+  fi
+}
+
+# --- 1. event-driven git watch against the shared worktree -------------------
+
+# Use `atmux path watch` as a low-latency edge trigger (fswatch on macOS,
+# inotifywait on Linux, polling fallback elsewhere) and let the
+# `git-edit-watch` wrapper invoke `atmux git watch --once` per event. Two
+# wins over the old polling git-watch (--interval 10):
+#   - reaction time drops from ~10s to milliseconds
+#   - changes to .gitignore'd files / .git/ refs trigger path-watch but
+#     git-watch produces no diff and stays silent — so the navigator
+#     never gets paged for noise that wouldn't have changed the diff
+# `--coalesce 0` fires the wrapper per event. git-watch's rolling-baseline
+# semantics + empty-diff suppression dedupe bursts naturally: the second
+# fire in a save-burst sees no change vs the baseline the first fire just
+# advanced, exits silently. So no extra coalescing is needed here.
+git_edit_watch_script="$ATMUX_ROLE_DIR/git-edit-watch"
+if [[ ! -x "$git_edit_watch_script" ]]; then
+  echo "navigator start: git-edit-watch script not executable at $git_edit_watch_script — skipping git watcher" >&2
+else
+  spawn_window "git-watch" "$state/git-watch.log" \
+    atmux path watch "$ATMUX_WORKTREE" \
+      --coalesce 0 \
+      --exec "$git_edit_watch_script $(printf '%q' "$git_watch_id") $(printf '%q' "$nav_pane")" \
+    || true
+fi
+
+# --- 2. edge-triggered idle watcher against the driver ------------------------
+
+# Derive the driver's name from the team context. The pair-program role
+# spawns members named `${ATMUX_TEAM}-driver` / `${ATMUX_TEAM}-navigator`.
+driver_name="${ATMUX_TEAM:-}-driver"
+
+idle_watch_script="$ATMUX_ROLE_DIR/idle-watch"
+if [[ ! -x "$idle_watch_script" ]]; then
+  echo "navigator start: idle-watch script not executable at $idle_watch_script — skipping idle watcher" >&2
+else
+  spawn_window "idle-watch" "$state/idle-watch.log" \
+    "$idle_watch_script" "$driver_name" "$nav_pane" "$state/idle-watch.log" \
+    || true
+fi
+
+# --- 3. follow-the-worktree tracker ------------------------------------------
+
+# Watches $ATMUX_HOME/agents/<repo>/<driver>/git-hooks/last-worktree-add
+# (written by the atmux git wrapper any time the driver runs `git
+# worktree add ...`) and re-arms the git-watch window to follow.
+worktree_tracker_script="$ATMUX_ROLE_DIR/worktree-tracker"
+if [[ ! -x "$worktree_tracker_script" ]]; then
+  echo "navigator start: worktree-tracker not executable — driver worktree changes won't be followed" >&2
+else
+  spawn_window "worktree-tracker" "$state/worktree-tracker.log" \
+    -e "ATMUX_REPO=${ATMUX_REPO:-}" \
+    -e "ATMUX_HOME=${ATMUX_HOME:-$HOME/.atmux}" \
+    "$worktree_tracker_script" "$driver_name" "$nav_session" "$nav_pane" "$state" "$state/worktree-tracker.log" \
+    || true
+fi

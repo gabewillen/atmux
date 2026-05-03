@@ -144,4 +144,12 @@ install_codex_stop_hook
 schedule_intelligence_profile
 
 echo "starting codex in $(pwd)"
-exec codex --dangerously-bypass-approvals-and-sandbox --search "$@"
+# Pre-trust the worktree so codex doesn't stop at its first-time
+# "Do you trust this directory?" prompt — that prompt requires keyboard
+# input and would otherwise hang any non-interactive boot (managed
+# agents, fresh team worktrees, CI). The override goes to codex via -c
+# and is equivalent to a `[projects."<path>"]` block in config.toml.
+codex_trust_pwd="$(pwd -P 2>/dev/null || pwd)"
+exec codex --dangerously-bypass-approvals-and-sandbox --search \
+  -c "projects.\"${codex_trust_pwd}\".trust_level=\"trusted\"" \
+  "$@"

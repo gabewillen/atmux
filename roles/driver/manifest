@@ -1,0 +1,6 @@
+# driver: pair-programming driver. Fast, low-intelligence model that
+# writes code under live oversight from a navigator peer.
+
+KIND=agent
+INTELLIGENCE=20
+ADAPTERS=(cursor-agent)

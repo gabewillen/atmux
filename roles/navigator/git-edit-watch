@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# git-edit-watch: bridge from `atmux path watch` to `atmux git watch --once`.
+#
+# `atmux path watch` is event-driven (fswatch on macOS, inotifywait on
+# Linux), so it fires within milliseconds of a filesystem change instead
+# of waiting for a polling tick. But it watches *paths*, not git state —
+# every write to .git/ or to an ignored file would otherwise trigger a
+# notification. So we use path-watch as a cheap edge trigger and let
+# `atmux git watch --once` be the source of truth: it computes the
+# rolling diff against the persisted baseline and stays silent when the
+# change doesn't affect tracked files.
+#
+# path-watch invokes us with its digest XML on stdin (which we discard)
+# and our argv carries the watch-id and the navigator pane id.
+#
+# Args: <git-watch-id> <nav-pane>
+set -euo pipefail
+
+watch_id="$1"
+nav_pane="$2"
+
+# Drain path-watch's stdin so it doesn't pile up; we only care about the
+# trigger, not the payload.
+cat >/dev/null
+
+# `git watch --once` exits 0 with no output on an empty diff (untracked
+# .gitignore'd file, transient .git/ ref churn). atmux notify only fires
+# when there's an actual XML payload to deliver, so untracked-file noise
+# never reaches the navigator's pane.
+exec atmux git watch --once \
+  --id "$watch_id" \
+  --exec "atmux notify --pane $(printf '%q' "$nav_pane") --xml \"\$(cat)\""

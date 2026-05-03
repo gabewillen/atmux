@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
-# Rolling-diff git watcher. On each tick, snapshots the worktree via
-# `git stash create` (non-mutating — creates a commit object referencing
-# index+worktree, prints SHA, leaves both untouched). Emits one XML digest
-# per --coalesce window containing `git diff <baseline_sha>..<current_sha>`,
-# where baseline_sha is the SHA from the previous emit. Suppresses empty
-# diffs, persists the baseline at $ATMUX_HOME/git/watch/<id>/last so the
-# watcher can resume from its last emit across restarts.
+# Rolling-diff git watcher. On each tick, snapshots the worktree by
+# building a temporary git index over HEAD + every tracked modification +
+# every untracked file (respecting .gitignore via --exclude-standard) and
+# writing its tree. The real index, worktree, and stash list are never
+# touched. Emits one XML digest per --coalesce window containing
+# `git diff <baseline_tree>..<current_tree>`, where baseline_tree is the
+# tree from the previous emit. Suppresses empty diffs, persists the
+# baseline at $ATMUX_HOME/git/watch/<id>/last so the watcher can resume
+# from its last emit across restarts.
 set -euo pipefail
 
 ATMUX_HOME="${ATMUX_HOME:-$HOME/.atmux}"
@@ -20,8 +22,18 @@ Usage:
 Description:
   Watch the current repo for worktree changes; emit `git diff` as XML for
   the change *since the previous notification*. Empty diffs are suppressed.
-  Snapshots are non-mutating (`git stash create`) so this is safe to run
-  against a worktree shared with other agents.
+  Snapshots cover tracked modifications AND untracked (non-ignored) files,
+  built in a temp index so the real index, worktree, and stash list are
+  never touched — safe to run against a worktree shared with other agents.
+
+  --once       True single-shot when no --interval is given: take one
+               snapshot, emit diff vs the persisted baseline if non-empty,
+               advance baseline, exit 0. Designed for event-driven setups
+               where an upstream watcher (e.g. `atmux path watch`) is the
+               trigger.
+
+               With `--once --interval N`: legacy poll-and-wait semantics
+               — poll every N seconds and exit on the first non-empty diff.
 USAGE
 }
 
@@ -37,33 +49,44 @@ derive_default_id() {
   fi
 }
 
-# Snapshot: returns the *tree* SHA of the current index+worktree. We take
-# `git stash create`'s output (a commit-ish whose tree captures the dirty
-# state) and resolve it to its tree SHA. Tree SHAs are content-addressed —
-# identical worktrees produce identical SHAs across calls, so equality
-# checks correctly detect "no change". (Stash create's *commit* SHA embeds
-# a timestamp and would change every poll.) When the tree is clean,
-# `git stash create` prints nothing; fall back to HEAD's tree, then to the
-# empty tree on a brand-new repo with no commits.
+# Snapshot: returns the *tree* SHA capturing tracked modifications +
+# untracked (non-ignored) files. Built by copying the real .git/index to
+# a tempfile, running `git add -A` against that copy, and writing its
+# tree. The real index, worktree, and stash list are untouched. Tree
+# SHAs are content-addressed — identical worktrees produce identical
+# SHAs across calls, so equality correctly detects "no change". When
+# .git/index is missing (brand-new repo with no commits) we fall back to
+# the empty tree.
 EMPTY_TREE="4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 
 make_snapshot() {
-  local commitish=""
-  commitish="$(git stash create 2>/dev/null || true)"
-  if [[ -z "$commitish" ]]; then
-    commitish="$(git rev-parse --verify HEAD 2>/dev/null || true)"
-  fi
-  if [[ -z "$commitish" ]]; then
+  local git_dir
+  git_dir="$(git rev-parse --git-dir 2>/dev/null || true)"
+  if [[ -z "$git_dir" ]]; then
     printf '%s\n' "$EMPTY_TREE"
     return 0
   fi
-  local tree
-  tree="$(git rev-parse --verify "${commitish}^{tree}" 2>/dev/null || true)"
+
+  local tmp_index
+  tmp_index="$(mktemp -t atmux-git-snapshot.XXXXXX 2>/dev/null || mktemp)"
+  # Seed the temp index from the real one when it exists; otherwise leave
+  # it empty (HEAD-less repo or never-committed repo).
+  if [[ -f "$git_dir/index" ]]; then
+    cp "$git_dir/index" "$tmp_index" 2>/dev/null || : > "$tmp_index"
+  else
+    : > "$tmp_index"
+  fi
+
+  local tree=""
+  if GIT_INDEX_FILE="$tmp_index" git add -A 2>/dev/null; then
+    tree="$(GIT_INDEX_FILE="$tmp_index" git write-tree 2>/dev/null || true)"
+  fi
+  rm -f "$tmp_index"
+
   if [[ -z "$tree" ]]; then
-    printf '%s\n' "$EMPTY_TREE"
-    return 0
+    tree="$(git rev-parse --verify 'HEAD^{tree}' 2>/dev/null || true)"
   fi
-  printf '%s\n' "$tree"
+  printf '%s\n' "${tree:-$EMPTY_TREE}"
 }
 
 EXEC_CMD=""
@@ -96,6 +119,7 @@ main() {
   local id=""
   local coalesce="0"
   local interval="10"
+  local interval_explicit=0
   local timeout_sec="0"
   local duration="0"
   local once=0
@@ -104,7 +128,7 @@ main() {
     case "$1" in
       --id)        id="${2:-}"; shift 2 ;;
       --coalesce)  coalesce="${2:-}"; shift 2 ;;
-      --interval)  interval="${2:-}"; shift 2 ;;
+      --interval)  interval="${2:-}"; interval_explicit=1; shift 2 ;;
       --timeout)   timeout_sec="${2:-}"; shift 2 ;;
       --duration)  duration="${2:-}"; shift 2 ;;
       --exec)      EXEC_CMD="${2:-}"; shift 2 ;;
@@ -160,6 +184,27 @@ main() {
     duration_deadline=$(( start_ts + duration ))
   fi
 
+  # --once without --interval: true single-shot. Compute one snapshot,
+  # emit diff vs the persisted baseline if non-empty, advance baseline,
+  # exit. Used by event-driven setups (e.g. roles/navigator/git-edit-watch
+  # invoked by `atmux path watch`) where polling is wasteful — the
+  # upstream event already proved a change happened, so we just need
+  # to check git's view of it once and report. Empty diffs (untracked /
+  # ignored files, .git/ ref churn) suppress the emit but still advance
+  # the baseline so subsequent --once invocations don't re-check.
+  #
+  # --once *with* --interval falls through to the polling loop below
+  # (preserves the older "wait until next change, then emit one diff
+  # and exit" semantics — handled inside the loop body).
+  if (( once == 1 )) && (( interval_explicit == 0 )); then
+    current_sha="$(make_snapshot)"
+    if [[ "$current_sha" != "$baseline_sha" ]]; then
+      emit_diff "$baseline_sha" "$current_sha" 1 "0" "once" "$id" || true
+      printf '%s\n' "$current_sha" > "$last_file"
+    fi
+    exit 0
+  fi
+
   local pending=0 event_count=0 flush_at=0
 
   flush_pending() {
@@ -195,6 +240,8 @@ main() {
       event_count=$(( event_count + 1 ))
 
       if (( once == 1 )); then
+        # `--once --interval N`: poll-and-wait for the first change,
+        # emit, exit (legacy single-shot semantics).
         if emit_diff "$baseline_sha" "$current_sha" "$event_count" "0" "once" "$id"; then
           printf '%s\n' "$current_sha" > "$last_file"
           exit 0

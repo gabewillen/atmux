@@ -6,7 +6,7 @@ set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/isolate-tmux.sh"
 
 # Matrix sanity check: for every shipped adapter manifest, resolve_submit_keys
-# returns the expected queue + interrupt key strings. Catches manifest schema
+# returns the expected steer + interrupt key strings. Catches manifest schema
 # regressions that would silently downgrade interrupt -> Enter.
 
 TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -36,7 +36,7 @@ check() {
   printf '  ok: %-50s -> %s\n' "$label" "$got"
 }
 
-want_queue_for() {
+want_steer_for() {
   case "$1" in
     claude-code|codex|cursor-agent|gemini) printf 'Enter' ;;
     *) return 1 ;;
@@ -45,10 +45,10 @@ want_queue_for() {
 
 want_interrupt_for() {
   case "$1" in
-    claude-code) printf 'Escape,Enter' ;;
-    codex)       printf 'Tab' ;;
-    cursor-agent) printf 'Enter' ;;
-    gemini)      printf 'Enter' ;;
+    claude-code) printf 'Escape' ;;
+    codex)       printf 'Escape' ;;
+    cursor-agent) printf 'C-c' ;;
+    gemini)      printf 'C-c' ;;
     *) return 1 ;;
   esac
 }
@@ -56,25 +56,25 @@ want_interrupt_for() {
 echo "matrix: every adapter manifest resolves to expected submit_keys" >&2
 
 for adapter in claude-code codex cursor-agent gemini; do
-  q="$(resolve_submit_keys "$adapter" queue | normalize_keys)"
+  s="$(resolve_submit_keys "$adapter" steer | normalize_keys)"
   i="$(resolve_submit_keys "$adapter" interrupt | normalize_keys)"
-  check "$adapter queue"     "$q" "$(want_queue_for "$adapter")"
+  check "$adapter steer"     "$s" "$(want_steer_for "$adapter")"
   check "$adapter interrupt" "$i" "$(want_interrupt_for "$adapter")"
 done
 
 # Fallback: unknown adapter must fall back to Enter for both modes (this
 # is what protects atmux from crashing when a user's session has a stale
 # ATMUX_ADAPTER pointing at a deleted adapter).
-unknown_q="$(resolve_submit_keys "this-adapter-does-not-exist" queue | normalize_keys)"
+unknown_s="$(resolve_submit_keys "this-adapter-does-not-exist" steer | normalize_keys)"
 unknown_i="$(resolve_submit_keys "this-adapter-does-not-exist" interrupt | normalize_keys)"
-check "unknown adapter queue"     "$unknown_q" "Enter"
+check "unknown adapter steer"     "$unknown_s" "Enter"
 check "unknown adapter interrupt" "$unknown_i" "Enter"
 
 # Empty adapter name: same fallback. Otherwise an unset ATMUX_ADAPTER could
 # crash the worker on an unbounded printf or empty manifest read.
-empty_q="$(resolve_submit_keys "" queue | normalize_keys)"
+empty_s="$(resolve_submit_keys "" steer | normalize_keys)"
 empty_i="$(resolve_submit_keys "" interrupt | normalize_keys)"
-check "empty adapter queue"     "$empty_q" "Enter"
+check "empty adapter steer"     "$empty_s" "Enter"
 check "empty adapter interrupt" "$empty_i" "Enter"
 
 # Manifest with no submit_keys at all: must still fall back, never produce
@@ -87,12 +87,37 @@ cat > "$fake_root/adapter/keysless/manifest.json" <<'EOF'
 EOF
 (
   ATMUX_SOURCE_ROOT="$fake_root"
-  q="$(resolve_submit_keys "keysless" queue | normalize_keys)"
+  s="$(resolve_submit_keys "keysless" steer | normalize_keys)"
   i="$(resolve_submit_keys "keysless" interrupt | normalize_keys)"
-  [[ "$q" == "Enter" ]] || { echo "FAIL: keysless queue: $q" >&2; exit 1; }
+  [[ "$s" == "Enter" ]] || { echo "FAIL: keysless steer: $s" >&2; exit 1; }
   [[ "$i" == "Enter" ]] || { echo "FAIL: keysless interrupt: $i" >&2; exit 1; }
   echo "  ok: keysless manifest                                -> Enter / Enter"
 )
 rm -rf "$fake_root"
 
 echo "ok: all adapter manifests resolve to expected submit_keys"
+
+# resolve_submit_keys_strict must NOT fall back to Enter when a mode is
+# missing — it returns empty + non-zero so --interrupt can detect the gap
+# instead of silently sending Enter as the abort prefix.
+echo "matrix: strict resolver returns empty for missing modes" >&2
+
+fake_root="$(mktemp -d "${TMPDIR:-/tmp}/atmux-strict-resolver.XXXXXX")"
+mkdir -p "$fake_root/adapter/steer-only"
+cat > "$fake_root/adapter/steer-only/manifest.json" <<'EOF'
+{ "name": "steer-only", "version": 1, "submit_keys": { "steer": ["Enter"] } }
+EOF
+(
+  ATMUX_SOURCE_ROOT="$fake_root"
+  if resolve_submit_keys_strict "steer-only" interrupt > /dev/null 2>&1; then
+    echo "FAIL: strict resolver should fail when mode is missing" >&2
+    exit 1
+  fi
+  s_strict="$(resolve_submit_keys_strict "steer-only" steer | normalize_keys)"
+  [[ "$s_strict" == "Enter" ]] || { echo "FAIL: strict steer: $s_strict" >&2; exit 1; }
+  echo "  ok: strict resolver returns empty for missing mode  -> exit 1"
+  echo "  ok: strict resolver returns keys when mode is present -> Enter"
+)
+rm -rf "$fake_root"
+
+echo "ok: strict submit-keys resolver behaves correctly"

@@ -56,17 +56,21 @@ Usage:
   atmux send --to <name|session> [--reply-required] [--interrupt] "message"
 
 Description:
-  Send XML messages to a single agent or every agent in a team.
+  Send XML messages to a single agent or every agent in a team. Without
+  --interrupt, the message is queued and delivered when the receiving agent
+  is at its idle prompt.
   Resolution order for --to:
     1) Team session/name
     2) Agent session/name
-  --interrupt  Submit using the adapter's interrupt key (processed after current
-               tool) instead of the default queue key (processed when idle).
+  --interrupt  Hard interrupt: send the adapter's abort key sequence
+               (`submit_keys.interrupt` in the manifest) to stop the current
+               operation, then submit the message. Use sparingly — this aborts
+               whatever the agent is doing.
 
 Examples:
   atmux send --to planner "run tests"
   atmux send --to platform --reply-required "status check-in"
-  atmux send --to worker --interrupt "stop and check this"
+  atmux send --to worker --interrupt "stop, that's wrong"
 
 ## message
 Usage:

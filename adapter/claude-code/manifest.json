@@ -2,8 +2,8 @@
   "name": "claude-code",
   "version": 1,
   "submit_keys": {
-    "queue": ["Enter"],
-    "interrupt": ["Escape", "Enter"]
+    "steer": ["Enter"],
+    "interrupt": ["Escape"]
   },
   "input_idle": {
     "prompt": "❯"

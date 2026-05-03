@@ -2,8 +2,8 @@
   "name": "cursor-agent",
   "version": 1,
   "submit_keys": {
-    "queue": ["Enter"],
-    "interrupt": ["Enter"]
+    "steer": ["Enter"],
+    "interrupt": ["C-c"]
   },
   "input_idle": {
     "prompt": "→"

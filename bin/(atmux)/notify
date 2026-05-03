@@ -604,16 +604,29 @@ deliver_notification_to_pane() {
   local payload="$2"
   local submit_keys="$3"
   local prompt_prefix="${4:-}"
+  local pre_keys="${5:-}"
   local settle paste_submit_wait submit_wait no_prompt_ready_wait
+  local interrupt_settle
 
   settle="${ATMUX_SEND_SETTLE_SECONDS:-0.4}"
   paste_submit_wait="${ATMUX_SEND_PASTE_TO_SUBMIT_WAIT_SECONDS:-0.8}"
   submit_wait="${ATMUX_SEND_SUBMIT_WAIT_SECONDS:-0.3}"
   no_prompt_ready_wait="${ATMUX_SEND_NO_PROMPT_READY_SECONDS:-0.6}"
+  interrupt_settle="${ATMUX_SEND_INTERRUPT_SETTLE_SECONDS:-0.6}"
 
-  debug_notify "deliver:start pane=$(printf '%q' "$pane") submit_keys=$(printf '%q' "$submit_keys") $(payload_debug_summary "$payload")"
+  debug_notify "deliver:start pane=$(printf '%q' "$pane") submit_keys=$(printf '%q' "$submit_keys") pre_keys=$(printf '%q' "$pre_keys") $(payload_debug_summary "$payload")"
 
-  if [[ -z "$prompt_prefix" ]]; then
+  if [[ -n "$pre_keys" ]]; then
+    local pk
+    for pk in $pre_keys; do
+      tmux send-keys -t "$pane" "$pk" >/dev/null 2>&1 || {
+        debug_notify "deliver:pre_key_failed pane=$(printf '%q' "$pane") key=$(printf '%q' "$pk")"
+        return 1
+      }
+    done
+    sleep "$interrupt_settle"
+    debug_notify "deliver:pre_keys_sent pane=$(printf '%q' "$pane") settle=$interrupt_settle"
+  elif [[ -z "$prompt_prefix" ]]; then
     sleep "$no_prompt_ready_wait"
   fi
 
@@ -705,6 +718,8 @@ queue_notification_payload() {
   local payload="$2"
   local submit_key_str="$3"
   local qdir payload_dir queue_id item_dir tmp_dir
+  local pre_key_str="${ATMUX_NOTIFY_PRE_KEYS:-}"
+  local bypass_idle="${ATMUX_NOTIFY_BYPASS_IDLE:-0}"
 
   qdir="$(notify_queue_dir "$pane")"
   payload_dir="$qdir/payloads"
@@ -719,8 +734,14 @@ queue_notification_payload() {
   write_field "$tmp_dir/state" "queued"
   write_field "$tmp_dir/attempts" "0"
   write_field "$tmp_dir/created_at" "$(timestamp_utc)"
+  if [[ -n "$pre_key_str" ]]; then
+    write_field "$tmp_dir/pre_keys" "$pre_key_str"
+  fi
+  if [[ "$bypass_idle" == "1" ]]; then
+    write_field "$tmp_dir/bypass_idle" "1"
+  fi
   mv "$tmp_dir" "$item_dir"
-  debug_notify "queue:enqueued pane=$(printf '%q' "$pane") qdir=$(printf '%q' "$qdir") queue_id=$(printf '%q' "$queue_id") submit_keys=$(printf '%q' "$submit_key_str") $(payload_debug_summary "$payload")"
+  debug_notify "queue:enqueued pane=$(printf '%q' "$pane") qdir=$(printf '%q' "$qdir") queue_id=$(printf '%q' "$queue_id") submit_keys=$(printf '%q' "$submit_key_str") pre_keys=$(printf '%q' "$pre_key_str") bypass_idle=$bypass_idle $(payload_debug_summary "$payload")"
 }
 
 notification_item_attempts() {
@@ -1001,7 +1022,21 @@ serve_notification_queue() {
       sleep "$mode_poll_interval"
       continue
     fi
-    if [[ -n "$prompt_prefix" ]] && ! wait_for_pane_ready "$pane" "$source_root" "$prompt_prefix"; then
+    # If any due item has bypass_idle=1 (--steer / --interrupt), skip the
+    # wait-for-pane-ready gate so the message goes through even mid-tool.
+    local _has_bypass_due=0
+    local _scan_item
+    for _scan_item in "${items[@]}"; do
+      [[ -d "$_scan_item" ]] || continue
+      if ! notification_item_due "$_scan_item"; then
+        continue
+      fi
+      if [[ -f "$_scan_item/bypass_idle" ]]; then
+        _has_bypass_due=1
+        break
+      fi
+    done
+    if (( _has_bypass_due == 0 )) && [[ -n "$prompt_prefix" ]] && ! wait_for_pane_ready "$pane" "$source_root" "$prompt_prefix"; then
       debug_notify "worker:not_ready pane=$(printf '%q' "$pane") prompt_prefix=$(printf '%q' "$prompt_prefix")"
       sleep "$mode_poll_interval"
       continue
@@ -1048,8 +1083,12 @@ serve_notification_queue() {
       # rolls past the viewport.
       payload="$(cat "$item_dir/payload" 2>/dev/null || true)"
       submit_keys="$(cat "$item_dir/submit_keys" 2>/dev/null || printf 'Enter')"
-      debug_notify "worker:item pane=$(printf '%q' "$pane") item_dir=$(printf '%q' "$item_dir") submit_keys=$(printf '%q' "$submit_keys") $(payload_debug_summary "$payload")"
-      if deliver_notification_to_pane "$pane" "$payload" "$submit_keys" "$prompt_prefix"; then
+      local pre_keys=""
+      if [[ -f "$item_dir/pre_keys" ]]; then
+        pre_keys="$(cat "$item_dir/pre_keys" 2>/dev/null || true)"
+      fi
+      debug_notify "worker:item pane=$(printf '%q' "$pane") item_dir=$(printf '%q' "$item_dir") submit_keys=$(printf '%q' "$submit_keys") pre_keys=$(printf '%q' "$pre_keys") $(payload_debug_summary "$payload")"
+      if deliver_notification_to_pane "$pane" "$payload" "$submit_keys" "$prompt_prefix" "$pre_keys"; then
         mark_notification_delivered "$item_dir"
         rm -rf "$item_dir"
       else
@@ -1223,7 +1262,7 @@ resolve_manifest_path() {
 
 resolve_submit_keys() {
   local adapter="$1"
-  local mode="${2:-queue}"
+  local mode="${2:-steer}"
   local manifest_path compact raw_keys
 
   if ! manifest_path="$(resolve_manifest_path "$adapter")"; then
@@ -1238,6 +1277,21 @@ resolve_submit_keys() {
     return 0
   fi
 
+  printf '%s' "$raw_keys" | sed 's/"//g; s/,/\n/g'
+}
+
+# Like resolve_submit_keys, but emits nothing (and returns 1) when the
+# manifest doesn't define the requested mode. Used by --interrupt to detect
+# adapters that lack an abort key, instead of silently falling back to Enter.
+resolve_submit_keys_strict() {
+  local adapter="$1"
+  local mode="${2:-steer}"
+  local manifest_path compact raw_keys
+
+  manifest_path="$(resolve_manifest_path "$adapter")" || return 1
+  compact="$(tr -d '\n\r\t ' < "$manifest_path")"
+  raw_keys="$(printf '%s' "$compact" | sed -n "s/.*\"${mode}\":\[\([^]]*\)\].*/\1/p")"
+  [[ -n "$raw_keys" ]] || return 1
   printf '%s' "$raw_keys" | sed 's/"//g; s/,/\n/g'
 }
 
@@ -1437,14 +1491,18 @@ Usage:
   atmux notify --pane <tmux-pane-id> --xml <payload> [--interrupt]
 
 Description:
-  Send an ATMUX XML notification to a tmux pane.
-  --interrupt  Use the adapter's interrupt submit key instead of the default
-               key (Enter). Resolves the adapter from the pane's session, or from
-               --session if provided.
+  Send an ATMUX XML notification to a tmux pane. Without --interrupt, the
+  notification is queued and delivered when the pane's adapter is at its
+  idle prompt.
+  --interrupt  Hard interrupt: send the adapter's abort key sequence
+               (`submit_keys.interrupt` in the manifest) before the message,
+               then submit. Resolves adapter from the pane's session, or from
+               --session if provided. Use sparingly — this aborts whatever
+               the agent is doing.
 
 Examples:
   atmux notify --pane %12 --xml '<notification type="test" from="manual" cmd="atmux message read abc" />'
-  atmux notify --pane %12 --xml '<notification type="urgent" from="mgr" />' --interrupt
+  atmux notify --pane %12 --xml '<notification type="abort" from="mgr" />' --interrupt
 USAGE
 }
 
@@ -1488,22 +1546,35 @@ notify_cli_main() {
   [[ -n "$xml_payload" ]] || { echo "missing --xml" >&2; exit 2; }
 
   local submit_keys=()
-  if [[ "$interrupt" -eq 1 ]]; then
+  local pre_keys_str=""
+  local bypass=""
+
+  if (( interrupt == 1 )); then
     local adapter="" resolve_session="$session"
     if [[ -z "$resolve_session" && -n "$pane" ]]; then
       resolve_session="$(tmux display-message -t "$pane" -p '#{session_name}' 2>/dev/null || true)"
     fi
     if [[ -n "$resolve_session" ]]; then
       adapter="$(get_session_env "$resolve_session" ATMUX_ADAPTER)"
-      if [[ -n "$adapter" ]]; then
-        while IFS= read -r __nk_line; do
-          submit_keys+=("$__nk_line")
-        done < <(resolve_submit_keys "$adapter" "interrupt")
-      fi
     fi
+    if [[ -n "$adapter" ]]; then
+      while IFS= read -r __qk_line; do
+        submit_keys+=("$__qk_line")
+      done < <(resolve_submit_keys "$adapter" "steer")
+      while IFS= read -r __pk_line; do
+        [[ -n "$__pk_line" ]] || continue
+        if [[ -n "$pre_keys_str" ]]; then
+          pre_keys_str+=" "
+        fi
+        pre_keys_str+="$__pk_line"
+      done < <(resolve_submit_keys_strict "$adapter" "interrupt" || true)
+    fi
+    bypass=1
   fi
 
-  send_notification "$pane" "$xml_payload" ${submit_keys[@]+"${submit_keys[@]}"}
+  ATMUX_NOTIFY_PRE_KEYS="$pre_keys_str" \
+  ATMUX_NOTIFY_BYPASS_IDLE="$bypass" \
+    send_notification "$pane" "$xml_payload" ${submit_keys[@]+"${submit_keys[@]}"}
 }
 
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then

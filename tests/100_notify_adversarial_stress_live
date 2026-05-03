@@ -8,18 +8,18 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/isolate-tmux.sh"
 # Live adversarial stress test for the notification system.
 # Targets a real adapter (default claude-code) and exercises:
 #   A. Adversarial payloads (XML special chars, control chars, long, unicode)
-#   B. Mixed --interrupt + queued sends in parallel
+#   B. Heavy parallel queued sends (16 at once, same target)
 #   D. Heavy burst right after session start (boot race)
 #
 # Surfaced a real bug on first run: macOS bash 3.2 lacks `mapfile`, so
-# `atmux send --interrupt` exited 127 on every call. Fixed in bin/(atmux)/send
-# and bin/(atmux)/notify by replacing mapfile with portable while-read loops.
+# `atmux send` exited 127 on every call. Fixed in bin/(atmux)/send and
+# bin/(atmux)/notify by replacing mapfile with portable while-read loops.
 #
-# Note: under heavy parallel --interrupt load the worker can mark items
+# Note: under heavy parallel load the worker can mark items
 # "delivery_unverified" even when the text reached the pane (cursor sample
 # races); the worker keeps retrying and pane-side dedupe is the user's job.
 # This test verifies user-visible delivery (text in pane), not strict queue
-# drain after the parallel interrupt phase.
+# drain after the parallel phase.
 
 TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
@@ -182,20 +182,20 @@ for id in "${ADV_IDS[@]}"; do
 done
 echo "phase A ok: adversarial payloads delivered" >&2
 
-# ---- Phase B: mixed --interrupt + queue parallel ----
+# ---- Phase B: heavy parallel queued sends ----
 # Verifies user-visible delivery; tolerates retrying items that are still
 # being re-verified (worker prefers redelivery over loss).
-echo "--- phase B: 8 interrupt + 8 queued in parallel ---" >&2
+echo "--- phase B: 16 queued sends in parallel ---" >&2
 collect="$(mktemp "${TMPDIR:-/tmp}/atmux-stress-collect.XXXXXX")"
 declare -a PIDS=()
 for i in $(seq 1 8); do
   (
-    out="$(run_atmux_as_manager send --to worker --interrupt "intr $i $RANDOM" 2>&1)" || true
+    out="$(run_atmux_as_manager send --to worker "burst1 $i $RANDOM" 2>&1)" || true
     printf '%s\n' "$out" >> "$collect"
   ) &
   PIDS+=($!)
   (
-    out="$(run_atmux_as_manager send --to worker "qd $i $RANDOM" 2>&1)" || true
+    out="$(run_atmux_as_manager send --to worker "burst2 $i $RANDOM" 2>&1)" || true
     printf '%s\n' "$out" >> "$collect"
   ) &
   PIDS+=($!)

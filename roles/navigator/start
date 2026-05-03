@@ -104,20 +104,30 @@ spawn_window() {
   fi
 }
 
-# --- 1. git watch against the shared worktree ---------------------------------
+# --- 1. event-driven git watch against the shared worktree -------------------
 
-# shellcheck disable=SC2016
-# The --exec value must stay single-quoted: $ATMUX_NAVIGATOR_PANE and
-# $(cat) are evaluated by the deferred bash -c that runs on each watcher
-# emit, not by this start-hook shell.
-spawn_window "git-watch" "$state/git-watch.log" \
-  -e "ATMUX_NAVIGATOR_PANE=$nav_pane" \
-  atmux git watch \
-    --id "$git_watch_id" \
-    --interval 10 \
-    --coalesce 0 \
-    --exec 'atmux notify --pane "$ATMUX_NAVIGATOR_PANE" --xml "$(cat)"' \
-  || true
+# Use `atmux path watch` as a low-latency edge trigger (fswatch on macOS,
+# inotifywait on Linux, polling fallback elsewhere) and let the
+# `git-edit-watch` wrapper invoke `atmux git watch --once` per event. Two
+# wins over the old polling git-watch (--interval 10):
+#   - reaction time drops from ~10s to milliseconds
+#   - changes to .gitignore'd files / .git/ refs trigger path-watch but
+#     git-watch produces no diff and stays silent — so the navigator
+#     never gets paged for noise that wouldn't have changed the diff
+# `--coalesce 0` fires the wrapper per event. git-watch's rolling-baseline
+# semantics + empty-diff suppression dedupe bursts naturally: the second
+# fire in a save-burst sees no change vs the baseline the first fire just
+# advanced, exits silently. So no extra coalescing is needed here.
+git_edit_watch_script="$ATMUX_ROLE_DIR/git-edit-watch"
+if [[ ! -x "$git_edit_watch_script" ]]; then
+  echo "navigator start: git-edit-watch script not executable at $git_edit_watch_script — skipping git watcher" >&2
+else
+  spawn_window "git-watch" "$state/git-watch.log" \
+    atmux path watch "$ATMUX_WORKTREE" \
+      --coalesce 0 \
+      --exec "$git_edit_watch_script $(printf '%q' "$git_watch_id") $(printf '%q' "$nav_pane")" \
+    || true
+fi
 
 # --- 2. edge-triggered idle watcher against the driver ------------------------
 

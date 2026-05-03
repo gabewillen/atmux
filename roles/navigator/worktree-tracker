@@ -94,15 +94,20 @@ rearm_git_watch_at() {
   printf '%s\n' "$new_id" > "$state_dir/git-watch-id"
 
   # Spawn a fresh git-watch window with cwd at the driver's worktree.
-  # `-c` sets the new window's working directory.
+  # Same event-driven shape as roles/navigator/start: path-watch is the
+  # edge trigger, git-edit-watch invokes `git watch --once` per event.
+  local git_edit_watch_script="${ATMUX_ROLE_DIR:-}/git-edit-watch"
+  if [[ ! -x "$git_edit_watch_script" ]]; then
+    note "git-edit-watch missing or not executable at $git_edit_watch_script — cannot rearm"
+    return 1
+  fi
+  local exec_cmd
+  exec_cmd="$git_edit_watch_script $(printf '%q' "$new_id") $(printf '%q' "$nav_pane")"
   tmux new-window -d -n git-watch -t "$nav_session" \
     -c "$target_path" \
-    -e "ATMUX_NAVIGATOR_PANE=$nav_pane" \
-    "atmux git watch \
-       --id $(printf '%q' "$new_id") \
-       --interval 10 \
+    "atmux path watch $(printf '%q' "$target_path") \
        --coalesce 0 \
-       --exec 'atmux notify --pane \"\$ATMUX_NAVIGATOR_PANE\" --xml \"\$(cat)\"' \
+       --exec $(printf '%q' "$exec_cmd") \
        >$(printf '%q' "$state_dir/git-watch.log") 2>&1" \
     2>/dev/null && note "rearmed git-watch at $target_path (id=$new_id)" \
     || note "tmux new-window failed for $target_path"

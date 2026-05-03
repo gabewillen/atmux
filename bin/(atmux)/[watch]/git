@@ -25,6 +25,15 @@ Description:
   Snapshots cover tracked modifications AND untracked (non-ignored) files,
   built in a temp index so the real index, worktree, and stash list are
   never touched — safe to run against a worktree shared with other agents.
+
+  --once       True single-shot when no --interval is given: take one
+               snapshot, emit diff vs the persisted baseline if non-empty,
+               advance baseline, exit 0. Designed for event-driven setups
+               where an upstream watcher (e.g. `atmux path watch`) is the
+               trigger.
+
+               With `--once --interval N`: legacy poll-and-wait semantics
+               — poll every N seconds and exit on the first non-empty diff.
 USAGE
 }
 
@@ -110,6 +119,7 @@ main() {
   local id=""
   local coalesce="0"
   local interval="10"
+  local interval_explicit=0
   local timeout_sec="0"
   local duration="0"
   local once=0
@@ -118,7 +128,7 @@ main() {
     case "$1" in
       --id)        id="${2:-}"; shift 2 ;;
       --coalesce)  coalesce="${2:-}"; shift 2 ;;
-      --interval)  interval="${2:-}"; shift 2 ;;
+      --interval)  interval="${2:-}"; interval_explicit=1; shift 2 ;;
       --timeout)   timeout_sec="${2:-}"; shift 2 ;;
       --duration)  duration="${2:-}"; shift 2 ;;
       --exec)      EXEC_CMD="${2:-}"; shift 2 ;;
@@ -174,6 +184,27 @@ main() {
     duration_deadline=$(( start_ts + duration ))
   fi
 
+  # --once without --interval: true single-shot. Compute one snapshot,
+  # emit diff vs the persisted baseline if non-empty, advance baseline,
+  # exit. Used by event-driven setups (e.g. roles/navigator/git-edit-watch
+  # invoked by `atmux path watch`) where polling is wasteful — the
+  # upstream event already proved a change happened, so we just need
+  # to check git's view of it once and report. Empty diffs (untracked /
+  # ignored files, .git/ ref churn) suppress the emit but still advance
+  # the baseline so subsequent --once invocations don't re-check.
+  #
+  # --once *with* --interval falls through to the polling loop below
+  # (preserves the older "wait until next change, then emit one diff
+  # and exit" semantics — handled inside the loop body).
+  if (( once == 1 )) && (( interval_explicit == 0 )); then
+    current_sha="$(make_snapshot)"
+    if [[ "$current_sha" != "$baseline_sha" ]]; then
+      emit_diff "$baseline_sha" "$current_sha" 1 "0" "once" "$id" || true
+      printf '%s\n' "$current_sha" > "$last_file"
+    fi
+    exit 0
+  fi
+
   local pending=0 event_count=0 flush_at=0
 
   flush_pending() {
@@ -209,6 +240,8 @@ main() {
       event_count=$(( event_count + 1 ))
 
       if (( once == 1 )); then
+        # `--once --interval N`: poll-and-wait for the first change,
+        # emit, exit (legacy single-shot semantics).
         if emit_diff "$baseline_sha" "$current_sha" "$event_count" "0" "once" "$id"; then
           printf '%s\n' "$current_sha" > "$last_file"
           exit 0

@@ -13,6 +13,7 @@ Usage:
   atmux team create <name>
   atmux team list
   atmux team ls
+  atmux team status [<name>]
   atmux team capture <name> [--lines <n>]
   atmux team kill <name|pattern> [...]
   atmux team resolve <name> [<repo_name>]
@@ -137,6 +138,10 @@ case "$sub" in
     ;;
   list|ls)
     list_teams
+    ;;
+  status)
+    here_team="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+    exec "$here_team/(list)/team-status" "$@"
     ;;
   capture)
     here_team="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"

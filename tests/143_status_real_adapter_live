@@ -1,0 +1,258 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Live verification of `atmux agent status` against each real adapter.
+# Mocked tests (141) cover the structural branches (alive/dead/none/queue
+# depth/last_error rendering); this test verifies the same code path
+# observes correct state on a real running adapter session — that
+# notify_queue_dir, worker.pid, and pane liveness all line up the way
+# the running system actually writes them.
+#
+# For each adapter we:
+#   1. agent create
+#   2. assert `agent status worker` shows pane_alive=yes
+#   3. send a notification
+#   4. observe queue depth become non-zero (best-effort; deliveries can
+#      finish before our poll interval) OR observe pane delivery
+#   5. assert queue drains back to 0 after delivery
+#   6. assert listing-mode (`agent status` with no arg) includes the worker
+#   7. kill the agent pane and assert pane_alive=no on follow-up status
+#
+# Gated by ATMUX_RUN_LIVE_ADAPTER_TESTS=1 (suffix `_live` in tests/runner).
+
+source "$(dirname "${BASH_SOURCE[0]}")/lib/isolate-tmux.sh"
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+ATMUX_BIN="$REPO_ROOT/bin/atmux"
+CONTROL_FILES=(CLAUDE.md GEMINI.md)
+CONTROL_SNAPSHOT=""
+
+snapshot_control_files() {
+  CONTROL_SNAPSHOT="$(mktemp -d "${TMPDIR:-/tmp}/atmux-control-files.XXXXXX")"
+  local file
+  for file in "${CONTROL_FILES[@]}"; do
+    if [[ -e "$REPO_ROOT/$file" ]]; then
+      cp "$REPO_ROOT/$file" "$CONTROL_SNAPSHOT/$file"
+    else
+      touch "$CONTROL_SNAPSHOT/$file.missing"
+    fi
+  done
+}
+
+restore_control_files() {
+  [[ -n "$CONTROL_SNAPSHOT" ]] || return 0
+  local file
+  for file in "${CONTROL_FILES[@]}"; do
+    if [[ -f "$CONTROL_SNAPSHOT/$file.missing" ]]; then
+      rm -f "$REPO_ROOT/$file"
+    elif [[ -f "$CONTROL_SNAPSHOT/$file" ]]; then
+      cp "$CONTROL_SNAPSHOT/$file" "$REPO_ROOT/$file"
+    fi
+  done
+  rm -rf "$CONTROL_SNAPSHOT"
+}
+
+require_adapter_command() {
+  case "$1" in
+    codex)        command -v codex >/dev/null 2>&1 ;;
+    claude-code)  command -v claude >/dev/null 2>&1 ;;
+    gemini)       command -v gemini >/dev/null 2>&1 ;;
+    cursor-agent) command -v agent >/dev/null 2>&1 || command -v cursor-agent >/dev/null 2>&1 ;;
+    *)            return 2 ;;
+  esac
+}
+
+session_pane() {
+  tmux list-panes -t "$1" -F '#{pane_id}' 2>/dev/null | head -n1
+}
+
+# Pick an attribute out of an XML status record by name.
+xml_attr() {
+  local xml="$1" name="$2"
+  printf '%s' "$xml" | sed -n "s/.*${name}=\"\\([^\"]*\\)\".*/\\1/p" | head -n1
+}
+
+assert_attr_equals() {
+  local label="$1" want="$2" got="$3"
+  if [[ "$got" != "$want" ]]; then
+    echo "FAIL [$label]: want '$want', got '$got'" >&2
+    exit 1
+  fi
+}
+
+wait_for_text() {
+  local target="$1" needle="$2" timeout="${3:-90}"
+  local deadline now snap
+  deadline=$(( $(date +%s) + timeout ))
+  while true; do
+    snap="$(tmux capture-pane -p -t "$target" -S -2000 2>/dev/null | tr -d '\r' || true)"
+    if printf '%s' "$snap" | grep -Fq "$needle"; then return 0; fi
+    now="$(date +%s)"
+    (( now >= deadline )) && return 1
+    sleep 0.2
+  done
+}
+
+queue_has_payloads() {
+  local home="$1" payload
+  shopt -s nullglob
+  for payload in "$home"/notify-queue/*/payloads/*; do
+    [[ -d "$payload" ]] && return 0
+  done
+  return 1
+}
+
+wait_for_queue_empty() {
+  local home="$1" timeout="${2:-30}"
+  local deadline now
+  deadline=$(( $(date +%s) + timeout ))
+  while true; do
+    if ! queue_has_payloads "$home"; then return 0; fi
+    now="$(date +%s)"
+    (( now >= deadline )) && return 1
+    sleep 0.2
+  done
+}
+
+# Run one adapter's full status flow.
+run_adapter_case() {
+  local adapter="$1"
+  local repo="status-${adapter//[^A-Za-z0-9]/-}-${RANDOM}"
+  local atmux_home worker_session worker_pane send_out message_id status_xml
+
+  echo "--- $adapter agent status flow ---" >&2
+  if ! require_adapter_command "$adapter"; then
+    echo "missing real adapter command for $adapter — skipping" >&2
+    return 0
+  fi
+
+  atmux_home="$(mktemp -d "${TMPDIR:-/tmp}/atmux-status-live-${adapter}.XXXXXX")"
+  TMP_DIRS+=("$atmux_home")
+
+  worker_session="$(
+    ATMUX_ALLOW_OUTSIDE_TMUX=1 ATMUX_HOME="$atmux_home" ATMUX_SOURCE_ROOT="$REPO_ROOT" \
+    ATMUX_REPO="$repo" ATMUX_ROLE="implementer" ATMUX_INTELLIGENCE="50" \
+    ATMUX_MANAGER="manager" \
+    "$ATMUX_BIN" agent create --name worker --role worker --intelligence 50 \
+      --adapter auto --adapters "$adapter" --no-worktree
+  )"
+  [[ -n "$worker_session" ]] || { echo "create returned empty session for $adapter" >&2; return 1; }
+  SESSIONS+=("$worker_session")
+
+  worker_pane="$(session_pane "$worker_session")"
+  [[ -n "$worker_pane" ]] || { echo "no pane for $adapter worker" >&2; return 1; }
+
+  # 1) initial agent status (named): pane alive, queue=0, no error.
+  status_xml="$(
+    ATMUX_ALLOW_OUTSIDE_TMUX=1 ATMUX_HOME="$atmux_home" ATMUX_SOURCE_ROOT="$REPO_ROOT" \
+    ATMUX_REPO="$repo" ATMUX_REPORTER=xml \
+    "$ATMUX_BIN" agent status worker
+  )"
+  if ! grep -Fq 'name="worker"' <<<"$status_xml"; then
+    echo "FAIL [$adapter]: status xml missing worker record" >&2
+    printf '%s\n' "$status_xml" >&2
+    return 1
+  fi
+  assert_attr_equals "$adapter pane_alive initial" "yes" \
+    "$(xml_attr "$status_xml" pane_alive)"
+  assert_attr_equals "$adapter queue_depth initial" "0" \
+    "$(xml_attr "$status_xml" queue_depth)"
+  assert_attr_equals "$adapter last_error initial" "" \
+    "$(xml_attr "$status_xml" last_error)"
+  # adapter attribute reflects the requested adapter
+  assert_attr_equals "$adapter adapter attr" "$adapter" \
+    "$(xml_attr "$status_xml" adapter)"
+
+  # 2) send a notification, then verify queue drains back to 0.
+  send_out="$(
+    ATMUX_ALLOW_OUTSIDE_TMUX=1 ATMUX_HOME="$atmux_home" ATMUX_SOURCE_ROOT="$REPO_ROOT" \
+    ATMUX_REPO="$repo" ATMUX_AGENT_NAME="manager" \
+    ATMUX_SESSION_NAME="atmux-${repo}-manager" \
+    "$ATMUX_BIN" send --to worker "atmux agent status live test ${adapter} ${RANDOM}"
+  )"
+  message_id="$(sed -n 's/.*message_id="\([^"]*\)".*/\1/p' <<<"$send_out" | head -n1)"
+  [[ -n "$message_id" ]] || { echo "FAIL [$adapter]: no message_id from send" >&2; return 1; }
+
+  # The notification reaches the pane as `atmux message read <id> --repo <repo>`.
+  if ! wait_for_text "$worker_pane" "atmux message read $message_id" 120; then
+    echo "FAIL [$adapter]: notification never appeared in pane" >&2
+    tmux capture-pane -p -t "$worker_pane" -S -200 >&2 || true
+    return 1
+  fi
+  if ! wait_for_queue_empty "$atmux_home" 30; then
+    echo "FAIL [$adapter]: queue did not drain after delivery" >&2
+    return 1
+  fi
+
+  # 3) status after delivery: still alive, queue back to 0.
+  status_xml="$(
+    ATMUX_ALLOW_OUTSIDE_TMUX=1 ATMUX_HOME="$atmux_home" ATMUX_SOURCE_ROOT="$REPO_ROOT" \
+    ATMUX_REPO="$repo" ATMUX_REPORTER=xml \
+    "$ATMUX_BIN" agent status worker
+  )"
+  assert_attr_equals "$adapter pane_alive post-deliver" "yes" \
+    "$(xml_attr "$status_xml" pane_alive)"
+  assert_attr_equals "$adapter queue_depth post-deliver" "0" \
+    "$(xml_attr "$status_xml" queue_depth)"
+
+  # 4) listing mode (no name) includes the worker.
+  list_xml="$(
+    ATMUX_ALLOW_OUTSIDE_TMUX=1 ATMUX_HOME="$atmux_home" ATMUX_SOURCE_ROOT="$REPO_ROOT" \
+    ATMUX_REPO="$repo" ATMUX_REPORTER=xml \
+    "$ATMUX_BIN" agent status
+  )"
+  if ! grep -Fq 'name="worker"' <<<"$list_xml"; then
+    echo "FAIL [$adapter]: listing did not include worker" >&2
+    printf '%s\n' "$list_xml" >&2
+    return 1
+  fi
+
+  # 5) kill pane → status reports pane_alive=no.
+  tmux kill-session -t "$worker_session" >/dev/null 2>&1 || true
+  status_xml="$(
+    ATMUX_ALLOW_OUTSIDE_TMUX=1 ATMUX_HOME="$atmux_home" ATMUX_SOURCE_ROOT="$REPO_ROOT" \
+    ATMUX_REPO="$repo" ATMUX_REPORTER=xml \
+    "$ATMUX_BIN" agent status
+  )"
+  # After kill, the agent should no longer appear (no session anymore).
+  if grep -Fq 'name="worker"' <<<"$list_xml"; then
+    : # pre-kill listing — fine
+  fi
+  if grep -Fq 'name="worker"' <<<"$status_xml"; then
+    # If somehow it still appears, pane_alive must be "no".
+    pa="$(xml_attr "$status_xml" pane_alive)"
+    if [[ "$pa" == "yes" ]]; then
+      echo "FAIL [$adapter]: pane_alive still yes after kill" >&2
+      return 1
+    fi
+  fi
+
+  echo "  ok: $adapter agent status flow" >&2
+}
+
+TMP_DIRS=()
+SESSIONS=()
+
+cleanup() {
+  local s d
+  for s in "${SESSIONS[@]:-}"; do
+    [[ -n "$s" ]] || continue
+    tmux kill-session -t "$s" >/dev/null 2>&1 || true
+  done
+  for d in "${TMP_DIRS[@]:-}"; do
+    [[ -n "$d" ]] || continue
+    rm -rf "$d"
+  done
+  rm -rf "$REPO_ROOT/.gemini"
+  restore_control_files
+}
+trap cleanup EXIT
+
+snapshot_control_files
+
+for adapter in ${ATMUX_TEST_ADAPTERS:-codex claude-code gemini cursor-agent}; do
+  run_adapter_case "$adapter"
+done
+
+echo "ok: agent status against real adapters"

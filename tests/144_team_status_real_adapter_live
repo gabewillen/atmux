@@ -1,0 +1,210 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Live verification of `atmux team status` rollup against real adapters.
+# Builds a 2-member team where each member runs a different real CLI, and
+# walks the rollup -> drill-in flow:
+#   1. team status            → row with members=2, alive=2, queue=0
+#   2. send notifications to both members
+#   3. observe queue depth grow then drain across the team
+#   4. team status <name>     → drill-in lists both members
+#   5. kill one member        → rollup shows alive=1
+#
+# Picks two adapters from the environment-default list — falls back to
+# whichever pair has both CLIs installed. Keeps total live-adapter spawns
+# to 2 to bound the test runtime.
+
+source "$(dirname "${BASH_SOURCE[0]}")/lib/isolate-tmux.sh"
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+ATMUX_BIN="$REPO_ROOT/bin/atmux"
+CONTROL_FILES=(CLAUDE.md GEMINI.md)
+CONTROL_SNAPSHOT=""
+
+snapshot_control_files() {
+  CONTROL_SNAPSHOT="$(mktemp -d "${TMPDIR:-/tmp}/atmux-control-files.XXXXXX")"
+  local file
+  for file in "${CONTROL_FILES[@]}"; do
+    if [[ -e "$REPO_ROOT/$file" ]]; then
+      cp "$REPO_ROOT/$file" "$CONTROL_SNAPSHOT/$file"
+    else
+      touch "$CONTROL_SNAPSHOT/$file.missing"
+    fi
+  done
+}
+
+restore_control_files() {
+  [[ -n "$CONTROL_SNAPSHOT" ]] || return 0
+  local file
+  for file in "${CONTROL_FILES[@]}"; do
+    if [[ -f "$CONTROL_SNAPSHOT/$file.missing" ]]; then
+      rm -f "$REPO_ROOT/$file"
+    elif [[ -f "$CONTROL_SNAPSHOT/$file" ]]; then
+      cp "$CONTROL_SNAPSHOT/$file" "$REPO_ROOT/$file"
+    fi
+  done
+  rm -rf "$CONTROL_SNAPSHOT"
+}
+
+require_adapter_command() {
+  case "$1" in
+    codex)        command -v codex >/dev/null 2>&1 ;;
+    claude-code)  command -v claude >/dev/null 2>&1 ;;
+    gemini)       command -v gemini >/dev/null 2>&1 ;;
+    cursor-agent) command -v agent >/dev/null 2>&1 || command -v cursor-agent >/dev/null 2>&1 ;;
+    *)            return 2 ;;
+  esac
+}
+
+xml_attr() {
+  local xml="$1" name="$2"
+  printf '%s' "$xml" | sed -n "s/.*${name}=\"\\([^\"]*\\)\".*/\\1/p" | head -n1
+}
+
+session_pane() {
+  tmux list-panes -t "$1" -F '#{pane_id}' 2>/dev/null | head -n1
+}
+
+queue_has_payloads() {
+  local home="$1" payload
+  shopt -s nullglob
+  for payload in "$home"/notify-queue/*/payloads/*; do
+    [[ -d "$payload" ]] && return 0
+  done
+  return 1
+}
+
+wait_for_queue_empty() {
+  local home="$1" timeout="${2:-30}"
+  local deadline now
+  deadline=$(( $(date +%s) + timeout ))
+  while true; do
+    if ! queue_has_payloads "$home"; then return 0; fi
+    now="$(date +%s)"
+    (( now >= deadline )) && return 1
+    sleep 0.2
+  done
+}
+
+wait_for_text() {
+  local target="$1" needle="$2" timeout="${3:-90}"
+  local deadline now snap
+  deadline=$(( $(date +%s) + timeout ))
+  while true; do
+    snap="$(tmux capture-pane -p -t "$target" -S -2000 2>/dev/null | tr -d '\r' || true)"
+    if printf '%s' "$snap" | grep -Fq "$needle"; then return 0; fi
+    now="$(date +%s)"
+    (( now >= deadline )) && return 1
+    sleep 0.2
+  done
+}
+
+# Pick two adapters from ATMUX_TEST_ADAPTERS that have CLIs installed.
+pick_two_adapters() {
+  local picks=() a
+  for a in ${ATMUX_TEST_ADAPTERS:-codex claude-code gemini cursor-agent}; do
+    if require_adapter_command "$a"; then
+      picks+=("$a")
+      (( ${#picks[@]} == 2 )) && break
+    fi
+  done
+  if (( ${#picks[@]} < 2 )); then
+    echo "skipping: need at least 2 installed adapters, found ${#picks[@]}" >&2
+    exit 0
+  fi
+  printf '%s\n%s\n' "${picks[0]}" "${picks[1]}"
+}
+
+TMP_DIRS=()
+SESSIONS=()
+
+cleanup() {
+  local s d
+  for s in "${SESSIONS[@]:-}"; do
+    [[ -n "$s" ]] || continue
+    tmux kill-session -t "$s" >/dev/null 2>&1 || true
+  done
+  for d in "${TMP_DIRS[@]:-}"; do
+    [[ -n "$d" ]] || continue
+    rm -rf "$d"
+  done
+  rm -rf "$REPO_ROOT/.gemini"
+  restore_control_files
+}
+trap cleanup EXIT
+
+snapshot_control_files
+
+adapter_a=""; adapter_b=""
+{ IFS= read -r adapter_a; IFS= read -r adapter_b; } < <(pick_two_adapters)
+echo "team status live: adapter_a=$adapter_a adapter_b=$adapter_b" >&2
+
+repo="team-status-${RANDOM}"
+ATMUX_HOME="$(mktemp -d "${TMPDIR:-/tmp}/atmux-team-status-live.XXXXXX")"
+TMP_DIRS+=("$ATMUX_HOME")
+ENVS=(ATMUX_ALLOW_OUTSIDE_TMUX=1 "ATMUX_HOME=$ATMUX_HOME"
+      "ATMUX_SOURCE_ROOT=$REPO_ROOT" "ATMUX_REPO=$repo")
+
+# Spawn two workers in team "alpha", each running a different adapter.
+spawn_worker() {
+  local name="$1" adapter="$2" out
+  out="$(env "${ENVS[@]}" \
+    ATMUX_ROLE="implementer" ATMUX_INTELLIGENCE="50" ATMUX_MANAGER="manager" \
+    "$ATMUX_BIN" agent create --name "$name" --role worker --intelligence 50 \
+      --adapter auto --adapters "$adapter" --team alpha --no-worktree)"
+  [[ -n "$out" ]] || { echo "create failed for $name" >&2; exit 1; }
+  SESSIONS+=("$out")
+  printf '%s\n' "$out"
+}
+
+worker_a_session="$(spawn_worker worker-a "$adapter_a")"
+worker_b_session="$(spawn_worker worker-b "$adapter_b")"
+# shellcheck disable=SC2034  # used via indirect reference below (`${!pane_var}`)
+worker_a_pane="$(session_pane "$worker_a_session")"
+# shellcheck disable=SC2034
+worker_b_pane="$(session_pane "$worker_b_session")"
+
+# 1. Rollup shows the team with members=2, alive=2.
+xml="$(env "${ENVS[@]}" ATMUX_REPORTER=xml "$ATMUX_BIN" team status)"
+if ! grep -Fq 'name="alpha"' <<<"$xml"; then
+  echo "FAIL: rollup did not include team alpha" >&2; printf '%s\n' "$xml" >&2; exit 1
+fi
+members="$(xml_attr "$xml" members)"; alive="$(xml_attr "$xml" alive)"
+[[ "$members" == "2" ]] || { echo "FAIL: rollup members=$members (want 2)" >&2; exit 1; }
+[[ "$alive" == "2" ]]   || { echo "FAIL: rollup alive=$alive (want 2)" >&2; exit 1; }
+
+# 2. Drill-in lists both members.
+drill="$(env "${ENVS[@]}" ATMUX_REPORTER=xml "$ATMUX_BIN" team status alpha)"
+grep -Fq 'name="worker-a"' <<<"$drill" || { echo "FAIL: drill missing worker-a" >&2; exit 1; }
+grep -Fq 'name="worker-b"' <<<"$drill" || { echo "FAIL: drill missing worker-b" >&2; exit 1; }
+
+# 3. Send notifications to both, observe drain on each.
+for w in worker-a worker-b; do
+  send_out="$(env "${ENVS[@]}" \
+    ATMUX_AGENT_NAME="manager" \
+    ATMUX_SESSION_NAME="atmux-${repo}-manager" \
+    "$ATMUX_BIN" send --to "$w" "team status live ping ${RANDOM}")"
+  message_id="$(sed -n 's/.*message_id="\([^"]*\)".*/\1/p' <<<"$send_out" | head -n1)"
+  [[ -n "$message_id" ]] || { echo "FAIL: no message_id for $w send" >&2; exit 1; }
+  pane_var="${w//-/_}_pane"
+  if ! wait_for_text "${!pane_var}" "atmux message read $message_id" 120; then
+    echo "FAIL: $w did not receive notification" >&2; exit 1
+  fi
+done
+if ! wait_for_queue_empty "$ATMUX_HOME" 60; then
+  echo "FAIL: queue across team did not drain" >&2; exit 1
+fi
+
+# 4. Rollup after drain: still 2 members, 2 alive, queue 0.
+xml="$(env "${ENVS[@]}" ATMUX_REPORTER=xml "$ATMUX_BIN" team status)"
+queue_total="$(xml_attr "$xml" queue_total)"
+[[ "$queue_total" == "0" ]] || { echo "FAIL: queue_total post-drain=$queue_total (want 0)" >&2; exit 1; }
+
+# 5. Kill one member; rollup must show alive=1.
+tmux kill-session -t "$worker_b_session" >/dev/null 2>&1 || true
+xml="$(env "${ENVS[@]}" ATMUX_REPORTER=xml "$ATMUX_BIN" team status)"
+alive="$(xml_attr "$xml" alive)"
+[[ "$alive" == "1" ]] || { echo "FAIL: alive after kill=$alive (want 1)" >&2; printf '%s\n' "$xml" >&2; exit 1; }
+
+echo "ok: team status rollup + drill-in across real $adapter_a / $adapter_b agents"

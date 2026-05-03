@@ -104,6 +104,7 @@ atmux agent create [name] --role <role> --intelligence <0-100>
   (or `--name <name>` instead of positional; if omitted, atmux
    auto-generates `agent-N`.)
 atmux agent list [--all] [--status]
+atmux agent status [<name>]
 atmux agent attach <name|session>
 atmux agent kill <name|pattern> [<name|pattern>...]
 atmux agent kill --all [--yes]
@@ -127,6 +128,7 @@ agent attach must be run outside tmux.
 atmux team create <name>
 atmux team list
 atmux team ls
+atmux team status [<name>]
 atmux team capture <name> [--lines <n>]
 atmux team kill <name|pattern> [...]
 atmux team resolve <name> [<repo_name>]

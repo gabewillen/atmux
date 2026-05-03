@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.13.0 — `agent status` and `team status` for cross-agent observability
+
+Two new verbs that read the same on-disk state the running system writes (`tmux` + the notify-queue under `ATMUX_HOME/notify-queue/`), so you can see across all agents in a repo without `capture-pane`-ing one at a time.
+
+- **`atmux agent status [<name>]`** — per-agent runtime state: pane alive, notify-worker liveness (alive/dead/none), pending queue depth, age of the oldest queued notification, and the last worker error (truncated). With no name, lists every agent in the repo; with a name, drills in.
+- **`atmux team status [<name>]`** — rollup verb. With no name, one row per team (members / alive / queue_total / errors). With a name, per-member breakdown — same columns as `agent status`. Membership comes from each pane's `@atmux_agent_session` tag.
+
+Both honor the reporter system: human terminals get column-aligned tables, agent context (`ATMUX_AGENT_NAME` set) gets XML records.
+
+This complements `agent list --status`, which shells out to each adapter's `status` hook to surface model/reasoning level. The new verbs answer "is the *plumbing* alive" — pane, worker, queue, errors — without round-tripping the adapter.
+
+Existing tests:
+- `tests/141_agent_status_mock` covers all worker-liveness branches and queue/error rendering.
+- `tests/142_team_status_mock` covers the rollup math and drill-in for a 3-member team plus a team with an absent member.
+- `tests/143_status_real_adapter_live` and `tests/144_team_status_real_adapter_live` exercise the same paths against real adapter sessions (`ATMUX_RUN_LIVE_ADAPTER_TESTS=1`).
+
 ## 0.12.1 — Auto-release on VERSION bump
 
 CI workflow that auto-tags and cuts a GitHub release when a push to `main` changes the `VERSION` file. Replaces the manual `git tag vX.Y.Z && git push --tags` step that used to follow every release-PR merge.

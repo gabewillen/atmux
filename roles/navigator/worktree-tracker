@@ -77,12 +77,20 @@ rearm_git_watch_at() {
   # process automatically; no pkill needed.
   tmux kill-window -t "$nav_session:git-watch" 2>/dev/null || true
 
-  # New unique id for this spawn.
+  # New unique id for this spawn. The random suffix is already a hex
+  # string from `od -tx1`, so interpolate it as %s. Routing it through
+  # %04x would coerce it back through bash's numeric parser, fail, and
+  # always emit "0000" (matches the pattern in roles/navigator/start).
+  local rand_suffix
+  rand_suffix="$(od -An -N2 -tx1 /dev/urandom 2>/dev/null | tr -d ' \n')"
+  if [[ -z "$rand_suffix" ]]; then
+    rand_suffix="$(printf '%04x' "$$")"
+  fi
   local new_id
-  new_id="$(printf '%s-rearm-%s-%04x' \
+  new_id="$(printf '%s-rearm-%s-%s' \
     "$driver" \
     "$(date +%s)" \
-    "$(od -An -N2 -tx1 /dev/urandom 2>/dev/null | tr -d ' \n' || printf '%04x' $$)")"
+    "$rand_suffix")"
   printf '%s\n' "$new_id" > "$state_dir/git-watch-id"
 
   # Spawn a fresh git-watch window with cwd at the driver's worktree.

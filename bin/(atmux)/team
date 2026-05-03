@@ -11,6 +11,7 @@ usage() {
   cat <<'USAGE'
 Usage:
   atmux team create <name> [--role <role>] [--start <cmd>] [--stop <cmd>]
+                           [--worktree <path>] [--shared-worktree]
   atmux team list
   atmux team ls
   atmux team status [<name>]
@@ -22,11 +23,24 @@ Description:
   Manage repo-scoped team tmux sessions.
   Team session format: atmux-<repo>-team-<name>
 
-  --role <name>   Apply a KIND=team role: opens the session, spawns each
-                  MEMBERS entry from the role manifest, then runs the
-                  role's optional `start` hook for any cross-cutting wiring.
-                  `team kill` auto-kills the spawned members and runs the
-                  matching `stop` hook.
+  Every team gets its own fresh git worktree by default — members spawned
+  with `--shared-worktree` inherit it via ATMUX_WORKTREE, so a pair of
+  agents can edit the same worktree without stomping the user's checkout.
+  `team kill` removes the worktree and branch.
+
+  --role <name>       Apply a KIND=team role: opens the session, spawns
+                      each MEMBERS entry from the role manifest, then
+                      runs the role's optional `start` hook for any
+                      cross-cutting wiring. `team kill` auto-kills the
+                      spawned members and runs the matching `stop` hook.
+
+  --worktree <path>   Override the worktree location. Default is
+                      $ATMUX_HOME/teams/<repo>/<team>/worktree on a new
+                      branch atmux-<repo>-team-<team>.
+
+  --shared-worktree   Opt out of the fresh-worktree default. Use the
+                      caller's pwd (or repo root) instead. Useful for
+                      coordination teams that just talk and never edit.
 USAGE
 }
 
@@ -131,9 +145,9 @@ teardown_team() {
   # Best-effort cleanup when team create fails partway through. Kills any
   # already-spawned members via `atmux agent kill` (so their worktrees and
   # branches get cleaned up too), then the team session, then the role
-  # state dir.
-  # Args: <repo_name> <team_name> <session> <role_state_dir>
-  local repo="$1" team="$2" session="$3" state_dir="${4:-}"
+  # state dir, then the team's owned worktree (if create_team made one).
+  # Args: <repo_name> <team_name> <session> <role_state_dir> [<owned_worktree>]
+  local repo="$1" team="$2" session="$3" state_dir="${4:-}" owned_wt="${5:-}"
   local prefix="atmux-${repo}-"
   local atmux_bin member_session member_team member_short
   atmux_bin="$(resolve_atmux_runner_for_team || true)"
@@ -154,14 +168,27 @@ teardown_team() {
   if [[ -n "$state_dir" && -d "$state_dir" ]]; then
     rm -rf -- "$state_dir" 2>/dev/null || true
   fi
+  if [[ -n "$owned_wt" && -d "$owned_wt" ]]; then
+    local repo_root
+    repo_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+    if [[ -n "$repo_root" ]] \
+       && git -C "$repo_root" worktree list --porcelain 2>/dev/null \
+            | grep -Fqx "worktree $owned_wt"; then
+      git -C "$repo_root" worktree remove -f "$owned_wt" >/dev/null 2>&1 || true
+    fi
+    rm -rf -- "$owned_wt" 2>/dev/null || true
+    local owner_meta
+    owner_meta="$(dirname -- "$owned_wt")/owned-worktree"
+    [[ -f "$owner_meta" ]] && rm -f -- "$owner_meta" 2>/dev/null || true
+  fi
 }
 
 spawn_team_members() {
   # Spawns each MEMBER from the manifest via `atmux agent create <args>
   # --team <team>`. Returns non-zero on the first spawn failure so the caller
   # can tear down the partially-built team.
-  # Args: <repo_name> <team_name> <member_lines>
-  local _repo="$1" team="$2" lines="$3"
+  # Args: <repo_name> <team_name> <member_lines> [<team_work_dir>]
+  local _repo="$1" team="$2" lines="$3" team_work_dir="${4:-}"
   [[ -n "$lines" ]] || return 0
 
   local atmux_bin
@@ -187,7 +214,14 @@ spawn_team_members() {
     if [[ "${#tokens[@]}" -eq 0 ]]; then
       continue
     fi
-    if ! "$atmux_bin" agent create "${tokens[@]}" --team "$team" >/dev/null; then
+    # Export ATMUX_WORKTREE so `agent create --shared-worktree` picks it up
+    # — that's how members spawned by a `team create --worktree` end up
+    # sharing the team's worktree instead of the repo root.
+    local -a env_prefix=()
+    if [[ -n "$team_work_dir" ]]; then
+      env_prefix=(env "ATMUX_WORKTREE=$team_work_dir" "ATMUX_TEAM=$team")
+    fi
+    if ! "${env_prefix[@]}" "$atmux_bin" agent create "${tokens[@]}" --team "$team" >/dev/null; then
       echo "atmux team create: spawning member failed: agent create $entry" >&2
       return 1
     fi
@@ -233,6 +267,13 @@ create_team() {
   local role=""
   local start_cmd=""
   local stop_cmd=""
+  # Default: every team gets its own fresh worktree. Members spawned with
+  # --shared-worktree inherit it via env. `--worktree <path>` overrides
+  # the location; `--shared-worktree` opts out (use the caller's pwd /
+  # repo root instead, useful for coordination teams that just talk and
+  # never touch files).
+  local shared_worktree=0
+  local worktree_path=""
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -242,8 +283,20 @@ create_team() {
       --start=*) start_cmd="${1#--start=}"; shift ;;
       --stop)    stop_cmd="${2:-}"; shift 2 ;;
       --stop=*)  stop_cmd="${1#--stop=}"; shift ;;
+      --worktree)
+        # Path-only override; presence with no path is a no-op (default
+        # path is already used).
+        if [[ $# -ge 2 && "${2:0:1}" != "-" ]]; then
+          worktree_path="$2"
+          shift 2
+        else
+          shift
+        fi
+        ;;
+      --worktree=*) worktree_path="${1#--worktree=}"; shift ;;
+      --shared-worktree) shared_worktree=1; shift ;;
       -h|--help)
-        echo "usage: atmux team create <name> [--role <role>] [--start <cmd>] [--stop <cmd>]"
+        echo "usage: atmux team create <name> [--role <role>] [--start <cmd>] [--stop <cmd>] [--worktree <path>] [--shared-worktree]"
         return 0
         ;;
       --) shift ;;
@@ -310,9 +363,50 @@ create_team() {
     fi
   fi
 
+  # Worktree: by default every team gets its own fresh worktree so members
+  # don't stomp the user's actual checkout. `--shared-worktree` opts out
+  # (use the caller's pwd / repo root). `--worktree <path>` overrides
+  # only the location. Spawned members with --shared-worktree inherit
+  # whichever path the team ended up with via ATMUX_WORKTREE in the
+  # session's env. Tracked with a marker so `team kill` can remove the
+  # worktree on teardown when atmux owns it.
+  local team_work_dir="$repo_root"
+  local team_worktree_owned=0
+  if [[ "$shared_worktree" -eq 0 ]]; then
+    local atmux_home="${ATMUX_HOME:-$HOME/.atmux}"
+    if [[ -z "$worktree_path" ]]; then
+      worktree_path="$atmux_home/teams/$repo_name/$team_name/worktree"
+    fi
+    local team_branch="atmux-${repo_name}-team-${team_name}"
+    if [[ -e "$worktree_path" ]]; then
+      if ! git -C "$worktree_path" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        echo "atmux team create: --worktree path exists and is not a git worktree: $worktree_path" >&2
+        exit 1
+      fi
+      # Reuse: don't re-add, don't claim ownership for teardown.
+    else
+      mkdir -p "$(dirname -- "$worktree_path")"
+      local worktree_err=""
+      if ! worktree_err="$(git -C "$repo_root" worktree add -B "$team_branch" "$worktree_path" HEAD 2>&1)"; then
+        if printf '%s\n' "$worktree_err" | grep -Eq 'cannot lock ref|Operation not permitted|Permission denied'; then
+          echo "atmux team create: branch creation failed; retrying detached worktree at $worktree_path" >&2
+          if ! git -C "$repo_root" worktree add "$worktree_path" HEAD >/dev/null 2>&1; then
+            echo "atmux team create: failed to create worktree at $worktree_path" >&2
+            exit 1
+          fi
+        else
+          printf '%s\n' "$worktree_err" >&2
+          exit 1
+        fi
+      fi
+      team_worktree_owned=1
+    fi
+    team_work_dir="$worktree_path"
+  fi
+
   local fresh_session=0
   if ! tmux has-session -t "$session" 2>/dev/null; then
-    tmux new-session -d -s "$session" -n "$session" -c "$repo_root"
+    tmux new-session -d -s "$session" -n "$session" -c "$team_work_dir"
     # Pin the default pane to a stable holder so the session can't die
     # mid-lifecycle. The bare default shell `tmux new-session` spawns
     # exits unpredictably in non-interactive environments (CI runners,
@@ -327,13 +421,21 @@ create_team() {
     tmux set-environment -t "$session" ATMUX_TEAM "$team_name"
     tmux set-environment -t "$session" ATMUX_SESSION_NAME "$session"
     tmux set-environment -t "$session" ATMUX_SESSION_KIND "team"
-    tmux set-environment -t "$session" ATMUX_WORKTREE "$repo_root"
+    tmux set-environment -t "$session" ATMUX_WORKTREE "$team_work_dir"
+    if [[ "$team_worktree_owned" -eq 1 ]]; then
+      # Marker for `team kill` to know it should remove the worktree.
+      tmux set-environment -t "$session" ATMUX_TEAM_WORKTREE_OWNED 1
+      local owner_dir="${ATMUX_HOME:-$HOME/.atmux}/teams/$repo_name/$team_name"
+      mkdir -p "$owner_dir"
+      printf '%s\n' "$team_work_dir" > "$owner_dir/owned-worktree"
+    fi
     if [[ -n "${ATMUX_SOURCE_ROOT:-}" ]]; then
       tmux set-environment -t "$session" ATMUX_SOURCE_ROOT "$ATMUX_SOURCE_ROOT"
     fi
   else
-    if [[ -n "$role" || -n "$start_cmd" || -n "$stop_cmd" ]]; then
-      echo "atmux team create: team '$team_name' already exists; --role/--start/--stop only apply to fresh sessions" >&2
+    if [[ -n "$role" || -n "$start_cmd" || -n "$stop_cmd" \
+          || -n "$worktree_path" || "$shared_worktree" -eq 1 ]]; then
+      echo "atmux team create: team '$team_name' already exists; --role/--start/--stop/--worktree/--shared-worktree only apply to fresh sessions" >&2
       exit 1
     fi
   fi
@@ -359,9 +461,10 @@ create_team() {
     # 1) Spawn declared MEMBERS first. Atmux owns these — `team kill` will
     #    auto-kill any agent whose ATMUX_TEAM matches this team's name.
     if [[ -n "${member_lines:-}" ]]; then
-      if ! spawn_team_members "$repo_name" "$team_name" "$member_lines"; then
+      if ! spawn_team_members "$repo_name" "$team_name" "$member_lines" "$team_work_dir"; then
         echo "atmux team create: tearing down team after member spawn failure" >&2
-        teardown_team "$repo_name" "$team_name" "$session" "$role_state_dir"
+        teardown_team "$repo_name" "$team_name" "$session" "$role_state_dir" \
+          "$([[ "$team_worktree_owned" -eq 1 ]] && printf '%s' "$team_work_dir")"
         exit 1
       fi
     fi
@@ -375,7 +478,7 @@ create_team() {
       ATMUX_ROLE_STATE_DIR="$role_state_dir" \
       ATMUX_TEAM="$team_name" \
       ATMUX_REPO="$repo_name" \
-      ATMUX_WORKTREE="$repo_root" \
+      ATMUX_WORKTREE="$team_work_dir" \
         run_team_role_hook_bounded "$start_cmd" "${ATMUX_ROLE_START_TIMEOUT:-60}" || role_start_rc=$?
       if [[ "$role_start_rc" -ne 0 ]]; then
         if [[ "$role_start_rc" -eq 124 ]]; then
@@ -383,7 +486,8 @@ create_team() {
         else
           echo "atmux team create: role start failed (rc=$role_start_rc); tearing down team" >&2
         fi
-        teardown_team "$repo_name" "$team_name" "$session" "$role_state_dir"
+        teardown_team "$repo_name" "$team_name" "$session" "$role_state_dir" \
+          "$([[ "$team_worktree_owned" -eq 1 ]] && printf '%s' "$team_work_dir")"
         exit 1
       fi
     fi

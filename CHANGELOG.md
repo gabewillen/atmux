@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.17.0 — Teams own a worktree by default
+
+**Behavior change**: `atmux team create <name>` now creates a fresh git worktree by default — at `$ATMUX_HOME/teams/<repo>/<team>/worktree` on a new branch `atmux-<repo>-team-<name>`. Members spawned with `--shared-worktree` inherit it via `ATMUX_WORKTREE`, so a pair of agents can edit the same worktree without stomping the user's checkout. `team kill` removes the worktree and branch.
+
+To opt out (e.g. a coordination team that just talks and never edits files), pass `--shared-worktree` to `team create`. To override only the path, pass `--worktree <path>`.
+
+Setup work for the upcoming pair-programming team — driver and navigator share the same fresh worktree, navigator's `git watch` reviews the driver's edits in real time.
+
+**`atmux agent create --shared-worktree`** is now env-aware: it picks up `ATMUX_WORKTREE` from env when set, falling back to the repo root only when unset. Members spawned by `team create` inherit the team's worktree automatically — the team's spawn path injects the worktree env into each child `agent create` call. Standalone `--shared-worktree` from a bare shell behaves the same as before.
+
+The team session's env carries `ATMUX_WORKTREE=<path>` and an `ATMUX_TEAM_WORKTREE_OWNED=1` marker so `team kill` knows which worktrees it owns. Removal also runs `git worktree prune` after the directory is gone, so the subsequent `git branch -D` doesn't trip over stale `.git/worktrees/<name>` metadata.
+
+### Other changes
+- `team create`'s teardown path (when member spawn or start hook fails) also removes the worktree if the failed create_team had already created it.
+- `cursor-agent` adapter pre-trusts the workspace via `<git_root>/.workspace-trusted` at start time. cursor-agent's first run in an unfamiliar directory otherwise blocks on a TUI "Workspace Trust Required" dialog that no autonomous agent can dismiss — every fresh team / agent worktree was an unfamiliar directory until now. The fix uses cursor-agent's own trust-state mechanism (no `--yolo` overreach).
+- `bin/atmux` no longer gates commands behind a "must be run inside tmux" check. Calls into `tmux` happen lazily inside the underlying scripts, which surface their own error if no tmux server is reachable. Removes the friction of prefixing every `send` / `notify` / `schedule` from a non-tmux shell with `ATMUX_ALLOW_OUTSIDE_TMUX=1` (the env var stays recognized for back-compat).
+- `atmux send --to <team>` no longer crashes under bash 3.2 strict-mode when the team has zero members; falls through to the normal "no targets" error.
+- Tests: `117_team_worktree_lifecycle` (covers default + `--shared-worktree` opt-out paths).
+
 ## 0.16.0 — `atmux git watch` rolling-diff worktree watcher
 
 Adds a new `git` resource so an agent can subscribe to worktree changes and receive **rolling diffs** — each notification contains only the diff *since the previous notification*, never the full dirty state. Setup work for the upcoming pair-programming team's navigator agent, which will watch the shared worktree and steer the driver when it goes off-track.

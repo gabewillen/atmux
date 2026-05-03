@@ -22,7 +22,7 @@ Install by piping `curl` into `sh`, or clone the repo and run `./install.sh`. Th
 - **You can actually see the agents work.** It's just tmux. Attach to any session, watch the agent think in real time, detach and come back later. No custom TUI, no web dashboard, no log tailing.
 - **Git worktree per agent.** Each agent gets its own branch and working directory under `ATMUX_HOME/agents/`. Parallel agents can't stomp each other's changes, and cleanup is a single `atmux agent kill`.
 
-> **Experimental** — this project is under active development (current version: `0.16.0`). APIs, commands, and behavior may change without notice. Use at your own risk.
+> **Experimental** — this project is under active development (current version: `0.17.0`). APIs, commands, and behavior may change without notice. Use at your own risk.
 
 ## Install
 
@@ -211,6 +211,7 @@ agent attach must be run outside tmux.
 
 ```sh
 atmux team create <name> [--role <role>] [--start <cmd>] [--stop <cmd>]
+                         [--worktree <path>] [--shared-worktree]
 atmux team list
 atmux team ls
 atmux team status [<name>]
@@ -222,11 +223,24 @@ atmux team resolve <name> [<repo_name>]
 Manage repo-scoped team tmux sessions.
 Team session format: atmux-<repo>-team-<name>
 
---role <name>   Apply a KIND=team role: opens the session, spawns each
-                MEMBERS entry from the role manifest, then runs the
-                role's optional `start` hook for any cross-cutting wiring.
-                `team kill` auto-kills the spawned members and runs the
-                matching `stop` hook.
+Every team gets its own fresh git worktree by default — members spawned
+with `--shared-worktree` inherit it via ATMUX_WORKTREE, so a pair of
+agents can edit the same worktree without stomping the user's checkout.
+`team kill` removes the worktree and branch.
+
+--role <name>       Apply a KIND=team role: opens the session, spawns
+                    each MEMBERS entry from the role manifest, then
+                    runs the role's optional `start` hook for any
+                    cross-cutting wiring. `team kill` auto-kills the
+                    spawned members and runs the matching `stop` hook.
+
+--worktree <path>   Override the worktree location. Default is
+                    $ATMUX_HOME/teams/<repo>/<team>/worktree on a new
+                    branch atmux-<repo>-team-<team>.
+
+--shared-worktree   Opt out of the fresh-worktree default. Use the
+                    caller's pwd (or repo root) instead. Useful for
+                    coordination teams that just talk and never edit.
 
 #### `role`
 

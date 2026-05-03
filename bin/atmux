@@ -245,16 +245,6 @@ emit_atmux_wrapper() {
   printf '</atmux>\n'
 }
 
-require_tmux() {
-  if [[ -n "${ATMUX_ALLOW_OUTSIDE_TMUX:-}" ]]; then
-    return 0
-  fi
-  if [[ -z "${TMUX:-}" ]]; then
-    echo "atmux: must be run inside tmux" >&2
-    exit 2
-  fi
-}
-
 maybe_auto_update() {
   local stamp="$ATMUX_HOME/.last-update-check"
   local log="$ATMUX_HOME/.update.log"
@@ -345,14 +335,13 @@ main() {
         fi
         exit 1
       fi
-      # Most resource nouns and self-update/bootstrap commands are safe to run
-      # outside tmux (the underlying script will refuse if it specifically
-      # needs it). `send`, `exec`, `schedule`, `notify` need tmux to deliver
-      # notifications or attach to panes.
-      case "$cmd" in
-        update|install|env|message|config|adapter|role|agent|team|issue|pr|watcher|process|pane|path|git) ;;
-        *) require_tmux ;;
-      esac
+      # All commands are allowed outside tmux. The underlying scripts
+      # invoke `tmux ...` directly when they need the server, and those
+      # calls fail with a clear error if no server is running — a
+      # blanket up-front gate just forced callers to set
+      # ATMUX_ALLOW_OUTSIDE_TMUX for plenty of legitimate uses
+      # (sending to an agent from a non-tmux shell, scripted notify
+      # from CI, etc).
 
       export ATMUX_ALLOW_REAL_TMUX=1
       if should_wrap_command "$cmd" "$@"; then

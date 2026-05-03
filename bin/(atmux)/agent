@@ -1110,7 +1110,15 @@ spawn_agent_session() {
   local worktree_created=0
 
   if [[ "$shared_worktree" -eq 1 ]]; then
-    work_dir="$repo_root"
+    # `--shared-worktree` shares the *caller's* worktree. When invoked from
+    # a team session (or another agent's pane) the caller's tmux env carries
+    # ATMUX_WORKTREE, which is the right path to inherit. Falling back to
+    # $repo_root preserves the original outside-tmux behavior.
+    if [[ -n "${ATMUX_WORKTREE:-}" && -d "$ATMUX_WORKTREE" ]]; then
+      work_dir="$ATMUX_WORKTREE"
+    else
+      work_dir="$repo_root"
+    fi
   else
     mkdir -p "$ATMUX_HOME/agents"
 

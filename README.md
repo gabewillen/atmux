@@ -22,7 +22,7 @@ Install by piping `curl` into `sh`, or clone the repo and run `./install.sh`. Th
 - **You can actually see the agents work.** It's just tmux. Attach to any session, watch the agent think in real time, detach and come back later. No custom TUI, no web dashboard, no log tailing.
 - **Git worktree per agent.** Each agent gets its own branch and working directory under `ATMUX_HOME/agents/`. Parallel agents can't stomp each other's changes, and cleanup is a single `atmux agent kill`.
 
-> **Experimental** — this project is under active development (current version: `0.13.1`). APIs, commands, and behavior may change without notice. Use at your own risk.
+> **Experimental** — this project is under active development (current version: `0.14.0`). APIs, commands, and behavior may change without notice. Use at your own risk.
 
 ## Install
 
@@ -427,17 +427,21 @@ atmux path watch 'docs/**/*.md' --exec ./on-docs-changed --coalesce 30
 atmux send --to <name|session> [--reply-required] [--interrupt] "message"
 ```
 
-Send XML messages to a single agent or every agent in a team.
+Send XML messages to a single agent or every agent in a team. Without
+--interrupt, the message is queued and delivered when the receiving agent
+is at its idle prompt.
 Resolution order for --to:
   1) Team session/name
   2) Agent session/name
---interrupt  Submit using the adapter's interrupt key (processed after current
-             tool) instead of the default queue key (processed when idle).
+--interrupt  Hard interrupt: send the adapter's abort key sequence
+             (`submit_keys.interrupt` in the manifest) to stop the current
+             operation, then submit the message. Use sparingly — this aborts
+             whatever the agent is doing.
 
 ```sh
 atmux send --to planner "run tests"
 atmux send --to platform --reply-required "status check-in"
-atmux send --to worker --interrupt "stop and check this"
+atmux send --to worker --interrupt "stop, that's wrong"
 ```
 
 #### `exec`
@@ -481,14 +485,18 @@ Durations accept a unit suffix: `ms`, `s`, `m`, `h`, `d`. No suffix means second
 atmux notify --pane <tmux-pane-id> --xml <payload> [--interrupt]
 ```
 
-Send an ATMUX XML notification to a tmux pane.
---interrupt  Use the adapter's interrupt submit key instead of the default
-             key (Enter). Resolves the adapter from the pane's session, or from
-             --session if provided.
+Send an ATMUX XML notification to a tmux pane. Without --interrupt, the
+notification is queued and delivered when the pane's adapter is at its
+idle prompt.
+--interrupt  Hard interrupt: send the adapter's abort key sequence
+             (`submit_keys.interrupt` in the manifest) before the message,
+             then submit. Resolves adapter from the pane's session, or from
+             --session if provided. Use sparingly — this aborts whatever
+             the agent is doing.
 
 ```sh
 atmux notify --pane %12 --xml '<notification type="test" from="manual" cmd="atmux message read abc" />'
-atmux notify --pane %12 --xml '<notification type="urgent" from="mgr" />' --interrupt
+atmux notify --pane %12 --xml '<notification type="abort" from="mgr" />' --interrupt
 ```
 
 #### `update`

@@ -12,17 +12,21 @@ Usage:
   atmux send --to <name|session> [--reply-required] [--interrupt] "message"
 
 Description:
-  Send XML messages to a single agent or every agent in a team.
+  Send XML messages to a single agent or every agent in a team. Without
+  --interrupt, the message is queued and delivered when the receiving agent
+  is at its idle prompt.
   Resolution order for --to:
     1) Team session/name
     2) Agent session/name
-  --interrupt  Submit using the adapter's interrupt key (processed after current
-               tool) instead of the default queue key (processed when idle).
+  --interrupt  Hard interrupt: send the adapter's abort key sequence
+               (`submit_keys.interrupt` in the manifest) to stop the current
+               operation, then submit the message. Use sparingly — this aborts
+               whatever the agent is doing.
 
 Examples:
   atmux send --to planner "run tests"
   atmux send --to platform --reply-required "status check-in"
-  atmux send --to worker --interrupt "stop and check this"
+  atmux send --to worker --interrupt "stop, that's wrong"
 USAGE
 }
 
@@ -103,15 +107,25 @@ store_message() {
   printf '%s\n' "$id"
 }
 
-resolve_interrupt_keys() {
+resolve_queue_keys() {
   local session="$1"
   local adapter=""
   adapter="$(get_session_env "$session" ATMUX_ADAPTER)"
   if [[ -n "$adapter" ]]; then
-    resolve_submit_keys "$adapter" "interrupt"
+    resolve_submit_keys "$adapter" "queue"
   else
     printf 'Enter\n'
   fi
+}
+
+resolve_abort_keys() {
+  local session="$1"
+  local adapter=""
+  adapter="$(get_session_env "$session" ATMUX_ADAPTER)"
+  if [[ -z "$adapter" ]]; then
+    return 0
+  fi
+  resolve_submit_keys_strict "$adapter" "interrupt" || true
 }
 
 build_message_payload_for_session() {
@@ -238,12 +252,24 @@ if [[ -n "$team_session" ]]; then
     attempted=$((attempted + 1))
     payload="$(build_message_payload_for_session "$s" "$from_session" "$read_cmd" "$reply_required_value")"
     member_keys=()
-    if [[ "$interrupt" -eq 1 ]]; then
+    member_pre_keys=""
+    member_bypass=""
+    if (( interrupt == 1 )); then
       while IFS= read -r __mk_line; do
         member_keys+=("$__mk_line")
-      done < <(resolve_interrupt_keys "$s")
+      done < <(resolve_queue_keys "$s")
+      member_bypass=1
+      while IFS= read -r __pk_line; do
+        [[ -n "$__pk_line" ]] || continue
+        if [[ -n "$member_pre_keys" ]]; then
+          member_pre_keys+=" "
+        fi
+        member_pre_keys+="$__pk_line"
+      done < <(resolve_abort_keys "$s")
     fi
-    if send_to_session "$s" "$payload" ${member_keys[@]+"${member_keys[@]}"}; then
+    if ATMUX_NOTIFY_PRE_KEYS="$member_pre_keys" \
+       ATMUX_NOTIFY_BYPASS_IDLE="$member_bypass" \
+       send_to_session "$s" "$payload" ${member_keys[@]+"${member_keys[@]}"}; then
       delivered=$((delivered + 1))
       results+="  <target session=\"$(xml_escape "$s")\" queued=\"true\" />"$'\n'
     else
@@ -284,12 +310,24 @@ msg_id="$(store_message "$repo_name" "$from_session" "$target_name" "$message" "
 printf -v read_cmd 'atmux message read %q --repo %q' "$msg_id" "$repo_name"
 payload="$(build_message_payload_for_session "$target_session" "$from_session" "$read_cmd" "$reply_required_value")"
 submit_keys=()
-if [[ "$interrupt" -eq 1 ]]; then
+target_pre_keys=""
+target_bypass=""
+if (( interrupt == 1 )); then
   while IFS= read -r __sk_line; do
     submit_keys+=("$__sk_line")
-  done < <(resolve_interrupt_keys "$target_session")
+  done < <(resolve_queue_keys "$target_session")
+  target_bypass=1
+  while IFS= read -r __pk_line; do
+    [[ -n "$__pk_line" ]] || continue
+    if [[ -n "$target_pre_keys" ]]; then
+      target_pre_keys+=" "
+    fi
+    target_pre_keys+="$__pk_line"
+  done < <(resolve_abort_keys "$target_session")
 fi
-if ! send_to_session "$target_session" "$payload" ${submit_keys[@]+"${submit_keys[@]}"}; then
+if ! ATMUX_NOTIFY_PRE_KEYS="$target_pre_keys" \
+     ATMUX_NOTIFY_BYPASS_IDLE="$target_bypass" \
+     send_to_session "$target_session" "$payload" ${submit_keys[@]+"${submit_keys[@]}"}; then
   notify_sender_failed_send "$target_session" "failed to queue notification"
   echo "failed to queue for session: $target_session" >&2
   exit 1

@@ -45,10 +45,10 @@ want_queue_for() {
 
 want_interrupt_for() {
   case "$1" in
-    claude-code) printf 'Escape,Enter' ;;
-    codex)       printf 'Tab' ;;
-    cursor-agent) printf 'Enter' ;;
-    gemini)      printf 'Enter' ;;
+    claude-code) printf 'Escape' ;;
+    codex)       printf 'Escape' ;;
+    cursor-agent) printf 'C-c' ;;
+    gemini)      printf 'C-c' ;;
     *) return 1 ;;
   esac
 }
@@ -96,3 +96,28 @@ EOF
 rm -rf "$fake_root"
 
 echo "ok: all adapter manifests resolve to expected submit_keys"
+
+# resolve_submit_keys_strict must NOT fall back to Enter when a mode is
+# missing — it returns empty + non-zero so --interrupt can detect the gap
+# instead of silently sending Enter as the abort prefix.
+echo "matrix: strict resolver returns empty for missing modes" >&2
+
+fake_root="$(mktemp -d "${TMPDIR:-/tmp}/atmux-strict-resolver.XXXXXX")"
+mkdir -p "$fake_root/adapter/queue-only"
+cat > "$fake_root/adapter/queue-only/manifest.json" <<'EOF'
+{ "name": "queue-only", "version": 1, "submit_keys": { "queue": ["Enter"] } }
+EOF
+(
+  ATMUX_SOURCE_ROOT="$fake_root"
+  if resolve_submit_keys_strict "queue-only" interrupt > /dev/null 2>&1; then
+    echo "FAIL: strict resolver should fail when mode is missing" >&2
+    exit 1
+  fi
+  q_strict="$(resolve_submit_keys_strict "queue-only" queue | normalize_keys)"
+  [[ "$q_strict" == "Enter" ]] || { echo "FAIL: strict queue: $q_strict" >&2; exit 1; }
+  echo "  ok: strict resolver returns empty for missing mode  -> exit 1"
+  echo "  ok: strict resolver returns keys when mode is present -> Enter"
+)
+rm -rf "$fake_root"
+
+echo "ok: strict submit-keys resolver behaves correctly"

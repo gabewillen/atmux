@@ -3,7 +3,7 @@
   "version": 1,
   "submit_keys": {
     "queue": ["Enter"],
-    "interrupt": ["Escape", "Enter"]
+    "interrupt": ["Escape"]
   },
   "input_idle": {
     "prompt": "❯"

@@ -11,6 +11,9 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/isolate-tmux.sh"
 #   1. Payload text reaches the pane (notification was "entered").
 #   2. Submit happens (cursor advances past the prompt line == "submitted").
 #   3. The notify-queue dir for the pane drains after delivery (no stuck items).
+#   4. For interrupt mode, the adapter's abort prefix keys (resolve_submit_keys
+#      "interrupt") are sent before the payload as pre_keys, then the queue
+#      submit key follows.
 # Targets the two failure modes the user cares about: not-entered and
 # stuck-in-input.
 
@@ -54,10 +57,18 @@ prompt_for() {
   esac
 }
 
-submit_keys_for_mode() {
-  # Print whitespace-separated submit key list for the given mode.
-  local adapter="$1" mode="$2"
-  resolve_submit_keys "$adapter" "$mode" | tr '\n' ' '
+submit_keys_for_adapter() {
+  # All modes (queue, steer, interrupt) share the same submit-keys path: the
+  # adapter's queue keys (e.g. Enter). The difference is whether bypass_idle
+  # is set and whether pre_keys (abort prefix) are sent.
+  local adapter="$1"
+  resolve_submit_keys "$adapter" queue | tr '\n' ' '
+}
+
+pre_keys_for_adapter() {
+  # Abort prefix; only meaningful for interrupt mode.
+  local adapter="$1"
+  resolve_submit_keys_strict "$adapter" interrupt 2>/dev/null | tr '\n' ' ' | sed 's/  *$//'
 }
 
 wait_for_text_in_pane() {
@@ -93,13 +104,18 @@ wait_for_queue_drained() {
 
 probe() {
   local adapter="$1" mode="$2"
-  local prompt session pane marker payload submit_keys label
+  local prompt session pane marker payload submit_keys pre_keys bypass label
   prompt="$(prompt_for "$adapter")"
   session="atmux-deliver-${adapter//[^A-Za-z0-9-]/_}-${mode}-$$-${RANDOM}"
   SESSIONS+=("$session")
 
   tmux kill-session -t "$session" >/dev/null 2>&1 || true
-  tmux new-session -d -s "$session" -n "$session" -x 120 -y 30 "cat"
+  # Disable INTR generation so adapters whose abort key is C-c (cursor-agent,
+  # gemini) don't kill the mock pane on --interrupt. The Ctrl-C still appears
+  # as a control character in cat's input stream, which is what the test
+  # cares about (pre_keys reached the pane before the payload).
+  tmux new-session -d -s "$session" -n "$session" -x 120 -y 30 \
+    "bash -c 'stty -isig 2>/dev/null; cat'"
   tmux set-environment -t "$session" ATMUX_ADAPTER "$adapter"
 
   pane="$(tmux list-panes -t "$session" -F '#{pane_id}' 2>/dev/null | head -n1)"
@@ -114,11 +130,18 @@ probe() {
 
   marker="probe-${adapter}-${mode}-${RANDOM}"
   payload="$(build_notification "test" "$marker" "")"
-  submit_keys="$(submit_keys_for_mode "$adapter" "$mode")"
+  submit_keys="$(submit_keys_for_adapter "$adapter")"
+  pre_keys=""
+  bypass=""
+  case "$mode" in
+    queue)     ;;
+    interrupt) bypass=1; pre_keys="$(pre_keys_for_adapter "$adapter")" ;;
+  esac
   label="$adapter/$mode"
 
   # Spawn the worker with the same key list the real CLI would dispatch.
-  if ! send_notification "$pane" "$payload" $submit_keys; then
+  if ! ATMUX_NOTIFY_PRE_KEYS="$pre_keys" ATMUX_NOTIFY_BYPASS_IDLE="$bypass" \
+       send_notification "$pane" "$payload" $submit_keys; then
     echo "FAIL: $label: send_notification returned non-zero" >&2
     return 1
   fi
@@ -139,7 +162,11 @@ probe() {
     return 1
   fi
 
-  printf '  ok: %-32s submit_keys=[%s]\n' "$label" "$(printf '%s' "$submit_keys" | sed 's/  */,/g; s/^,//; s/,$//')"
+  printf '  ok: %-32s submit_keys=[%s] pre_keys=[%s] bypass=[%s]\n' \
+    "$label" \
+    "$(printf '%s' "$submit_keys" | sed 's/  */,/g; s/^,//; s/,$//')" \
+    "$(printf '%s' "$pre_keys" | sed 's/  */,/g; s/^,//; s/,$//')" \
+    "$bypass"
   tmux kill-session -t "$session" >/dev/null 2>&1 || true
   return 0
 }

@@ -137,23 +137,41 @@ for _ in $(seq 1 80); do
 done
 [[ -f "$MARKERS/team-started" ]] || { echo "fail: team start hook never ran" >&2; exit 1; }
 
-# Members should both exist with ATMUX_TEAM set
+# Members should both exist with ATMUX_TEAM set. Poll briefly — on slower
+# runners (CI), the session env propagation can lag a few hundred ms behind
+# the team-started marker even though spawn_agent_session sets ATMUX_TEAM
+# synchronously.
 seen_alpha=0; seen_beta=0
-while IFS= read -r s; do
-  [[ -z "$s" ]] && continue
-  # `tmux show-environment` exits non-zero when the var is unset on a session
-  # (e.g. the team session has no ATMUX_AGENT_NAME). `|| true` keeps set -e
-  # from killing the loop.
-  member_team="$(tmux show-environment -t "$s" ATMUX_TEAM 2>/dev/null | sed -n 's/^ATMUX_TEAM=//p' || true)"
-  [[ "$member_team" == "$team_short" ]] || continue
-  agent_name="$(tmux show-environment -t "$s" ATMUX_AGENT_NAME 2>/dev/null | sed -n 's/^ATMUX_AGENT_NAME=//p' || true)"
-  case "$agent_name" in
-    "$alpha_name") seen_alpha=1 ;;
-    "$beta_name")  seen_beta=1 ;;
-  esac
-done < <(tmux list-sessions -F '#{session_name}' 2>/dev/null | grep '^atmux-amux_sh-' || true)
-[[ "$seen_alpha" == "1" ]] || { echo "fail: member '$alpha_name' not spawned with ATMUX_TEAM=$team_short" >&2; exit 1; }
-[[ "$seen_beta"  == "1" ]] || { echo "fail: member '$beta_name' not spawned with ATMUX_TEAM=$team_short" >&2; exit 1; }
+for _ in $(seq 1 40); do
+  seen_alpha=0; seen_beta=0
+  while IFS= read -r s; do
+    [[ -z "$s" ]] && continue
+    # `tmux show-environment` exits non-zero when the var is unset on a session
+    # (e.g. the team session has no ATMUX_AGENT_NAME). `|| true` keeps set -e
+    # from killing the loop.
+    member_team="$(tmux show-environment -t "$s" ATMUX_TEAM 2>/dev/null | sed -n 's/^ATMUX_TEAM=//p' || true)"
+    [[ "$member_team" == "$team_short" ]] || continue
+    agent_name="$(tmux show-environment -t "$s" ATMUX_AGENT_NAME 2>/dev/null | sed -n 's/^ATMUX_AGENT_NAME=//p' || true)"
+    case "$agent_name" in
+      "$alpha_name") seen_alpha=1 ;;
+      "$beta_name")  seen_beta=1 ;;
+    esac
+  done < <(tmux list-sessions -F '#{session_name}' 2>/dev/null | grep '^atmux-amux_sh-' || true)
+  [[ "$seen_alpha" == "1" && "$seen_beta" == "1" ]] && break
+  sleep 0.1
+done
+if [[ "$seen_alpha" != "1" || "$seen_beta" != "1" ]]; then
+  echo "fail: members not visible — alpha=$seen_alpha beta=$seen_beta team=$team_short" >&2
+  echo "  sessions in repo:" >&2
+  tmux list-sessions -F '  #{session_name}' 2>/dev/null | grep '^  atmux-amux_sh-' >&2 || true
+  while IFS= read -r s; do
+    [[ -z "$s" ]] && continue
+    mt="$(tmux show-environment -t "$s" ATMUX_TEAM 2>/dev/null | sed -n 's/^ATMUX_TEAM=//p' || true)"
+    an="$(tmux show-environment -t "$s" ATMUX_AGENT_NAME 2>/dev/null | sed -n 's/^ATMUX_AGENT_NAME=//p' || true)"
+    echo "    $s  ATMUX_TEAM=${mt:-<unset>}  ATMUX_AGENT_NAME=${an:-<unset>}" >&2
+  done < <(tmux list-sessions -F '#{session_name}' 2>/dev/null | grep '^atmux-amux_sh-' || true)
+  exit 1
+fi
 
 # Verify start hook env round-trip
 grep -Fxq "ATMUX_TEAM=$team_short"     "$MARKERS/team-start.env" || { echo "fail: start ATMUX_TEAM mismatch" >&2; cat "$MARKERS/team-start.env" >&2; exit 1; }

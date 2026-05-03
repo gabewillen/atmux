@@ -161,13 +161,13 @@ probe_burst() {
   done
 
   for marker in "${markers[@]}"; do
-    if ! wait_for_text_in_pane "$pane" "$marker" 45; then
+    if ! wait_for_text_in_pane "$pane" "$marker" 12; then
       echo "FAIL: $label: marker '$marker' never appeared in pane" >&2
       tmux capture-pane -p -t "$pane" -S -400 >&2 || true
       return 1
     fi
   done
-  if ! wait_for_queue_drained "$pane" 30; then
+  if ! wait_for_queue_drained "$pane" 10; then
     echo "FAIL: $label: queue stuck after burst" >&2
     return 1
   fi

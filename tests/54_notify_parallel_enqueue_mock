@@ -150,7 +150,7 @@ for pid in "${pids[@]}"; do
 done
 
 # cat harness: each line echoed twice; expect 2 appearances per marker.
-if ! wait_for_all_markers "$pane" 2 240; then
+if ! wait_for_all_markers "$pane" 2 30; then
   echo "not all markers appeared twice in time" >&2
   tmux capture-pane -p -t "$pane" -S -400 >&2 || true
   exit 1

@@ -98,11 +98,14 @@ for more information.
 ```sh
 atmux agent create [name] --role <role> --intelligence <0-100>
                    [--team <team>] [--adapter <adapter>] [--adapters <list>]
-                   [--no-worktree] [--start <cmd>] [--stop <cmd>]
+                   [--shared-worktree] [--start <cmd>] [--stop <cmd>]
                    [--task --description <desc> --todo <todo>...]
                    [-- <adapter-args...>]
   (or `--name <name>` instead of positional; if omitted, atmux
    auto-generates `agent-N`.)
+  `--shared-worktree` runs the new agent in the caller's current
+  worktree instead of creating a private one for it (deprecated
+  alias: `--no-worktree`).
 atmux agent list [--all] [--status]
 atmux agent status [<name>]
 atmux agent attach <name|session>

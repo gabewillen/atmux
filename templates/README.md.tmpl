@@ -73,7 +73,7 @@ atmux issue create --title "stabilize parser" --assign-to planner \
 
 ### Sessions and agents
 
-Each agent runs in a named tmux session: `atmux-<repo>-<agent>`. By default, agents get their own git worktree at `ATMUX_HOME/agents/<repo>-<name>`, keeping their changes isolated. Worktree creation initializes submodules with `git submodule update --init --recursive`. Pass `--no-worktree` to skip worktree creation and run in the repo root instead.
+Each agent runs in a named tmux session: `atmux-<repo>-<agent>`. By default, agents get their own git worktree at `ATMUX_HOME/agents/<repo>-<name>`, keeping their changes isolated. Worktree creation initializes submodules with `git submodule update --init --recursive`. Pass `--shared-worktree` to skip worktree creation and run the new agent in the caller's current worktree instead (`--no-worktree` is a deprecated alias).
 
 ### Teams
 

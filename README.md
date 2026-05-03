@@ -73,7 +73,7 @@ atmux issue create --title "stabilize parser" --assign-to planner \
 
 ### Sessions and agents
 
-Each agent runs in a named tmux session: `atmux-<repo>-<agent>`. By default, agents get their own git worktree at `ATMUX_HOME/agents/<repo>-<name>`, keeping their changes isolated. Worktree creation initializes submodules with `git submodule update --init --recursive`. Pass `--no-worktree` to skip worktree creation and run in the repo root instead.
+Each agent runs in a named tmux session: `atmux-<repo>-<agent>`. By default, agents get their own git worktree at `ATMUX_HOME/agents/<repo>-<name>`, keeping their changes isolated. Worktree creation initializes submodules with `git submodule update --init --recursive`. Pass `--shared-worktree` to skip worktree creation and run the new agent in the caller's current worktree instead (`--no-worktree` is a deprecated alias).
 
 ### Teams
 
@@ -179,11 +179,14 @@ for more information.
 ```sh
 atmux agent create [name] --role <role> --intelligence <0-100>
                    [--team <team>] [--adapter <adapter>] [--adapters <list>]
-                   [--no-worktree] [--start <cmd>] [--stop <cmd>]
+                   [--shared-worktree] [--start <cmd>] [--stop <cmd>]
                    [--task --description <desc> --todo <todo>...]
                    [-- <adapter-args...>]
   (or `--name <name>` instead of positional; if omitted, atmux
    auto-generates `agent-N`.)
+  `--shared-worktree` runs the new agent in the caller's current
+  worktree instead of creating a private one for it (deprecated
+  alias: `--no-worktree`).
 atmux agent list [--all] [--status]
 atmux agent status [<name>]
 atmux agent attach <name|session>

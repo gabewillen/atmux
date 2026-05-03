@@ -135,7 +135,7 @@ run_adapter_case() {
     ATMUX_REPO="$repo" ATMUX_ROLE="implementer" ATMUX_INTELLIGENCE="50" \
     ATMUX_MANAGER="manager" \
     "$ATMUX_BIN" agent create --name worker --role worker --intelligence 50 \
-      --adapter auto --adapters "$adapter" --no-worktree
+      --adapter auto --adapters "$adapter" --shared-worktree
   )"
   [[ -n "$worker_session" ]] || { echo "create returned empty session for $adapter" >&2; return 1; }
   SESSIONS+=("$worker_session")

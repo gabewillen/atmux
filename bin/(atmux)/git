@@ -117,9 +117,14 @@ hook_worktree_add() {
         continue
         ;;
       -b|-B|--orphan|--reason)
+        # Short forms `-b`/`-B` and `--orphan`/`--reason` only accept
+        # the separated form (`-b feature`, `--reason "..."`); git
+        # does not parse `-b=feature`. So we only need to handle the
+        # `--long=value` shape for the long-options that actually
+        # support it.
         skip_next=1
         ;;
-      -b=*|-B=*|--orphan=*|--reason=*|--lock=*)
+      --orphan=*|--reason=*)
         # Inline form takes no extra arg.
         ;;
       -*)

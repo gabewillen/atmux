@@ -290,10 +290,18 @@ exec_detached() {
   local self="${BASH_SOURCE[0]}"
   {
     printf '#!/usr/bin/env bash\n'
+    # Always forward ATMUX_HOME explicitly. The script-local
+    # `ATMUX_HOME="${ATMUX_HOME:-...}"` assignment near the top of
+    # `atmux exec` is *not* exported, so it doesn't appear in
+    # `compgen -e` unless a parent process already exported it. Some
+    # callers (e.g. test harnesses, ad-hoc shells) leave it unexported,
+    # which would otherwise silently let the worker fall back to
+    # `$HOME/.atmux` instead of the caller's intended ATMUX_HOME.
+    printf 'export ATMUX_HOME=%q\n' "$ATMUX_HOME"
     while IFS= read -r __exec_env_name; do
       [[ -n "$__exec_env_name" ]] || continue
       case "$__exec_env_name" in
-        TMUX|TMUX_PANE|_) continue ;;
+        TMUX|TMUX_PANE|_|ATMUX_HOME) continue ;;
       esac
       printf 'export %s=%q\n' "$__exec_env_name" "${!__exec_env_name-}"
     done < <(compgen -e)

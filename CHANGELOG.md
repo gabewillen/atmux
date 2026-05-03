@@ -6,14 +6,16 @@
 
 **New `--interrupt` semantics**: send the adapter's abort key sequence to stop the current operation, then submit the notification.
 
-| adapter      | abort key (`submit_keys.interrupt`) |
-|--------------|-------------------------------------|
-| claude-code  | `["Escape"]`                        |
-| codex        | `["Escape"]`                        |
-| cursor-agent | `["C-c"]`                           |
-| gemini       | `["C-c"]`                           |
+| adapter      | `submit_keys.interrupt` (abort prefix) | `submit_keys.steer` (submit) |
+|--------------|----------------------------------------|------------------------------|
+| claude-code  | `["Escape"]`                           | `["Enter"]`                  |
+| codex        | `["Escape"]`                           | `["Enter"]`                  |
+| cursor-agent | `["C-c"]`                              | `["Enter"]`                  |
+| gemini       | `["C-c"]`                              | `["Enter"]`                  |
 
-**No replacement flag for the old soft-steer behavior** — what `--interrupt` used to do is now just `atmux send` with no flag. The default queue path was already the right shape for "deliver when the receiving agent is ready"; adapters that supported mid-tool injection (codex's Tab-queues, claude-code's Enter-while-busy) will inject through the same default path.
+**Manifest schema rename**: `submit_keys.queue` → `submit_keys.steer`. The previous name implied "deliver after the agent finishes all its current todos" (true queue), but the field is actually used to submit at the next idle prompt — i.e., the steer path. True queue mode doesn't exist yet; calling it `steer` matches its real semantics. The default fallback mode in `resolve_submit_keys` is now `steer` instead of `queue`.
+
+**No replacement flag for the old soft-steer behavior** — what `--interrupt` used to do is now just `atmux send` with no flag. The default steer path was already the right shape for "deliver when the receiving agent is ready"; adapters that supported mid-tool injection (codex's Tab-queues, claude-code's Enter-while-busy) will inject through the same default path.
 
 Internal plumbing: queued items now carry optional `pre_keys` (abort prefix sent before the payload) and `bypass_idle` (skip the worker's wait-for-idle gate). Both are set only by `--interrupt`. Adapter manifests gain new semantics for the existing `submit_keys.interrupt` field — it's the abort prefix now, not the post-message submit keys.
 
@@ -22,7 +24,7 @@ Internal plumbing: queued items now carry optional `pre_keys` (abort prefix sent
 - **cursor-agent / gemini**: `C-c` may also exit the CLI session, depending on version. There are open upstream issues asking for double-press confirmation. Avoid `--interrupt` in long-lived production agents on these adapters until upstream behavior settles.
 
 ### Other changes
-- Removed `resolve_interrupt_keys()` helper from `bin/(atmux)/send`. New helpers: `resolve_queue_keys()` and `resolve_abort_keys()` (the latter uses the strict resolver so missing manifest fields don't silently fall back to `Enter`).
+- Removed `resolve_interrupt_keys()` helper from `bin/(atmux)/send`. New helpers: `resolve_steer_keys()` and `resolve_abort_keys()` (the latter uses the strict resolver so missing manifest fields don't silently fall back to `Enter`).
 - Added `resolve_submit_keys_strict()` to `bin/(atmux)/notify` — same as `resolve_submit_keys` but returns empty + non-zero when the requested mode is missing from the manifest.
 - `tests/101_notify_adapter_submit_keys_matrix` asserts the new abort keys.
 - `tests/102_notify_adapter_delivery_matrix_mock` exercises the `--interrupt` plumbing end-to-end against a SIGINT-resistant `cat` mock pane.

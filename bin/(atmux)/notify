@@ -1262,7 +1262,7 @@ resolve_manifest_path() {
 
 resolve_submit_keys() {
   local adapter="$1"
-  local mode="${2:-queue}"
+  local mode="${2:-steer}"
   local manifest_path compact raw_keys
 
   if ! manifest_path="$(resolve_manifest_path "$adapter")"; then
@@ -1285,7 +1285,7 @@ resolve_submit_keys() {
 # adapters that lack an abort key, instead of silently falling back to Enter.
 resolve_submit_keys_strict() {
   local adapter="$1"
-  local mode="${2:-queue}"
+  local mode="${2:-steer}"
   local manifest_path compact raw_keys
 
   manifest_path="$(resolve_manifest_path "$adapter")" || return 1
@@ -1560,7 +1560,7 @@ notify_cli_main() {
     if [[ -n "$adapter" ]]; then
       while IFS= read -r __qk_line; do
         submit_keys+=("$__qk_line")
-      done < <(resolve_submit_keys "$adapter" "queue")
+      done < <(resolve_submit_keys "$adapter" "steer")
       while IFS= read -r __pk_line; do
         [[ -n "$__pk_line" ]] || continue
         if [[ -n "$pre_keys_str" ]]; then

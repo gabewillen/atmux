@@ -2,7 +2,7 @@
   "name": "claude-code",
   "version": 1,
   "submit_keys": {
-    "queue": ["Enter"],
+    "steer": ["Enter"],
     "interrupt": ["Escape"]
   },
   "input_idle": {

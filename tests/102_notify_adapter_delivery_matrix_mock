@@ -12,15 +12,15 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/isolate-tmux.sh"
 #   2. Submit happens (cursor advances past the prompt line == "submitted").
 #   3. The notify-queue dir for the pane drains after delivery (no stuck items).
 #   4. For interrupt mode, the adapter's abort prefix keys (resolve_submit_keys
-#      "interrupt") are sent before the payload as pre_keys, then the submit
-#      key (`submit_keys.queue` in the manifest) follows.
+#      "interrupt") are sent before the payload as pre_keys, then the steer
+#      submit key (`submit_keys.steer` in the manifest) follows.
 # Modes:
 #   steer     — default `atmux send` path: deliver at next idle prompt. Mid-
 #               tool injection where the adapter supports it. NOT a true queue
 #               (which would wait for the agent to finish all current todos);
 #               that mode doesn't exist yet.
 #   interrupt — hard abort + submit. Sends `submit_keys.interrupt` (abort key)
-#               before the payload, settles, then submits with `submit_keys.queue`.
+#               before the payload, settles, then submits with `submit_keys.steer`.
 # Targets the two failure modes the user cares about: not-entered and
 # stuck-in-input.
 
@@ -66,12 +66,10 @@ prompt_for() {
 
 submit_keys_for_adapter() {
   # Both modes (steer, interrupt) share the same submit-keys path: the
-  # adapter's `submit_keys.queue` (typically Enter). The difference is whether
-  # bypass_idle is set and whether pre_keys (abort prefix) are sent. The
-  # manifest field is named `queue` for historical reasons, but in mode
-  # terminology this is the steer (next-idle-prompt) path.
+  # adapter's `submit_keys.steer` (typically Enter). The difference is whether
+  # bypass_idle is set and whether pre_keys (abort prefix) are sent.
   local adapter="$1"
-  resolve_submit_keys "$adapter" queue | tr '\n' ' '
+  resolve_submit_keys "$adapter" steer | tr '\n' ' '
 }
 
 pre_keys_for_adapter() {

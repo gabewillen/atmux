@@ -107,12 +107,12 @@ store_message() {
   printf '%s\n' "$id"
 }
 
-resolve_queue_keys() {
+resolve_steer_keys() {
   local session="$1"
   local adapter=""
   adapter="$(get_session_env "$session" ATMUX_ADAPTER)"
   if [[ -n "$adapter" ]]; then
-    resolve_submit_keys "$adapter" "queue"
+    resolve_submit_keys "$adapter" "steer"
   else
     printf 'Enter\n'
   fi
@@ -257,7 +257,7 @@ if [[ -n "$team_session" ]]; then
     if (( interrupt == 1 )); then
       while IFS= read -r __mk_line; do
         member_keys+=("$__mk_line")
-      done < <(resolve_queue_keys "$s")
+      done < <(resolve_steer_keys "$s")
       member_bypass=1
       while IFS= read -r __pk_line; do
         [[ -n "$__pk_line" ]] || continue
@@ -315,7 +315,7 @@ target_bypass=""
 if (( interrupt == 1 )); then
   while IFS= read -r __sk_line; do
     submit_keys+=("$__sk_line")
-  done < <(resolve_queue_keys "$target_session")
+  done < <(resolve_steer_keys "$target_session")
   target_bypass=1
   while IFS= read -r __pk_line; do
     [[ -n "$__pk_line" ]] || continue

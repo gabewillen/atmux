@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.12.1 — Auto-release on VERSION bump
+
+CI workflow that auto-tags and cuts a GitHub release when a push to `main` changes the `VERSION` file. Replaces the manual `git tag vX.Y.Z && git push --tags` step that used to follow every release-PR merge.
+
+The 0.12.0 release missed this path because the workflow itself landed after the 0.12.0 VERSION bump; 0.12.1 is the first release through the auto-tagger.
+
 ## 0.12.0 — Reporter system: humans get CLI text, agents get XML; remove read-only pane on agent create
 
 Until now, every `atmux` command wrapped its output in an `<atmux command="…">` XML envelope and listings emitted hand-rolled XML records, regardless of who invoked them. Humans running `atmux pr list` from a normal terminal saw raw XML.

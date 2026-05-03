@@ -899,7 +899,27 @@ run_adapter() {
         fi
         local fail_worktree="${ATMUX_WORKTREE:-}"
         local fail_session="$current_session"
-        if [[ -n "$fail_worktree" && -d "$fail_worktree" ]]; then
+        # Only clean up worktrees that atmux itself created. Atmux-owned
+        # worktrees live under $ATMUX_HOME (e.g. agents/<repo>/<agent>/worktree
+        # or teams/<repo>/<team>/worktree). Anything else is the caller's —
+        # most importantly, --shared-worktree exposes the *caller's pwd*
+        # as ATMUX_WORKTREE, which can be an actual user repo. Without
+        # this guard, a role_start failure would `rm -rf` the user's repo
+        # via the `git worktree remove` fallback path below.
+        local atmux_owned_root=""
+        if [[ -n "${ATMUX_HOME:-}" ]]; then
+          atmux_owned_root="$(cd -- "$ATMUX_HOME" 2>/dev/null && pwd -P)" || atmux_owned_root=""
+        fi
+        local fail_worktree_real=""
+        if [[ -n "$fail_worktree" ]]; then
+          fail_worktree_real="$(cd -- "$fail_worktree" 2>/dev/null && pwd -P)" || fail_worktree_real=""
+        fi
+        local atmux_owned=0
+        if [[ -n "$atmux_owned_root" && -n "$fail_worktree_real" \
+              && "$fail_worktree_real" == "$atmux_owned_root"/* ]]; then
+          atmux_owned=1
+        fi
+        if [[ "$atmux_owned" -eq 1 && -n "$fail_worktree" && -d "$fail_worktree" ]]; then
           local repo_for_cleanup=""
           repo_for_cleanup="$(git -C "$fail_worktree" rev-parse --show-toplevel 2>/dev/null || true)"
           if [[ -n "$repo_for_cleanup" ]] && \
@@ -911,6 +931,9 @@ run_adapter() {
           if [[ -n "$repo_for_cleanup" && -n "$fail_session" ]]; then
             git -C "$repo_for_cleanup" branch -D "$fail_session" >/dev/null 2>&1 || true
           fi
+        elif [[ -n "$fail_worktree" ]]; then
+          # Shared / user-supplied worktree — leave the filesystem alone.
+          echo "atmux: leaving worktree at $fail_worktree (not atmux-owned)" >&2
         fi
         if [[ -n "$fail_session" ]] && tmux has-session -t "$fail_session" 2>/dev/null; then
           tmux set-environment -t "$fail_session" ATMUX_ROLE_START_STATE failed >/dev/null 2>&1 || true

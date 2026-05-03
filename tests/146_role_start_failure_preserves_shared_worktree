@@ -1,0 +1,116 @@
+#!/usr/bin/env bash
+# Regression: --shared-worktree agent with a failing role start hook
+# must NOT delete the caller's worktree.
+#
+# Bug: bin/(atmux)/agent's role_start failure cleanup ran
+# `rm -rf "$ATMUX_WORKTREE"` against the failed agent's worktree. For
+# --shared-worktree agents, ATMUX_WORKTREE is the *caller's pwd* — which
+# can be a real user repo. A failing role start would silently nuke the
+# user's working directory.
+#
+# Fix: the cleanup is now gated on whether the worktree lives under
+# $ATMUX_HOME (atmux-owned). Anything else is left alone.
+set -euo pipefail
+
+source "$(dirname "${BASH_SOURCE[0]}")/lib/isolate-tmux.sh"
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+ATMUX_BIN="$REPO_ROOT/bin/atmux"
+
+WORK_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/amux-shared-fail.XXXXXX")"
+ATMUX_HOME="$WORK_ROOT/atmux-home"
+mkdir -p "$ATMUX_HOME"
+export ATMUX_HOME
+
+# The "user's repo" — completely outside ATMUX_HOME. Plant a sentinel
+# file we can check for survival after the failed agent create.
+USER_REPO="$WORK_ROOT/user-repo"
+mkdir -p "$USER_REPO"
+git -C "$USER_REPO" init -q
+git -C "$USER_REPO" -c user.email=t@t -c user.name=t commit --allow-empty -q -m init
+SENTINEL="$USER_REPO/SENTINEL.txt"
+printf 'do not delete me\n' > "$SENTINEL"
+
+cleanup() {
+  set +e
+  rm -rf "$WORK_ROOT"
+}
+trap cleanup EXIT
+
+# Mock adapter: never actually runs (start hook fails before adapter starts).
+adapter_dir="$ATMUX_HOME/adapters/mock"
+mkdir -p "$adapter_dir"
+cat > "$adapter_dir/cmd" <<'ADAPTER'
+#!/usr/bin/env bash
+set -euo pipefail
+case "${1:-}" in
+  control-file) printf 'AGENTS.md\n' ;;
+  prepare-prompt) : ;;
+  start) sleep 600 ;;
+  status) printf '<status adapter="mock" owner="agent" state="idle" model="" reasoning_level="" control_file="AGENTS.md" />\n' ;;
+  model) printf 'mock\n' ;;
+  reasoning-level) printf 'medium\n' ;;
+  *) exit 2 ;;
+esac
+ADAPTER
+chmod +x "$adapter_dir/cmd"
+
+# Failing role start.
+roles_dir="$ATMUX_HOME/roles/failing"
+mkdir -p "$roles_dir"
+echo "# failing" > "$roles_dir/role.md"
+cat > "$roles_dir/start" <<'EOF'
+#!/usr/bin/env bash
+echo "intentional failure" >&2
+exit 7
+EOF
+chmod +x "$roles_dir/start"
+
+# Run agent create from inside USER_REPO with --shared-worktree, so the
+# agent inherits USER_REPO as its ATMUX_WORKTREE.
+cd "$USER_REPO"
+agent_name="sharedfail$$"
+
+out="$(
+  ATMUX_ALLOW_OUTSIDE_TMUX=1 \
+  ATMUX_AGENT_NAME=test-manager \
+  "$ATMUX_BIN" agent create "$agent_name" \
+    --role failing \
+    --intelligence 20 \
+    --adapter mock \
+    --shared-worktree 2>&1 || true
+)"
+
+# Agent create must surface a non-zero exit (role start failed).
+ec="$(printf '%s\n' "$out" | sed -n 's/.*exit_code="\([0-9]*\)".*/\1/p' | head -1)"
+if [[ "$ec" != "1" ]]; then
+  echo "fail: expected wrapper exit_code=1, got '$ec'" >&2
+  echo "$out" >&2
+  exit 1
+fi
+
+# CRITICAL: the user's repo and sentinel file must still exist.
+if [[ ! -d "$USER_REPO" ]]; then
+  echo "fail: USER_REPO ($USER_REPO) was deleted by failed agent create" >&2
+  exit 1
+fi
+if [[ ! -f "$SENTINEL" ]]; then
+  echo "fail: SENTINEL ($SENTINEL) was deleted by failed agent create" >&2
+  ls -la "$USER_REPO" >&2 || true
+  exit 1
+fi
+if ! grep -q "do not delete me" "$SENTINEL"; then
+  echo "fail: SENTINEL contents were modified" >&2
+  exit 1
+fi
+
+# And the cleanup output should mention that we left the worktree alone
+# (defense-in-depth: explicit user-visible signal).
+if ! printf '%s\n' "$out" | grep -q "leaving worktree at .* (not atmux-owned)"; then
+  echo "warn: expected diagnostic message about leaving worktree alone; output was:" >&2
+  printf '%s\n' "$out" >&2
+  # Don't fail on this — the survival check above is the real assertion.
+fi
+
+echo "ok: --shared-worktree agent with failing role start preserves caller's worktree"

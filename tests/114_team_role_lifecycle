@@ -133,7 +133,11 @@ chmod +x "$team_role_dir/stop"
 cd "$REPO_ROOT"
 team_short="lifecycle$$"
 
-out="$( ATMUX_ALLOW_OUTSIDE_TMUX=1 "$ATMUX_BIN" team create "$team_short" --role probe-pair 2>&1 || true )"
+# --shared-worktree opts out of the default fresh-worktree behavior so
+# this test continues to verify env propagation against the repo root,
+# which is what `probe-pair`'s assertions expect. The fresh-worktree
+# path is exercised by 117_team_worktree_lifecycle instead.
+out="$( ATMUX_ALLOW_OUTSIDE_TMUX=1 "$ATMUX_BIN" team create "$team_short" --role probe-pair --shared-worktree 2>&1 || true )"
 team_session="$(printf '%s\n' "$out" | sed -n 's/.*session="\([^"]*\)".*/\1/p' | head -1)"
 [[ -n "$team_session" ]] || { echo "fail: no team session created" >&2; echo "$out" >&2; exit 1; }
 

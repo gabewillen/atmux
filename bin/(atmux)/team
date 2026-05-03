@@ -11,7 +11,7 @@ usage() {
   cat <<'USAGE'
 Usage:
   atmux team create <name> [--role <role>] [--start <cmd>] [--stop <cmd>]
-                           [--worktree [<path>]]
+                           [--worktree <path>] [--shared-worktree]
   atmux team list
   atmux team ls
   atmux team status [<name>]
@@ -23,20 +23,24 @@ Description:
   Manage repo-scoped team tmux sessions.
   Team session format: atmux-<repo>-team-<name>
 
-  --role <name>      Apply a KIND=team role: opens the session, spawns each
-                     MEMBERS entry from the role manifest, then runs the
-                     role's optional `start` hook for any cross-cutting
-                     wiring. `team kill` auto-kills the spawned members
-                     and runs the matching `stop` hook.
+  Every team gets its own fresh git worktree by default — members spawned
+  with `--shared-worktree` inherit it via ATMUX_WORKTREE, so a pair of
+  agents can edit the same worktree without stomping the user's checkout.
+  `team kill` removes the worktree and branch.
 
-  --worktree [path]  Create a fresh git worktree for the team and open the
-                     session in it. Members spawned with `--shared-worktree`
-                     inherit this path via the team session's
-                     ATMUX_WORKTREE env (so a pair of agents can edit the
-                     same worktree without stomping the user's checkout).
-                     Path defaults to $ATMUX_HOME/teams/<repo>/<team>/worktree
-                     on a new branch atmux-<repo>-team-<team>. `team kill`
-                     removes the worktree and branch.
+  --role <name>       Apply a KIND=team role: opens the session, spawns
+                      each MEMBERS entry from the role manifest, then
+                      runs the role's optional `start` hook for any
+                      cross-cutting wiring. `team kill` auto-kills the
+                      spawned members and runs the matching `stop` hook.
+
+  --worktree <path>   Override the worktree location. Default is
+                      $ATMUX_HOME/teams/<repo>/<team>/worktree on a new
+                      branch atmux-<repo>-team-<team>.
+
+  --shared-worktree   Opt out of the fresh-worktree default. Use the
+                      caller's pwd (or repo root) instead. Useful for
+                      coordination teams that just talk and never edit.
 USAGE
 }
 
@@ -263,7 +267,12 @@ create_team() {
   local role=""
   local start_cmd=""
   local stop_cmd=""
-  local worktree_requested=0
+  # Default: every team gets its own fresh worktree. Members spawned with
+  # --shared-worktree inherit it via env. `--worktree <path>` overrides
+  # the location; `--shared-worktree` opts out (use the caller's pwd /
+  # repo root instead, useful for coordination teams that just talk and
+  # never touch files).
+  local shared_worktree=0
   local worktree_path=""
 
   while [[ $# -gt 0 ]]; do
@@ -275,8 +284,8 @@ create_team() {
       --stop)    stop_cmd="${2:-}"; shift 2 ;;
       --stop=*)  stop_cmd="${1#--stop=}"; shift ;;
       --worktree)
-        worktree_requested=1
-        # Optional value: only consume next arg if it doesn't look like a flag.
+        # Path-only override; presence with no path is a no-op (default
+        # path is already used).
         if [[ $# -ge 2 && "${2:0:1}" != "-" ]]; then
           worktree_path="$2"
           shift 2
@@ -284,9 +293,10 @@ create_team() {
           shift
         fi
         ;;
-      --worktree=*) worktree_requested=1; worktree_path="${1#--worktree=}"; shift ;;
+      --worktree=*) worktree_path="${1#--worktree=}"; shift ;;
+      --shared-worktree) shared_worktree=1; shift ;;
       -h|--help)
-        echo "usage: atmux team create <name> [--role <role>] [--start <cmd>] [--stop <cmd>] [--worktree [<path>]]"
+        echo "usage: atmux team create <name> [--role <role>] [--start <cmd>] [--stop <cmd>] [--worktree <path>] [--shared-worktree]"
         return 0
         ;;
       --) shift ;;
@@ -353,13 +363,16 @@ create_team() {
     fi
   fi
 
-  # Worktree: when --worktree is passed, create a fresh git worktree that
-  # the team session opens in. Spawned members with --shared-worktree
-  # inherit it via ATMUX_WORKTREE in the session's env. Tracked in a
-  # marker file so `team kill` can remove the worktree on teardown.
+  # Worktree: by default every team gets its own fresh worktree so members
+  # don't stomp the user's actual checkout. `--shared-worktree` opts out
+  # (use the caller's pwd / repo root). `--worktree <path>` overrides
+  # only the location. Spawned members with --shared-worktree inherit
+  # whichever path the team ended up with via ATMUX_WORKTREE in the
+  # session's env. Tracked with a marker so `team kill` can remove the
+  # worktree on teardown when atmux owns it.
   local team_work_dir="$repo_root"
   local team_worktree_owned=0
-  if [[ "$worktree_requested" -eq 1 ]]; then
+  if [[ "$shared_worktree" -eq 0 ]]; then
     local atmux_home="${ATMUX_HOME:-$HOME/.atmux}"
     if [[ -z "$worktree_path" ]]; then
       worktree_path="$atmux_home/teams/$repo_name/$team_name/worktree"
@@ -420,8 +433,9 @@ create_team() {
       tmux set-environment -t "$session" ATMUX_SOURCE_ROOT "$ATMUX_SOURCE_ROOT"
     fi
   else
-    if [[ -n "$role" || -n "$start_cmd" || -n "$stop_cmd" || "$worktree_requested" -eq 1 ]]; then
-      echo "atmux team create: team '$team_name' already exists; --role/--start/--stop/--worktree only apply to fresh sessions" >&2
+    if [[ -n "$role" || -n "$start_cmd" || -n "$stop_cmd" \
+          || -n "$worktree_path" || "$shared_worktree" -eq 1 ]]; then
+      echo "atmux team create: team '$team_name' already exists; --role/--start/--stop/--worktree/--shared-worktree only apply to fresh sessions" >&2
       exit 1
     fi
   fi

@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
-# Verifies `atmux team create --worktree` lifecycle:
-#   - team create --worktree creates a fresh git worktree at the expected
-#     path and points the team session's ATMUX_WORKTREE at it
+# Verifies the team-worktree default + opt-out:
+#   - `team create <name>` (no flag) creates a fresh git worktree at the
+#     default path and points the session's ATMUX_WORKTREE at it
 #   - members spawned with --shared-worktree inherit that worktree (env
 #     propagation through spawn_team_members)
 #   - team kill removes the worktree, prunes git's metadata, and deletes
 #     the team branch
+#   - `team create <name> --shared-worktree` opts out — no worktree
+#     created, ATMUX_WORKTREE points at the repo root, no owner marker,
+#     team kill leaves the repo untouched
 set -euo pipefail
 
 source "$(dirname "${BASH_SOURCE[0]}")/lib/isolate-tmux.sh"
@@ -86,8 +89,9 @@ MEMBERS=(
 EOF
 
 cd "$REPO_ROOT"
+# No --worktree flag — fresh worktree should be the default for teams.
 ATMUX_ALLOW_OUTSIDE_TMUX=1 "$ATMUX_BIN" team create "$TEAM_SHORT" \
-  --role "wt-team-${SUFFIX}" --worktree >/dev/null
+  --role "wt-team-${SUFFIX}" >/dev/null
 
 # Worktree should exist on disk.
 [[ -d "$EXPECTED_WT" ]] \
@@ -151,4 +155,36 @@ if tmux has-session -t "$ALPHA_SESSION" 2>/dev/null; then
   exit 1
 fi
 
-echo "ok: team --worktree creates, members share, kill removes worktree+branch"
+# --- Opt-out path: --shared-worktree should leave the repo alone ---
+SHARED_TEAM="shared${SUFFIX}"
+SHARED_SESSION="${SESSION_PREFIX}team-${SHARED_TEAM}"
+SHARED_BRANCH="atmux-${REPO_NORM}-team-${SHARED_TEAM}"
+SHARED_WT_DEFAULT="$ATMUX_HOME/teams/$REPO_NORM/$SHARED_TEAM/worktree"
+
+ATMUX_ALLOW_OUTSIDE_TMUX=1 "$ATMUX_BIN" team create "$SHARED_TEAM" --shared-worktree >/dev/null
+
+# Worktree dir must NOT have been created.
+[[ ! -d "$SHARED_WT_DEFAULT" ]] \
+  || { echo "fail: --shared-worktree still created a worktree at $SHARED_WT_DEFAULT" >&2; exit 1; }
+
+# git must not have a registered worktree for this team.
+if git -C "$REPO_ROOT" worktree list --porcelain | grep -Fq "/teams/$REPO_NORM/$SHARED_TEAM/"; then
+  echo "fail: --shared-worktree created a git-registered worktree" >&2
+  git -C "$REPO_ROOT" worktree list >&2
+  exit 1
+fi
+
+# Branch must not exist.
+if git -C "$REPO_ROOT" show-ref --verify --quiet "refs/heads/$SHARED_BRANCH"; then
+  echo "fail: --shared-worktree created branch $SHARED_BRANCH" >&2
+  exit 1
+fi
+
+# Owner marker must NOT be set on the session.
+shared_owned="$(tmux show-environment -t "$SHARED_SESSION" ATMUX_TEAM_WORKTREE_OWNED 2>/dev/null | sed -n 's/^ATMUX_TEAM_WORKTREE_OWNED=//p' || true)"
+[[ -z "$shared_owned" ]] \
+  || { echo "fail: --shared-worktree set ATMUX_TEAM_WORKTREE_OWNED=$shared_owned (expected empty)" >&2; exit 1; }
+
+ATMUX_ALLOW_OUTSIDE_TMUX=1 "$ATMUX_BIN" team kill "$SHARED_TEAM" >/dev/null
+
+echo "ok: team default creates worktree, --shared-worktree opts out, kill cleans up only what it owned"

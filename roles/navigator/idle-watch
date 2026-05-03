@@ -1,0 +1,92 @@
+#!/usr/bin/env bash
+# Edge-triggered idle watcher: polls the driver's pane every IDLE_INTERVAL
+# seconds and fires exactly one notification per active→idle transition.
+#
+# Usage: idle-watch <driver_name> <nav_pane_id> <state_log_path>
+#
+# State machine:
+#   - prev empty:                first poll, prime baseline, record activity
+#   - cur != prev:               driver is active — record activity, reset
+#   - cur == prev (saw activity, not yet notified, stable >= IDLE_AFTER_TICKS):
+#                                fire ONE notification; flag notified
+#   - cur == prev (notified):    silent — wait for next active→idle cycle
+set -u
+
+driver="${1:?usage: idle-watch <driver> <pane> <log>}"
+nav_pane="${2:?usage: idle-watch <driver> <pane> <log>}"
+log="${3:?usage: idle-watch <driver> <pane> <log>}"
+
+IDLE_INTERVAL="${IDLE_INTERVAL:-10}"   # seconds between pane samples
+IDLE_AFTER_TICKS="${IDLE_AFTER_TICKS:-3}"  # consecutive stable samples = idle
+# Lifetime guard: how many consecutive ticks of "session not resolvable"
+# before we consider this watcher orphaned and exit. With IDLE_INTERVAL
+# at 10s, 3 ticks = 30s of unbroken absence before we self-terminate —
+# enough to ride out brief atmux/tmux hiccups, short enough to prevent
+# multi-day orphan accumulation when the team is killed.
+LIFETIME_MISS_LIMIT="${LIFETIME_MISS_LIMIT:-3}"
+
+# Resolve the navigator's tmux session from the pane id (`%NN`). The
+# pane id format is stable across the session's lifetime; tmux will
+# refuse to look it up once the session is gone, which is our exit cue.
+nav_session_active() {
+  tmux display-message -p -t "$nav_pane" '#{session_name}' >/dev/null 2>&1
+}
+
+note() { printf '[%s] %s\n' "$(date +%H:%M:%S)" "$*" >> "$log"; }
+
+note "idle-watch start: driver=$driver pane=$nav_pane interval=${IDLE_INTERVAL}s ticks=${IDLE_AFTER_TICKS}"
+
+prev=""
+stable_ticks=0
+saw_activity=0
+notified=0
+miss_streak=0
+
+while sleep "$IDLE_INTERVAL"; do
+  # Self-terminate if the navigator's tmux session has been torn down.
+  # Without this, `nohup` watchers outlive their parent agent and pile
+  # up as orphans across team-kill / re-create cycles.
+  if ! nav_session_active; then
+    note "navigator pane $nav_pane no longer resolvable — exiting"
+    exit 0
+  fi
+
+  cur="$(atmux agent capture "$driver" --lines 80 2>/dev/null || true)"
+  if [[ -z "$cur" ]]; then
+    miss_streak=$(( miss_streak + 1 ))
+    note "tick: empty capture (miss_streak=$miss_streak/$LIFETIME_MISS_LIMIT)"
+    if (( miss_streak >= LIFETIME_MISS_LIMIT )); then
+      note "driver $driver unreachable for $LIFETIME_MISS_LIMIT ticks — exiting"
+      exit 0
+    fi
+    continue
+  fi
+  miss_streak=0
+
+  if [[ "$cur" != "$prev" ]]; then
+    if [[ -z "$prev" ]]; then
+      note "tick: priming baseline (len=${#cur})"
+    else
+      note "tick: pane changed (len=${#cur}) — resetting stable_ticks, saw_activity=1"
+    fi
+    prev="$cur"
+    stable_ticks=0
+    saw_activity=1
+    notified=0
+    continue
+  fi
+
+  stable_ticks=$(( stable_ticks + 1 ))
+  note "tick: pane stable (stable_ticks=$stable_ticks saw_activity=$saw_activity notified=$notified)"
+
+  if (( saw_activity == 1 )) && (( notified == 0 )) && (( stable_ticks >= IDLE_AFTER_TICKS )); then
+    stable_seconds=$(( stable_ticks * IDLE_INTERVAL ))
+    xml="<watch type=\"agent\" id=\"${driver}\" reason=\"idle\" stable_seconds=\"${stable_seconds}\"/>"
+    if atmux notify --pane "$nav_pane" --xml "$xml" >/dev/null 2>&1; then
+      note "idle notification fired (driver=$driver stable_seconds=${stable_seconds})"
+    else
+      note "atmux notify FAILED (pane=$nav_pane)"
+    fi
+    notified=1
+  fi
+done

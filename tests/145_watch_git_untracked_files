@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+# Verifies `atmux git watch` snapshots cover untracked (non-ignored) files
+# in addition to tracked modifications. Without this, fresh-file work
+# (the most common driver case in pair-program teams) is invisible to the
+# navigator because `git stash create` skips untracked content by default.
+set -euo pipefail
+
+source "$(dirname "${BASH_SOURCE[0]}")/lib/isolate-tmux.sh"
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+ATMUX_BIN="$REPO_ROOT/bin/atmux"
+
+WORK="$(mktemp -d "${TMPDIR:-/tmp}/atmux-git-watch-untracked.XXXXXX")"
+trap 'rm -rf "$WORK"' EXIT
+
+REPO="$WORK/repo"
+git init -q "$REPO"
+git -C "$REPO" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
+echo "tracked content" > "$REPO/tracked"
+git -C "$REPO" add tracked
+git -C "$REPO" -c user.email=t@t -c user.name=t commit -q -m "add tracked"
+# Sanity: respect .gitignore — ignored files should NOT show up in diffs.
+echo "ignored.tmp" > "$REPO/.gitignore"
+git -C "$REPO" add .gitignore
+git -C "$REPO" -c user.email=t@t -c user.name=t commit -q -m "ignore tmp"
+
+export ATMUX_HOME="$WORK/atmux-home"
+mkdir -p "$ATMUX_HOME"
+
+cd "$REPO"
+
+OUT="$WORK/run.out"
+
+# After the watcher starts, create a new untracked file (the pair-program
+# driver's typical first action). Then create an ignored file that must
+# stay invisible.
+( sleep 2; echo "new content" > sandbox.sh; sleep 3; echo "should be hidden" > ignored.tmp ) &
+writer=$!
+
+rc=0
+ATMUX_ALLOW_OUTSIDE_TMUX=1 "$ATMUX_BIN" git watch \
+  --id untracked --interval 1 --coalesce 1 --duration 7 > "$OUT" 2>&1 || rc=$?
+wait "$writer" 2>/dev/null || true
+
+[[ "$rc" -eq 124 ]] || { echo "expected duration exit 124, got $rc" >&2; cat "$OUT" >&2; exit 1; }
+
+# At least one emit must contain the new untracked file's diff.
+grep -Fq '+new content' "$OUT" \
+  || { echo "watcher missed untracked file content" >&2; cat "$OUT" >&2; exit 1; }
+grep -Fq 'sandbox.sh' "$OUT" \
+  || { echo "watcher missed untracked file path" >&2; cat "$OUT" >&2; exit 1; }
+
+# Ignored file must NOT appear.
+grep -Fq 'ignored.tmp' "$OUT" \
+  && { echo "watcher leaked ignored file" >&2; cat "$OUT" >&2; exit 1; } || true
+grep -Fq 'should be hidden' "$OUT" \
+  && { echo "watcher leaked ignored file content" >&2; cat "$OUT" >&2; exit 1; } || true
+
+# Both writer files must have been created on disk; ignored.tmp simply
+# doesn't surface in `git status` thanks to .gitignore. Status must show
+# the untracked sandbox.sh and nothing else (no spurious A/M from a
+# leaked add).
+[[ -f "$REPO/sandbox.sh" && -f "$REPO/ignored.tmp" ]] \
+  || { echo "writer files missing on disk" >&2; ls -la "$REPO" >&2; exit 1; }
+status_lines="$(git -C "$REPO" status --porcelain)"
+[[ "$status_lines" == "?? sandbox.sh" ]] \
+  || { echo "worktree state changed unexpectedly" >&2; printf '%s\n' "$status_lines" >&2; exit 1; }
+[[ -z "$(git -C "$REPO" stash list)" ]] \
+  || { echo "stash list should be empty (snapshot must not push)" >&2; git -C "$REPO" stash list >&2; exit 1; }
+
+echo "ok: git watch sees untracked files, respects .gitignore, stays non-mutating"

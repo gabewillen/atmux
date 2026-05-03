@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
-# Rolling-diff git watcher. On each tick, snapshots the worktree via
-# `git stash create` (non-mutating — creates a commit object referencing
-# index+worktree, prints SHA, leaves both untouched). Emits one XML digest
-# per --coalesce window containing `git diff <baseline_sha>..<current_sha>`,
-# where baseline_sha is the SHA from the previous emit. Suppresses empty
-# diffs, persists the baseline at $ATMUX_HOME/git/watch/<id>/last so the
-# watcher can resume from its last emit across restarts.
+# Rolling-diff git watcher. On each tick, snapshots the worktree by
+# building a temporary git index over HEAD + every tracked modification +
+# every untracked file (respecting .gitignore via --exclude-standard) and
+# writing its tree. The real index, worktree, and stash list are never
+# touched. Emits one XML digest per --coalesce window containing
+# `git diff <baseline_tree>..<current_tree>`, where baseline_tree is the
+# tree from the previous emit. Suppresses empty diffs, persists the
+# baseline at $ATMUX_HOME/git/watch/<id>/last so the watcher can resume
+# from its last emit across restarts.
 set -euo pipefail
 
 ATMUX_HOME="${ATMUX_HOME:-$HOME/.atmux}"
@@ -20,8 +22,9 @@ Usage:
 Description:
   Watch the current repo for worktree changes; emit `git diff` as XML for
   the change *since the previous notification*. Empty diffs are suppressed.
-  Snapshots are non-mutating (`git stash create`) so this is safe to run
-  against a worktree shared with other agents.
+  Snapshots cover tracked modifications AND untracked (non-ignored) files,
+  built in a temp index so the real index, worktree, and stash list are
+  never touched — safe to run against a worktree shared with other agents.
 USAGE
 }
 
@@ -37,33 +40,44 @@ derive_default_id() {
   fi
 }
 
-# Snapshot: returns the *tree* SHA of the current index+worktree. We take
-# `git stash create`'s output (a commit-ish whose tree captures the dirty
-# state) and resolve it to its tree SHA. Tree SHAs are content-addressed —
-# identical worktrees produce identical SHAs across calls, so equality
-# checks correctly detect "no change". (Stash create's *commit* SHA embeds
-# a timestamp and would change every poll.) When the tree is clean,
-# `git stash create` prints nothing; fall back to HEAD's tree, then to the
-# empty tree on a brand-new repo with no commits.
+# Snapshot: returns the *tree* SHA capturing tracked modifications +
+# untracked (non-ignored) files. Built by copying the real .git/index to
+# a tempfile, running `git add -A` against that copy, and writing its
+# tree. The real index, worktree, and stash list are untouched. Tree
+# SHAs are content-addressed — identical worktrees produce identical
+# SHAs across calls, so equality correctly detects "no change". When
+# .git/index is missing (brand-new repo with no commits) we fall back to
+# the empty tree.
 EMPTY_TREE="4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 
 make_snapshot() {
-  local commitish=""
-  commitish="$(git stash create 2>/dev/null || true)"
-  if [[ -z "$commitish" ]]; then
-    commitish="$(git rev-parse --verify HEAD 2>/dev/null || true)"
-  fi
-  if [[ -z "$commitish" ]]; then
+  local git_dir
+  git_dir="$(git rev-parse --git-dir 2>/dev/null || true)"
+  if [[ -z "$git_dir" ]]; then
     printf '%s\n' "$EMPTY_TREE"
     return 0
   fi
-  local tree
-  tree="$(git rev-parse --verify "${commitish}^{tree}" 2>/dev/null || true)"
+
+  local tmp_index
+  tmp_index="$(mktemp -t atmux-git-snapshot.XXXXXX 2>/dev/null || mktemp)"
+  # Seed the temp index from the real one when it exists; otherwise leave
+  # it empty (HEAD-less repo or never-committed repo).
+  if [[ -f "$git_dir/index" ]]; then
+    cp "$git_dir/index" "$tmp_index" 2>/dev/null || : > "$tmp_index"
+  else
+    : > "$tmp_index"
+  fi
+
+  local tree=""
+  if GIT_INDEX_FILE="$tmp_index" git add -A 2>/dev/null; then
+    tree="$(GIT_INDEX_FILE="$tmp_index" git write-tree 2>/dev/null || true)"
+  fi
+  rm -f "$tmp_index"
+
   if [[ -z "$tree" ]]; then
-    printf '%s\n' "$EMPTY_TREE"
-    return 0
+    tree="$(git rev-parse --verify 'HEAD^{tree}' 2>/dev/null || true)"
   fi
-  printf '%s\n' "$tree"
+  printf '%s\n' "${tree:-$EMPTY_TREE}"
 }
 
 EXEC_CMD=""

@@ -91,13 +91,40 @@ resolve_real_git() {
 # Hook: `git worktree add` succeeded. argv after `worktree add`.
 hook_worktree_add() {
   local target_path=""
-  # Find first non-flag arg after `worktree add`. `git worktree add
-  # [<options>] <path> [<commit-ish>]`.
+  # Find the first positional after `worktree add`. The shape is:
+  #   git worktree add [<options>] <path> [<commit-ish>]
+  # but several options consume a following value, so we can't just
+  # take the first non-`-` arg — `git worktree add -b feature ../wt`
+  # would otherwise pick `feature` as the path. Skip the value of
+  # any option that's known to take one. `--flag=value` consumes
+  # nothing extra; `--flag value` consumes one. `--` ends options.
+  local skip_next=0
   local arg
   for arg in "$@"; do
+    if (( skip_next == 1 )); then
+      skip_next=0
+      continue
+    fi
     case "$arg" in
-      -*) ;;
-      *)  target_path="$arg"; break ;;
+      --)
+        # Everything after `--` is positional.
+        skip_next=0
+        continue
+        ;;
+      -b|-B|--orphan|--reason)
+        skip_next=1
+        ;;
+      -b=*|-B=*|--orphan=*|--reason=*|--lock=*)
+        # Inline form takes no extra arg.
+        ;;
+      -*)
+        # Other flags (--detach, --force, --no-checkout, --quiet, etc)
+        # take no value.
+        ;;
+      *)
+        target_path="$arg"
+        break
+        ;;
     esac
   done
   [[ -n "$target_path" ]] || return 0

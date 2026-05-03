@@ -152,7 +152,7 @@ spawn_worker() {
   out="$(env "${ENVS[@]}" \
     ATMUX_ROLE="implementer" ATMUX_INTELLIGENCE="50" ATMUX_MANAGER="manager" \
     "$ATMUX_BIN" agent create --name "$name" --role worker --intelligence 50 \
-      --adapter auto --adapters "$adapter" --team alpha --no-worktree)"
+      --adapter auto --adapters "$adapter" --team alpha --shared-worktree)"
   [[ -n "$out" ]] || { echo "create failed for $name" >&2; exit 1; }
   SESSIONS+=("$out")
   printf '%s\n' "$out"

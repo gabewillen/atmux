@@ -22,7 +22,7 @@ Install by piping `curl` into `sh`, or clone the repo and run `./install.sh`. Th
 - **You can actually see the agents work.** It's just tmux. Attach to any session, watch the agent think in real time, detach and come back later. No custom TUI, no web dashboard, no log tailing.
 - **Git worktree per agent.** Each agent gets its own branch and working directory under `ATMUX_HOME/agents/`. Parallel agents can't stomp each other's changes, and cleanup is a single `atmux agent kill`.
 
-> **Experimental** — this project is under active development (current version: `0.13.0`). APIs, commands, and behavior may change without notice. Use at your own risk.
+> **Experimental** — this project is under active development (current version: `0.13.1`). APIs, commands, and behavior may change without notice. Use at your own risk.
 
 ## Install
 
@@ -73,7 +73,7 @@ atmux issue create --title "stabilize parser" --assign-to planner \
 
 ### Sessions and agents
 
-Each agent runs in a named tmux session: `atmux-<repo>-<agent>`. By default, agents get their own git worktree at `ATMUX_HOME/agents/<repo>-<name>`, keeping their changes isolated. Worktree creation initializes submodules with `git submodule update --init --recursive`. Pass `--no-worktree` to skip worktree creation and run in the repo root instead.
+Each agent runs in a named tmux session: `atmux-<repo>-<agent>`. By default, agents get their own git worktree at `ATMUX_HOME/agents/<repo>-<name>`, keeping their changes isolated. Worktree creation initializes submodules with `git submodule update --init --recursive`. Pass `--shared-worktree` to skip worktree creation and run the new agent in the caller's current worktree instead (`--no-worktree` is a deprecated alias).
 
 ### Teams
 
@@ -179,11 +179,14 @@ for more information.
 ```sh
 atmux agent create [name] --role <role> --intelligence <0-100>
                    [--team <team>] [--adapter <adapter>] [--adapters <list>]
-                   [--no-worktree] [--start <cmd>] [--stop <cmd>]
+                   [--shared-worktree] [--start <cmd>] [--stop <cmd>]
                    [--task --description <desc> --todo <todo>...]
                    [-- <adapter-args...>]
   (or `--name <name>` instead of positional; if omitted, atmux
    auto-generates `agent-N`.)
+  `--shared-worktree` runs the new agent in the caller's current
+  worktree instead of creating a private one for it (deprecated
+  alias: `--no-worktree`).
 atmux agent list [--all] [--status]
 atmux agent status [<name>]
 atmux agent attach <name|session>

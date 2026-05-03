@@ -11,11 +11,14 @@ usage() {
 Usage:
   atmux agent create [name] --role <role> --intelligence <0-100>
                      [--team <team>] [--adapter <adapter>] [--adapters <list>]
-                     [--no-worktree] [--start <cmd>] [--stop <cmd>]
+                     [--shared-worktree] [--start <cmd>] [--stop <cmd>]
                      [--task --description <desc> --todo <todo>...]
                      [-- <adapter-args...>]
     (or `--name <name>` instead of positional; if omitted, atmux
      auto-generates `agent-N`.)
+    `--shared-worktree` runs the new agent in the caller's current
+    worktree instead of creating a private one for it (deprecated
+    alias: `--no-worktree`).
   atmux agent list [--all] [--status]
   atmux agent status [<name>]
   atmux agent attach <name|session>
@@ -972,7 +975,7 @@ spawn_agent_session() {
   local team="${ATMUX_TEAM:-}"
   local intelligence="${ATMUX_INTELLIGENCE:-20}"
   local name_explicit=0
-  local no_worktree=0
+  local shared_worktree=0
   local real_tmux=""
   local -a forward_args=()
 
@@ -992,8 +995,12 @@ spawn_agent_session() {
         adapters_list="${2:-}"
         shift 2
         ;;
+      --shared-worktree)
+        shared_worktree=1
+        shift
+        ;;
       --no-worktree)
-        no_worktree=1
+        shared_worktree=1
         shift
         ;;
       --)
@@ -1096,7 +1103,7 @@ spawn_agent_session() {
   local work_dir="$worktree"
   local worktree_created=0
 
-  if [[ "$no_worktree" -eq 1 ]]; then
+  if [[ "$shared_worktree" -eq 1 ]]; then
     work_dir="$repo_root"
   else
     mkdir -p "$ATMUX_HOME/agents"
@@ -1498,7 +1505,7 @@ do_create() {
   local adapter="auto"
   local adapters_list=""
   local intelligence=""
-  local no_worktree=0
+  local shared_worktree=0
   local task_mode=0
   local task_description=""
   local task_todos_blob=""
@@ -1531,8 +1538,13 @@ do_create() {
         intelligence="${2:-}"
         shift 2
         ;;
+      --shared-worktree)
+        shared_worktree=1
+        shift
+        ;;
       --no-worktree)
-        no_worktree=1
+        echo "atmux agent create: --no-worktree is deprecated; use --shared-worktree instead" >&2
+        shared_worktree=1
         shift
         ;;
       --task)
@@ -1655,8 +1667,8 @@ do_create() {
   if [[ -n "$effective_adapters" ]]; then
     spawn_args+=(--adapters "$effective_adapters")
   fi
-  if [[ "$no_worktree" -eq 1 ]]; then
-    spawn_args+=(--no-worktree)
+  if [[ "$shared_worktree" -eq 1 ]]; then
+    spawn_args+=(--shared-worktree)
   fi
   if [[ ${#forward[@]} -gt 0 ]]; then
     spawn_args+=(-- "${forward[@]}")

@@ -32,7 +32,7 @@
 # atmux help
 ## create
 Usage:
-  atmux agent create <name> --role <role> --intelligence <0-100> [--team <team>] [--adapter <adapter>] [--no-worktree] [--task --description <desc> --todo <todo>...] [-- <adapter-args...>]
+  atmux agent create <name> --role <role> --intelligence <0-100> [--team <team>] [--adapter <adapter>] [--shared-worktree] [--task --description <desc> --todo <todo>...] [-- <adapter-args...>]
   atmux team create <name>
   atmux issue create --title <title> [--description <description>] [--todo <todo>...] [--repo <repo>]
 

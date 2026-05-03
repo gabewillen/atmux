@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.13.1 — `--shared-worktree` replaces `--no-worktree`
+
+Renamed `agent create --no-worktree` to `--shared-worktree` to better describe what the flag does: the new agent runs in the caller's *current worktree* rather than getting its own. This is a setup step for an upcoming paired-programming feature where two agents intentionally share one worktree.
+
+- **`atmux agent create --shared-worktree`** — preferred name. Skips worktree creation; the new tmux session opens with `pwd` set to the caller's `git rev-parse --show-toplevel`.
+- **`atmux agent create --no-worktree`** — still works, prints `--no-worktree is deprecated; use --shared-worktree instead` to stderr, then proceeds. Existing scripts won't break.
+
+No behavior change beyond the warning. Help text and prose docs updated to say "current worktree" instead of "repo root", which was inaccurate for callers running inside a worktree.
+
 ## 0.13.0 — `agent status` and `team status` for cross-agent observability
 
 Two new verbs that read the same on-disk state the running system writes (`tmux` + the notify-queue under `ATMUX_HOME/notify-queue/`), so you can see across all agents in a repo without `capture-pane`-ing one at a time.

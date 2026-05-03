@@ -17,6 +17,13 @@ TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
 ATMUX_BIN="$REPO_ROOT/bin/atmux"
 
+# Mirror atmux's normalize_name on basename(REPO_ROOT). The local checkout
+# is amux.sh → "amux_sh"; the GitHub Actions checkout is .../atmux/atmux
+# → "atmux". The session-name prefix tracks this, so derive it instead of
+# hardcoding.
+REPO_NORM="$(basename "$REPO_ROOT" | sed -E 's/[^A-Za-z0-9_-]+/_/g; s/_+/_/g; s/^_+//; s/_+$//')"
+SESSION_PREFIX="atmux-${REPO_NORM}-"
+
 WORK_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/amux-team-lifecycle.XXXXXX")"
 ATMUX_HOME="$WORK_ROOT/atmux-home"
 mkdir -p "$ATMUX_HOME"
@@ -141,8 +148,8 @@ done
 # (avoids depending on list-sessions/grep, which can return empty in odd
 # tmux states even when has-session returns true). Poll briefly — on slow
 # CI runners the env can lag a few hundred ms behind spawn return.
-alpha_session="atmux-amux_sh-${alpha_name}"
-beta_session="atmux-amux_sh-${beta_name}"
+alpha_session="${SESSION_PREFIX}${alpha_name}"
+beta_session="${SESSION_PREFIX}${beta_name}"
 seen_alpha=0; seen_beta=0
 for _ in $(seq 1 80); do
   seen_alpha=0; seen_beta=0
@@ -217,7 +224,7 @@ done
 
 # Team session and member sessions all gone
 tmux has-session -t "$team_session" 2>/dev/null && { echo "fail: team session still alive" >&2; exit 1; }
-remaining="$(tmux list-sessions -F '#{session_name}' 2>/dev/null | grep '^atmux-amux_sh-' || true)"
+remaining="$(tmux list-sessions -F '#{session_name}' 2>/dev/null | grep "^${SESSION_PREFIX}" || true)"
 if [[ -n "$remaining" ]]; then
   while IFS= read -r s; do
     [[ -z "$s" ]] && continue

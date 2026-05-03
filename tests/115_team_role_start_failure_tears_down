@@ -16,6 +16,12 @@ TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
 ATMUX_BIN="$REPO_ROOT/bin/atmux"
 
+# Mirror atmux's normalize_name on basename(REPO_ROOT). Local checkout is
+# amux.sh → "amux_sh"; the GitHub Actions checkout is .../atmux/atmux →
+# "atmux". The session-name prefix tracks this.
+REPO_NORM="$(basename "$REPO_ROOT" | sed -E 's/[^A-Za-z0-9_-]+/_/g; s/_+/_/g; s/^_+//; s/_+$//')"
+SESSION_PREFIX="atmux-${REPO_NORM}-"
+
 WORK_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/amux-team-fail.XXXXXX")"
 ATMUX_HOME="$WORK_ROOT/atmux-home"
 mkdir -p "$ATMUX_HOME"
@@ -67,7 +73,7 @@ EOF
 # `--bogus-flag` is unknown to `atmux agent create` and forces a non-zero
 # exit before any tmux/worktree state is created.
 team_short_a="failmemberspawn$$"
-team_session_a="atmux-amux_sh-team-${team_short_a}"
+team_session_a="${SESSION_PREFIX}team-${team_short_a}"
 mkdir -p "$ATMUX_HOME/roles/bad-flag-team"
 cat > "$ATMUX_HOME/roles/bad-flag-team/role.md" <<EOF
 # Bad-flag team role
@@ -97,7 +103,7 @@ team_short_a=""
 
 # --- Scenario B: start hook exits non-zero → members + team torn down ----
 team_short_b="failstart$$"
-team_session_b="atmux-amux_sh-team-${team_short_b}"
+team_session_b="${SESSION_PREFIX}team-${team_short_b}"
 member_for_b="memberB$$"
 state_dir_b="$ATMUX_HOME/teams/amux_sh/${team_short_b}/role"
 
@@ -124,7 +130,7 @@ if tmux has-session -t "$team_session_b" 2>/dev/null; then
   echo "$out_b" >&2
   exit 1
 fi
-if tmux has-session -t "atmux-amux_sh-${member_for_b}" 2>/dev/null; then
+if tmux has-session -t "${SESSION_PREFIX}${member_for_b}" 2>/dev/null; then
   echo "fail: scenario B — spawned member survived start hook failure" >&2
   exit 1
 fi

@@ -58,7 +58,7 @@ prompt_for() {
 }
 
 submit_keys_for_adapter() {
-  # All modes (queue, steer, interrupt) share the same submit-keys path: the
+  # Both modes (queue, interrupt) share the same submit-keys path: the
   # adapter's queue keys (e.g. Enter). The difference is whether bypass_idle
   # is set and whether pre_keys (abort prefix) are sent.
   local adapter="$1"

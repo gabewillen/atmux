@@ -9,7 +9,9 @@ Usage:
   atmux role list
   atmux role show <name>
   atmux role resolve <name>
+  atmux role kind <name>
   atmux role create <name> (--from-file <path> | --from-stdin | --description <text>)
+                           [--kind agent|team]
                            [--intelligence <0-100>] [--adapters <a,b,...>]
                            [--hooks <start,stop>] [--scope repo|global|auto]
                            [--force]
@@ -17,9 +19,15 @@ Usage:
 Description:
   Manage adapter-agnostic roles. A role is a directory containing any of:
     role.md           prompt body, appended under "# Role" in the control file
-    manifest          optional, sourced bash: INTELLIGENCE, ADAPTERS=(name ...)
-    start             runs before the adapter starts (agent _create time)
-    stop              runs after the adapter exits (agent kill time)
+    manifest          optional, sourced bash: KIND, INTELLIGENCE, ADAPTERS=(name ...)
+    start             runs before the adapter starts (agent_create time) or
+                      after the team session opens (team_create time)
+    stop              runs after the adapter exits (agent kill time) or after
+                      a team is killed (team kill time)
+
+  KIND defaults to `agent`. KIND=team roles are consumed by
+  `atmux team create --role <name>` and receive ATMUX_TEAM /
+  ATMUX_ROLE_STATE_DIR / ATMUX_WORKTREE in their start hook.
 
 Resolution precedence (first match wins):
     <repo>/.atmux/roles/<name>
@@ -36,6 +44,7 @@ create_usage() {
   cat <<'USAGE'
 Usage:
   atmux role create <name> (--from-file <path> | --from-stdin | --description <text>)
+                           [--kind agent|team]
                            [--intelligence <0-100>] [--adapters <a,b,...>]
                            [--hooks <start,stop>] [--scope repo|global|auto]
                            [--force]
@@ -46,12 +55,14 @@ Description:
     --from-stdin          read role.md body from stdin
     --description <text>  generate a minimal role.md stub from this text
 
-  Optional manifest fields (omit either to leave it out):
-    --intelligence <n>    default agent intelligence (0-100)
-    --adapters <list>     comma-separated allow-list of adapter names
+  Optional manifest fields (omit any to leave it out):
+    --kind <kind>         agent (default) or team
+    --intelligence <n>    default agent intelligence (0-100; agent kind only)
+    --adapters <list>     comma-separated allow-list of adapter names (agent kind only)
 
   Optional hooks (chmod +x written templates):
     --hooks <list>        comma-separated subset of start,stop (or "none")
+                          Stub contents differ by --kind.
 
   --force overwrites an existing role directory.
 USAGE
@@ -116,8 +127,32 @@ resolve_role_dir() {
   return 1
 }
 
+read_manifest_kind() {
+  # Args: <role_dir>. Echoes KIND (defaults to "agent" if manifest missing or
+  # KIND unset). Sourcing happens in a subshell so manifest side-effects can't
+  # leak into the caller.
+  local dir="$1"
+  local manifest="$dir/manifest"
+  if [[ ! -f "$manifest" ]]; then
+    printf '%s\n' "agent"
+    return 0
+  fi
+  local kind
+  kind="$(
+    KIND=""
+    # shellcheck source=/dev/null
+    source "$manifest" 2>/dev/null || true
+    printf '%s' "$KIND"
+  )"
+  case "$kind" in
+    agent|team) printf '%s\n' "$kind" ;;
+    "")         printf '%s\n' "agent" ;;
+    *)          printf '%s\n' "agent" ;;
+  esac
+}
+
 list_roles() {
-  local base name dir seen=""
+  local base name dir seen="" kind
   while IFS= read -r base; do
     [[ -d "$base" ]] || continue
     while IFS= read -r dir; do
@@ -126,7 +161,8 @@ list_roles() {
         *"|$name|"*) continue ;;
       esac
       seen="$seen|$name|"
-      printf '%s\t%s\n' "$name" "$dir"
+      kind="$(read_manifest_kind "$dir")"
+      printf '%s\t%s\t%s\n' "$name" "$kind" "$dir"
     done < <(find "$base" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | sort)
   done < <(role_search_paths)
 }
@@ -163,28 +199,62 @@ resolve_create_dest() {
 }
 
 write_role_manifest() {
-  # Args: <dest_dir> <name> <intelligence> <adapters_csv>
-  local dest="$1" name="$2" intel="$3" adapters="$4"
-  [[ -z "$intel" && -z "$adapters" ]] && return 0
+  # Args: <dest_dir> <name> <kind> <intelligence> <adapters_csv>
+  # Always writes a manifest when kind=team (so KIND is recorded). For kind=agent
+  # only writes when there's something to record.
+  local dest="$1" name="$2" kind="$3" intel="$4" adapters="$5"
+  if [[ "$kind" != "team" && -z "$intel" && -z "$adapters" ]]; then
+    return 0
+  fi
   {
-    printf '# Sourced by atmux when an agent is created with --role %s.\n' "$name"
-    printf '# Anything exported here is visible during agent creation.\n\n'
+    if [[ "$kind" == "team" ]]; then
+      printf '# Sourced by atmux when a team is created with --role %s.\n' "$name"
+    else
+      printf '# Sourced by atmux when an agent is created with --role %s.\n' "$name"
+    fi
+    printf '# Anything exported here is visible during creation.\n\n'
+    printf '# Role kind: agent (default) or team. Team-kind roles are spawned\n'
+    printf '# by `atmux team create --role %s`.\n' "$name"
+    printf 'KIND=%s\n' "$kind"
     if [[ -n "$intel" ]]; then
-      printf '# Default intelligence (caller'\''s --intelligence flag still wins)\n'
+      printf '\n# Default intelligence (caller'\''s --intelligence flag still wins)\n'
       printf 'INTELLIGENCE=%s\n' "$intel"
-      [[ -n "$adapters" ]] && printf '\n'
     fi
     if [[ -n "$adapters" ]]; then
-      printf '# Adapter allow-list. Comment out to allow any adapter.\n'
+      printf '\n# Adapter allow-list. Comment out to allow any adapter.\n'
       printf 'ADAPTERS=(%s)\n' "${adapters//,/ }"
     fi
   } > "$dest/manifest"
 }
 
 write_role_start_hook() {
-  # Args: <dest_dir> <name>
-  local dest="$1" name="$2"
-  cat > "$dest/start" <<EOF
+  # Args: <dest_dir> <name> <kind>
+  local dest="$1" name="$2" kind="${3:-agent}"
+  if [[ "$kind" == "team" ]]; then
+    cat > "$dest/start" <<EOF
+#!/usr/bin/env bash
+# Team role start hook for $name. Runs after the team tmux session is opened,
+# before any members are spawned. Env provided by atmux:
+#   ATMUX_TEAM            - this team's short name
+#   ATMUX_REPO            - normalized repo name
+#   ATMUX_WORKTREE        - the team session's cwd (typically the repo root)
+#   ATMUX_ROLE_DIR        - this role's directory
+#   ATMUX_ROLE_STATE_DIR  - private state dir for this (team, role) pair
+set -euo pipefail
+
+state="\$ATMUX_ROLE_STATE_DIR"
+mkdir -p "\$state"
+
+# TODO: spawn members and register cross-member watchers. Record agent
+# names and watcher ids under "\$state/" so 'stop' can tear them down.
+#
+# Example:
+#   atmux agent create driver --role driver --intelligence 20 \\
+#     --team "\$ATMUX_TEAM" --shared-worktree
+#   echo driver >> "\$state/members"
+EOF
+  else
+    cat > "$dest/start" <<EOF
 #!/usr/bin/env bash
 # Role start hook for $name. Runs after the control file is rendered, before
 # the AI CLI execs. Env provided by atmux:
@@ -200,13 +270,36 @@ mkdir -p "\$state"
 # TODO: register watchers, warm caches, etc. Record any ids in
 # "\$state/" so 'stop' can tear them down.
 EOF
+  fi
   chmod +x "$dest/start"
 }
 
 write_role_stop_hook() {
-  # Args: <dest_dir> <name>
-  local dest="$1" name="$2"
-  cat > "$dest/stop" <<EOF
+  # Args: <dest_dir> <name> <kind>
+  local dest="$1" name="$2" kind="${3:-agent}"
+  if [[ "$kind" == "team" ]]; then
+    cat > "$dest/stop" <<EOF
+#!/usr/bin/env bash
+# Team role stop hook for $name. Tears down whatever start registered:
+# typically the spawned members and any cross-member watchers.
+set -euo pipefail
+
+state="\${ATMUX_ROLE_STATE_DIR:-}"
+[[ -n "\$state" && -d "\$state" ]] || exit 0
+
+# TODO: kill members and watchers recorded by start.
+#
+# Example:
+#   if [[ -f "\$state/members" ]]; then
+#     while IFS= read -r member; do
+#       [[ -n "\$member" ]] && atmux agent kill "\$member" >/dev/null 2>&1 || true
+#     done < "\$state/members"
+#   fi
+
+rm -rf "\$state"
+EOF
+  else
+    cat > "$dest/stop" <<EOF
 #!/usr/bin/env bash
 # Role stop hook for $name. Tears down whatever start registered.
 set -euo pipefail
@@ -218,6 +311,7 @@ state="\${ATMUX_ROLE_STATE_DIR:-}"
 
 rm -rf "\$state"
 EOF
+  fi
   chmod +x "$dest/stop"
 }
 
@@ -244,6 +338,7 @@ EOF
 create_role() {
   local name=""
   local description="" body_file="" body_stdin=0
+  local kind="agent"
   local intelligence="" adapters="" hooks=""
   local scope="auto" force=0
 
@@ -259,6 +354,8 @@ create_role() {
       --from-file)          body_file="$2"; shift 2 ;;
       --from-file=*)        body_file="${1#--from-file=}"; shift ;;
       --from-stdin)         body_stdin=1; shift ;;
+      --kind)               kind="$2"; shift 2 ;;
+      --kind=*)             kind="${1#--kind=}"; shift ;;
       --intelligence)       intelligence="$2"; shift 2 ;;
       --intelligence=*)     intelligence="${1#--intelligence=}"; shift ;;
       --adapters)           adapters="$2"; shift 2 ;;
@@ -302,6 +399,25 @@ create_role() {
   if [[ -n "$body_file" && ! -f "$body_file" ]]; then
     echo "atmux role create: --from-file not found: $body_file" >&2
     return 1
+  fi
+
+  case "$kind" in
+    agent|team) ;;
+    *)
+      echo "atmux role create: --kind must be agent or team, got: $kind" >&2
+      return 2
+      ;;
+  esac
+
+  if [[ "$kind" == "team" ]]; then
+    if [[ -n "$intelligence" ]]; then
+      echo "atmux role create: --intelligence is not valid for --kind team" >&2
+      return 2
+    fi
+    if [[ -n "$adapters" ]]; then
+      echo "atmux role create: --adapters is not valid for --kind team" >&2
+      return 2
+    fi
   fi
 
   if [[ -n "$intelligence" ]]; then
@@ -349,15 +465,15 @@ create_role() {
     write_role_md_stub "$dest" "$name" "$description"
   fi
 
-  write_role_manifest "$dest" "$name" "$intelligence" "$adapters"
+  write_role_manifest "$dest" "$name" "$kind" "$intelligence" "$adapters"
 
   if [[ -n "$hooks" && "$hooks" != "none" ]]; then
     local hooks_csv=",${hooks// /},"
     case "$hooks_csv" in
-      *,start,*) write_role_start_hook "$dest" "$name" ;;
+      *,start,*) write_role_start_hook "$dest" "$name" "$kind" ;;
     esac
     case "$hooks_csv" in
-      *,stop,*) write_role_stop_hook "$dest" "$name" ;;
+      *,stop,*) write_role_stop_hook "$dest" "$name" "$kind" ;;
     esac
   fi
 
@@ -392,6 +508,16 @@ case "$sub" in
       printf '%s\n' "$dir"
       exit 0
     fi
+    exit 1
+    ;;
+  kind)
+    name="${1:-}"
+    [[ -n "$name" ]] || { echo "usage: atmux role kind <name>" >&2; exit 2; }
+    if dir="$(resolve_role_dir "$name")"; then
+      read_manifest_kind "$dir"
+      exit 0
+    fi
+    echo "role not found: $name" >&2
     exit 1
     ;;
   create)

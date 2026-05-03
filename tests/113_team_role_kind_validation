@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+# Validates the agent/team role-kind boundary:
+#   - role manifest with no KIND defaults to KIND=agent
+#   - `atmux role kind <name>` reports the resolved kind
+#   - `atmux role list` surfaces kind in column 2
+#   - `atmux team create --role <agent-kind-role>` is rejected
+#   - `atmux agent create --role <team-kind-role>` is rejected
+# No real adapter or session is needed — both rejections happen during arg
+# validation before any tmux or worktree work.
+set -euo pipefail
+
+source "$(dirname "${BASH_SOURCE[0]}")/lib/isolate-tmux.sh"
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+ATMUX_BIN="$REPO_ROOT/bin/atmux"
+
+WORK_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/amux-team-kind.XXXXXX")"
+ATMUX_HOME="$WORK_ROOT/atmux-home"
+mkdir -p "$ATMUX_HOME/roles"
+export ATMUX_HOME
+
+cleanup() { rm -rf "$WORK_ROOT"; }
+trap cleanup EXIT
+
+# Role with no manifest at all → defaults to agent
+mkdir -p "$ATMUX_HOME/roles/no-manifest"
+cat > "$ATMUX_HOME/roles/no-manifest/role.md" <<EOF
+# No-manifest role
+EOF
+
+# Role with KIND=agent manifest
+mkdir -p "$ATMUX_HOME/roles/just-agent"
+cat > "$ATMUX_HOME/roles/just-agent/role.md" <<EOF
+# Agent role
+EOF
+cat > "$ATMUX_HOME/roles/just-agent/manifest" <<EOF
+KIND=agent
+INTELLIGENCE=20
+EOF
+
+# Role with KIND=team manifest
+mkdir -p "$ATMUX_HOME/roles/just-team"
+cat > "$ATMUX_HOME/roles/just-team/role.md" <<EOF
+# Team role
+EOF
+cat > "$ATMUX_HOME/roles/just-team/manifest" <<EOF
+KIND=team
+EOF
+
+cd "$REPO_ROOT"
+
+# 1. `role kind` resolves KIND with the right default
+got="$("$ATMUX_BIN" role kind no-manifest)"
+[[ "$got" == "agent" ]] || { echo "fail: missing manifest should default KIND=agent, got: $got" >&2; exit 1; }
+
+got="$("$ATMUX_BIN" role kind just-agent)"
+[[ "$got" == "agent" ]] || { echo "fail: KIND=agent manifest should report agent, got: $got" >&2; exit 1; }
+
+got="$("$ATMUX_BIN" role kind just-team)"
+[[ "$got" == "team" ]] || { echo "fail: KIND=team manifest should report team, got: $got" >&2; exit 1; }
+
+# 2. `role list` should include kind as column 2
+list_out="$("$ATMUX_BIN" role list)"
+echo "$list_out" | awk -F'\t' '$1=="just-team" && $2=="team" { found=1 } END { exit (found?0:1) }' \
+  || { echo "fail: role list missing kind column for just-team" >&2; echo "$list_out" >&2; exit 1; }
+echo "$list_out" | awk -F'\t' '$1=="no-manifest" && $2=="agent" { found=1 } END { exit (found?0:1) }' \
+  || { echo "fail: role list missing kind column for no-manifest" >&2; echo "$list_out" >&2; exit 1; }
+
+# 3. team create with an agent-kind role should be rejected with a clear error
+err="$( ATMUX_ALLOW_OUTSIDE_TMUX=1 "$ATMUX_BIN" team create kind-test-1 --role just-agent 2>&1 || true )"
+echo "$err" | grep -q "is KIND=agent" \
+  || { echo "fail: team create should reject KIND=agent; got: $err" >&2; exit 1; }
+
+# 4. agent create with a team-kind role should be rejected with a clear error
+err="$( ATMUX_ALLOW_OUTSIDE_TMUX=1 ATMUX_AGENT_NAME=test-mgr \
+  "$ATMUX_BIN" agent create kind-test-2 --role just-team --intelligence 50 --adapter mock 2>&1 || true )"
+echo "$err" | grep -q "is KIND=team" \
+  || { echo "fail: agent create should reject KIND=team; got: $err" >&2; exit 1; }
+
+echo "ok: role kind validation (default, list, mismatch rejection both directions)"

@@ -128,7 +128,7 @@ agent attach must be run outside tmux.
 #### `team`
 
 ```sh
-atmux team create <name>
+atmux team create <name> [--role <role>] [--start <cmd>] [--stop <cmd>]
 atmux team list
 atmux team ls
 atmux team status [<name>]
@@ -140,13 +140,21 @@ atmux team resolve <name> [<repo_name>]
 Manage repo-scoped team tmux sessions.
 Team session format: atmux-<repo>-team-<name>
 
+--role <name>   Apply a KIND=team role: opens the session, spawns each
+                MEMBERS entry from the role manifest, then runs the
+                role's optional `start` hook for any cross-cutting wiring.
+                `team kill` auto-kills the spawned members and runs the
+                matching `stop` hook.
+
 #### `role`
 
 ```sh
 atmux role list
 atmux role show <name>
 atmux role resolve <name>
+atmux role kind <name>
 atmux role create <name> (--from-file <path> | --from-stdin | --description <text>) \
+                         [--kind agent|team] \
                          [--intelligence <0-100>] [--adapters <a,b,...>] \
                          [--hooks <start,stop>] [--scope repo|global|auto] [--force]
 ```
@@ -154,9 +162,13 @@ atmux role create <name> (--from-file <path> | --from-stdin | --description <tex
 Roles are adapter-agnostic. A role is a directory containing any of:
 
 - `role.md` — prompt body, appended under `# Role` in the agent's control file
-- `manifest` — optional, sourced bash: `INTELLIGENCE=<0-100>`, `ADAPTERS=(name ...)`
-- `start` — runs before the adapter starts (at agent-create time)
-- `stop` — runs after the adapter exits (at agent-kill time)
+- `manifest` — optional, sourced bash: `KIND=<agent|team>`, `INTELLIGENCE=<0-100>`, `ADAPTERS=(name ...)`, `MEMBERS=("<agent-create args>" ...)` (team kind only)
+- `start` — runs before the adapter starts (at agent-create time) or after the team session opens (at team-create time)
+- `stop` — runs after the adapter exits (at agent-kill time) or after a team is killed (at team-kill time)
+
+`KIND` defaults to `agent`. `KIND=team` roles are consumed by `atmux team create --role <name>`. For team-kind roles, `MEMBERS` is an array of strings; each entry is shell-tokenized (so `--description "multi word"` survives) and appended to `atmux agent create` to spawn one member with `--team <team>` already injected. The optional `start` hook runs *after* members spawn, for cross-cutting wiring (watchers, message buses) — most team roles won't need it. Team kill auto-kills any agent whose `ATMUX_TEAM` matches and runs the optional `stop` hook.
+
+The team start hook receives: `ATMUX_TEAM`, `ATMUX_REPO`, `ATMUX_WORKTREE`, `ATMUX_ROLE`, `ATMUX_ROLE_DIR`, `ATMUX_ROLE_STATE_DIR` (`~/.atmux/teams/<repo>/<team>/role/`).
 
 Resolution precedence (first match wins): `<repo>/.atmux/roles/<name>` → `~/.atmux/roles/<name>` → `<source-root>/roles/<name>`.
 

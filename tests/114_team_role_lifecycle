@@ -1,0 +1,240 @@
+#!/usr/bin/env bash
+# Full team-role lifecycle:
+#   - `team create --role <team-role>` spawns each MEMBERS entry as its own
+#     agent session, with --team set to the team's short name.
+#   - The team role's optional `start` hook runs after members spawn, sees
+#     ATMUX_TEAM, ATMUX_ROLE_STATE_DIR, ATMUX_WORKTREE.
+#   - `team kill` runs the team role's `stop` hook, then auto-kills every
+#     agent whose ATMUX_TEAM matches the team — including each member's
+#     own role-stop hook.
+#
+# Uses a mock adapter so no real LLM CLI is required, mirroring 111.
+set -euo pipefail
+
+source "$(dirname "${BASH_SOURCE[0]}")/lib/isolate-tmux.sh"
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+ATMUX_BIN="$REPO_ROOT/bin/atmux"
+
+# Mirror atmux's normalize_name on basename(REPO_ROOT). The local checkout
+# is amux.sh → "amux_sh"; the GitHub Actions checkout is .../atmux/atmux
+# → "atmux". The session-name prefix tracks this, so derive it instead of
+# hardcoding.
+REPO_NORM="$(basename "$REPO_ROOT" | sed -E 's/[^A-Za-z0-9_-]+/_/g; s/_+/_/g; s/^_+//; s/_+$//')"
+SESSION_PREFIX="atmux-${REPO_NORM}-"
+
+WORK_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/amux-team-lifecycle.XXXXXX")"
+ATMUX_HOME="$WORK_ROOT/atmux-home"
+mkdir -p "$ATMUX_HOME"
+export ATMUX_HOME
+
+MARKERS="$WORK_ROOT/markers"
+mkdir -p "$MARKERS"
+
+team_session=""
+team_short=""
+alpha_name=""
+beta_name=""
+cleanup() {
+  set +e
+  if [[ -n "$team_short" ]]; then
+    "$ATMUX_BIN" team kill "$team_short" >/dev/null 2>&1 || true
+  fi
+  for m in "$alpha_name" "$beta_name"; do
+    [[ -n "$m" ]] || continue
+    "$ATMUX_BIN" agent kill "$m" >/dev/null 2>&1 || true
+  done
+  rm -rf "$WORK_ROOT"
+}
+trap cleanup EXIT
+
+# Mock adapter (sleeps until killed)
+adapter_dir="$ATMUX_HOME/adapters/mock"
+mkdir -p "$adapter_dir"
+cat > "$adapter_dir/cmd" <<'ADAPTER'
+#!/usr/bin/env bash
+set -euo pipefail
+case "${1:-}" in
+  control-file) printf 'AGENTS.md\n' ;;
+  prepare-prompt) : ;;
+  start) sleep 600 ;;
+  status) printf '<status adapter="mock" owner="agent" state="idle" model="" reasoning_level="" control_file="AGENTS.md" />\n' ;;
+  model) printf 'mock\n' ;;
+  reasoning-level) printf 'medium\n' ;;
+  *) exit 2 ;;
+esac
+ADAPTER
+chmod +x "$adapter_dir/cmd"
+
+# A trivial agent role used by both members. Nothing fancy — just allows the
+# mock adapter and records (via stop hook) that it was reached.
+member_role_dir="$ATMUX_HOME/roles/member-probe"
+mkdir -p "$member_role_dir"
+cat > "$member_role_dir/role.md" <<EOF
+# Member probe role
+EOF
+cat > "$member_role_dir/manifest" <<EOF
+KIND=agent
+INTELLIGENCE=20
+ADAPTERS=(mock)
+EOF
+cat > "$member_role_dir/stop" <<EOF
+#!/usr/bin/env bash
+set -u
+echo "stopped \${ATMUX_AGENT_NAME:-?}" >> "$MARKERS/member-stops"
+EOF
+chmod +x "$member_role_dir/stop"
+
+# The team role itself — declares two MEMBERS plus a start/stop pair so we
+# can assert the hooks run with the expected env.
+team_role_dir="$ATMUX_HOME/roles/probe-pair"
+mkdir -p "$team_role_dir"
+cat > "$team_role_dir/role.md" <<EOF
+# Probe team role
+EOF
+alpha_name="alpha$$"
+beta_name="beta$$"
+cat > "$team_role_dir/manifest" <<EOF
+KIND=team
+MEMBERS=(
+  "$alpha_name --role member-probe --intelligence 20 --adapter mock"
+  "$beta_name --role member-probe --intelligence 20 --adapter mock"
+)
+EOF
+cat > "$team_role_dir/start" <<EOF
+#!/usr/bin/env bash
+set -u
+{
+  echo "ATMUX_TEAM=\${ATMUX_TEAM:-}"
+  echo "ATMUX_ROLE=\${ATMUX_ROLE:-}"
+  echo "ATMUX_ROLE_DIR=\${ATMUX_ROLE_DIR:-}"
+  echo "ATMUX_ROLE_STATE_DIR=\${ATMUX_ROLE_STATE_DIR:-}"
+  echo "ATMUX_REPO=\${ATMUX_REPO:-}"
+  echo "ATMUX_WORKTREE=\${ATMUX_WORKTREE:-}"
+} > "$MARKERS/team-start.env"
+mkdir -p "\${ATMUX_ROLE_STATE_DIR:-/tmp/missing}"
+echo started > "\${ATMUX_ROLE_STATE_DIR:-/tmp/missing}/marker"
+echo started > "$MARKERS/team-started"
+EOF
+chmod +x "$team_role_dir/start"
+cat > "$team_role_dir/stop" <<EOF
+#!/usr/bin/env bash
+set -u
+{
+  echo "STATE_HAS_MARKER=\$( [[ -f \${ATMUX_ROLE_STATE_DIR:-/tmp/x}/marker ]] && echo yes || echo no )"
+  echo "ATMUX_TEAM=\${ATMUX_TEAM:-}"
+} > "$MARKERS/team-stop.env"
+echo stopped > "$MARKERS/team-stopped"
+rm -rf "\${ATMUX_ROLE_STATE_DIR:-}"
+EOF
+chmod +x "$team_role_dir/stop"
+
+cd "$REPO_ROOT"
+team_short="lifecycle$$"
+
+out="$( ATMUX_ALLOW_OUTSIDE_TMUX=1 "$ATMUX_BIN" team create "$team_short" --role probe-pair 2>&1 || true )"
+team_session="$(printf '%s\n' "$out" | sed -n 's/.*session="\([^"]*\)".*/\1/p' | head -1)"
+[[ -n "$team_session" ]] || { echo "fail: no team session created" >&2; echo "$out" >&2; exit 1; }
+
+# Wait for start hook to fire
+for _ in $(seq 1 80); do
+  [[ -f "$MARKERS/team-started" ]] && break
+  sleep 0.1
+done
+[[ -f "$MARKERS/team-started" ]] || { echo "fail: team start hook never ran" >&2; exit 1; }
+
+# Members should exist with ATMUX_TEAM set. Query each by exact session name
+# (avoids depending on list-sessions/grep, which can return empty in odd
+# tmux states even when has-session returns true). Poll briefly — on slow
+# CI runners the env can lag a few hundred ms behind spawn return.
+alpha_session="${SESSION_PREFIX}${alpha_name}"
+beta_session="${SESSION_PREFIX}${beta_name}"
+seen_alpha=0; seen_beta=0
+for _ in $(seq 1 80); do
+  seen_alpha=0; seen_beta=0
+  if tmux has-session -t "$alpha_session" 2>/dev/null; then
+    mt="$(tmux show-environment -t "$alpha_session" ATMUX_TEAM 2>/dev/null | sed -n 's/^ATMUX_TEAM=//p' || true)"
+    [[ "$mt" == "$team_short" ]] && seen_alpha=1
+  fi
+  if tmux has-session -t "$beta_session" 2>/dev/null; then
+    mt="$(tmux show-environment -t "$beta_session" ATMUX_TEAM 2>/dev/null | sed -n 's/^ATMUX_TEAM=//p' || true)"
+    [[ "$mt" == "$team_short" ]] && seen_beta=1
+  fi
+  [[ "$seen_alpha" == "1" && "$seen_beta" == "1" ]] && break
+  sleep 0.1
+done
+if [[ "$seen_alpha" != "1" || "$seen_beta" != "1" ]]; then
+  {
+    echo "fail: members not visible — alpha=$seen_alpha beta=$seen_beta team=$team_short"
+    echo "  team create stdout/stderr:"
+    printf '%s\n' "$out" | sed 's/^/    /'
+    echo "  team session ($team_session):"
+    if tmux has-session -t "$team_session" 2>/dev/null; then
+      echo "    EXISTS"
+      tmux show-environment -t "$team_session" 2>/dev/null | grep '^ATMUX_' | sed 's/^/      /'
+    else
+      echo "    MISSING (probably exited or tmux server died)"
+    fi
+    echo "  ALL sessions on tmux server:"
+    tmux list-sessions -F '    #{session_name}' 2>/dev/null || echo "    <list-sessions failed — tmux server may be dead>"
+    echo "  per-session ATMUX env (atmux- prefix):"
+    while IFS= read -r s; do
+      [[ -z "$s" ]] && continue
+      mt="$(tmux show-environment -t "$s" ATMUX_TEAM 2>/dev/null | sed -n 's/^ATMUX_TEAM=//p' || true)"
+      an="$(tmux show-environment -t "$s" ATMUX_AGENT_NAME 2>/dev/null | sed -n 's/^ATMUX_AGENT_NAME=//p' || true)"
+      echo "    $s  ATMUX_TEAM=${mt:-<unset>}  ATMUX_AGENT_NAME=${an:-<unset>}"
+    done < <(tmux list-sessions -F '#{session_name}' 2>/dev/null | grep '^atmux-' || true)
+    echo "  worktrees in ATMUX_HOME:"
+    ls -la "$ATMUX_HOME/agents/" 2>/dev/null | sed 's/^/    /' || echo "    <no agents dir>"
+    echo "  team-started marker:"
+    [[ -f "$MARKERS/team-started" ]] && echo "    present" || echo "    MISSING"
+    echo "  team-start.env:"
+    [[ -f "$MARKERS/team-start.env" ]] && sed 's/^/    /' "$MARKERS/team-start.env" || echo "    MISSING"
+    echo "  member-stops:"
+    [[ -f "$MARKERS/member-stops" ]] && sed 's/^/    /' "$MARKERS/member-stops" || echo "    <none>"
+  } >&2
+  exit 1
+fi
+
+# Verify start hook env round-trip
+grep -Fxq "ATMUX_TEAM=$team_short"     "$MARKERS/team-start.env" || { echo "fail: start ATMUX_TEAM mismatch" >&2; cat "$MARKERS/team-start.env" >&2; exit 1; }
+grep -Fxq "ATMUX_ROLE=probe-pair"      "$MARKERS/team-start.env" || { echo "fail: start ATMUX_ROLE mismatch" >&2; cat "$MARKERS/team-start.env" >&2; exit 1; }
+grep -Fxq "ATMUX_ROLE_DIR=$team_role_dir" "$MARKERS/team-start.env" || { echo "fail: start ATMUX_ROLE_DIR mismatch" >&2; cat "$MARKERS/team-start.env" >&2; exit 1; }
+grep -Fxq "ATMUX_WORKTREE=$REPO_ROOT"  "$MARKERS/team-start.env" || { echo "fail: start ATMUX_WORKTREE mismatch" >&2; cat "$MARKERS/team-start.env" >&2; exit 1; }
+state_dir="$(grep '^ATMUX_ROLE_STATE_DIR=' "$MARKERS/team-start.env" | cut -d= -f2-)"
+[[ -n "$state_dir" && -f "$state_dir/marker" ]] || { echo "fail: state dir/marker missing: $state_dir" >&2; exit 1; }
+
+# Kill the team and wait for the stop hook to fire
+ATMUX_ALLOW_OUTSIDE_TMUX=1 "$ATMUX_BIN" team kill "$team_short" >/dev/null 2>&1 || true
+
+for _ in $(seq 1 80); do
+  [[ -f "$MARKERS/team-stopped" ]] && break
+  sleep 0.1
+done
+[[ -f "$MARKERS/team-stopped" ]] || { echo "fail: team stop hook never ran" >&2; exit 1; }
+grep -Fxq "STATE_HAS_MARKER=yes" "$MARKERS/team-stop.env" \
+  || { echo "fail: stop ran without seeing start's marker" >&2; cat "$MARKERS/team-stop.env" >&2; exit 1; }
+
+# Both members' own stop hooks should have fired
+for member in "$alpha_name" "$beta_name"; do
+  grep -Fxq "stopped $member" "$MARKERS/member-stops" \
+    || { echo "fail: member $member stop hook didn't run" >&2; cat "$MARKERS/member-stops" 2>/dev/null >&2; exit 1; }
+done
+
+# Team session and member sessions all gone
+tmux has-session -t "$team_session" 2>/dev/null && { echo "fail: team session still alive" >&2; exit 1; }
+remaining="$(tmux list-sessions -F '#{session_name}' 2>/dev/null | grep "^${SESSION_PREFIX}" || true)"
+if [[ -n "$remaining" ]]; then
+  while IFS= read -r s; do
+    [[ -z "$s" ]] && continue
+    mt="$(tmux show-environment -t "$s" ATMUX_TEAM 2>/dev/null | sed -n 's/^ATMUX_TEAM=//p' || true)"
+    if [[ "$mt" == "$team_short" ]]; then
+      echo "fail: member session $s still alive after team kill" >&2
+      exit 1
+    fi
+  done <<< "$remaining"
+fi
+
+echo "ok: team role lifecycle (members spawned, start/stop fired, members auto-killed)"
+team_session=""

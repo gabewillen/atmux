@@ -453,20 +453,29 @@ kill_agents() {
     local note=""
 
     if tmux has-session -t "$session" 2>/dev/null; then
+      session_kind="$(get_session_env "$session" ATMUX_SESSION_KIND)"
       # Wind the adapter down first so the role.stop hook below sees the
-      # adapter process gone but the session env still readable.
-      signal_adapter_pane "$session" 5
+      # adapter process gone but the session env still readable. Team
+      # sessions don't run an adapter — skip the wind-down so we don't
+      # signal an unrelated shell.
+      if [[ "$session_kind" != "team" ]]; then
+        signal_adapter_pane "$session" 5
+      fi
       role_stop="$(get_session_env "$session" ATMUX_ROLE_STOP)"
       if [[ -n "$role_stop" ]]; then
         role_dir="$(get_session_env "$session" ATMUX_ROLE_DIR)"
         role_state_dir="$(get_session_env "$session" ATMUX_ROLE_STATE_DIR)"
         role_name="$(get_session_env "$session" ATMUX_ROLE)"
+        team_name="$(get_session_env "$session" ATMUX_TEAM)"
+        worktree="$(get_session_env "$session" ATMUX_WORKTREE)"
         ATMUX_AGENT_NAME="$short_name" \
         ATMUX_AGENT_SESSION="$session" \
         ATMUX_REPO="$repo_name" \
         ATMUX_ROLE="$role_name" \
         ATMUX_ROLE_DIR="$role_dir" \
         ATMUX_ROLE_STATE_DIR="$role_state_dir" \
+        ATMUX_TEAM="$team_name" \
+        ATMUX_WORKTREE="$worktree" \
         run_role_hook_bounded "$role_stop" "${ATMUX_ROLE_STOP_TIMEOUT:-30}" || true
       fi
       tmux kill-session -t "$session"

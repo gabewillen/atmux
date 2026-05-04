@@ -50,21 +50,22 @@ resolve_profile_from_manifest() {
 
 schedule_intelligence_profile() {
   local intelligence="${ATMUX_INTELLIGENCE:-}"
-  if [[ -z "$intelligence" || ! "$intelligence" =~ ^[0-9]+$ ]] || (( intelligence < 0 || intelligence > 100 )); then
-    set_bootstrap_state ready
-    return 0
-  fi
-
   local manifest_path profile model reasoning
   manifest_path="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)/manifest.json"
-  profile="$(resolve_profile_from_manifest "$intelligence" "$manifest_path" || true)"
-  if [[ -z "$profile" ]]; then
-    set_bootstrap_state ready
-    return 0
+
+  if [[ -n "$intelligence" && "$intelligence" =~ ^[0-9]+$ ]] \
+     && (( intelligence >= 0 && intelligence <= 100 )); then
+    profile="$(resolve_profile_from_manifest "$intelligence" "$manifest_path" || true)"
+    if [[ -n "$profile" ]]; then
+      model="${profile%% *}"
+      reasoning="${profile#* }"
+    fi
   fi
 
-  model="${profile%% *}"
-  reasoning="${profile#* }"
+  # Explicit overrides win over the intelligence_map lookup.
+  [[ -n "${ATMUX_MODEL:-}" ]] && model="$ATMUX_MODEL"
+  [[ -n "${ATMUX_REASONING_LEVEL:-}" ]] && reasoning="$ATMUX_REASONING_LEVEL"
+
   if [[ -z "$model" || -z "$reasoning" ]]; then
     set_bootstrap_state ready
     return 0

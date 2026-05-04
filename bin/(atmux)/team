@@ -12,6 +12,10 @@ usage() {
 Usage:
   atmux team create <name> [--role <role>] [--start <cmd>] [--stop <cmd>]
                            [--worktree <path>] [--shared-worktree]
+                           [--adapter <adapter>] [--intelligence <0-100>]
+                           [--model <id>] [--reasoning <level>]
+                           [--set <key>=<value>]...
+                           [--set <member>.<key>=<value>]...
   atmux team list
   atmux team ls
   atmux team status [<name>]
@@ -41,6 +45,13 @@ Description:
   --shared-worktree   Opt out of the fresh-worktree default. Use the
                       caller's pwd (or repo root) instead. Useful for
                       coordination teams that just talk and never edit.
+
+  --adapter / --intelligence / --model / --reasoning
+                      Apply to every member spawned from MEMBERS=(...).
+                      Per-member overrides via `--set <member>.<field>=
+                      <value>` take precedence (member name matches the
+                      last `-`-segment of the member's first token, e.g.
+                      `${ATMUX_TEAM}-driver` matches on `driver`).
 USAGE
 }
 
@@ -186,11 +197,26 @@ teardown_team() {
   fi
 }
 
+member_short_name() {
+  # Map a member entry's first token to the short name used by `--set
+  # <member>.<field>=...`. Per the spec the match is on the last
+  # `-`-segment, so `${ATMUX_TEAM}-driver` (already expanded by the
+  # manifest source) becomes `driver`.
+  local first_tok="$1"
+  printf '%s\n' "${first_tok##*-}"
+}
+
 spawn_team_members() {
   # Spawns each MEMBER from the manifest via `atmux agent create <args>
   # --team <team>`. Returns non-zero on the first spawn failure so the caller
   # can tear down the partially-built team.
   # Args: <repo_name> <team_name> <member_lines> [<team_work_dir>]
+  #
+  # Reads the following caller-scope variables (set by create_team) for
+  # per-spawn overrides:
+  #   team_adapter, team_intelligence, team_model, team_reasoning
+  #   team_sets[]         — undotted --set key=val (apply to every member)
+  #   team_dotted_sets[]  — `<member>.<key>=<val>` (apply only to that member)
   local _repo="$1" team="$2" lines="$3" team_work_dir="${4:-}"
   [[ -n "$lines" ]] || return 0
 
@@ -200,6 +226,19 @@ spawn_team_members() {
     echo "atmux team create: cannot locate the atmux binary to spawn members" >&2
     return 127
   fi
+
+  # Build the team-wide override arg list once. Overrides are appended to
+  # each `agent create` so they win over the role's MEMBERS=(...) defaults
+  # (later flag wins in agent's parser).
+  local -a team_overrides=()
+  [[ -n "${team_adapter:-}"      ]] && team_overrides+=(--adapter "$team_adapter")
+  [[ -n "${team_intelligence:-}" ]] && team_overrides+=(--intelligence "$team_intelligence")
+  [[ -n "${team_model:-}"        ]] && team_overrides+=(--model "$team_model")
+  [[ -n "${team_reasoning:-}"    ]] && team_overrides+=(--reasoning "$team_reasoning")
+  local set_kv
+  for set_kv in "${team_sets[@]+"${team_sets[@]}"}"; do
+    [[ -n "$set_kv" ]] && team_overrides+=(--set "$set_kv")
+  done
 
   local entry
   while IFS= read -r entry; do
@@ -217,6 +256,23 @@ spawn_team_members() {
     if [[ "${#tokens[@]}" -eq 0 ]]; then
       continue
     fi
+
+    # Per-member overrides (--set <member>.<field>=<value>). Match on the
+    # last `-`-segment of the first token (e.g. `${ATMUX_TEAM}-driver` →
+    # `driver`). Appended after team-level overrides so they win.
+    local member_short
+    member_short="$(member_short_name "${tokens[0]}")"
+    local -a member_overrides=()
+    local dotted_kv member_part field_part
+    for dotted_kv in "${team_dotted_sets[@]+"${team_dotted_sets[@]}"}"; do
+      [[ -n "$dotted_kv" ]] || continue
+      member_part="${dotted_kv%%.*}"
+      field_part="${dotted_kv#*.}"
+      [[ "$member_part" == "$member_short" ]] || continue
+      # field_part is `<key>=<value>` — pass through as `--set <key>=<value>`.
+      member_overrides+=(--set "$field_part")
+    done
+
     # Export ATMUX_WORKTREE so `agent create --shared-worktree` picks it up
     # — that's how members spawned by a `team create --worktree` end up
     # sharing the team's worktree instead of the repo root.
@@ -224,7 +280,10 @@ spawn_team_members() {
     if [[ -n "$team_work_dir" ]]; then
       env_prefix=(env "ATMUX_WORKTREE=$team_work_dir" "ATMUX_TEAM=$team")
     fi
-    if ! "${env_prefix[@]}" "$atmux_bin" agent create "${tokens[@]}" --team "$team" >/dev/null; then
+    if ! "${env_prefix[@]+"${env_prefix[@]}"}" "$atmux_bin" agent create \
+           "${tokens[@]}" --team "$team" \
+           "${team_overrides[@]+"${team_overrides[@]}"}" \
+           "${member_overrides[@]+"${member_overrides[@]}"}" >/dev/null; then
       echo "atmux team create: spawning member failed: agent create $entry" >&2
       return 1
     fi
@@ -277,6 +336,15 @@ create_team() {
   # never touch files).
   local shared_worktree=0
   local worktree_path=""
+  # Team-wide member overrides: applied to every spawned MEMBER. Per-member
+  # `--set <member>.<field>=<value>` overrides win, since spawn_team_members
+  # appends per-member overrides after these.
+  local team_adapter=""
+  local team_intelligence=""
+  local team_model=""
+  local team_reasoning=""
+  local -a team_sets=()
+  local -a team_dotted_sets=()
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -286,6 +354,40 @@ create_team() {
       --start=*) start_cmd="${1#--start=}"; shift ;;
       --stop)    stop_cmd="${2:-}"; shift 2 ;;
       --stop=*)  stop_cmd="${1#--stop=}"; shift ;;
+      --adapter)        team_adapter="${2:-}"; shift 2 ;;
+      --adapter=*)      team_adapter="${1#--adapter=}"; shift ;;
+      --intelligence)   team_intelligence="${2:-}"; shift 2 ;;
+      --intelligence=*) team_intelligence="${1#--intelligence=}"; shift ;;
+      --model)          team_model="${2:-}"; shift 2 ;;
+      --model=*)        team_model="${1#--model=}"; shift ;;
+      --reasoning)      team_reasoning="${2:-}"; shift 2 ;;
+      --reasoning=*)    team_reasoning="${1#--reasoning=}"; shift ;;
+      --set)
+        local set_kv="${2:-}"
+        if [[ "$set_kv" != *=* ]]; then
+          echo "atmux team create: --set requires key=value: $set_kv" >&2
+          exit 2
+        fi
+        if [[ "${set_kv%%=*}" == *.* ]]; then
+          team_dotted_sets+=("$set_kv")
+        else
+          team_sets+=("$set_kv")
+        fi
+        shift 2
+        ;;
+      --set=*)
+        local set_kv="${1#--set=}"
+        if [[ "$set_kv" != *=* ]]; then
+          echo "atmux team create: --set requires key=value: $set_kv" >&2
+          exit 2
+        fi
+        if [[ "${set_kv%%=*}" == *.* ]]; then
+          team_dotted_sets+=("$set_kv")
+        else
+          team_sets+=("$set_kv")
+        fi
+        shift
+        ;;
       --worktree)
         # Path-only override; presence with no path is a no-op (default
         # path is already used).
@@ -299,7 +401,7 @@ create_team() {
       --worktree=*) worktree_path="${1#--worktree=}"; shift ;;
       --shared-worktree) shared_worktree=1; shift ;;
       -h|--help)
-        echo "usage: atmux team create <name> [--role <role>] [--start <cmd>] [--stop <cmd>] [--worktree <path>] [--shared-worktree]"
+        echo "usage: atmux team create <name> [--role <role>] [--start <cmd>] [--stop <cmd>] [--worktree <path>] [--shared-worktree] [--adapter ...] [--intelligence ...] [--model ...] [--reasoning ...] [--set <key>=<val>]..."
         return 0
         ;;
       --) shift ;;

@@ -11,6 +11,8 @@ usage() {
 Usage:
   atmux agent create [name] --role <role> --intelligence <0-100>
                      [--team <team>] [--adapter <adapter>] [--adapters <list>]
+                     [--model <id>] [--reasoning <low|medium|high|extra-high>]
+                     [--set <key>=<value>]...
                      [--shared-worktree] [--start <cmd>] [--stop <cmd>]
                      [--task --description <desc> --todo <todo>...]
                      [-- <adapter-args...>]
@@ -19,6 +21,11 @@ Usage:
     `--shared-worktree` runs the new agent in the caller's current
     worktree instead of creating a private one for it (deprecated
     alias: `--no-worktree`).
+    `--model` / `--reasoning` skip the role's intelligence_map lookup
+    and force a specific model/reasoning level on the adapter. `--set
+    <key>=<value>` is a generic override; known keys (model, reasoning,
+    adapter, intelligence) map onto the corresponding flag, unknown
+    keys emit a warning and are passed through unchanged.
   atmux agent list [--all] [--status]
   atmux agent status [<name>]
   atmux agent attach <name|session>
@@ -1221,6 +1228,12 @@ spawn_agent_session() {
     tmux set-environment -t "$session" ATMUX_ADAPTERS_ALLOWED "$adapters_list"
   fi
   tmux set-environment -t "$session" ATMUX_INTELLIGENCE "$intelligence"
+  if [[ -n "${ATMUX_MODEL:-}" ]]; then
+    tmux set-environment -t "$session" ATMUX_MODEL "$ATMUX_MODEL"
+  fi
+  if [[ -n "${ATMUX_REASONING_LEVEL:-}" ]]; then
+    tmux set-environment -t "$session" ATMUX_REASONING_LEVEL "$ATMUX_REASONING_LEVEL"
+  fi
   if [[ -n "${ATMUX_ROLE:-}" ]]; then
     tmux set-environment -t "$session" ATMUX_ROLE "$ATMUX_ROLE"
   fi
@@ -1597,6 +1610,8 @@ do_create() {
   local adapter="auto"
   local adapters_list=""
   local intelligence=""
+  local model=""
+  local reasoning=""
   local shared_worktree=0
   local task_mode=0
   local task_description=""
@@ -1604,6 +1619,7 @@ do_create() {
   local start_cmd=""
   local stop_cmd=""
   local -a forward=()
+  local -a sets=()
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --name)
@@ -1628,6 +1644,18 @@ do_create() {
         ;;
       --intelligence)
         intelligence="${2:-}"
+        shift 2
+        ;;
+      --model)
+        model="${2:-}"
+        shift 2
+        ;;
+      --reasoning)
+        reasoning="${2:-}"
+        shift 2
+        ;;
+      --set)
+        sets+=("${2:-}")
         shift 2
         ;;
       --shared-worktree)
@@ -1722,6 +1750,40 @@ do_create() {
     fi
   fi
 
+  # --set <key>=<value> (repeatable) generic overrides. Known keys map onto
+  # variables that drive spawn_agent_session; unknown keys warn and skip
+  # (forward-compat: a future adapter manifest field can land without
+  # requiring atmux changes). Dotted keys are reserved for `team create
+  # --set <member>.<field>=...` and are rejected here.
+  local entry_set
+  for entry_set in "${sets[@]+"${sets[@]}"}"; do
+    [[ -n "$entry_set" ]] || continue
+    if [[ "$entry_set" != *=* ]]; then
+      echo "atmux agent create: --set requires key=value: $entry_set" >&2
+      exit 2
+    fi
+    local set_key="${entry_set%%=*}"
+    local set_val="${entry_set#*=}"
+    if [[ "$set_key" == *.* ]]; then
+      echo "atmux agent create: dotted --set keys are only valid for team create: $set_key" >&2
+      exit 2
+    fi
+    case "$set_key" in
+      model) model="$set_val" ;;
+      reasoning|reasoning_level) reasoning="$set_val" ;;
+      adapter) adapter="$set_val" ;;
+      adapters) adapters_list="$set_val" ;;
+      intelligence) intelligence="$set_val" ;;
+      name) name="$set_val" ;;
+      team) team="$set_val" ;;
+      start|start_command) start_cmd="$set_val" ;;
+      stop|stop_command) stop_cmd="$set_val" ;;
+      *)
+        echo "atmux agent create: --set $set_key=... is not a recognized field; ignoring" >&2
+        ;;
+    esac
+  done
+
   if [[ -n "$intelligence" ]] && ! valid_intelligence "$intelligence"; then
     echo "invalid intelligence: $intelligence" >&2
     echo "expected integer range: 0-100" >&2
@@ -1730,6 +1792,15 @@ do_create() {
   if [[ -z "$intelligence" ]]; then
     echo "missing required flag: --intelligence" >&2
     exit 2
+  fi
+  if [[ -n "$reasoning" ]]; then
+    case "$reasoning" in
+      low|medium|high|extra-high) ;;
+      extra_high|extrahigh) reasoning="extra-high" ;;
+      *)
+        echo "atmux agent create: unknown --reasoning '$reasoning'; passing through to adapter" >&2
+        ;;
+    esac
   fi
   if [[ "$task_mode" -eq 0 && ( -n "$task_description" || -n "$task_todos_blob" ) ]]; then
     echo "--description/--todos require --task for agent create" >&2
@@ -1785,6 +1856,8 @@ do_create() {
     ATMUX_ROLE_STOP="$stop_cmd" \
     ATMUX_TEAM="$team" \
     ATMUX_INTELLIGENCE="$intelligence" \
+    ATMUX_MODEL="$model" \
+    ATMUX_REASONING_LEVEL="$reasoning" \
       spawn_agent_session "${spawn_args[@]}"
     return 0
   fi
@@ -1799,6 +1872,8 @@ do_create() {
     ATMUX_ROLE_STOP="$stop_cmd" \
     ATMUX_TEAM="$team" \
     ATMUX_INTELLIGENCE="$intelligence" \
+    ATMUX_MODEL="$model" \
+    ATMUX_REASONING_LEVEL="$reasoning" \
       spawn_agent_session "${spawn_args[@]}"
   )"
 

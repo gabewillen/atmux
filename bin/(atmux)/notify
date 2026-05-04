@@ -782,6 +782,15 @@ submit_notification_input() {
       return 0
     fi
 
+    # Give the adapter a beat to actually process the Enter before we
+    # start polling. Without this delay the first extract runs ~0ms
+    # after send-keys returned, and a busy/slow adapter hasn't cleared
+    # the input box yet — we'd then count it as "input still present"
+    # and spuriously retry. The verify loop's deadline is small
+    # (default 2s); polling tight against a still-processing input
+    # just burns budget on noise. Wait once, then enter the loop.
+    sleep "$submit_wait"
+
     deadline=$(( $(date +%s) + submit_verify_timeout ))
     while true; do
       after_input="$(extract_prompt_input "$pane" "$prompt_prefix" 2>/dev/null || true)"

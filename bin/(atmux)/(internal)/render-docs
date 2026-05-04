@@ -244,6 +244,88 @@ render_env_vars_table() {
   done < "$TEMPLATE_DIR/env-vars.tsv"
 }
 
+extract_first_markdown_paragraph() {
+  local file="$1"
+  [[ -f "$file" ]] || return 0
+  awk '
+    /^[[:space:]]*$/ {
+      if (started) exit
+      next
+    }
+    /^[[:space:]]*#/ { next }
+    {
+      line=$0
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", line)
+      if (started) out = out " " line
+      else { out = line; started = 1 }
+    }
+    END { print out }
+  ' "$file"
+}
+
+render_builtin_role_rows() {
+  local target_kind="$1"
+  [[ -d "$ROOT/roles" ]] || return 0
+
+  local role_dir name manifest kind readme role_md link_target desc demo
+  for role_dir in "$ROOT"/roles/*; do
+    [[ -d "$role_dir" ]] || continue
+    name="$(basename "$role_dir")"
+    manifest="$role_dir/manifest"
+    [[ -f "$manifest" ]] || continue
+
+    kind="$(
+      awk -F= '
+        /^[[:space:]]*KIND=/ {
+          value=$2
+          gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
+          print value
+          exit
+        }
+      ' "$manifest"
+    )"
+    [[ -n "$kind" ]] || kind="agent"
+    [[ "$kind" == "$target_kind" ]] || continue
+
+    readme="$role_dir/README.md"
+    role_md="$role_dir/role.md"
+    if [[ -f "$readme" ]]; then
+      link_target="roles/$name/README.md"
+      desc="$(extract_first_markdown_paragraph "$readme")"
+    else
+      link_target="roles/$name/role.md"
+      desc="$(extract_first_markdown_paragraph "$role_md")"
+    fi
+    if [[ -z "$desc" && -f "$role_md" ]]; then
+      desc="$(extract_first_markdown_paragraph "$role_md")"
+    fi
+    desc="${desc//|/\\|}"
+
+    demo=""
+    if [[ -f "$role_dir/demo.gif" ]]; then
+      demo="[demo](roles/$name/demo.gif)"
+    fi
+
+    printf '| [`%s`](%s) | %s | %s |\n' "$name" "$link_target" "$desc" "$demo"
+  done
+}
+
+render_builtin_role_table() {
+  local title="$1" kind="$2" rows
+  rows="$(render_builtin_role_rows "$kind")"
+  [[ -n "$rows" ]] || return 0
+
+  printf '#### %s\n\n' "$title"
+  printf '| Role | Description | Demo |\n'
+  printf '|------|-------------|------|\n'
+  printf '%s\n\n' "$rows"
+}
+
+render_builtin_roles() {
+  render_builtin_role_table "Built-in agent roles" "agent"
+  render_builtin_role_table "Built-in team roles" "team"
+}
+
 render_version() {
   cat "$ROOT/VERSION"
 }
@@ -264,6 +346,7 @@ render_template() {
   render_resource_reference       > "$tmpdir/RESOURCE_REFERENCE"
   render_verb_reference           > "$tmpdir/VERB_REFERENCE"
   render_env_vars_table           > "$tmpdir/ENV_VARS_TABLE"
+  render_builtin_roles            > "$tmpdir/BUILT_IN_ROLES"
   render_version                  > "$tmpdir/VERSION"
 
   awk -v tdir="$tmpdir" '

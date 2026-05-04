@@ -118,7 +118,45 @@ resolve_input_prompt_for_adapter() {
   fi
 
   compact="$(tr -d '\n\r\t' < "$manifest_path")"
-  printf '%s' "$compact" | sed -n 's/.*"input_idle"[[:space:]]*:[[:space:]]*{[^}]*"prompt"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p'
+  printf '%s' "$compact" | sed -n 's/.*"input"[[:space:]]*:[[:space:]]*{[^}]*"start"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p'
+}
+
+# Returns the SGR sequence body that marks the end of the user-input
+# region, e.g. "[0;7m" for cursor-agent (the reverse-video cursor
+# cell). The full ANSI escape is `\e<value>`. When set,
+# extract_prompt_input switches to a styled (`-e`) capture and stops
+# at the first occurrence of this marker after the prompt prefix —
+# anything past it is the cursor cell + chrome (placeholder text,
+# slash-command palette, status footer) and gets dropped.
+#
+# Adapters that don't declare `input.end` get the legacy
+# capture-to-cursor-position behavior.
+resolve_input_end_for_adapter() {
+  local adapter="$1"
+  local source_root="$2"
+  local manifest_path compact
+
+  local ATMUX_SOURCE_ROOT="$source_root"
+  if ! manifest_path="$(resolve_manifest_path "$adapter")"; then
+    return 1
+  fi
+
+  compact="$(tr -d '\n\r\t' < "$manifest_path")"
+  printf '%s' "$compact" | sed -n 's/.*"input"[[:space:]]*:[[:space:]]*{[^}]*"end"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p'
+}
+
+resolve_input_end_for_pane() {
+  local pane="$1"
+  local source_root="$2"
+  local sess adapter
+
+  sess="$(tmux display-message -t "$pane" -p "#{session_name}" 2>/dev/null || true)"
+  [[ -n "$sess" ]] || return 1
+
+  adapter="$(get_session_env "$sess" ATMUX_ADAPTER)"
+  [[ -n "$adapter" ]] || return 1
+
+  resolve_input_end_for_adapter "$adapter" "$source_root"
 }
 
 normalize_prompt_text() {
@@ -325,6 +363,17 @@ extract_prompt_input() {
 
   [[ -n "$prompt_prefix" ]] || return 0
 
+  # If the adapter declares an input.end marker, use it: capture with
+  # ANSI preserved, find the prompt prefix, then everything up to the
+  # first input.end SGR escape on that line is the user's input. Skips
+  # placeholder text, slash-command palettes, status footers, etc.
+  local input_end_marker=""
+  input_end_marker="$(resolve_input_end_for_pane "$pane" "${ATMUX_SOURCE_ROOT:-${ATMUX_HOME}/src/atmux}" 2>/dev/null || true)"
+  if [[ -n "$input_end_marker" ]]; then
+    extract_prompt_input_with_end_marker "$pane" "$prompt_prefix" "$input_end_marker"
+    return 0
+  fi
+
   snap="$(tmux capture-pane -p -t "$pane" 2>/dev/null || true)"
   while IFS= read -r line; do
     lines+=("$line")
@@ -361,6 +410,77 @@ extract_prompt_input() {
     saved_input+="${lines[idx]}"
   done
   printf '%s' "$saved_input"
+}
+
+# extract_prompt_input_with_end_marker: styled-capture variant used
+# when the adapter manifest declares `input.end`. Captures with `-e`,
+# walks lines bottom-up to find the prompt prefix, then takes
+# everything between the prefix and the first occurrence of the
+# end marker (`\e<end_marker>`) on the same logical input region.
+# ANSI codes are stripped from the captured text.
+extract_prompt_input_with_end_marker() {
+  local pane="$1"
+  local prompt_prefix="$2"
+  local end_marker="$3"
+  local snap
+
+  snap="$(tmux capture-pane -p -e -t "$pane" 2>/dev/null || true)"
+  [[ -n "$snap" ]] || return 0
+
+  ATMUX_PROMPT_PREFIX="$prompt_prefix" \
+  ATMUX_INPUT_END="$end_marker" \
+  perl -e '
+    use strict; use warnings;
+    my $prompt = $ENV{ATMUX_PROMPT_PREFIX};
+    my $end    = "\e" . $ENV{ATMUX_INPUT_END};
+    my $snap   = do { local $/; <STDIN> };
+    my @lines  = split /\r?\n/, $snap, -1;
+
+    # Walk lines bottom-up; first line whose ANSI-stripped form
+    # contains the prompt prefix is the input prompt line.
+    my $idx = -1;
+    for (my $i = $#lines; $i >= 0; $i--) {
+      my $bare = $lines[$i];
+      $bare =~ s/\e\[[0-9;]*[a-zA-Z]//g;
+      if (index($bare, $prompt) >= 0) { $idx = $i; last; }
+    }
+    exit 0 if $idx < 0;
+
+    my $line = $lines[$idx];
+    # Locate the prompt prefix in the styled bytes by skipping ANSI
+    # escapes byte-by-byte until the visible bytes start with the
+    # prompt prefix.
+    my $scan = $line;
+    my $pos  = 0;
+    while ($scan ne "" && index($scan, $prompt) != 0) {
+      if ($scan =~ /^\e\[[0-9;]*[a-zA-Z]/) {
+        my $len = length($&);
+        $scan = substr($scan, $len);
+        $pos += $len;
+      } else {
+        $scan = substr($scan, 1);
+        $pos++;
+      }
+    }
+    my $rest = substr($line, $pos + length($prompt));
+
+    # Stop at the first end marker; everything before is user input.
+    my $captured;
+    my $end_pos = index($rest, $end);
+    if ($end_pos >= 0) {
+      $captured = substr($rest, 0, $end_pos);
+    } else {
+      # No end marker on the prompt line — adapter promised one but
+      # render is in an unexpected state. Be conservative and return
+      # empty so we never re-paste chrome.
+      exit 0;
+    }
+    # Strip remaining ANSI codes and trim.
+    $captured =~ s/\e\[[0-9;]*[a-zA-Z]//g;
+    $captured =~ s/^\s+//;
+    $captured =~ s/\s+$//;
+    print $captured;
+  ' <<< "$snap"
 }
 
 pane_has_prompt_line() {

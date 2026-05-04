@@ -2,11 +2,12 @@
   "name": "cursor-agent",
   "version": 1,
   "submit_keys": {
-    "steer": ["Enter"],
-    "interrupt": ["C-c"]
-  },
-  "input_idle": {
-    "prompt": "→"
+    "steer": [
+      "Enter"
+    ],
+    "interrupt": [
+      "C-c"
+    ]
   },
   "intelligence_map": [
     {
@@ -33,5 +34,9 @@
       "model": "gpt-5.3-codex-xhigh",
       "reasoning_level": "extra-high"
     }
-  ]
+  ],
+  "input": {
+    "start": "→",
+    "end": "[0;7m"
+  }
 }

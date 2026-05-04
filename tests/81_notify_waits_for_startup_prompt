@@ -69,8 +69,8 @@ cat > "$ATMUX_SOURCE_ROOT/adapter/mock/manifest.json" <<EOF
   "submit_keys": {
     "steer": ["Enter"]
   },
-  "input_idle": {
-    "prompt": "$prompt_prefix"
+  "input": {
+    "start": "$prompt_prefix"
   }
 }
 EOF

@@ -2,11 +2,12 @@
   "name": "codex",
   "version": 1,
   "submit_keys": {
-    "steer": ["Enter"],
-    "interrupt": ["Escape"]
-  },
-  "input_idle": {
-    "prompt": "›"
+    "steer": [
+      "Enter"
+    ],
+    "interrupt": [
+      "Escape"
+    ]
   },
   "intelligence_map": [
     {
@@ -33,5 +34,8 @@
       "model": "gpt-5.5",
       "reasoning_level": "extra-high"
     }
-  ]
+  ],
+  "input": {
+    "start": "›"
+  }
 }

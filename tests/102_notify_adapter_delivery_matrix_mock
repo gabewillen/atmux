@@ -7,7 +7,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/isolate-tmux.sh"
 
 # Full matrix: every shipped adapter (claude-code, codex, cursor-agent,
 # gemini) x {steer, interrupt} mode, delivered against a mock `cat` pane
-# primed with the adapter's real input_idle.prompt. Verifies:
+# primed with the adapter's real input.start. Verifies:
 #   1. Payload text reaches the pane (notification was "entered").
 #   2. Submit happens (cursor advances past the prompt line == "submitted").
 #   3. The notify-queue dir for the pane drains after delivery (no stuck items).

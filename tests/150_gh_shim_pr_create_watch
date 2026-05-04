@@ -84,4 +84,20 @@ grep -Fq '%7|0' "$watcher_file" || {
   exit 1
 }
 
+ATMUX_TEST_GH_LOG="$tmp/gh.log" \
+PATH="$REPO_ROOT/bin:$fakebin:$PATH" \
+ATMUX_HOME="$atmux_home" \
+ATMUX_SOURCE_ROOT="$REPO_ROOT" \
+ATMUX_SHIM_REAL_BINARY="$fakebin/gh" \
+ATMUX_REPO=demo \
+ATMUX_AGENT_NAME=agent \
+TMUX_PANE="%7" \
+  "$GH_SHIM" pr checkout --editor 24 >/dev/null
+
+checkout_number="$(tr -d '\r\n' < "$atmux_home/agents/demo/agent/gh-hooks/last-pr-checkout-number")"
+[[ "$checkout_number" == "24" ]] || {
+  echo "gh shim treated boolean --editor as a value-consuming flag; checkout number: ${checkout_number:-missing}" >&2
+  exit 1
+}
+
 echo "ok: gh shim auto-registers PR watcher after gh pr create"

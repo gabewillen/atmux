@@ -81,32 +81,17 @@ repo_from_args() {
   return 1
 }
 
-repo_from_url() {
-  local url="$1" stripped path owner repo
-  stripped="${url#http://}"
-  stripped="${stripped#https://}"
-  stripped="${stripped#github.com/}"
-  path="${stripped#/}"
-  owner="$(printf '%s\n' "$path" | cut -d/ -f1)"
-  repo="$(printf '%s\n' "$path" | cut -d/ -f2)"
-  [[ -n "$owner" && -n "$repo" ]] || return 1
-  printf '%s/%s\n' "$owner" "$repo"
-}
-
-number_from_url() {
-  local url="$1"
-  printf '%s\n' "$url" | sed -E 's#.*/(pull|issues)/([0-9]+).*#\2#'
-}
-
 number_arg_after_verb() {
   local arg
   while [[ $# -gt 0 ]]; do
     arg="$1"; shift
     case "$arg" in
-      --repo|-R|--body|-b|--body-file|-F|--editor|-e)
+      --repo|-R|--body|-b|--body-file|-F)
         shift || true
         ;;
       --repo=*|-R=*|--body=*|-b=*|--body-file=*|-F=*)
+        ;;
+      --editor|-e)
         ;;
       -*)
         ;;

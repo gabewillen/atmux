@@ -200,7 +200,7 @@ fetch_pr_poll_data() {
       | [
           "STATE|\(if $pr.mergedAt != null or $pr.state == "MERGED" then "merged" elif $pr.state == "CLOSED" then "closed" else "open" end)",
           ([
-            $pr.comments.nodes[]? |
+            ($pr.comments.nodes[]? |
               {
                 updatedAt,
                 kind: "issue_comment",
@@ -208,7 +208,25 @@ fetch_pr_poll_data() {
                 author: (.author.login // "unknown"),
                 state: "",
                 body: (.body // "")
-              }
+              }),
+            ($pr.reviews.nodes[]? |
+              {
+                updatedAt,
+                kind: "review",
+                id,
+                author: (.author.login // "unknown"),
+                state: (.state // ""),
+                body: (.body // "")
+              }),
+            ($pr.reviews.nodes[]? as $review | $review.comments.nodes[]? |
+              {
+                updatedAt,
+                kind: "review_comment",
+                id,
+                author: (.author.login // "unknown"),
+                state: "",
+                body: (.body // "")
+              })
           ]
           | sort_by([.updatedAt, .id])
           | .[]

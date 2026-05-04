@@ -28,17 +28,14 @@ ATMUX_HOME="$WORK_ROOT/atmux-home"
 mkdir -p "$ATMUX_HOME"
 export ATMUX_HOME
 
-agents_to_kill=()
-team_short=""
 cleanup() {
   set +e
-  if [[ -n "$team_short" ]]; then
-    "$ATMUX_BIN" team kill "$team_short" >/dev/null 2>&1 || true
-  fi
-  for a in "${agents_to_kill[@]:-}"; do
-    [[ -n "$a" ]] || continue
-    "$ATMUX_BIN" agent kill "$a" >/dev/null 2>&1 || true
-  done
+  # The tmux server is isolated via TMUX_TMPDIR (see lib/isolate-tmux.sh),
+  # so killing the server reaps every session this test created in one
+  # call instead of `atmux agent/team kill`-ing each by name (each of
+  # those is several seconds on CI; we ran into the 1-min step budget
+  # on shard 10 because of it).
+  TMUX_TMPDIR="$ATMUX_TESTS_TMUX_TMPDIR" tmux kill-server >/dev/null 2>&1 || true
   rm -rf "$WORK_ROOT"
 }
 trap cleanup EXIT
@@ -74,12 +71,17 @@ EOF
 
 cd "$REPO_ROOT"
 
+# All probes pass `--shared-worktree` so we skip the per-agent
+# `git worktree add` (the slow step). The test only cares about session
+# env vars, never the working tree contents — so a fresh worktree adds
+# pure latency. On CI shard 10 (1-min budget) this dropped 118 from
+# ~33s to a few seconds.
+
 # --- Case 1: --model and --reasoning land on the new session env ---
 agent_a="probe-a$$"
-agents_to_kill+=("$agent_a")
 ATMUX_ALLOW_OUTSIDE_TMUX=1 ATMUX_AGENT_NAME=manager \
   "$AGENT_BIN" _create --name "$agent_a" --role probe-agent \
-    --intelligence 20 --adapter mock \
+    --intelligence 20 --adapter mock --shared-worktree \
     --model probe-model-a --reasoning high >/dev/null 2>&1
 
 session_a="${SESSION_PREFIX}${agent_a}"
@@ -99,10 +101,9 @@ got_reasoning="$(tmux show-environment -t "$session_a" ATMUX_REASONING_LEVEL 2>/
 
 # --- Case 2: --set model=… and --set reasoning=… do the same job ---
 agent_b="probe-b$$"
-agents_to_kill+=("$agent_b")
 ATMUX_ALLOW_OUTSIDE_TMUX=1 ATMUX_AGENT_NAME=manager \
   "$AGENT_BIN" _create --name "$agent_b" --role probe-agent \
-    --intelligence 20 --adapter mock \
+    --intelligence 20 --adapter mock --shared-worktree \
     --set model=probe-model-b --set reasoning=medium >/dev/null 2>&1
 
 session_b="${SESSION_PREFIX}${agent_b}"
@@ -122,10 +123,9 @@ got_reasoning="$(tmux show-environment -t "$session_b" ATMUX_REASONING_LEVEL 2>/
 
 # --- Case 3: --set wins over --model / --reasoning (precedence rule) ---
 agent_c="probe-c$$"
-agents_to_kill+=("$agent_c")
 ATMUX_ALLOW_OUTSIDE_TMUX=1 ATMUX_AGENT_NAME=manager \
   "$AGENT_BIN" _create --name "$agent_c" --role probe-agent \
-    --intelligence 20 --adapter mock \
+    --intelligence 20 --adapter mock --shared-worktree \
     --model losing-model --reasoning low \
     --set model=winning-model --set reasoning=high >/dev/null 2>&1
 
@@ -143,11 +143,10 @@ got_reasoning="$(tmux show-environment -t "$session_c" ATMUX_REASONING_LEVEL 2>/
 
 # --- Case 4: --set unknown=foo warns but proceeds ---
 agent_d="probe-d$$"
-agents_to_kill+=("$agent_d")
 out="$(
   ATMUX_ALLOW_OUTSIDE_TMUX=1 ATMUX_AGENT_NAME=manager \
     "$AGENT_BIN" _create --name "$agent_d" --role probe-agent \
-      --intelligence 20 --adapter mock \
+      --intelligence 20 --adapter mock --shared-worktree \
       --set probe_unknown_field=foo 2>&1
 )"
 session_d="${SESSION_PREFIX}${agent_d}"
@@ -159,6 +158,19 @@ tmux has-session -t "$session_d" 2>/dev/null \
   || { echo "fail: unknown --set field aborted agent create; output: $out" >&2; exit 1; }
 printf '%s\n' "$out" | grep -q "probe_unknown_field" \
   || { echo "fail: unknown --set field did not warn; output: $out" >&2; exit 1; }
+
+# --- Case 4b: --set start=$'\n'... must hit the same newline guard
+# that --start enforces (regression coverage for a Bugbot-flagged bypass:
+# the loop runs *after* the literal-flag check, so --set was previously
+# uncaught). Use printf %b to inject a real newline into the value.
+out="$(
+  ATMUX_ALLOW_OUTSIDE_TMUX=1 ATMUX_AGENT_NAME=manager \
+    "$AGENT_BIN" _create --name "should-not-exist-newline$$" --role probe-agent \
+      --intelligence 20 --adapter mock --shared-worktree \
+      --set "$(printf 'start=line1\nline2')" 2>&1 || true
+)"
+printf '%s\n' "$out" | grep -q "must be a single line" \
+  || { echo "fail: --set start=<multi-line> bypassed newline guard; output: $out" >&2; exit 1; }
 
 # --- Case 5: dotted --set on agent create is rejected with a clear msg ---
 out="$(
@@ -178,12 +190,11 @@ cat > "$team_role_dir/role.md" <<EOF
 EOF
 alpha_name="alpha$$"
 beta_name="beta$$"
-agents_to_kill+=("$alpha_name" "$beta_name")
 cat > "$team_role_dir/manifest" <<EOF
 KIND=team
 MEMBERS=(
-  "$alpha_name --role probe-agent --intelligence 20 --adapter mock"
-  "$beta_name --role probe-agent --intelligence 20 --adapter mock"
+  "$alpha_name --role probe-agent --intelligence 20 --adapter mock --shared-worktree"
+  "$beta_name --role probe-agent --intelligence 20 --adapter mock --shared-worktree"
 )
 EOF
 

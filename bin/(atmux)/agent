@@ -1713,6 +1713,9 @@ do_create() {
     exit 2
   fi
 
+  # Newline check is also re-run after the --set loop below — `--set
+  # start=...` / `--set stop=...` can land here too and must not bypass
+  # the same guard.
   case "$start_cmd" in
     *$'\n'*) echo "--start must be a single line; use a script file for multi-line commands" >&2; exit 2 ;;
   esac
@@ -1783,6 +1786,15 @@ do_create() {
         ;;
     esac
   done
+
+  # Re-validate after --set: `--set start=$'a\nb'` would otherwise bypass
+  # the newline guard the literal `--start` flag enforces above.
+  case "$start_cmd" in
+    *$'\n'*) echo "--start must be a single line; use a script file for multi-line commands" >&2; exit 2 ;;
+  esac
+  case "$stop_cmd" in
+    *$'\n'*) echo "--stop must be a single line; use a script file for multi-line commands" >&2; exit 2 ;;
+  esac
 
   if [[ -n "$intelligence" ]] && ! valid_intelligence "$intelligence"; then
     echo "invalid intelligence: $intelligence" >&2

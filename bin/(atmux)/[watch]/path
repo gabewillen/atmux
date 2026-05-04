@@ -472,11 +472,23 @@ main() {
       continue
     fi
 
-    after="$(snapshot_paths "${paths[@]}")"
-    if [[ "$after" == "$before" ]]; then
-      continue
+    # Snapshot-based dedup is only valuable for the polling backend
+    # (which can't tell whether a fired tick reflects a real change vs
+    # a spurious wake). fswatch / inotifywait deliver only on actual
+    # filesystem events, so the snapshot check there is at best a
+    # latency cost and at worst incorrectly drops events: when the
+    # pattern is a directory (no glob) `snapshot_paths` only stats
+    # the dir entry itself, which doesn't change when files *inside*
+    # are modified — so every in-place file edit looks identical to
+    # the prior snapshot and gets suppressed. Skip the dedup whenever
+    # we're on an event-driven backend.
+    if [[ "$backend" == "poll" ]]; then
+      after="$(snapshot_paths "${paths[@]}")"
+      if [[ "$after" == "$before" ]]; then
+        continue
+      fi
+      before="$after"
     fi
-    before="$after"
     now="$(date +%s)"
     last_event_ts="$now"
     event_count=$(( event_count + 1 ))

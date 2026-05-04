@@ -747,7 +747,7 @@ submit_notification_input() {
   local prompt_prefix="$2"
   local submit_keys="$3"
   local submit_wait="$4"
-  local attempts="${ATMUX_SEND_SUBMIT_RETRY_ATTEMPTS:-4}"
+  local attempts="${ATMUX_SEND_SUBMIT_RETRY_ATTEMPTS:-3}"
   local attempt sk
   local before_input before_cursor before_y
   local after_input after_cursor after_y
@@ -1014,22 +1014,92 @@ notification_item_due() {
 
 mark_notification_attempt_failed() {
   local item_dir="$1"
-  local attempts delay now
+  local attempts delay now max
   attempts="$(notification_item_attempts "$item_dir")"
   attempts=$(( attempts + 1 ))
-  delay="$(notification_retry_delay_seconds "$attempts")"
   now="$(date +%s)"
-  write_field "$item_dir/state" "retrying"
+  max="${ATMUX_NOTIFY_MAX_OUTER_ATTEMPTS:-3}"
+  [[ "$max" =~ ^[0-9]+$ ]] || max=3
+  (( max > 0 )) || max=3
+
   write_field "$item_dir/attempts" "$attempts"
   write_field "$item_dir/last_attempt_at" "$now"
-  write_field "$item_dir/next_attempt_at" "$(( now + delay ))"
   write_field "$item_dir/last_error" "delivery_unverified"
+
+  if (( attempts >= max )); then
+    # Give up. The worker loop notices state=failed and dispatches a
+    # delivery-failed notification back to the original sender (parsed
+    # from the payload's `from` attribute), then drops the item.
+    write_field "$item_dir/state" "failed"
+    return 0
+  fi
+
+  delay="$(notification_retry_delay_seconds "$attempts")"
+  write_field "$item_dir/state" "retrying"
+  write_field "$item_dir/next_attempt_at" "$(( now + delay ))"
 }
 
 mark_notification_delivered() {
   local item_dir="$1"
   write_field "$item_dir/state" "delivered"
   write_field "$item_dir/delivered_at" "$(timestamp_utc)"
+}
+
+# Parse a notification XML's `from=` attribute. Returns empty if not
+# found or malformed.
+notification_payload_from() {
+  local payload="$1"
+  printf '%s' "$payload" | sed -n 's/.*<notification[^>]* from="\([^"]*\)".*/\1/p' | head -n1
+}
+
+notification_payload_type() {
+  local payload="$1"
+  printf '%s' "$payload" | sed -n 's/.*<notification[^>]* type="\([^"]*\)".*/\1/p' | head -n1
+}
+
+# Send a `delivery-failed` notification back to the original sender so
+# they know the message never made it. The recipient is the session
+# named in the payload's `from=` attribute. Routed through `atmux send`
+# so all the usual session-name resolution (team/agent/raw session)
+# applies.
+dispatch_delivery_failed_notice() {
+  local recipient_pane="$1" item_dir="$2" payload="$3"
+  local from_session original_type attempts source_root atmux_bin
+  from_session="$(notification_payload_from "$payload")"
+  original_type="$(notification_payload_type "$payload")"
+  attempts="$(notification_item_attempts "$item_dir")"
+
+  if [[ -z "$from_session" ]]; then
+    debug_notify "deliver:failed_no_sender pane=$(printf '%q' "$recipient_pane") payload_summary=$(payload_debug_summary "$payload")"
+    return 0
+  fi
+
+  source_root="${ATMUX_SOURCE_ROOT:-$ATMUX_HOME/src/atmux}"
+  atmux_bin="$source_root/bin/atmux"
+  [[ -x "$atmux_bin" ]] || atmux_bin="atmux"
+
+  debug_notify "deliver:failed_dispatch pane=$(printf '%q' "$recipient_pane") sender=$(printf '%q' "$from_session") attempts=$attempts type=$(printf '%q' "$original_type")"
+
+  # Build the failure notice through the canonical builder so the
+  # sender receives the same shape as every other notification.
+  local notice_xml
+  notice_xml="$(build_notification "delivery-failed" "$recipient_pane" "" \
+    "original_type=$original_type" \
+    "attempts=$attempts")"
+
+  # Resolve the sender's session to its primary pane so we can enqueue
+  # the notification directly. Going through `atmux send` would wrap
+  # the XML inside another `<notification type="message">`, which is
+  # not what we want here.
+  local sender_pane
+  sender_pane="$(primary_pane_for_session "$from_session" 2>/dev/null || true)"
+  if [[ -z "$sender_pane" ]]; then
+    debug_notify "deliver:failed_unresolvable sender=$(printf '%q' "$from_session")"
+    return 0
+  fi
+
+  # Best-effort: if the sender's pane is gone, we've still logged.
+  "$atmux_bin" notify --pane "$sender_pane" --xml "$notice_xml" >/dev/null 2>&1 || true
 }
 
 notification_worker_pid_file() {
@@ -1326,6 +1396,13 @@ serve_notification_queue() {
       else
         debug_notify "worker:item_failed pane=$(printf '%q' "$pane") item_dir=$(printf '%q' "$item_dir")"
         mark_notification_attempt_failed "$item_dir"
+        # Once the cap is hit the item is in state=failed; notify the
+        # original sender so they know the message was not delivered,
+        # then remove the item so the queue doesn't keep retrying.
+        if [[ "$(read_state_field "$item_dir/state")" == "failed" ]]; then
+          dispatch_delivery_failed_notice "$pane" "$item_dir" "$payload"
+          rm -rf "$item_dir"
+        fi
         if (( batch_active == 1 )); then
           restore_after_failed_delivery "$pane" "$prompt_prefix" "$saved_input"
           prompt_prefix=""

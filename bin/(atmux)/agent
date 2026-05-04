@@ -1742,17 +1742,8 @@ do_create() {
   if [[ -n "$role_dir" ]]; then
     manifest_out="$(read_role_manifest "$role_dir/manifest" || true)"
     if [[ -n "$manifest_out" ]]; then
-      manifest_kind="$(printf '%s\n' "$manifest_out" | sed -n 's/^KIND=//p')"
-      case "$role_dir" in
-        */roles/agents/*|*/roles/teams/*/agents/*) manifest_kind="agent" ;;
-        */roles/teams/*) manifest_kind="team" ;;
-      esac
       manifest_intelligence="$(printf '%s\n' "$manifest_out" | sed -n 's/^INTELLIGENCE=//p')"
       role_adapters="$(printf '%s\n' "$manifest_out" | sed -n 's/^ADAPTERS=//p')"
-      if [[ "$manifest_kind" == "team" ]]; then
-        echo "atmux agent create: role '$role' is KIND=team; use 'atmux team create --role $role' instead" >&2
-        exit 2
-      fi
       if [[ -z "$intelligence" && -n "$manifest_intelligence" ]]; then
         intelligence="$manifest_intelligence"
       fi

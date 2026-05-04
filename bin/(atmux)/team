@@ -465,15 +465,6 @@ create_team() {
     fi
     manifest_out="$(ATMUX_TEAM="$team_name" ATMUX_REPO="$repo_name" \
                        read_team_role_manifest "$role_dir/manifest" || true)"
-    role_kind="$(printf '%s\n' "$manifest_out" | sed -n 's/^KIND=//p')"
-    case "$role_dir" in
-      */roles/agents/*|*/roles/teams/*/agents/*) role_kind="agent" ;;
-      */roles/teams/*) role_kind="team" ;;
-    esac
-    if [[ "$role_kind" != "team" ]]; then
-      echo "atmux team create: role '$role' is KIND=${role_kind:-agent}; use 'atmux agent create --role $role' instead" >&2
-      exit 2
-    fi
     member_lines="$(printf '%s\n' "$manifest_out" | sed -n 's/^MEMBER=//p')"
     if [[ -z "$start_cmd" && -x "$role_dir/start" ]]; then
       start_cmd="$role_dir/start"

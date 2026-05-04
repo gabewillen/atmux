@@ -87,12 +87,7 @@ infer_state() {
     return
   fi
 
-  # cursor-agent shows a "Composing" line with a spinner while
-  # generating, and the input box's footer flips its placeholder to
-  # "ctrl+c to stop" while the prompt is unsubmittable. Either of
-  # those means the input box won't accept new paste reliably; both
-  # disappear when the agent returns to idle.
-  if printf '%s\n' "$snapshot" | grep -Eqi 'approv(e|ing)|running command|executing|thinking(\.\.\.|…)|working(\.\.\.|…)|generating|Composing|ctrl\+c to stop'; then
+  if printf '%s\n' "$snapshot" | grep -Eqi 'approv(e|ing)|running command|executing|thinking(\.\.\.|…)|working(\.\.\.|…)|generating'; then
     printf '%s\n' 'busy'
     return
   fi

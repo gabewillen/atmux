@@ -207,13 +207,33 @@ mark_workspace_trusted() {
   # silence and sits forever.
   local trusted_at
   trusted_at="$(date -u +%Y-%m-%dT%H:%M:%S.000Z 2>/dev/null || echo '1970-01-01T00:00:00.000Z')"
-  # Escape backslash and quote in workspace path (rare in practice but
-  # cheap to defend; JSON otherwise allows arbitrary chars in strings).
-  local workspace_json
-  workspace_json="$(printf '%s' "$workspace" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g')"
-  printf '{"trustedAt":"%s","workspacePath":"%s"}\n' \
-    "$trusted_at" "$workspace_json" \
-    > "$project_dir/.workspace-trusted" 2>/dev/null || true
+  # Use python's json.dumps to encode the workspace path correctly. Hand-
+  # rolled escaping previously only handled `\` and `"`, which would
+  # silently emit malformed JSON for paths containing control characters
+  # (U+0000–U+001F: newlines, tabs, etc) — and a malformed trust file
+  # re-triggers the very prompt this fix is meant to suppress. python is
+  # already a hard dep elsewhere in the codebase (notify, plenty of
+  # tests). Fall back to the old sed escape if python is somehow absent.
+  local trust_json=""
+  if command -v python3 >/dev/null 2>&1; then
+    trust_json="$(
+      ATMUX_TRUSTED_AT="$trusted_at" ATMUX_WORKSPACE="$workspace" \
+      python3 -c '
+import json, os
+print(json.dumps({
+    "trustedAt": os.environ["ATMUX_TRUSTED_AT"],
+    "workspacePath": os.environ["ATMUX_WORKSPACE"],
+}))
+' 2>/dev/null
+    )"
+  fi
+  if [[ -z "$trust_json" ]]; then
+    local workspace_json
+    workspace_json="$(printf '%s' "$workspace" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g')"
+    trust_json="$(printf '{"trustedAt":"%s","workspacePath":"%s"}' \
+      "$trusted_at" "$workspace_json")"
+  fi
+  printf '%s\n' "$trust_json" > "$project_dir/.workspace-trusted" 2>/dev/null || true
 }
 
 mark_workspace_trusted

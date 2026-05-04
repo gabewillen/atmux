@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.18.2 — Pair-program role docs and demo
+
+- Added README docs for the built-in roles and a GIF demo for the
+  `pair-program` team role.
+- Added an auto-generated built-in role table to the project README,
+  split by agent roles and team roles, including links to role docs and
+  demos when present.
+
 ## 0.18.0 — Pair-programming team role
 
 Adds three new roles that compose into a driver/navigator pair-programming team. Goal: see how far a fast low-intelligence model can go with smart oversight from a high-intelligence model.

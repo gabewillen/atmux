@@ -279,15 +279,6 @@ main() {
     deadline=$(( $(date +%s) + timeout_sec ))
   fi
 
-  snap="$(tmux capture-pane -p -t "$pane" -S "-$lines" 2>/dev/null | tr -d '\r' || true)"
-  recent="$(printf '%s\n' "$snap" | tail -n 30)"
-  if detect_stuck_prompt "$recent"; then
-    emit_idle_notification "$agent" "$idle_seconds" "$exec_cmd"
-    (( repeat == 1 )) || exit 0
-    # Repeat against a stuck prompt would loop instantly; sleep one cycle.
-    sleep "$interval"
-  fi
-
   local stream_dir="" output_fifo="" event_fifo="" bridge_pid="" stream_rc=0
   set +e
   {
@@ -312,6 +303,22 @@ main() {
     stop_pane_event_stream "$pane" "$stream_dir" "$bridge_pid"
   }
   trap cleanup_stream EXIT INT TERM HUP
+
+  # Already-stuck pre-check: if the pane is sitting on a prompt
+  # ("Enter to select" / "Esc to cancel") at watch start, emit
+  # immediately. With --once we exit; in repeat mode we drain to the
+  # next active event so the main loop's idle timer starts AFTER the
+  # agent moves off the prompt — otherwise it would re-emit a second
+  # notification for the same stuck state once idle_seconds elapsed.
+  snap="$(tmux capture-pane -p -t "$pane" -S "-$lines" 2>/dev/null | tr -d '\r' || true)"
+  recent="$(printf '%s\n' "$snap" | tail -n 30)"
+  if detect_stuck_prompt "$recent"; then
+    emit_idle_notification "$agent" "$idle_seconds" "$exec_cmd"
+    (( repeat == 1 )) || exit 0
+    while read -r -t 1 _ <&8; do :; done   # drain
+    read -r _ <&8 || true                  # block for next event
+    last_change_ts="$(date +%s)"
+  fi
 
   while true; do
     local now idle_for next_deadline wait_for

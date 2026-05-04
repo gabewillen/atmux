@@ -267,7 +267,7 @@ render_builtin_role_rows() {
   local target_kind="$1"
   [[ -d "$ROOT/roles" ]] || return 0
 
-  local role_dir name manifest kind readme role_md link_target desc demo
+  local role_dir name readme role_md link_target desc demo
   case "$target_kind" in
     agent)
       set -- "$ROOT"/roles/agents/*
@@ -282,10 +282,6 @@ render_builtin_role_rows() {
   for role_dir in "$@"; do
     [[ -d "$role_dir" ]] || continue
     name="$(basename "$role_dir")"
-    manifest="$role_dir/manifest"
-
-    kind="$target_kind"
-    [[ "$kind" == "$target_kind" ]] || continue
 
     readme="$role_dir/README.md"
     role_md="$role_dir/role.md"

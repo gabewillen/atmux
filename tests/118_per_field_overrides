@@ -58,7 +58,7 @@ ADAPTER
 chmod +x "$adapter_dir/cmd"
 
 # Agent role used by all probes.
-agent_role_dir="$ATMUX_HOME/roles/probe-agent"
+agent_role_dir="$ATMUX_HOME/roles/agents/probe-agent"
 mkdir -p "$agent_role_dir"
 cat > "$agent_role_dir/role.md" <<EOF
 # Probe agent
@@ -183,7 +183,7 @@ printf '%s\n' "$out" | grep -q "dotted --set keys are only valid for team create
   || { echo "fail: dotted --set was not rejected on agent create; output: $out" >&2; exit 1; }
 
 # --- Case 6: team create --set <member>.field=value targets one member ---
-team_role_dir="$ATMUX_HOME/roles/probe-pair-overrides"
+team_role_dir="$ATMUX_HOME/roles/teams/probe-pair-overrides"
 mkdir -p "$team_role_dir"
 cat > "$team_role_dir/role.md" <<EOF
 # Probe team

@@ -18,12 +18,6 @@ atmux team create <name> --role pair-program
 atmux send --to <name>-driver "<your task description>"
 ```
 
-It can also be created directly:
-
-```sh
-atmux agent create driver --role driver
-```
-
 When used inside a pair-program team, the driver shares the team's
 worktree with the navigator. The navigator watches changes and sends
 corrective messages when the implementation goes off-track.

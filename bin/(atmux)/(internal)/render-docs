@@ -268,32 +268,32 @@ render_builtin_role_rows() {
   [[ -d "$ROOT/roles" ]] || return 0
 
   local role_dir name manifest kind readme role_md link_target desc demo
-  for role_dir in "$ROOT"/roles/*; do
+  case "$target_kind" in
+    agent)
+      set -- "$ROOT"/roles/agents/*
+      ;;
+    team)
+      set -- "$ROOT"/roles/teams/*
+      ;;
+    *)
+      return 0
+      ;;
+  esac
+  for role_dir in "$@"; do
     [[ -d "$role_dir" ]] || continue
     name="$(basename "$role_dir")"
     manifest="$role_dir/manifest"
-    [[ -f "$manifest" ]] || continue
 
-    kind="$(
-      awk -F= '
-        /^[[:space:]]*KIND=/ {
-          value=$2
-          gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
-          print value
-          exit
-        }
-      ' "$manifest"
-    )"
-    [[ -n "$kind" ]] || kind="agent"
+    kind="$target_kind"
     [[ "$kind" == "$target_kind" ]] || continue
 
     readme="$role_dir/README.md"
     role_md="$role_dir/role.md"
     if [[ -f "$readme" ]]; then
-      link_target="roles/$name/README.md"
+      link_target="${role_dir#"$ROOT/"}"/README.md
       desc="$(extract_first_markdown_paragraph "$readme")"
     else
-      link_target="roles/$name/role.md"
+      link_target="${role_dir#"$ROOT/"}"/role.md
       desc="$(extract_first_markdown_paragraph "$role_md")"
     fi
     if [[ -z "$desc" && -f "$role_md" ]]; then
@@ -303,7 +303,7 @@ render_builtin_role_rows() {
 
     demo=""
     if [[ -f "$role_dir/demo.gif" ]]; then
-      demo="[demo](roles/$name/demo.gif)"
+      demo="[demo](${role_dir#"$ROOT/"}/demo.gif)"
     fi
 
     printf '| [`%s`](%s) | %s | %s |\n' "$name" "$link_target" "$desc" "$demo"

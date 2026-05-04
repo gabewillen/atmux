@@ -8,10 +8,11 @@ usage() {
 Usage:
   atmux role list
   atmux role show <name>
-  atmux role resolve <name>
+  atmux role resolve [--kind agent|team] <name>
   atmux role kind <name>
   atmux role create <name> (--from-file <path> | --from-stdin | --description <text>)
                            [--kind agent|team]
+                           [--parent-team <name>]
                            [--intelligence <0-100>] [--adapters <a,b,...>]
                            [--hooks <start,stop>] [--scope repo|global|auto]
                            [--force]
@@ -30,13 +31,17 @@ Description:
   ATMUX_ROLE_STATE_DIR / ATMUX_WORKTREE in their start hook.
 
 Resolution precedence (first match wins):
-    <repo>/.atmux/roles/<name>
-    ~/.atmux/roles/<name>
-    <source_root>/roles/<name>
+    ATMUX_ROLE_SEARCH_PREPEND/<name>      (team member spawning only)
+    <repo>/.atmux/roles/agents/<name>
+    ~/.atmux/roles/agents/<name>
+    <source_root>/roles/agents/<name>
+    <repo>/.atmux/roles/teams/<name>
+    ~/.atmux/roles/teams/<name>
+    <source_root>/roles/teams/<name>
 
-`create` writes the role under ~/.atmux/roles/<name> by default. --scope repo
-writes under <repo>/.atmux/roles/<name>; --scope auto picks repo if inside a
-git repo with an existing .atmux/, otherwise global.
+`create` writes agents under roles/agents/<name> and teams under
+roles/teams/<name>. Use --parent-team <team> with --kind agent to create a
+team-private member role under roles/teams/<team>/agents/<name>.
 USAGE
 }
 
@@ -45,6 +50,7 @@ create_usage() {
 Usage:
   atmux role create <name> (--from-file <path> | --from-stdin | --description <text>)
                            [--kind agent|team]
+                           [--parent-team <name>]
                            [--intelligence <0-100>] [--adapters <a,b,...>]
                            [--hooks <start,stop>] [--scope repo|global|auto]
                            [--force]
@@ -57,6 +63,7 @@ Description:
 
   Optional manifest fields (omit any to leave it out):
     --kind <kind>         agent (default) or team
+    --parent-team <name>  create an agent role private to a team
     --intelligence <n>    default agent intelligence (0-100; agent kind only)
     --adapters <list>     comma-separated allow-list of adapter names (agent kind only)
 
@@ -97,8 +104,19 @@ role_search_paths() {
   printf '%s\n' "$sr/roles"
 }
 
+role_search_prepend_paths() {
+  local raw="${ATMUX_ROLE_SEARCH_PREPEND:-}" path
+  [[ -n "$raw" ]] || return 0
+  local old_ifs="$IFS"
+  IFS=:
+  for path in $raw; do
+    [[ -n "$path" ]] && printf '%s\n' "$path"
+  done
+  IFS="$old_ifs"
+}
+
 role_name_valid() {
-  # Role names live as flat directory names — no slashes, no relative path
+  # Role names live as single directory names — no slashes, no relative path
   # segments, no leading dot. This keeps `--role <name>` from escaping the
   # search roots via `..` traversal.
   local name="$1"
@@ -113,16 +131,69 @@ role_name_valid() {
   return 0
 }
 
+role_path_kind() {
+  # Args: <role_dir> <fallback_kind>. Hierarchical paths encode kind.
+  local dir="$1" fallback="${2:-}"
+  case "$dir" in
+    */roles/agents/*) printf '%s\n' "agent"; return 0 ;;
+    */roles/teams/*/agents/*) printf '%s\n' "agent"; return 0 ;;
+    */roles/teams/*) printf '%s\n' "team"; return 0 ;;
+  esac
+  if [[ -n "$fallback" ]]; then
+    printf '%s\n' "$fallback"
+  else
+    read_manifest_kind "$dir"
+  fi
+}
+
 resolve_role_dir() {
   local name="$1"
+  local want_kind="${2:-}"
   role_name_valid "$name" || return 1
-  local base
+  case "$want_kind" in
+    ""|agent|team) ;;
+    *) return 1 ;;
+  esac
+  local base dir kind
+  if [[ "$want_kind" != "team" ]]; then
+    while IFS= read -r base; do
+      [[ -n "$base" ]] || continue
+      dir="$base/$name"
+      [[ -d "$dir" ]] || continue
+      kind="$(role_path_kind "$dir" "agent")"
+      [[ -z "$want_kind" || "$kind" == "$want_kind" ]] || continue
+      printf '%s\n' "$dir"
+      return 0
+    done < <(role_search_prepend_paths)
+  fi
   while IFS= read -r base; do
     [[ -n "$base" ]] || continue
-    if [[ -d "$base/$name" ]]; then
-      printf '%s\n' "$base/$name"
+    if [[ "$want_kind" != "team" && -d "$base/agents/$name" ]]; then
+      printf '%s\n' "$base/agents/$name"
       return 0
     fi
+  done < <(role_search_paths)
+  while IFS= read -r base; do
+    [[ -n "$base" ]] || continue
+    if [[ "$want_kind" != "agent" && -d "$base/teams/$name" ]]; then
+      printf '%s\n' "$base/teams/$name"
+      return 0
+    fi
+  done < <(role_search_paths)
+  return 1
+}
+
+resolve_private_agent_role_dir() {
+  local name="$1"
+  role_name_valid "$name" || return 1
+  local base dir
+  while IFS= read -r base; do
+    [[ -n "$base" ]] || continue
+    while IFS= read -r dir; do
+      [[ -d "$dir" ]] || continue
+      printf '%s\n' "$dir"
+      return 0
+    done < <(find "$base/teams" -mindepth 3 -maxdepth 3 -type d -path "*/agents/$name" 2>/dev/null | sort)
   done < <(role_search_paths)
   return 1
 }
@@ -157,23 +228,35 @@ list_roles() {
     [[ -d "$base" ]] || continue
     while IFS= read -r dir; do
       name="$(basename "$dir")"
-      case "$seen" in
-        *"|$name|"*) continue ;;
-      esac
-      seen="$seen|$name|"
-      kind="$(read_manifest_kind "$dir")"
+      kind="$(role_path_kind "$dir" "agent")"
+      case "$seen" in *"|$kind:$name|"*) continue ;; esac
+      seen="$seen|$kind:$name|"
       printf '%s\t%s\t%s\n' "$name" "$kind" "$dir"
-    done < <(find "$base" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | sort)
+    done < <(find "$base/agents" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | sort)
+    while IFS= read -r dir; do
+      name="$(basename "$dir")"
+      kind="$(role_path_kind "$dir" "team")"
+      case "$seen" in *"|$kind:$name|"*) continue ;; esac
+      seen="$seen|$kind:$name|"
+      printf '%s\t%s\t%s\n' "$name" "$kind" "$dir"
+    done < <(find "$base/teams" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | sort)
   done < <(role_search_paths)
 }
 
 resolve_create_dest() {
   # Prints the absolute destination directory for `role create` based on scope.
-  # Args: <name> <scope>
-  local name="$1" scope="$2" rr=""
+  # Args: <name> <scope> <kind> <parent_team>
+  local name="$1" scope="$2" kind="$3" parent_team="${4:-}" rr="" rel=""
+  if [[ -n "$parent_team" ]]; then
+    rel="teams/$parent_team/agents/$name"
+  elif [[ "$kind" == "team" ]]; then
+    rel="teams/$name"
+  else
+    rel="agents/$name"
+  fi
   case "$scope" in
     global)
-      printf '%s\n' "$ATMUX_HOME/roles/$name"
+      printf '%s\n' "$ATMUX_HOME/roles/$rel"
       ;;
     repo)
       rr="$(git rev-parse --show-toplevel 2>/dev/null || true)"
@@ -181,14 +264,14 @@ resolve_create_dest() {
         echo "atmux role create: --scope repo requires being inside a git repo" >&2
         return 1
       fi
-      printf '%s\n' "$rr/.atmux/roles/$name"
+      printf '%s\n' "$rr/.atmux/roles/$rel"
       ;;
     auto)
       rr="$(git rev-parse --show-toplevel 2>/dev/null || true)"
       if [[ -n "$rr" && -d "$rr/.atmux" ]]; then
-        printf '%s\n' "$rr/.atmux/roles/$name"
+        printf '%s\n' "$rr/.atmux/roles/$rel"
       else
-        printf '%s\n' "$ATMUX_HOME/roles/$name"
+        printf '%s\n' "$ATMUX_HOME/roles/$rel"
       fi
       ;;
     *)
@@ -339,6 +422,7 @@ create_role() {
   local name=""
   local description="" body_file="" body_stdin=0
   local kind="agent"
+  local parent_team=""
   local intelligence="" adapters="" hooks=""
   local scope="auto" force=0
 
@@ -356,6 +440,8 @@ create_role() {
       --from-stdin)         body_stdin=1; shift ;;
       --kind)               kind="$2"; shift 2 ;;
       --kind=*)             kind="${1#--kind=}"; shift ;;
+      --parent-team)        parent_team="$2"; shift 2 ;;
+      --parent-team=*)      parent_team="${1#--parent-team=}"; shift ;;
       --intelligence)       intelligence="$2"; shift 2 ;;
       --intelligence=*)     intelligence="${1#--intelligence=}"; shift ;;
       --adapters)           adapters="$2"; shift 2 ;;
@@ -385,6 +471,10 @@ create_role() {
     echo "atmux role create: invalid role name: $name (want ^[A-Za-z0-9._-]+\$, no .. or /)" >&2
     return 2
   fi
+  if [[ -n "$parent_team" ]] && ! role_name_valid "$parent_team"; then
+    echo "atmux role create: invalid --parent-team: $parent_team (want ^[A-Za-z0-9._-]+\$, no .. or /)" >&2
+    return 2
+  fi
 
   # Exactly one body source.
   local sources=0
@@ -410,6 +500,10 @@ create_role() {
   esac
 
   if [[ "$kind" == "team" ]]; then
+    if [[ -n "$parent_team" ]]; then
+      echo "atmux role create: --parent-team is only valid for --kind agent" >&2
+      return 2
+    fi
     if [[ -n "$intelligence" ]]; then
       echo "atmux role create: --intelligence is not valid for --kind team" >&2
       return 2
@@ -440,7 +534,7 @@ create_role() {
   fi
 
   local dest
-  if ! dest="$(resolve_create_dest "$name" "$scope")"; then
+  if ! dest="$(resolve_create_dest "$name" "$scope" "$kind" "$parent_team")"; then
     return 2
   fi
 
@@ -502,9 +596,33 @@ case "$sub" in
     exit 1
     ;;
   resolve)
+    want_kind=""
+    case "${1:-}" in
+      --kind)
+        want_kind="${2:-}"
+        shift 2 || true
+        ;;
+      --kind=*)
+        want_kind="${1#--kind=}"
+        shift
+        ;;
+    esac
+    case "$want_kind" in
+      ""|agent|team) ;;
+      *) echo "usage: atmux role resolve [--kind agent|team] <name>" >&2; exit 2 ;;
+    esac
     name="${1:-}"
-    [[ -n "$name" ]] || { echo "usage: atmux role resolve <name>" >&2; exit 2; }
-    if dir="$(resolve_role_dir "$name")"; then
+    [[ -n "$name" ]] || { echo "usage: atmux role resolve [--kind agent|team] <name>" >&2; exit 2; }
+    if dir="$(resolve_role_dir "$name" "$want_kind")"; then
+      printf '%s\n' "$dir"
+      exit 0
+    fi
+    exit 1
+    ;;
+  private-agent)
+    name="${1:-}"
+    [[ -n "$name" ]] || { echo "usage: atmux role private-agent <name>" >&2; exit 2; }
+    if dir="$(resolve_private_agent_role_dir "$name")"; then
       printf '%s\n' "$dir"
       exit 0
     fi
@@ -514,7 +632,7 @@ case "$sub" in
     name="${1:-}"
     [[ -n "$name" ]] || { echo "usage: atmux role kind <name>" >&2; exit 2; }
     if dir="$(resolve_role_dir "$name")"; then
-      read_manifest_kind "$dir"
+      role_path_kind "$dir"
       exit 0
     fi
     echo "role not found: $name" >&2

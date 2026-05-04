@@ -61,7 +61,7 @@ chmod +x "$adapter_dir/cmd"
 
 # Probe role with a start hook that dumps env to a marker file and a stop
 # hook that records that it ran with the expected state.
-roles_dir="$ATMUX_HOME/roles/probe"
+roles_dir="$ATMUX_HOME/roles/agents/probe"
 mkdir -p "$roles_dir"
 cat > "$roles_dir/role.md" <<'EOF'
 # Probe Role

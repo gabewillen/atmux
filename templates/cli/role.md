@@ -1,10 +1,11 @@
 ```sh
 atmux role list
 atmux role show <name>
-atmux role resolve <name>
+atmux role resolve [--kind agent|team] <name>
 atmux role kind <name>
 atmux role create <name> (--from-file <path> | --from-stdin | --description <text>) \
                          [--kind agent|team] \
+                         [--parent-team <name>] \
                          [--intelligence <0-100>] [--adapters <a,b,...>] \
                          [--hooks <start,stop>] [--scope repo|global|auto] [--force]
 ```
@@ -20,6 +21,6 @@ Roles are adapter-agnostic. A role is a directory containing any of:
 
 The team start hook receives: `ATMUX_TEAM`, `ATMUX_REPO`, `ATMUX_WORKTREE`, `ATMUX_ROLE`, `ATMUX_ROLE_DIR`, `ATMUX_ROLE_STATE_DIR` (`~/.atmux/teams/<repo>/<team>/role/`).
 
-Resolution precedence (first match wins): `<repo>/.atmux/roles/<name>` → `~/.atmux/roles/<name>` → `<source-root>/roles/<name>`.
+Resolution precedence is kind-aware. Agent roles resolve from `roles/agents/<name>`, team roles resolve from `roles/teams/<name>`, and team member spawning temporarily prepends the parent team's `roles/teams/<team>/agents/` directory so private members like `driver` are only reachable from that team.
 
-`create` writes the role to `~/.atmux/roles/<name>` by default. `--scope repo` writes under `<repo>/.atmux/roles/<name>`; `--scope auto` picks repo if inside a git repo with an existing `.atmux/`, otherwise global.
+`create` writes agent roles to `roles/agents/<name>` and team roles to `roles/teams/<name>`. `--parent-team <team>` with `--kind agent` writes a team-private member role to `roles/teams/<team>/agents/<name>`. `--scope repo` writes under `<repo>/.atmux/roles/...`; `--scope auto` picks repo if inside a git repo with an existing `.atmux/`, otherwise global.

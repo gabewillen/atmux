@@ -24,27 +24,27 @@ cleanup() { rm -rf "$WORK_ROOT"; }
 trap cleanup EXIT
 
 # Role with no manifest at all → defaults to agent
-mkdir -p "$ATMUX_HOME/roles/no-manifest"
-cat > "$ATMUX_HOME/roles/no-manifest/role.md" <<EOF
+mkdir -p "$ATMUX_HOME/roles/agents/no-manifest"
+cat > "$ATMUX_HOME/roles/agents/no-manifest/role.md" <<EOF
 # No-manifest role
 EOF
 
 # Role with KIND=agent manifest
-mkdir -p "$ATMUX_HOME/roles/just-agent"
-cat > "$ATMUX_HOME/roles/just-agent/role.md" <<EOF
+mkdir -p "$ATMUX_HOME/roles/agents/just-agent"
+cat > "$ATMUX_HOME/roles/agents/just-agent/role.md" <<EOF
 # Agent role
 EOF
-cat > "$ATMUX_HOME/roles/just-agent/manifest" <<EOF
+cat > "$ATMUX_HOME/roles/agents/just-agent/manifest" <<EOF
 KIND=agent
 INTELLIGENCE=20
 EOF
 
 # Role with KIND=team manifest
-mkdir -p "$ATMUX_HOME/roles/just-team"
-cat > "$ATMUX_HOME/roles/just-team/role.md" <<EOF
+mkdir -p "$ATMUX_HOME/roles/teams/just-team"
+cat > "$ATMUX_HOME/roles/teams/just-team/role.md" <<EOF
 # Team role
 EOF
-cat > "$ATMUX_HOME/roles/just-team/manifest" <<EOF
+cat > "$ATMUX_HOME/roles/teams/just-team/manifest" <<EOF
 KIND=team
 EOF
 

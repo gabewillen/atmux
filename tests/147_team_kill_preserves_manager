@@ -48,7 +48,7 @@ ADAPTER
 chmod +x "$adapter_dir/cmd"
 
 # Team-kind role spawning one member.
-roles_dir="$ATMUX_HOME/roles/duo"
+roles_dir="$ATMUX_HOME/roles/teams/duo"
 mkdir -p "$roles_dir"
 echo "# duo" > "$roles_dir/role.md"
 cat > "$roles_dir/manifest" <<EOF
@@ -57,8 +57,8 @@ MEMBERS=(
   "alpha --role worker --intelligence 20 --adapter mock --shared-worktree"
 )
 EOF
-mkdir -p "$ATMUX_HOME/roles/worker"
-echo "# worker" > "$ATMUX_HOME/roles/worker/role.md"
+mkdir -p "$ATMUX_HOME/roles/agents/worker"
+echo "# worker" > "$ATMUX_HOME/roles/agents/worker/role.md"
 
 cd "$REPO_ROOT"
 team_name="duo$$"

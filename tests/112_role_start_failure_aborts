@@ -43,7 +43,7 @@ esac
 ADAPTER
 chmod +x "$adapter_dir/cmd"
 
-roles_dir="$ATMUX_HOME/roles/failing"
+roles_dir="$ATMUX_HOME/roles/agents/failing"
 mkdir -p "$roles_dir"
 echo "# failing" > "$roles_dir/role.md"
 cat > "$roles_dir/start" <<'EOF'

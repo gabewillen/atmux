@@ -67,9 +67,12 @@ esac
 ADAPTER
 chmod +x "$adapter_dir/cmd"
 
-# A trivial agent role used by both members. Nothing fancy — just allows the
-# mock adapter and records (via stop hook) that it was reached.
-member_role_dir="$ATMUX_HOME/roles/member-probe"
+# The team role itself — declares two MEMBERS plus a start/stop pair so we
+# can assert the hooks run with the expected env. Its member role lives under
+# the team's private agents/ directory, so bare `--role member-probe` only
+# resolves while this team is spawning MEMBERS.
+team_role_dir="$ATMUX_HOME/roles/teams/probe-pair"
+member_role_dir="$team_role_dir/agents/member-probe"
 mkdir -p "$member_role_dir"
 cat > "$member_role_dir/role.md" <<EOF
 # Member probe role
@@ -86,9 +89,6 @@ echo "stopped \${ATMUX_AGENT_NAME:-?}" >> "$MARKERS/member-stops"
 EOF
 chmod +x "$member_role_dir/stop"
 
-# The team role itself — declares two MEMBERS plus a start/stop pair so we
-# can assert the hooks run with the expected env.
-team_role_dir="$ATMUX_HOME/roles/probe-pair"
 mkdir -p "$team_role_dir"
 cat > "$team_role_dir/role.md" <<EOF
 # Probe team role
@@ -132,6 +132,12 @@ chmod +x "$team_role_dir/stop"
 
 cd "$REPO_ROOT"
 team_short="lifecycle$$"
+
+# Private team member roles should not be spawnable as standalone agent roles.
+err="$( ATMUX_ALLOW_OUTSIDE_TMUX=1 ATMUX_AGENT_NAME=test-mgr \
+  "$ATMUX_BIN" agent create "standalone-member$$" --role member-probe --intelligence 20 --adapter mock 2>&1 || true )"
+echo "$err" | grep -q "private to a team" \
+  || { echo "fail: private member role resolved outside its team; got: $err" >&2; exit 1; }
 
 # --shared-worktree opts out of the default fresh-worktree behavior so
 # this test continues to verify env propagation against the repo root,

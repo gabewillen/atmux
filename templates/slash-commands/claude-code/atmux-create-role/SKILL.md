@@ -5,13 +5,13 @@ allowed-tools: Bash(atmux role create*, mktemp*, rm*)
 ---
 # ATMUX Create Role
 
-Use `atmux role create` to scaffold a new role directory. The created role is discoverable by `atmux role resolve <name>` and usable as `atmux agent create <agent> --role <name>`.
+Use `atmux role create` to scaffold a new role directory. The created role is discoverable by `atmux role resolve --kind agent <name>` and usable as `atmux agent create <agent> --role <name>`.
 
 ## Arguments
 
 `$ARGUMENTS` should contain fields separated by `|`:
 
-`name | description | intelligence? | adapters? | hooks? | scope?`
+`name | description | intelligence? | adapters? | hooks? | scope? | parent-team?`
 
 | # | Field | Required | Notes |
 |---|-------|----------|-------|
@@ -21,6 +21,7 @@ Use `atmux role create` to scaffold a new role directory. The created role is di
 | 4 | `adapters` | no | Comma-separated subset (e.g. `claude-code,codex`). |
 | 5 | `hooks` | no | Comma-separated subset of `start,stop` (or `none`). |
 | 6 | `scope` | no | `repo` \| `global` \| `auto` (default `auto`). |
+| 7 | `parent-team` | no | Team name for a private member role under `roles/teams/<team>/agents/<name>`. |
 
 Examples:
 
@@ -37,6 +38,7 @@ Examples:
    - `--adapters <list>` if provided.
    - `--hooks <list>` if provided (or `--hooks none` to be explicit).
    - `--scope <repo|global|auto>` if provided (defaults to `auto`).
+   - `--parent-team <team>` if provided.
 4. Clean up the temp file with `rm -f`.
 5. Report the path printed by `atmux role create` and the suggested invocation:
    `atmux agent create <suggested-agent-name> --role <name> --intelligence <n> [--adapter <first-adapter>]`

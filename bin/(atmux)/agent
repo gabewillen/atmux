@@ -1384,7 +1384,14 @@ ensure_team_dashboard_for_agent() {
     read -r width height < <(team_dimensions_for_panes "$panes")
     tmux set-window-option -t "${team_session}:0" window-size manual >/dev/null 2>&1 || true
     tmux resize-window -t "${team_session}:0" -x "$width" -y "$height" >/dev/null 2>&1 || true
-    tmux select-layout -t "${team_session}:0" tiled >/dev/null 2>&1 || true
+    # `tiled` for 2 panes stacks them top/bottom on most window aspect
+    # ratios, which wastes screen real estate on the typical wide
+    # monitor. Use `even-horizontal` (side-by-side) for 2 specifically;
+    # `tiled` is still the right call for 3+ where each row would be
+    # too narrow.
+    local layout="tiled"
+    (( panes == 2 )) && layout="even-horizontal"
+    tmux select-layout -t "${team_session}:0" "$layout" >/dev/null 2>&1 || true
   }
 
   apply_team_scroll_settings() {

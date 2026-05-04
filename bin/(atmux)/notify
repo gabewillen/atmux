@@ -396,8 +396,20 @@ extract_prompt_input() {
   local input_end_marker=""
   input_end_marker="$(resolve_input_end_for_pane "$pane" "${ATMUX_SOURCE_ROOT:-${ATMUX_HOME}/src/atmux}" 2>/dev/null || true)"
   if [[ -n "$input_end_marker" ]]; then
-    extract_prompt_input_with_end_marker "$pane" "$prompt_prefix" "$input_end_marker"
-    return 0
+    # Only honor the end-marker path when perl is callable AND the
+    # extractor exits 0. If perl is missing or the script blows up,
+    # fall through to the legacy capture-to-cursor path below — empty
+    # stdout from a crashed perl is indistinguishable from "input was
+    # genuinely empty," so we can't trust it as the final answer.
+    if command -v perl >/dev/null 2>&1; then
+      local marker_out marker_rc=0
+      marker_out="$(extract_prompt_input_with_end_marker "$pane" "$prompt_prefix" "$input_end_marker")" || marker_rc=$?
+      if (( marker_rc == 0 )); then
+        printf '%s' "$marker_out"
+        return 0
+      fi
+    fi
+    # else: drop into the legacy path
   fi
 
   snap="$(tmux capture-pane -p -t "$pane" 2>/dev/null || true)"

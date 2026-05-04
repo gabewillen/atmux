@@ -71,9 +71,6 @@ watch_via_status() {
 
   while true; do
     now="$(date +%s)"
-    if (( now >= deadline )); then
-      return 124
-    fi
 
     status_xml="$(ATMUX_HOME="$ATMUX_HOME" \
       ATMUX_SOURCE_ROOT="${ATMUX_SOURCE_ROOT:-$ATMUX_HOME/src/atmux}" \
@@ -81,6 +78,10 @@ watch_via_status() {
       "$status_script" 2>/dev/null || true)"
     state="$(printf '%s' "$status_xml" | sed -n 's/.*state="\([^"]*\)".*/\1/p' | head -n1)"
 
+    # Check idle BEFORE the deadline so callers using
+    # `--idle 1 --timeout 1` (the idle-watch anti-spam re-arm gate)
+    # observe idle on the same tick they hit the deadline. Reverse
+    # ordering would always return 124 when timeout==idle.
     case "$state" in
       idle|errored|usage-limit)
         if (( first_idle_ts == 0 )); then
@@ -94,6 +95,10 @@ watch_via_status() {
         first_idle_ts=0
         ;;
     esac
+
+    if (( now >= deadline )); then
+      return 124
+    fi
 
     sleep "$interval"
   done

@@ -41,14 +41,21 @@ _atmux_git() {
     "$ATMUX_REAL_GIT" "$@"
     return $?
   fi
-  local candidate resolved
+  # Search the system default PATH first (skipping any agent-injected
+  # git shim), then fall back to `which -a` over the current PATH and
+  # finally a hardcoded list of common locations. We can't use
+  # `command -v -p` because bash silently ignores `-p` when `-v` is
+  # present; instead, prefix `PATH=$(getconf PATH)` so `command -v`
+  # resolves against the system default PATH for that one invocation.
+  local candidate resolved default_path
+  default_path="$(getconf PATH 2>/dev/null || printf '/usr/bin:/bin:/usr/sbin:/sbin')"
   while IFS= read -r candidate; do
     [[ -n "$candidate" && -x "$candidate" ]] || continue
     resolved="$(cd -- "$(dirname -- "$candidate")" 2>/dev/null && pwd -P)/$(basename -- "$candidate")"
     [[ "$resolved" != *'/git-shim/git' ]] || continue
     "$candidate" "$@"
     return $?
-  done < <(command -v -p git 2>/dev/null
+  done < <(PATH="$default_path" command -v git 2>/dev/null
            which -a git 2>/dev/null
            printf '%s\n' /usr/bin/git /opt/homebrew/bin/git /usr/local/bin/git)
   return 127

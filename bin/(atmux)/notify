@@ -1378,7 +1378,14 @@ build_notification() {
       "$attrs" \
       "$(xml_escape "$body")"
   else
-    printf '<notification type="%s" from="%s"%s%s />' \
+    # Self-closing tag with NO space before `/>`. cursor-agent treats
+    # ` /<chars>` in its input box as a slash-command invocation; the
+    # space + `/` of ` />` would arm a stray `/notification` slash
+    # command and Enter would run that instead of submitting the
+    # message. The XML spec accepts both `<x />` and `<x/>` so this
+    # is purely a defensive tightening for adapters with sticky
+    # slash-command parsers.
+    printf '<notification type="%s" from="%s"%s%s/>' \
       "$(xml_escape "$type")" \
       "$(xml_escape "$from")" \
       "$cmd_attr" \

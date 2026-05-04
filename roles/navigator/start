@@ -135,14 +135,16 @@ fi
 # spawns members named `${ATMUX_TEAM}-driver` / `${ATMUX_TEAM}-navigator`.
 driver_name="${ATMUX_TEAM:-}-driver"
 
-idle_watch_script="$ATMUX_ROLE_DIR/idle-watch"
-if [[ ! -x "$idle_watch_script" ]]; then
-  echo "navigator start: idle-watch script not executable at $idle_watch_script — skipping idle watcher" >&2
-else
-  spawn_window "idle-watch" "$state/idle-watch.log" \
-    "$idle_watch_script" "$driver_name" "$nav_pane" "$state/idle-watch.log" \
-    || true
-fi
+# `atmux agent watch` already implements edge-triggered idle detection
+# (one emit per active→idle transition by default, like `git watch` /
+# `path watch`) and notification fan-out via --exec. No role-local
+# script needed — keeping the policy in atmux means every consumer
+# gets the same definition of "idle".
+spawn_window "idle-watch" "$state/idle-watch.log" \
+  atmux agent watch "$driver_name" \
+    --idle "${IDLE_SECONDS:-30}" \
+    --exec "atmux notify --pane $nav_pane --xml -" \
+  || true
 
 # --- 3. follow-the-worktree tracker ------------------------------------------
 

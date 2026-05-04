@@ -10,21 +10,33 @@ source "$HERE/../notify"
 usage() {
   cat <<'USAGE'
 Usage:
-  atmux agent watch <name|session> [--idle <seconds>] [--timeout <seconds>] [--interval <seconds>] [--lines <n>]
+  atmux agent watch <name|session> [--idle <seconds>] [--timeout <seconds>]
+                                   [--interval <seconds>] [--lines <n>]
+                                   [--exec <cmd>] [--once]
 
 Description:
-  Wait until an agent's pane output has been stable (unchanged) for --idle
-  seconds. Exits 0 when idle, 124 on timeout.
+  Continuously emit one notification per active→idle transition of the
+  named agent. Same edge-triggered, repeat-by-default semantics as
+  `atmux git watch` and `atmux path watch` — pass --once for single-shot.
 
-  Stuck interactive prompts (e.g. "Enter to select" / "Esc to cancel") are
-  always detected and exit immediately regardless of --idle.
+  Stuck interactive prompts (e.g. "Enter to select" / "Esc to cancel")
+  are always treated as idle.
 
-  Defaults: --idle 30, --timeout 120, --interval 2, --lines 80.
+  On each idle, emits a canonical notification XML to stdout:
+    <notification type="agent-idle" from="<name>" reason="idle" stable_seconds="N"/>
+  --exec <cmd> additionally pipes that XML to `bash -c <cmd>` (matches
+  `atmux git watch` / `atmux path watch`).
+
+  --once exits after the first emit (rc 0 = idle observed, 124 = timeout
+  before idle).
+
+  Defaults: --idle 30, --timeout 0 (no cap; --once falls back to 120),
+  --interval 2, --lines 80.
 
 Examples:
-  atmux agent watch worker
-  atmux agent watch worker --idle 10 --timeout 60
-  atmux agent watch atmux-myrepo-planner --idle 5
+  atmux agent watch driver --idle 30 \
+    --exec "atmux notify --pane %12 --xml -"
+  atmux agent watch worker --idle 10 --timeout 60 --once
 USAGE
 }
 
@@ -67,7 +79,14 @@ watch_via_status() {
   local idle_seconds="$3" timeout_sec="$4" interval="$5"
 
   local deadline now state status_xml first_idle_ts=0
-  deadline=$(( $(date +%s) + timeout_sec ))
+  # timeout_sec=0 means "no timeout" — used with --repeat so the watcher
+  # runs forever (until killed). Pick a far-future deadline so the
+  # comparison below never trips.
+  if (( timeout_sec == 0 )); then
+    deadline=$(( $(date +%s) + 365 * 24 * 3600 ))
+  else
+    deadline=$(( $(date +%s) + timeout_sec ))
+  fi
 
   while true; do
     now="$(date +%s)"
@@ -104,12 +123,52 @@ watch_via_status() {
   done
 }
 
+emit_idle_notification() {
+  local agent="$1" idle_seconds="$2" exec_cmd="$3"
+  local xml
+  xml="$(printf '<notification type="agent-idle" from="%s" reason="idle" stable_seconds="%s"/>' \
+    "$(xml_escape "$agent")" \
+    "$(xml_escape "$idle_seconds")")"
+  printf '%s\n' "$xml"
+  if [[ -n "$exec_cmd" ]]; then
+    printf '%s' "$xml" | bash -c "$exec_cmd" >/dev/null 2>&1 || true
+  fi
+}
+
+# wait_for_active: block until the agent is NOT idle (status != idle/errored/
+# usage-limit, or pane output changes). Used between --repeat emits to
+# enforce edge-triggered semantics — one notification per active→idle cycle.
+wait_for_active() {
+  local pane="$1" status_script="$2" interval="$3"
+  local snap_before snap_now state
+  if [[ -n "$status_script" ]]; then
+    while true; do
+      state="$(ATMUX_HOME="$ATMUX_HOME" \
+        ATMUX_SOURCE_ROOT="${ATMUX_SOURCE_ROOT:-$ATMUX_HOME/src/atmux}" \
+        ATMUX_STATUS_PASSIVE=1 ATMUX_TARGET_PANE="$pane" \
+        "$status_script" 2>/dev/null | sed -n 's/.*state="\([^"]*\)".*/\1/p' | head -n1)"
+      case "$state" in
+        idle|errored|usage-limit) sleep "$interval" ;;
+        *) return 0 ;;
+      esac
+    done
+  fi
+  snap_before="$(tmux capture-pane -p -t "$pane" 2>/dev/null || true)"
+  while true; do
+    sleep "$interval"
+    snap_now="$(tmux capture-pane -p -t "$pane" 2>/dev/null || true)"
+    [[ "$snap_now" != "$snap_before" ]] && return 0
+  done
+}
+
 main() {
   local agent=""
   local idle_seconds="30"
-  local timeout_sec="120"
+  local timeout_sec=""
   local interval="2"
   local lines="80"
+  local exec_cmd=""
+  local once=0
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -133,6 +192,14 @@ main() {
         lines="${2:-}"
         shift 2
         ;;
+      --exec)
+        exec_cmd="${2:-}"
+        shift 2
+        ;;
+      --once)
+        once=1
+        shift
+        ;;
       -h|--help|help)
         usage
         exit 0
@@ -146,6 +213,17 @@ main() {
   done
 
   [[ -n "$agent" ]] || { echo "missing --agent" >&2; exit 2; }
+
+  # Default --timeout: 0 (no cap) in repeat mode, 120 in --once mode so
+  # one-shot callers don't block forever on a never-idle agent.
+  if [[ -z "$timeout_sec" ]]; then
+    if (( once == 1 )); then
+      timeout_sec="120"
+    else
+      timeout_sec="0"
+    fi
+  fi
+  local repeat=$((1 - once))
 
   local repo_name session pane
   repo_name="$(repo_name_from_context)"
@@ -182,17 +260,32 @@ main() {
   fi
 
   if [[ -n "$status_script" ]]; then
-    watch_via_status "$pane" "$status_script" "$idle_seconds" "$timeout_sec" "$interval"
-    exit $?
+    while true; do
+      local rc=0
+      watch_via_status "$pane" "$status_script" "$idle_seconds" "$timeout_sec" "$interval" || rc=$?
+      if (( rc != 0 )); then
+        exit "$rc"
+      fi
+      emit_idle_notification "$agent" "$idle_seconds" "$exec_cmd"
+      (( repeat == 1 )) || exit 0
+      wait_for_active "$pane" "$status_script" "$interval"
+    done
   fi
 
   local deadline last_change_ts snap recent
-  deadline=$(( $(date +%s) + timeout_sec ))
+  if (( timeout_sec == 0 )); then
+    deadline=$(( $(date +%s) + 365 * 24 * 3600 ))
+  else
+    deadline=$(( $(date +%s) + timeout_sec ))
+  fi
 
   snap="$(tmux capture-pane -p -t "$pane" -S "-$lines" 2>/dev/null | tr -d '\r' || true)"
   recent="$(printf '%s\n' "$snap" | tail -n 30)"
   if detect_stuck_prompt "$recent"; then
-    exit 0
+    emit_idle_notification "$agent" "$idle_seconds" "$exec_cmd"
+    (( repeat == 1 )) || exit 0
+    # Repeat against a stuck prompt would loop instantly; sleep one cycle.
+    sleep "$interval"
   fi
 
   local stream_dir="" output_fifo="" event_fifo="" bridge_pid="" stream_rc=0
@@ -226,7 +319,19 @@ main() {
 
     idle_for=$(( now - last_change_ts ))
     if (( idle_for >= idle_seconds )); then
-      exit 0
+      emit_idle_notification "$agent" "$idle_seconds" "$exec_cmd"
+      (( repeat == 1 )) || exit 0
+      # Re-arm: wait for the next pane change (active again), then loop
+      # back into the idle wait. Blocks on the same event fifo.
+      while read -r -t 1 _ <&8; do :; done   # drain
+      read -r _ <&8 || true                  # block for next event
+      last_change_ts="$(date +%s)"
+      if (( timeout_sec == 0 )); then
+        deadline=$(( last_change_ts + 365 * 24 * 3600 ))
+      else
+        deadline=$(( last_change_ts + timeout_sec ))
+      fi
+      continue
     fi
 
     if (( now >= deadline )); then

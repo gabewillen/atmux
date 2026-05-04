@@ -37,7 +37,7 @@ driver's pane. When the driver transitions from active to idle (pane
 output stable for ~30s following recent activity), you receive ONE:
 
 ```xml
-<watch type="agent" id="${ATMUX_TEAM}-driver" reason="idle" stable_seconds="30"/>
+<notification type="agent-idle" from="${ATMUX_TEAM}-driver" reason="idle" stable_seconds="30"/>
 ```
 
 Exactly one notification per stall — you will not be re-pinged until
@@ -101,7 +101,7 @@ atmux send --to ${ATMUX_TEAM}-driver "Style nit (not blocking): the helper at f.
    diff arrives.
 2. As diff messages arrive, run the review checklist on each. Interrupt
    or queue feedback as warranted.
-3. When an `<watch type="agent" reason="idle"/>` notification arrives,
+3. When an `<notification type="agent-idle" reason="idle"/>` arrives,
    the driver has stopped producing output for ~30s following recent
    activity. Capture their pane (`atmux agent capture
    ${ATMUX_TEAM}-driver --lines 80`) and decide:

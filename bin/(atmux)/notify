@@ -1766,6 +1766,12 @@ notify_cli_main() {
   done
 
   [[ -n "$pane" ]] || { echo "missing --pane" >&2; exit 2; }
+  if [[ "$xml_payload" == "-" ]]; then
+    # `--xml -` reads the payload from stdin so callers can chain it
+    # off another producer (e.g. `atmux agent watch ... --exec
+    # "atmux notify --pane $p --xml -"`).
+    xml_payload="$(cat)"
+  fi
   [[ -n "$xml_payload" ]] || { echo "missing --xml" >&2; exit 2; }
 
   local submit_keys=()

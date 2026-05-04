@@ -329,6 +329,9 @@ Resolution precedence:
 ~/.atmux/shims/<name>
 <source_root>/shims/<name>
 
+Installed shims are active for every adapter by default. An adapter can opt
+out by setting SHIMS=off in its manifest.
+
 #### `watcher`
 
 ```sh

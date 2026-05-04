@@ -501,6 +501,19 @@ read_shim_binaries() {
   read_manifest_array_assignment "$manifest" BINARIES
 }
 
+adapter_shims_enabled() {
+  local adapter_cmd="$1"
+  local manifest="${adapter_cmd%/*}/manifest"
+  local setting=""
+
+  [[ -f "$manifest" ]] || return 0
+  setting="$(read_manifest_scalar_assignment "$manifest" SHIMS || true)"
+  case "$setting" in
+    0|false|FALSE|False|no|NO|No|off|OFF|Off|disabled|DISABLED|Disabled) return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
 write_shim_proxy() {
   local proxy_path="$1" binary="$2" shim_dir="$3" shim_exec="$4" active_dirs="$5" proxy_dir="$6"
   {
@@ -1049,7 +1062,9 @@ run_adapter() {
     fi
 
     prepare_atmux_prompt "$(pwd)"
-    activate_agent_shims
+    if adapter_shims_enabled "$adapter_cmd"; then
+      activate_agent_shims
+    fi
 
     if [[ -n "${ATMUX_ROLE_START:-}" ]]; then
       ATMUX_ROLE_STATE_DIR="${ATMUX_HOME}/agents/${ATMUX_REPO:-repo}/${ATMUX_AGENT_NAME:-agent}/role"

@@ -151,4 +151,41 @@ codex_got="$(cat "$codex_result")"
   exit 1
 }
 
-echo "ok: agent shim proxies activate default git shim and installed shims"
+optout_dir="$fake_root/adapter/optout"
+mkdir -p "$optout_dir"
+cat > "$optout_dir/manifest" <<'SH'
+NAME=optout
+VERSION=1
+SHIMS=off
+SH
+cat > "$optout_dir/cmd" <<'SH'
+#!/usr/bin/env bash
+case "${1:-}" in
+  prepare-prompt) cat >/dev/null ;;
+  start)
+    if [[ -z "${ATMUX_SHIM_PROXY_DIR:-}" && "$(command -v git)" != */shims/bin/git ]]; then
+      printf 'adapter-opted-out-of-shims\n' > "$ATMUX_TEST_RESULT"
+    else
+      printf 'optout-failed:proxy=%s git=%s\n' "${ATMUX_SHIM_PROXY_DIR:-}" "$(command -v git)" > "$ATMUX_TEST_RESULT"
+    fi
+    ;;
+esac
+SH
+chmod +x "$optout_dir/cmd"
+
+optout_result="$tmp/optout-result"
+PATH="$cursor_realbin:$PATH" \
+ATMUX_HOME="$tmp/codex-atmux-home" \
+ATMUX_SOURCE_ROOT="$fake_root" \
+ATMUX_REPO=repo \
+ATMUX_AGENT_NAME=optout \
+ATMUX_TEST_RESULT="$optout_result" \
+  "$AGENT" _run-adapter --adapter optout
+
+optout_got="$(cat "$optout_result")"
+[[ "$optout_got" == "adapter-opted-out-of-shims" ]] || {
+  echo "expected adapter manifest SHIMS=off to opt out of installed shims, got $optout_got" >&2
+  exit 1
+}
+
+echo "ok: agent shim proxies activate installed shims by default with adapter opt-out"

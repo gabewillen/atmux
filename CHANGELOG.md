@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.20.0 — Hierarchical role layout
 
 - Reorganized built-in roles into kind-aware directories: standalone agents
   live under `roles/agents/`, team roles under `roles/teams/`, and

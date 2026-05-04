@@ -107,6 +107,65 @@ resolve_notify_script_path() {
   fi
 }
 
+# Read a string field from the adapter manifest's `input` object,
+# JSON-decoding escapes correctly (so e.g. gemini's `"\\*"` resolves to
+# the two-byte regex `\*` rather than the raw three-byte `\\*` that a
+# byte-level sed would return). Cascades python3 → perl → sed-with-
+# manual-unescape so the function works even on minimal hosts that
+# lack one of the higher-level interpreters.
+read_manifest_input_field() {
+  local manifest_path="$1" field="$2"
+
+  if command -v python3 >/dev/null 2>&1; then
+    ATMUX_FIELD="$field" python3 -c '
+import json, os, sys
+try:
+  d = json.load(open(sys.argv[1]))
+  v = (d.get("input") or {}).get(os.environ["ATMUX_FIELD"])
+  if v is not None:
+    sys.stdout.write(v)
+except Exception:
+  pass
+' "$manifest_path"
+    return 0
+  fi
+
+  if command -v perl >/dev/null 2>&1; then
+    ATMUX_FIELD="$field" perl -0777 -ne '
+      use strict; use warnings;
+      my $field = quotemeta $ENV{ATMUX_FIELD};
+      if (/"input"\s*:\s*\{[^{}]*"$field"\s*:\s*"((?:\\.|[^"\\])*)"/s) {
+        my $v = $1;
+        # JSON string unescape: \\, \", \/, \b, \f, \n, \r, \t, \uXXXX
+        $v =~ s/\\u([0-9a-fA-F]{4})/chr(hex($1))/ge;
+        $v =~ s/\\n/\n/g;
+        $v =~ s/\\r/\r/g;
+        $v =~ s/\\t/\t/g;
+        $v =~ s/\\b/\b/g;
+        $v =~ s/\\f/\f/g;
+        $v =~ s/\\\//\//g;
+        $v =~ s/\\"/"/g;
+        $v =~ s/\\\\/\\/g;
+        print $v;
+      }
+    ' "$manifest_path"
+    return 0
+  fi
+
+  # sed fallback: walk to the input.<field> value, then capture bytes
+  # up to the next unescaped quote. Adapter manifests today only use
+  # `\\` (backslash) and `\"` (quote) inside these regex strings; other
+  # JSON escapes (\n, \uXXXX) aren't used. If a future manifest needs
+  # them, install python3 or perl.
+  local compact raw
+  compact="$(tr -d '\n\r\t' < "$manifest_path")"
+  # `[^"]*` is naive (would stop at `\"`), but neither current manifest
+  # contains `\"` inside input.{start,end}, so it's sufficient.
+  raw="$(printf '%s' "$compact" | sed -n "s/.*\"$field\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p")"
+  # JSON unescape: \\ → \, then \" → ". Order matters.
+  printf '%s' "$raw" | sed -e 's/\\\\/\\/g' -e 's/\\"/"/g'
+}
+
 resolve_input_prompt_for_adapter() {
   local adapter="$1"
   local source_root="$2"
@@ -117,19 +176,7 @@ resolve_input_prompt_for_adapter() {
     return 1
   fi
 
-  # Use python so JSON escapes (e.g. `"\\*"` for gemini's regex prompt)
-  # decode to their actual bytes — sed would return the raw `\\*`,
-  # which makes bash =~ expect a literal backslash in the pane.
-  python3 -c '
-import json, sys
-try:
-  d = json.load(open(sys.argv[1]))
-  v = (d.get("input") or {}).get("start")
-  if v is not None:
-    sys.stdout.write(v)
-except Exception:
-  pass
-' "$manifest_path"
+  read_manifest_input_field "$manifest_path" "start"
 }
 
 # Returns the SGR sequence body that marks the end of the user-input
@@ -152,16 +199,7 @@ resolve_input_end_for_adapter() {
     return 1
   fi
 
-  python3 -c '
-import json, sys
-try:
-  d = json.load(open(sys.argv[1]))
-  v = (d.get("input") or {}).get("end")
-  if v is not None:
-    sys.stdout.write(v)
-except Exception:
-  pass
-' "$manifest_path"
+  read_manifest_input_field "$manifest_path" "end"
 }
 
 resolve_input_end_for_pane() {

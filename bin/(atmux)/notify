@@ -325,6 +325,25 @@ extract_prompt_input() {
 
   [[ -n "$prompt_prefix" ]] || return 0
 
+  # First try the styled-capture path: many TUI adapters (cursor-agent
+  # confirmed, codex/claude-code/gemini likely) render the input box
+  # with a faint placeholder + a status footer below it, all of which
+  # would otherwise be captured as if it were the user's typed input.
+  # The cursor cell, however, is rendered as reverse video (`\e[7m`),
+  # which gives us a precise end-of-input marker independent of the
+  # placeholder text. If we find that marker after the prompt prefix,
+  # everything between it and the prefix is the actual user input.
+  saved_input="$(extract_prompt_input_via_cursor_marker "$pane" "$prompt_prefix" 2>/dev/null || true)"
+  if [[ "${ATMUX_NOTIFY_PROMPT_INPUT_VIA_CURSOR_MARKER:-1}" != "0" ]] \
+     && [[ "$saved_input" != "__no_marker__" ]]; then
+    printf '%s' "$saved_input"
+    return 0
+  fi
+
+  # Fallback: legacy capture path that uses tmux's reported cursor
+  # position. Adapters that don't render a reverse-video cursor cell
+  # (or where the marker scan above couldn't resolve a usable line)
+  # land here.
   snap="$(tmux capture-pane -p -t "$pane" 2>/dev/null || true)"
   while IFS= read -r line; do
     lines+=("$line")
@@ -361,6 +380,71 @@ extract_prompt_input() {
     saved_input+="${lines[idx]}"
   done
   printf '%s' "$saved_input"
+}
+
+# Helper: read the styled (with -e) pane capture, find the prompt
+# prefix line, and return whatever the user has typed by stopping at
+# the first reverse-video span (the cursor cell). If no cursor span is
+# found on the prompt line, prints the sentinel "__no_marker__" so
+# extract_prompt_input falls back to the legacy logic.
+extract_prompt_input_via_cursor_marker() {
+  local pane="$1"
+  local prompt_prefix="$2"
+  local snap
+
+  snap="$(tmux capture-pane -p -e -t "$pane" 2>/dev/null || true)"
+  [[ -n "$snap" ]] || { printf '__no_marker__'; return 0; }
+
+  ATMUX_PROMPT_PREFIX="$prompt_prefix" perl -e '
+    use strict; use warnings;
+    my $prompt = $ENV{ATMUX_PROMPT_PREFIX};
+    my $snap = do { local $/; <STDIN> };
+    my @lines = split /\r?\n/, $snap, -1;
+    # Walk lines bottom-up; first line containing the prompt prefix
+    # (after stripping ANSI for the search) is the prompt line.
+    my $prompt_idx = -1;
+    for (my $i = $#lines; $i >= 0; $i--) {
+      my $bare = $lines[$i];
+      $bare =~ s/\e\[[0-9;]*[a-zA-Z]//g;
+      if (index($bare, $prompt) >= 0) {
+        $prompt_idx = $i;
+        last;
+      }
+    }
+    if ($prompt_idx < 0) {
+      print "__no_marker__";
+      exit 0;
+    }
+    my $line = $lines[$prompt_idx];
+    # Locate the prompt prefix in the styled bytes (which may have
+    # ANSI sequences interleaved with the prefix glyphs). Strip ANSI
+    # to find offset, then map back conservatively by scanning.
+    my $scan = $line;
+    my $pos = 0;
+    while ($scan ne "" && index($scan, $prompt) != 0) {
+      # Skip one byte (or one ANSI escape) and retry.
+      if ($scan =~ /^\e\[[0-9;]*[a-zA-Z]/) {
+        my $len = length($&);
+        $scan = substr($scan, $len);
+        $pos += $len;
+      } else {
+        $scan = substr($scan, 1);
+        $pos++;
+      }
+    }
+    my $rest = substr($line, $pos + length($prompt));
+    # Real input ends at the cursor cell (reverse video, SGR 7).
+    # Match `\e[7m`, `\e[0;7m`, `\e[7;...m`, etc.
+    if ($rest =~ /^(.*?)\e\[(?:[\d;]*;)?7(?:;[\d;]*)?m/s) {
+      my $captured = $1;
+      $captured =~ s/\e\[[0-9;]*[a-zA-Z]//g;
+      $captured =~ s/^\s+//;
+      $captured =~ s/\s+$//;
+      print $captured;
+      exit 0;
+    }
+    print "__no_marker__";
+  ' <<< "$snap"
 }
 
 pane_has_prompt_line() {

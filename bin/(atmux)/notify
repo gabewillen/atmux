@@ -1714,9 +1714,9 @@ notify_exec_watchers() {
     [[ -n "$f" ]] || continue
     [[ -f "$f" ]] || continue
     pane="$(watcher_record_pane "$f")"
-    [[ -n "$pane" ]] || continue
-    [[ "$pane" == "$skip_pane" ]] && continue
-    send_notification "$pane" "$payload"
+    if [[ -n "$pane" && "$pane" != "$skip_pane" ]]; then
+      send_notification "$pane" "$payload"
+    fi
     signal_watcher_event_file "$f"
   done < <(find "$wdir" -maxdepth 1 -type f 2>/dev/null)
 }
@@ -1732,9 +1732,9 @@ notify_issue_watchers() {
     [[ -n "$f" ]] || continue
     [[ -f "$f" ]] || continue
     pane="$(watcher_record_pane "$f")"
-    [[ -n "$pane" ]] || continue
-    [[ "$pane" == "$skip_pane" ]] && continue
-    send_notification "$pane" "$payload"
+    if [[ -n "$pane" && "$pane" != "$skip_pane" ]]; then
+      send_notification "$pane" "$payload"
+    fi
     signal_watcher_event_file "$f"
   done < <(find "$wdir" -maxdepth 1 -type f 2>/dev/null)
 }
@@ -1750,9 +1750,9 @@ notify_pull_request_watchers() {
     [[ -n "$f" ]] || continue
     [[ -f "$f" ]] || continue
     pane="$(watcher_record_pane "$f")"
-    [[ -n "$pane" ]] || continue
-    [[ "$pane" == "$skip_pane" ]] && continue
-    send_notification "$pane" "$payload"
+    if [[ -n "$pane" && "$pane" != "$skip_pane" ]]; then
+      send_notification "$pane" "$payload"
+    fi
     signal_watcher_event_file "$f"
   done < <(find "$wdir" -maxdepth 1 -type f 2>/dev/null)
 }

@@ -352,7 +352,12 @@ main() {
     snap="$(tmux capture-pane -p -t "$pane" -S "-$lines" 2>/dev/null | tr -d '\r' || true)"
     recent="$(printf '%s\n' "$snap" | tail -n 30)"
     if detect_stuck_prompt "$recent"; then
-      exit 0
+      emit_idle_notification "$agent" "$idle_seconds" "$exec_cmd"
+      (( repeat == 1 )) || exit 0
+      # Repeat against a stuck prompt would loop instantly; sleep one
+      # cycle so we don't busy-spin while the prompt persists.
+      sleep "$interval"
+      continue
     fi
   done
 }

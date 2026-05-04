@@ -72,6 +72,9 @@ done
 tmux_path="$(tr -d '\r\n' < "$atmux_home/tmux-path")"
 [[ "$tmux_path" == "$REPO_ROOT/bin/tmux" ]] || { echo "expected tmux shim path, got ${tmux_path:-missing}" >&2; exit 1; }
 
+mouse_value="$(tmux show-options -t "$session" -v mouse 2>/dev/null | tr -d '\r\n')"
+[[ "$mouse_value" == "off" ]] || { echo "expected managed agent session mouse=off to prevent accidental copy-mode, got ${mouse_value:-missing}" >&2; exit 1; }
+
 allow_value="$(tr -d '\r\n' < "$atmux_home/tmux-allow")"
 [[ -z "$allow_value" ]] || { echo "adapter inherited real tmux allowance: $allow_value" >&2; exit 1; }
 

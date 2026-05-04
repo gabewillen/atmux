@@ -700,6 +700,7 @@ atmux install --no-slash-commands
 | `ATMUX_TEAM` | Team this agent belongs to |
 | `ATMUX_SESSION_ID` | Unique session identifier |
 | `ATMUX_SESSION_KIND` | `agent` or `team` |
+| `ATMUX_TMUX_MOUSE` | Tmux mouse mode for managed sessions, `off` by default to avoid accidental copy-mode blocking notifications; set `on` to restore tmux mouse scrolling |
 
 ## Agent coordination rules
 

@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.19.0 — Per-field overrides on `agent create` / `team create`
+
+Promotes `--model` and `--reasoning` to first-class flags and adds a generic repeatable `--set <key>=<value>` so you can override anything declared in a role manifest at launch time without editing the role on disk. On teams, `--set <member>.<field>=<value>` targets a single member spawned from the role's `MEMBERS=(...)` array.
+
+```sh
+atmux agent create planner --role architect --model gpt-5.5 --reasoning extra-high
+atmux team create alpha --role pair-program \
+  --set driver.intelligence=95 \
+  --set navigator.adapter=codex
+```
+
+Member name match is the last `-`-segment of the member's first token, so role-templated names like `${ATMUX_TEAM}-driver` match on `driver`. Precedence (low → high): role manifest defaults → role `MEMBERS` flags → first-class flags → undotted `--set` → dotted per-member `--set`. Unknown `--set` keys warn and pass through (forward-compat: future adapter manifest fields land without atmux changes).
+
+### Adapter coverage
+
+`agent create` stamps `ATMUX_MODEL` / `ATMUX_REASONING_LEVEL` on the new tmux session, and each adapter's start script honors them after the intelligence_map lookup:
+
+- **claude-code**: `--model <id> --effort <level>` argv flags. Generic override beats both `ATMUX_INTELLIGENCE` and the legacy `ATMUX_CLAUDE_MODEL` / `ATMUX_CLAUDE_EFFORT` envvars.
+- **codex**: drives the same `/model` TUI menu used by intelligence_map, so explicit overrides take effect post-boot the same way.
+- **cursor-agent**: `--model <id>` argv. Reasoning level is encoded in the cursor-agent model id itself (`composer-2-fast` vs `gpt-5.3-codex-xhigh`), so `--reasoning` updates state.env for status output but `--model` is the knob that moves runtime behavior.
+- **gemini**: `--model <id>` argv. The current Gemini CLI exposes no reasoning/effort flag; `--reasoning` is preserved on the session for parity.
+
 ## 0.18.2 — Pair-program role docs and demo
 
 - Added README docs for the built-in roles and a GIF demo for the

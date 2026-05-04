@@ -94,6 +94,16 @@ if [[ -n "${ATMUX_CLAUDE_EFFORT:-}" ]]; then
   REASONING_LEVEL="$(normalize_effort "$ATMUX_CLAUDE_EFFORT" || { echo "invalid ATMUX_CLAUDE_EFFORT: $ATMUX_CLAUDE_EFFORT" >&2; exit 2; })"
 fi
 
+# Generic per-field overrides win over intelligence_map and adapter-specific
+# legacy envvars. Unknown values pass through unchanged so the adapter can
+# emit its own error if the model id isn't valid for the underlying CLI.
+if [[ -n "${ATMUX_MODEL:-}" ]]; then
+  MODEL="$ATMUX_MODEL"
+fi
+if [[ -n "${ATMUX_REASONING_LEVEL:-}" ]]; then
+  REASONING_LEVEL="$ATMUX_REASONING_LEVEL"
+fi
+
 printf 'MODEL=%s\nREASONING_LEVEL=%s\n' "$MODEL" "$REASONING_LEVEL" > "$state_file"
 
 if ! arg_present --model "$@"; then

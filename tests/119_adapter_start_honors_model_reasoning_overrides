@@ -1,0 +1,138 @@
+#!/usr/bin/env bash
+# Adapter start scripts must honor ATMUX_MODEL / ATMUX_REASONING_LEVEL,
+# overriding the intelligence_map lookup and any adapter-specific legacy
+# envvars (ATMUX_CLAUDE_MODEL/ATMUX_CLAUDE_EFFORT, ATMUX_CURSOR_AGENT_*,
+# ATMUX_GEMINI_*).
+#
+# Strategy: shim the adapter CLI binary with a script that records its
+# argv to a file, run the real start script with the overrides set, then
+# inspect the captured argv. Mirrors 80_gemini_intelligence_model_selection.
+set -euo pipefail
+
+source "$(dirname "${BASH_SOURCE[0]}")/lib/isolate-tmux.sh"
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+
+tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/atmux-adapter-overrides.XXXXXX")"
+cleanup() { rm -rf "$tmp_dir"; }
+trap cleanup EXIT
+
+mkdir -p "$tmp_dir/bin"
+# cursor-agent's start script forces `${HOME}/.local/bin` and
+# `${HOME}/.cursor/bin` to the front of PATH at boot, which would
+# normally find the developer's real cursor-agent binary and bypass
+# our shim. Mirror those paths inside a fake $HOME so the shim wins.
+mkdir -p "$tmp_dir/home/.local/bin" "$tmp_dir/home/.cursor/bin"
+
+# Generic "record argv" stub. Each adapter installs a copy under its CLI
+# name so the start script's `command -v` check passes.
+cat > "$tmp_dir/bin/_record" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$@" > "$ATMUX_FAKE_ARGS"
+SH
+chmod +x "$tmp_dir/bin/_record"
+ln -sf _record "$tmp_dir/bin/gemini"
+ln -sf _record "$tmp_dir/bin/claude"
+ln -sf _record "$tmp_dir/bin/cursor-agent"
+ln -sf _record "$tmp_dir/bin/agent"
+# Same shim at the paths cursor-agent injects.
+for name in cursor-agent agent; do
+  ln -sf "$tmp_dir/bin/_record" "$tmp_dir/home/.local/bin/$name"
+  ln -sf "$tmp_dir/bin/_record" "$tmp_dir/home/.cursor/bin/$name"
+done
+
+# Helper: run a start script with given env in a fresh worktree, return
+# the captured argv path.
+run_start() {
+  local adapter="$1"; shift
+  local label="$1"; shift  # unique tag per case so files don't collide
+  local args_file="$tmp_dir/args-$adapter-$label"
+  local home_dir="$tmp_dir/home-$adapter-$label"
+  local worktree="$tmp_dir/work-$adapter-$label"
+  mkdir -p "$worktree"
+
+  local start_script="$REPO_ROOT/adapter/$adapter/scripts/start"
+  # Use `env` to apply caller-supplied KEY=VALUE pairs: bash only honors
+  # such pairs as env prefixes when they appear literally before a
+  # command, not when expanded from an array (they'd otherwise be treated
+  # as a command and fail with "command not found").
+  (
+    cd "$worktree"
+    env -i \
+      HOME="$tmp_dir/home" \
+      PATH="$tmp_dir/bin:$tmp_dir/home/.local/bin:$tmp_dir/home/.cursor/bin:/usr/bin:/bin" \
+      TMUX_TMPDIR="${TMUX_TMPDIR:-}" \
+      ATMUX_HOME="$home_dir" \
+      ATMUX_FAKE_ARGS="$args_file" \
+      "$@" \
+      "$start_script" >/dev/null 2>&1
+  )
+  printf '%s\n' "$args_file"
+}
+
+# After --model is `--model X`, the next line in the captured argv is X.
+arg_value_after() {
+  local file="$1" needle="$2"
+  awk -v n="$needle" '
+    found {print; exit}
+    $0 == n {found=1}
+  ' "$file"
+}
+
+assert_arg_eq() {
+  local file="$1" flag="$2" expected="$3" tag="$4"
+  local got
+  got="$(arg_value_after "$file" "$flag" || true)"
+  if [[ "$got" != "$expected" ]]; then
+    echo "fail [$tag]: expected $flag=$expected, got '$got'" >&2
+    echo "  captured argv:" >&2
+    sed 's/^/    /' "$file" >&2
+    exit 1
+  fi
+}
+
+# === gemini ============================================================
+# Sanity: ATMUX_INTELLIGENCE alone picks the right model.
+af="$(run_start gemini int-only ATMUX_INTELLIGENCE=50)"
+assert_arg_eq "$af" --model gemini-3-flash-preview gemini-int-only
+
+# ATMUX_MODEL overrides intelligence_map (the value isn't even in
+# gemini's normalize_model whitelist — verifies the override path
+# bypasses normalization).
+af="$(run_start gemini model-override ATMUX_INTELLIGENCE=50 ATMUX_MODEL=probe-test-model)"
+assert_arg_eq "$af" --model probe-test-model gemini-model-override
+
+# === claude-code ======================================================
+# Intelligence-only picks sonnet/medium.
+af="$(run_start claude-code int-only ATMUX_INTELLIGENCE=50)"
+assert_arg_eq "$af" --model sonnet claude-int-only
+assert_arg_eq "$af" --effort medium claude-int-only
+
+# ATMUX_MODEL / ATMUX_REASONING_LEVEL win.
+af="$(run_start claude-code overrides \
+        ATMUX_INTELLIGENCE=50 \
+        ATMUX_MODEL=opus \
+        ATMUX_REASONING_LEVEL=high)"
+assert_arg_eq "$af" --model opus claude-overrides
+assert_arg_eq "$af" --effort high claude-overrides
+
+# Generic ATMUX_MODEL beats the legacy adapter-specific ATMUX_CLAUDE_MODEL
+# when both are set (they're applied in order: intelligence_map → legacy
+# adapter-specific → generic).
+af="$(run_start claude-code precedence \
+        ATMUX_INTELLIGENCE=50 \
+        ATMUX_CLAUDE_MODEL=sonnet \
+        ATMUX_MODEL=opus)"
+assert_arg_eq "$af" --model opus claude-precedence
+
+# === cursor-agent =====================================================
+af="$(run_start cursor-agent int-only ATMUX_INTELLIGENCE=80)"
+assert_arg_eq "$af" --model gpt-5.3-codex-high cursor-int-only
+
+af="$(run_start cursor-agent override \
+        ATMUX_INTELLIGENCE=80 \
+        ATMUX_MODEL=probe-cursor-model)"
+assert_arg_eq "$af" --model probe-cursor-model cursor-override
+
+echo "ok: gemini/claude-code/cursor-agent start scripts honor ATMUX_MODEL/ATMUX_REASONING_LEVEL overrides"

@@ -99,6 +99,8 @@ for more information.
 ```sh
 atmux agent create [name] --role <role> --intelligence <0-100>
                    [--team <team>] [--adapter <adapter>] [--adapters <list>]
+                   [--model <id>] [--reasoning <low|medium|high|extra-high>]
+                   [--set <key>=<value>]...
                    [--shared-worktree] [--start <cmd>] [--stop <cmd>]
                    [--task --description <desc> --todo <todo>...]
                    [-- <adapter-args...>]
@@ -107,6 +109,11 @@ atmux agent create [name] --role <role> --intelligence <0-100>
   `--shared-worktree` runs the new agent in the caller's current
   worktree instead of creating a private one for it (deprecated
   alias: `--no-worktree`).
+  `--model` / `--reasoning` skip the role's intelligence_map lookup
+  and force a specific model/reasoning level on the adapter. `--set
+  <key>=<value>` is a generic override; known keys (model, reasoning,
+  adapter, intelligence) map onto the corresponding flag, unknown
+  keys emit a warning and are passed through unchanged.
 atmux agent list [--all] [--status]
 atmux agent status [<name>]
 atmux agent attach <name|session>
@@ -131,6 +138,10 @@ agent attach must be run outside tmux.
 ```sh
 atmux team create <name> [--role <role>] [--start <cmd>] [--stop <cmd>]
                          [--worktree <path>] [--shared-worktree]
+                         [--adapter <adapter>] [--intelligence <0-100>]
+                         [--model <id>] [--reasoning <level>]
+                         [--set <key>=<value>]...
+                         [--set <member>.<key>=<value>]...
 atmux team list
 atmux team ls
 atmux team status [<name>]
@@ -160,6 +171,13 @@ agents can edit the same worktree without stomping the user's checkout.
 --shared-worktree   Opt out of the fresh-worktree default. Use the
                     caller's pwd (or repo root) instead. Useful for
                     coordination teams that just talk and never edit.
+
+--adapter / --intelligence / --model / --reasoning
+                    Apply to every member spawned from MEMBERS=(...).
+                    Per-member overrides via `--set <member>.<field>=
+                    <value>` take precedence (member name matches the
+                    last `-`-segment of the member's first token, e.g.
+                    `${ATMUX_TEAM}-driver` matches on `driver`).
 
 #### `role`
 

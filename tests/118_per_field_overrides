@@ -1,0 +1,233 @@
+#!/usr/bin/env bash
+# Per-field overrides on agent/team create:
+#   - `agent create --model M --reasoning R`   stamps ATMUX_MODEL /
+#     ATMUX_REASONING_LEVEL on the new tmux session.
+#   - `agent create --set model=X --set reasoning=Y` does the same via
+#     the generic --set form.
+#   - `agent create --set unknown=foo` warns but still creates the agent.
+#   - `team create --role <r> --set <member>.<field>=<value>` only applies
+#     the override to the matching member, not to its peer.
+#
+# Uses a sleep-forever mock adapter so no real LLM CLI is required. The
+# overrides are observable purely from `tmux show-environment` on the
+# spawned sessions; we don't need the adapter to act on them.
+set -euo pipefail
+
+source "$(dirname "${BASH_SOURCE[0]}")/lib/isolate-tmux.sh"
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+ATMUX_BIN="$REPO_ROOT/bin/atmux"
+AGENT_BIN="$REPO_ROOT/bin/(atmux)/agent"
+
+REPO_NORM="$(basename "$REPO_ROOT" | sed -E 's/[^A-Za-z0-9_-]+/_/g; s/_+/_/g; s/^_+//; s/_+$//')"
+SESSION_PREFIX="atmux-${REPO_NORM}-"
+
+WORK_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/amux-overrides.XXXXXX")"
+ATMUX_HOME="$WORK_ROOT/atmux-home"
+mkdir -p "$ATMUX_HOME"
+export ATMUX_HOME
+
+cleanup() {
+  set +e
+  # The tmux server is isolated via TMUX_TMPDIR (see lib/isolate-tmux.sh),
+  # so killing the server reaps every session this test created in one
+  # call instead of `atmux agent/team kill`-ing each by name (each of
+  # those is several seconds on CI; we ran into the 1-min step budget
+  # on shard 10 because of it).
+  TMUX_TMPDIR="$ATMUX_TESTS_TMUX_TMPDIR" tmux kill-server >/dev/null 2>&1 || true
+  rm -rf "$WORK_ROOT"
+}
+trap cleanup EXIT
+
+adapter_dir="$ATMUX_HOME/adapters/mock"
+mkdir -p "$adapter_dir"
+cat > "$adapter_dir/cmd" <<'ADAPTER'
+#!/usr/bin/env bash
+set -euo pipefail
+case "${1:-}" in
+  control-file) printf 'AGENTS.md\n' ;;
+  prepare-prompt) : ;;
+  start) sleep 600 ;;
+  status) printf '<status adapter="mock" owner="agent" state="idle" model="" reasoning_level="" control_file="AGENTS.md" />\n' ;;
+  model) printf 'mock\n' ;;
+  reasoning-level) printf 'medium\n' ;;
+  *) exit 2 ;;
+esac
+ADAPTER
+chmod +x "$adapter_dir/cmd"
+
+# Agent role used by all probes.
+agent_role_dir="$ATMUX_HOME/roles/probe-agent"
+mkdir -p "$agent_role_dir"
+cat > "$agent_role_dir/role.md" <<EOF
+# Probe agent
+EOF
+cat > "$agent_role_dir/manifest" <<EOF
+KIND=agent
+INTELLIGENCE=20
+ADAPTERS=(mock)
+EOF
+
+cd "$REPO_ROOT"
+
+# All probes pass `--shared-worktree` so we skip the per-agent
+# `git worktree add` (the slow step). The test only cares about session
+# env vars, never the working tree contents — so a fresh worktree adds
+# pure latency. On CI shard 10 (1-min budget) this dropped 118 from
+# ~33s to a few seconds.
+
+# --- Case 1: --model and --reasoning land on the new session env ---
+agent_a="probe-a$$"
+ATMUX_ALLOW_OUTSIDE_TMUX=1 ATMUX_AGENT_NAME=manager \
+  "$AGENT_BIN" _create --name "$agent_a" --role probe-agent \
+    --intelligence 20 --adapter mock --shared-worktree \
+    --model probe-model-a --reasoning high >/dev/null 2>&1
+
+session_a="${SESSION_PREFIX}${agent_a}"
+for _ in $(seq 1 80); do
+  tmux has-session -t "$session_a" 2>/dev/null && break
+  sleep 0.1
+done
+tmux has-session -t "$session_a" 2>/dev/null \
+  || { echo "fail: agent session $session_a never appeared" >&2; exit 1; }
+
+got_model="$(tmux show-environment -t "$session_a" ATMUX_MODEL 2>/dev/null | sed -n 's/^ATMUX_MODEL=//p')"
+got_reasoning="$(tmux show-environment -t "$session_a" ATMUX_REASONING_LEVEL 2>/dev/null | sed -n 's/^ATMUX_REASONING_LEVEL=//p')"
+[[ "$got_model" == "probe-model-a" ]] \
+  || { echo "fail: ATMUX_MODEL=$got_model (expected probe-model-a)" >&2; exit 1; }
+[[ "$got_reasoning" == "high" ]] \
+  || { echo "fail: ATMUX_REASONING_LEVEL=$got_reasoning (expected high)" >&2; exit 1; }
+
+# --- Case 2: --set model=… and --set reasoning=… do the same job ---
+agent_b="probe-b$$"
+ATMUX_ALLOW_OUTSIDE_TMUX=1 ATMUX_AGENT_NAME=manager \
+  "$AGENT_BIN" _create --name "$agent_b" --role probe-agent \
+    --intelligence 20 --adapter mock --shared-worktree \
+    --set model=probe-model-b --set reasoning=medium >/dev/null 2>&1
+
+session_b="${SESSION_PREFIX}${agent_b}"
+for _ in $(seq 1 80); do
+  tmux has-session -t "$session_b" 2>/dev/null && break
+  sleep 0.1
+done
+tmux has-session -t "$session_b" 2>/dev/null \
+  || { echo "fail: agent session $session_b never appeared" >&2; exit 1; }
+
+got_model="$(tmux show-environment -t "$session_b" ATMUX_MODEL 2>/dev/null | sed -n 's/^ATMUX_MODEL=//p')"
+got_reasoning="$(tmux show-environment -t "$session_b" ATMUX_REASONING_LEVEL 2>/dev/null | sed -n 's/^ATMUX_REASONING_LEVEL=//p')"
+[[ "$got_model" == "probe-model-b" ]] \
+  || { echo "fail (--set model): ATMUX_MODEL=$got_model" >&2; exit 1; }
+[[ "$got_reasoning" == "medium" ]] \
+  || { echo "fail (--set reasoning): ATMUX_REASONING_LEVEL=$got_reasoning" >&2; exit 1; }
+
+# --- Case 3: --set wins over --model / --reasoning (precedence rule) ---
+agent_c="probe-c$$"
+ATMUX_ALLOW_OUTSIDE_TMUX=1 ATMUX_AGENT_NAME=manager \
+  "$AGENT_BIN" _create --name "$agent_c" --role probe-agent \
+    --intelligence 20 --adapter mock --shared-worktree \
+    --model losing-model --reasoning low \
+    --set model=winning-model --set reasoning=high >/dev/null 2>&1
+
+session_c="${SESSION_PREFIX}${agent_c}"
+for _ in $(seq 1 80); do
+  tmux has-session -t "$session_c" 2>/dev/null && break
+  sleep 0.1
+done
+got_model="$(tmux show-environment -t "$session_c" ATMUX_MODEL 2>/dev/null | sed -n 's/^ATMUX_MODEL=//p')"
+got_reasoning="$(tmux show-environment -t "$session_c" ATMUX_REASONING_LEVEL 2>/dev/null | sed -n 's/^ATMUX_REASONING_LEVEL=//p')"
+[[ "$got_model" == "winning-model" ]] \
+  || { echo "fail (precedence): ATMUX_MODEL=$got_model, expected winning-model" >&2; exit 1; }
+[[ "$got_reasoning" == "high" ]] \
+  || { echo "fail (precedence): ATMUX_REASONING_LEVEL=$got_reasoning, expected high" >&2; exit 1; }
+
+# --- Case 4: --set unknown=foo warns but proceeds ---
+agent_d="probe-d$$"
+out="$(
+  ATMUX_ALLOW_OUTSIDE_TMUX=1 ATMUX_AGENT_NAME=manager \
+    "$AGENT_BIN" _create --name "$agent_d" --role probe-agent \
+      --intelligence 20 --adapter mock --shared-worktree \
+      --set probe_unknown_field=foo 2>&1
+)"
+session_d="${SESSION_PREFIX}${agent_d}"
+for _ in $(seq 1 80); do
+  tmux has-session -t "$session_d" 2>/dev/null && break
+  sleep 0.1
+done
+tmux has-session -t "$session_d" 2>/dev/null \
+  || { echo "fail: unknown --set field aborted agent create; output: $out" >&2; exit 1; }
+printf '%s\n' "$out" | grep -q "probe_unknown_field" \
+  || { echo "fail: unknown --set field did not warn; output: $out" >&2; exit 1; }
+
+# --- Case 4b: --set start=$'\n'... must hit the same newline guard
+# that --start enforces (regression coverage for a Bugbot-flagged bypass:
+# the loop runs *after* the literal-flag check, so --set was previously
+# uncaught). Use printf %b to inject a real newline into the value.
+out="$(
+  ATMUX_ALLOW_OUTSIDE_TMUX=1 ATMUX_AGENT_NAME=manager \
+    "$AGENT_BIN" _create --name "should-not-exist-newline$$" --role probe-agent \
+      --intelligence 20 --adapter mock --shared-worktree \
+      --set "$(printf 'start=line1\nline2')" 2>&1 || true
+)"
+printf '%s\n' "$out" | grep -q "must be a single line" \
+  || { echo "fail: --set start=<multi-line> bypassed newline guard; output: $out" >&2; exit 1; }
+
+# --- Case 5: dotted --set on agent create is rejected with a clear msg ---
+out="$(
+  ATMUX_ALLOW_OUTSIDE_TMUX=1 ATMUX_AGENT_NAME=manager \
+    "$AGENT_BIN" _create --name "should-not-exist$$" --role probe-agent \
+      --intelligence 20 --adapter mock \
+      --set driver.model=foo 2>&1 || true
+)"
+printf '%s\n' "$out" | grep -q "dotted --set keys are only valid for team create" \
+  || { echo "fail: dotted --set was not rejected on agent create; output: $out" >&2; exit 1; }
+
+# --- Case 6: team create --set <member>.field=value targets one member ---
+team_role_dir="$ATMUX_HOME/roles/probe-pair-overrides"
+mkdir -p "$team_role_dir"
+cat > "$team_role_dir/role.md" <<EOF
+# Probe team
+EOF
+alpha_name="alpha$$"
+beta_name="beta$$"
+cat > "$team_role_dir/manifest" <<EOF
+KIND=team
+MEMBERS=(
+  "$alpha_name --role probe-agent --intelligence 20 --adapter mock --shared-worktree"
+  "$beta_name --role probe-agent --intelligence 20 --adapter mock --shared-worktree"
+)
+EOF
+
+team_short="ovr$$"
+out="$(
+  ATMUX_ALLOW_OUTSIDE_TMUX=1 "$ATMUX_BIN" team create "$team_short" \
+    --role probe-pair-overrides --shared-worktree \
+    --set "${alpha_name##*-}.model=alpha-only" \
+    --set "${beta_name##*-}.model=beta-only" 2>&1 || true
+)"
+
+# Each MEMBERS entry's first token is the *short* member name. Per spec the
+# match is the last `-`-segment, so for $alpha_name (no dash) the segment
+# *is* the whole name. Use it directly.
+alpha_session="${SESSION_PREFIX}${alpha_name}"
+beta_session="${SESSION_PREFIX}${beta_name}"
+for _ in $(seq 1 80); do
+  if tmux has-session -t "$alpha_session" 2>/dev/null \
+     && tmux has-session -t "$beta_session" 2>/dev/null; then
+    break
+  fi
+  sleep 0.1
+done
+tmux has-session -t "$alpha_session" 2>/dev/null \
+  || { echo "fail: alpha member session missing; out: $out" >&2; exit 1; }
+tmux has-session -t "$beta_session" 2>/dev/null \
+  || { echo "fail: beta member session missing; out: $out" >&2; exit 1; }
+
+alpha_model="$(tmux show-environment -t "$alpha_session" ATMUX_MODEL 2>/dev/null | sed -n 's/^ATMUX_MODEL=//p')"
+beta_model="$(tmux show-environment -t "$beta_session" ATMUX_MODEL 2>/dev/null | sed -n 's/^ATMUX_MODEL=//p')"
+[[ "$alpha_model" == "alpha-only" ]] \
+  || { echo "fail: alpha ATMUX_MODEL='$alpha_model' (expected alpha-only)" >&2; exit 1; }
+[[ "$beta_model" == "beta-only" ]] \
+  || { echo "fail: beta ATMUX_MODEL='$beta_model' (expected beta-only)" >&2; exit 1; }
+
+echo "ok: per-field overrides apply to agents and per-member to teams"

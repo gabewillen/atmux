@@ -94,6 +94,15 @@ if [[ -n "${ATMUX_GEMINI_REASONING_LEVEL:-}" ]]; then
   REASONING_LEVEL="$(normalize_reasoning "$ATMUX_GEMINI_REASONING_LEVEL" || { echo "invalid ATMUX_GEMINI_REASONING_LEVEL: $ATMUX_GEMINI_REASONING_LEVEL" >&2; exit 2; })"
 fi
 
+# Generic per-field overrides win over intelligence_map and adapter-specific
+# legacy envvars.
+if [[ -n "${ATMUX_MODEL:-}" ]]; then
+  MODEL="$ATMUX_MODEL"
+fi
+if [[ -n "${ATMUX_REASONING_LEVEL:-}" ]]; then
+  REASONING_LEVEL="$ATMUX_REASONING_LEVEL"
+fi
+
 printf 'MODEL=%s\nREASONING_LEVEL=%s\n' "$MODEL" "$REASONING_LEVEL" > "$state_file"
 
 args=("$@")

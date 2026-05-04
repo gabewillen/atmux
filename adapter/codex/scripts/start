@@ -6,6 +6,10 @@ if ! command -v codex >/dev/null 2>&1; then
   exit 127
 fi
 
+manifest_lib="${ATMUX_SOURCE_ROOT:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../.." && pwd)}/bin/(atmux)/(lib)/manifest"
+# shellcheck source=bin/(atmux)/(lib)/manifest
+source "$manifest_lib"
+
 current_session_name() {
   if [[ -n "${TMUX:-}" ]]; then
     tmux display-message -p '#S' 2>/dev/null || true
@@ -20,38 +24,10 @@ set_bootstrap_state() {
   tmux set-environment -t "$session" ATMUX_BOOTSTRAP_STATE "$state" >/dev/null 2>&1 || true
 }
 
-resolve_profile_from_manifest() {
-  local intelligence="$1"
-  local manifest_path="$2"
-  local map item min max model reasoning compact
-
-  [[ -f "$manifest_path" ]] || return 1
-  compact="$(tr -d '\n\r\t ' < "$manifest_path")"
-  map="$(printf '%s\n' "$compact" | sed -n "s/.*\"intelligence_map\":\[\(.*\)\][,}].*/\1/p")"
-  [[ -n "$map" ]] || return 1
-
-  while IFS= read -r item; do
-    min="$(printf '%s\n' "$item" | sed -n 's/.*"min":\([0-9][0-9]*\).*/\1/p')"
-    max="$(printf '%s\n' "$item" | sed -n 's/.*"max":\([0-9][0-9]*\).*/\1/p')"
-    model="$(printf '%s\n' "$item" | sed -n 's/.*"model":"\([^"]*\)".*/\1/p')"
-    reasoning="$(printf '%s\n' "$item" | sed -n 's/.*"reasoning_level":"\([^"]*\)".*/\1/p')"
-
-    if [[ -z "$min" || -z "$max" || -z "$model" || -z "$reasoning" ]]; then
-      continue
-    fi
-    if (( intelligence >= min && intelligence <= max )); then
-      printf '%s %s\n' "$model" "$reasoning"
-      return 0
-    fi
-  done < <(printf '%s\n' "$map" | sed 's/},{/}\n{/g')
-
-  return 1
-}
-
 schedule_intelligence_profile() {
   local intelligence="${ATMUX_INTELLIGENCE:-}"
   local manifest_path profile model reasoning
-  manifest_path="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)/manifest.json"
+  manifest_path="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)/manifest"
 
   if [[ -n "$intelligence" && "$intelligence" =~ ^[0-9]+$ ]] \
      && (( intelligence >= 0 && intelligence <= 100 )); then

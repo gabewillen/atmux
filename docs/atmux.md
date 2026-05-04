@@ -129,6 +129,11 @@ Current built-in mapping:
 ### `atmux adapter install <owner/repo|github-url>`
 - Installs (or updates) adapter repos under `<ATMUX_HOME>/adapters/<adapter>`.
 
+### `atmux shim install <name|owner/repo|github-url>`
+- Installs a shipped shim by name or a single-shim GitHub repo whose root contains `manifest` and executable wrappers.
+- Installed shims live under `<ATMUX_HOME>/shims/<shim>`.
+- Use `atmux shim list`, `atmux shim show <name>`, and `atmux shim resolve <name>` to inspect installed and shipped shims.
+
 ### Script Subcommands
 - Any executable in `<ATMUX_HOME>/bin/scripts/<name>` is available as:
   `atmux <name>`

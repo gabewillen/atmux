@@ -1,0 +1,11 @@
+NAME=gemini
+VERSION=1
+SUBMIT_KEYS_STEER=(Enter)
+SUBMIT_KEYS_INTERRUPT=(C-c)
+INTELLIGENCE_MAP=(
+  "0 39 gemini-3.1-flash-lite-preview low"
+  "40 74 gemini-3-flash-preview medium"
+  "75 89 gemini-3.1-pro-preview medium"
+  "90 100 gemini-3.1-pro-preview high"
+)
+INPUT_START="\\*"

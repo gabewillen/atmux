@@ -22,7 +22,7 @@ Install by piping `curl` into `sh`, or clone the repo and run `./install.sh`. Th
 - **You can actually see the agents work.** It's just tmux. Attach to any session, watch the agent think in real time, detach and come back later. No custom TUI, no web dashboard, no log tailing.
 - **Git worktree per agent.** Each agent gets its own branch and working directory under `ATMUX_HOME/agents/`. Parallel agents can't stomp each other's changes, and cleanup is a single `atmux agent kill`.
 
-> **Experimental** — this project is under active development (current version: `0.20.0`). APIs, commands, and behavior may change without notice. Use at your own risk.
+> **Experimental** — this project is under active development (current version: `0.21.0`). APIs, commands, and behavior may change without notice. Use at your own risk.
 
 ## Install
 
@@ -145,6 +145,13 @@ Install a third-party adapter:
 atmux adapter install owner/repo
 ```
 
+Install a shipped or third-party shim:
+
+```sh
+atmux shim install git
+atmux shim install owner/repo
+```
+
 ## Command reference
 
 Most commands take the form `atmux <noun> <verb> [args]`. A handful of cross-cutting verbs (`send`, `exec`, `schedule`, `notify`, `update`, `install`) have no resource home and stay verb-shaped. Run `atmux <noun> --help` (or `atmux <verb> --help`) for the full flag list of any single command.
@@ -168,6 +175,7 @@ Resources (use `atmux <noun> --help` for verbs):
   config     atmux configuration (get, set, unset, list)
   env        environment vars (get, list)
   adapter    AI CLI adapters (install, ...)
+  shim       executable shims for agent sessions (install, list, show, resolve)
   watcher    background watcher registrations (list, kill)
   process    atmux exec-tracked processes (watch, kill)
   pane       tmux pane operations (watch)
@@ -402,6 +410,26 @@ atmux adapter codex status
 atmux adapter codex model list
 ```
 
+#### `shim`
+
+```sh
+atmux shim install <name|owner/repo|github-url>
+atmux shim list
+atmux shim show <name>
+atmux shim resolve <name>
+```
+
+Manage executable shims activated for agent sessions.
+
+A shim is a directory containing:
+  manifest      sourced bash: NAME, KIND=path-prefix, DESCRIPTION, BINARIES=(...)
+  <binary>      one executable wrapper per BINARIES entry
+
+Resolution precedence:
+<repo>/.atmux/shims/<name>
+~/.atmux/shims/<name>
+<source_root>/shims/<name>
+
 #### `watcher`
 
 ```sh
@@ -522,7 +550,7 @@ Resolution order for --to:
   1) Team session/name
   2) Agent session/name
 --interrupt  Hard interrupt: send the adapter's abort key sequence
-             (`submit_keys.interrupt` in the manifest) to stop the current
+             (`SUBMIT_KEYS_INTERRUPT` in the manifest) to stop the current
              operation, then submit the message. Use sparingly — this aborts
              whatever the agent is doing.
 
@@ -584,7 +612,7 @@ Send an ATMUX XML notification to a tmux pane. Without --interrupt, the
 notification is queued and delivered when the pane's adapter is at its
 idle prompt.
 --interrupt  Hard interrupt: send the adapter's abort key sequence
-             (`submit_keys.interrupt` in the manifest) before the message,
+             (`SUBMIT_KEYS_INTERRUPT` in the manifest) before the message,
              then submit. Resolves adapter from the pane's session, or from
              --session if provided. Use sparingly — this aborts whatever
              the agent is doing.

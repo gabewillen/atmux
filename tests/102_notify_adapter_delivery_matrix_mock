@@ -19,7 +19,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/isolate-tmux.sh"
 #               tool injection where the adapter supports it. NOT a true queue
 #               (which would wait for the agent to finish all current todos);
 #               that mode doesn't exist yet.
-#   interrupt — hard abort + submit. Sends `submit_keys.interrupt` (abort key)
+#   interrupt — hard abort + submit. Sends `SUBMIT_KEYS_INTERRUPT` (abort key)
 #               before the payload, settles, then submits with `submit_keys.steer`.
 # Targets the two failure modes the user cares about: not-entered and
 # stuck-in-input.

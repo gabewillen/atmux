@@ -113,6 +113,13 @@ Install a third-party adapter:
 atmux adapter install owner/repo
 ```
 
+Install a shipped or third-party shim:
+
+```sh
+atmux shim install git
+atmux shim install owner/repo
+```
+
 ## Command reference
 
 Most commands take the form `atmux <noun> <verb> [args]`. A handful of cross-cutting verbs (`send`, `exec`, `schedule`, `notify`, `update`, `install`) have no resource home and stay verb-shaped. Run `atmux <noun> --help` (or `atmux <verb> --help`) for the full flag list of any single command.

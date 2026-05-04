@@ -19,7 +19,7 @@ Description:
     1) Team session/name
     2) Agent session/name
   --interrupt  Hard interrupt: send the adapter's abort key sequence
-               (`submit_keys.interrupt` in the manifest) to stop the current
+               (`SUBMIT_KEYS_INTERRUPT` in the manifest) to stop the current
                operation, then submit the message. Use sparingly — this aborts
                whatever the agent is doing.
 

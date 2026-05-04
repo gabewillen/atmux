@@ -9,7 +9,7 @@ TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
 MODEL_SCRIPT="$REPO_ROOT/adapter/codex/scripts/model"
 REASONING_SCRIPT="$REPO_ROOT/adapter/codex/scripts/reasoning-level"
-MANIFEST="$REPO_ROOT/adapter/codex/manifest.json"
+MANIFEST="$REPO_ROOT/adapter/codex/manifest"
 
 tmp_home="$(mktemp -d "${TMPDIR:-/tmp}/atmux-codex-default.XXXXXX")"
 trap 'rm -rf "$tmp_home"' EXIT
@@ -34,12 +34,12 @@ reasoning_default_model="$(
   exit 1
 }
 
-if grep -Fq '"model": "gpt-5.4"' "$MANIFEST"; then
+if grep -Fq 'gpt-5.4' "$MANIFEST"; then
   echo "codex intelligence manifest still references gpt-5.4" >&2
   exit 1
 fi
 
-model_count="$(grep -Fc '"model": "gpt-5.5"' "$MANIFEST")"
+model_count="$(grep -Ec '"[0-9]+ [0-9]+ gpt-5\.5 ' "$MANIFEST")"
 [[ "$model_count" -eq 4 ]] || {
   echo "expected 4 codex intelligence entries for gpt-5.5, got $model_count" >&2
   exit 1

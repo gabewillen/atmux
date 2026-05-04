@@ -4,6 +4,9 @@
 # When sourced, only function definitions run (see bottom).
 
 ATMUX_NOTIFY_SCRIPT_PATH="${BASH_SOURCE[0]}"
+ATMUX_NOTIFY_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=bin/(atmux)/(lib)/manifest
+source "$ATMUX_NOTIFY_DIR/(lib)/manifest"
 
 debug_notify_enabled() {
   case "${ATMUX_DEBUG_NOTIFY:-0}" in
@@ -107,71 +110,13 @@ resolve_notify_script_path() {
   fi
 }
 
-# Read a string field from the adapter manifest's `input` object,
-# JSON-decoding escapes correctly (so e.g. gemini's `"\\*"` resolves to
-# the two-byte regex `\*` rather than the raw three-byte `\\*` that a
-# byte-level sed would return). Cascades python3 → perl → sed-with-
-# manual-unescape so the function works even on minimal hosts that
-# lack one of the higher-level interpreters.
+# Read a string field from an adapter manifest without executing it.
 read_manifest_input_field() {
   local manifest_path="$1" field="$2"
-
-  if command -v python3 >/dev/null 2>&1; then
-    ATMUX_FIELD="$field" python3 -c '
-import json, os, sys
-try:
-  d = json.load(open(sys.argv[1]))
-  v = (d.get("input") or {}).get(os.environ["ATMUX_FIELD"])
-  if v is not None:
-    sys.stdout.write(v)
-except Exception:
-  pass
-' "$manifest_path"
-    return 0
-  fi
-
-  if command -v perl >/dev/null 2>&1; then
-    ATMUX_FIELD="$field" perl -0777 -ne '
-      use strict; use warnings;
-      my $field = quotemeta $ENV{ATMUX_FIELD};
-      if (/"input"\s*:\s*\{[^{}]*"$field"\s*:\s*"((?:\\.|[^"\\])*)"/s) {
-        my $v = $1;
-        # JSON string unescape. A naive sequence of independent
-        # substitutions is wrong: `\\n` (a literal backslash + n) would
-        # be rewritten by the `\\n -> newline` pass before `\\\\ -> \\`
-        # ran. Walk left-to-right one escape at a time so each `\X` is
-        # only consumed once.
-        my $out = "";
-        while (length $v) {
-          if ($v =~ /^\\u([0-9a-fA-F]{4})/) { $out .= chr(hex($1)); $v = substr($v, 6); }
-          elsif ($v =~ /^\\n/) { $out .= "\n"; $v = substr($v, 2); }
-          elsif ($v =~ /^\\r/) { $out .= "\r"; $v = substr($v, 2); }
-          elsif ($v =~ /^\\t/) { $out .= "\t"; $v = substr($v, 2); }
-          elsif ($v =~ /^\\b/) { $out .= "\b"; $v = substr($v, 2); }
-          elsif ($v =~ /^\\f/) { $out .= "\f"; $v = substr($v, 2); }
-          elsif ($v =~ /^\\\//) { $out .= "/"; $v = substr($v, 2); }
-          elsif ($v =~ /^\\"/) { $out .= "\""; $v = substr($v, 2); }
-          elsif ($v =~ /^\\\\/) { $out .= "\\"; $v = substr($v, 2); }
-          else { $out .= substr($v, 0, 1); $v = substr($v, 1); }
-        }
-        print $out;
-      }
-    ' "$manifest_path"
-    return 0
-  fi
-
-  # sed fallback: walk to the input.<field> value, then capture bytes
-  # up to the next unescaped quote. Adapter manifests today only use
-  # `\\` (backslash) and `\"` (quote) inside these regex strings; other
-  # JSON escapes (\n, \uXXXX) aren't used. If a future manifest needs
-  # them, install python3 or perl.
-  local compact raw
-  compact="$(tr -d '\n\r\t' < "$manifest_path")"
-  # `[^"]*` is naive (would stop at `\"`), but neither current manifest
-  # contains `\"` inside input.{start,end}, so it's sufficient.
-  raw="$(printf '%s' "$compact" | sed -n "s/.*\"$field\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p")"
-  # JSON unescape: \\ → \, then \" → ". Order matters.
-  printf '%s' "$raw" | sed -e 's/\\\\/\\/g' -e 's/\\"/"/g'
+  case "$field" in
+    start) read_manifest_scalar_assignment "$manifest_path" INPUT_START || true ;;
+    end) read_manifest_scalar_assignment "$manifest_path" INPUT_END || true ;;
+  esac
 }
 
 resolve_input_prompt_for_adapter() {
@@ -1609,12 +1554,12 @@ resolve_manifest_path() {
   local source_root manifest_path
 
   source_root="${ATMUX_SOURCE_ROOT:-${ATMUX_HOME}/src/atmux}"
-  manifest_path="$source_root/adapter/$adapter/manifest.json"
+  manifest_path="$source_root/adapter/$adapter/manifest"
   if [[ -f "$manifest_path" ]]; then
     printf '%s\n' "$manifest_path"
     return 0
   fi
-  manifest_path="$ATMUX_HOME/adapters/$adapter/manifest.json"
+  manifest_path="$ATMUX_HOME/adapters/$adapter/manifest"
   if [[ -f "$manifest_path" ]]; then
     printf '%s\n' "$manifest_path"
     return 0
@@ -1625,21 +1570,25 @@ resolve_manifest_path() {
 resolve_submit_keys() {
   local adapter="$1"
   local mode="${2:-steer}"
-  local manifest_path compact raw_keys
+  local manifest_path var keys
 
   if ! manifest_path="$(resolve_manifest_path "$adapter")"; then
     printf 'Enter\n'
     return 0
   fi
 
-  compact="$(tr -d '\n\r\t ' < "$manifest_path")"
-  raw_keys="$(printf '%s' "$compact" | sed -n "s/.*\"${mode}\":\[\([^]]*\)\].*/\1/p")"
-  if [[ -z "$raw_keys" ]]; then
+  case "$mode" in
+    steer) var=SUBMIT_KEYS_STEER ;;
+    interrupt) var=SUBMIT_KEYS_INTERRUPT ;;
+    *) var= ;;
+  esac
+  [[ -n "$var" ]] || { printf 'Enter\n'; return 0; }
+  keys="$(read_manifest_array_assignment "$manifest_path" "$var" || true)"
+  if [[ -z "$keys" ]]; then
     printf 'Enter\n'
-    return 0
+  else
+    printf '%s\n' "$keys"
   fi
-
-  printf '%s' "$raw_keys" | sed 's/"//g; s/,/\n/g'
 }
 
 # Like resolve_submit_keys, but emits nothing (and returns 1) when the
@@ -1648,13 +1597,17 @@ resolve_submit_keys() {
 resolve_submit_keys_strict() {
   local adapter="$1"
   local mode="${2:-steer}"
-  local manifest_path compact raw_keys
+  local manifest_path var keys
 
   manifest_path="$(resolve_manifest_path "$adapter")" || return 1
-  compact="$(tr -d '\n\r\t ' < "$manifest_path")"
-  raw_keys="$(printf '%s' "$compact" | sed -n "s/.*\"${mode}\":\[\([^]]*\)\].*/\1/p")"
-  [[ -n "$raw_keys" ]] || return 1
-  printf '%s' "$raw_keys" | sed 's/"//g; s/,/\n/g'
+  case "$mode" in
+    steer) var=SUBMIT_KEYS_STEER ;;
+    interrupt) var=SUBMIT_KEYS_INTERRUPT ;;
+    *) return 1 ;;
+  esac
+  keys="$(read_manifest_array_assignment "$manifest_path" "$var" || true)"
+  [[ -n "$keys" ]] || return 1
+  printf '%s\n' "$keys"
 }
 
 timestamp_utc() {
@@ -1857,7 +1810,7 @@ Description:
   notification is queued and delivered when the pane's adapter is at its
   idle prompt.
   --interrupt  Hard interrupt: send the adapter's abort key sequence
-               (`submit_keys.interrupt` in the manifest) before the message,
+               (`SUBMIT_KEYS_INTERRUPT` in the manifest) before the message,
                then submit. Resolves adapter from the pane's session, or from
                --session if provided. Use sparingly — this aborts whatever
                the agent is doing.

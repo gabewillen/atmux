@@ -4,7 +4,7 @@
 # envvars (ATMUX_CLAUDE_MODEL/ATMUX_CLAUDE_EFFORT, ATMUX_CURSOR_AGENT_*,
 # ATMUX_GEMINI_*).
 #
-# Strategy: shim the adapter CLI binary with a script that records its
+# Strategy: shadow the adapter CLI binary with a script that records its
 # argv to a file, run the real start script with the overrides set, then
 # inspect the captured argv. Mirrors 80_gemini_intelligence_model_selection.
 set -euo pipefail
@@ -22,7 +22,7 @@ mkdir -p "$tmp_dir/bin"
 # cursor-agent's start script forces `${HOME}/.local/bin` and
 # `${HOME}/.cursor/bin` to the front of PATH at boot, which would
 # normally find the developer's real cursor-agent binary and bypass
-# our shim. Mirror those paths inside a fake $HOME so the shim wins.
+# our stub. Mirror those paths inside a fake $HOME so the stub wins.
 mkdir -p "$tmp_dir/home/.local/bin" "$tmp_dir/home/.cursor/bin"
 
 # Generic "record argv" stub. Each adapter installs a copy under its CLI
@@ -36,7 +36,7 @@ ln -sf _record "$tmp_dir/bin/gemini"
 ln -sf _record "$tmp_dir/bin/claude"
 ln -sf _record "$tmp_dir/bin/cursor-agent"
 ln -sf _record "$tmp_dir/bin/agent"
-# Same shim at the paths cursor-agent injects.
+# Same stub at the paths cursor-agent injects.
 for name in cursor-agent agent; do
   ln -sf "$tmp_dir/bin/_record" "$tmp_dir/home/.local/bin/$name"
   ln -sf "$tmp_dir/bin/_record" "$tmp_dir/home/.cursor/bin/$name"

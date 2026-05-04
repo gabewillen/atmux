@@ -1,0 +1,4 @@
+NAME=git
+KIND=path-prefix
+DESCRIPTION="Route agent-issued git through atmux git hooks."
+BINARIES=(git)

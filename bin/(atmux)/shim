@@ -1,0 +1,257 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ATMUX_HOME="${ATMUX_HOME:-$HOME/.atmux}"
+HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=bin/(atmux)/(lib)/manifest
+source "$HERE/(lib)/manifest"
+
+usage() {
+  cat <<'USAGE'
+Usage:
+  atmux shim install <name|owner/repo|github-url>
+  atmux shim list
+  atmux shim show <name>
+  atmux shim resolve <name>
+
+Description:
+  Manage executable shims activated for agent sessions.
+
+  A shim is a directory containing:
+    manifest      sourced bash: NAME, KIND=path-prefix, DESCRIPTION, BINARIES=(...)
+    <binary>      one executable wrapper per BINARIES entry
+
+Resolution precedence:
+  <repo>/.atmux/shims/<name>
+  ~/.atmux/shims/<name>
+  <source_root>/shims/<name>
+USAGE
+}
+
+source_root() {
+  if [[ -n "${ATMUX_SOURCE_ROOT:-}" && -d "$ATMUX_SOURCE_ROOT" ]]; then
+    printf '%s\n' "$ATMUX_SOURCE_ROOT"
+    return 0
+  fi
+  local self_root
+  self_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
+  if [[ -d "$self_root/shims" || -d "$self_root/bin/(atmux)" ]]; then
+    printf '%s\n' "$self_root"
+    return 0
+  fi
+  if [[ -d "$ATMUX_HOME/src/atmux" ]]; then
+    printf '%s\n' "$ATMUX_HOME/src/atmux"
+    return 0
+  fi
+  printf '%s\n' "$self_root"
+}
+
+shim_search_paths() {
+  local repo_root="" sr
+  repo_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+  sr="$(source_root)"
+  if [[ -n "$repo_root" ]]; then
+    printf '%s\n' "$repo_root/.atmux/shims"
+  fi
+  printf '%s\n' "$ATMUX_HOME/shims"
+  printf '%s\n' "$sr/shims"
+}
+
+resolve_shim_dir() {
+  local name="$1"
+  shim_name_valid "$name" || return 1
+  local base
+  while IFS= read -r base; do
+    [[ -n "$base" ]] || continue
+    if [[ -d "$base/$name" ]]; then
+      printf '%s\n' "$base/$name"
+      return 0
+    fi
+  done < <(shim_search_paths)
+  return 1
+}
+
+read_manifest() {
+  local dir="$1"
+  local manifest="$dir/manifest"
+  local name kind description binary
+  [[ -f "$manifest" ]] || { echo "shim manifest missing: $manifest" >&2; return 1; }
+  name="$(read_manifest_scalar_assignment "$manifest" NAME || true)"
+  kind="$(read_manifest_scalar_assignment "$manifest" KIND || true)"
+  description="$(read_manifest_scalar_assignment "$manifest" DESCRIPTION || true)"
+  [[ -n "$name" ]] || name="$(basename "$dir")"
+  printf 'NAME=%s\n' "$name"
+  printf 'KIND=%s\n' "$kind"
+  printf 'DESCRIPTION=%s\n' "$description"
+  while IFS= read -r binary; do
+    [[ -n "$binary" ]] || continue
+    printf 'BINARY=%s\n' "$binary"
+  done < <(read_manifest_array_assignment "$manifest" BINARIES || true)
+}
+
+validate_shim_dir() {
+  local dir="$1"
+  local out name kind binary saw_binary=0
+  out="$(read_manifest "$dir")" || return 1
+  name="$(printf '%s\n' "$out" | sed -n 's/^NAME=//p' | head -n 1)"
+  kind="$(printf '%s\n' "$out" | sed -n 's/^KIND=//p' | head -n 1)"
+  shim_name_valid "$name" || { echo "invalid shim NAME: $name" >&2; return 1; }
+  [[ "$kind" == "path-prefix" ]] || { echo "unsupported shim KIND for $name: ${kind:-missing}" >&2; return 1; }
+  while IFS= read -r binary; do
+    saw_binary=1
+    shim_binary_valid "$binary" || { echo "invalid shim binary for $name: $binary" >&2; return 1; }
+    [[ -x "$dir/$binary" ]] || { echo "shim binary is not executable: $dir/$binary" >&2; return 1; }
+  done < <(printf '%s\n' "$out" | sed -n 's/^BINARY=//p')
+  [[ "$saw_binary" -eq 1 ]] || { echo "shim has no BINARIES: $name" >&2; return 1; }
+}
+
+normalize_github_repo() {
+  local input="$1"
+  local repo_path=""
+  case "$input" in
+    https://github.com/*) repo_path="${input#https://github.com/}" ;;
+    github.com/*) repo_path="${input#github.com/}" ;;
+    */*) repo_path="$input" ;;
+    *) return 1 ;;
+  esac
+  repo_path="${repo_path%.git}"
+  repo_path="${repo_path%/}"
+  [[ "$repo_path" == */* ]] || return 1
+  printf '%s\n' "$repo_path"
+}
+
+install_shipped() {
+  local name="$1"
+  shim_name_valid "$name" || { echo "invalid shim name: $name" >&2; exit 2; }
+  local sr src dest
+  sr="$(source_root)"
+  src="$sr/shims/$name"
+  [[ -d "$src" ]] || { echo "shipped shim not found: $name" >&2; exit 1; }
+  validate_shim_dir "$src"
+  dest="$ATMUX_HOME/shims/$name"
+  mkdir -p "$ATMUX_HOME/shims"
+  if [[ -e "$dest" ]]; then
+    echo "shim already exists: $dest" >&2
+    exit 1
+  fi
+  cp -R "$src" "$dest"
+  validate_shim_dir "$dest"
+  echo "installed shim at $dest"
+}
+
+install_github() {
+  local input="$1"
+  local repo_path repo_base repo_url tmp dest manifest_out manifest_name existing_repo
+  repo_path="$(normalize_github_repo "$input")" || { echo "invalid shim or github repo: $input" >&2; exit 2; }
+  repo_base="$(basename "$repo_path")"
+  repo_url="https://github.com/${repo_path}.git"
+  tmp="$(mktemp -d "${TMPDIR:-/tmp}/atmux-shim-install.XXXXXX")"
+  if ! git clone "$repo_url" "$tmp/repo" >/dev/null; then
+    rm -rf "$tmp"
+    return 1
+  fi
+  if ! validate_shim_dir "$tmp/repo"; then
+    rm -rf "$tmp"
+    return 1
+  fi
+  if ! manifest_out="$(read_manifest "$tmp/repo")"; then
+    rm -rf "$tmp"
+    return 1
+  fi
+  manifest_name="$(printf '%s\n' "$manifest_out" | sed -n 's/^NAME=//p' | head -n 1)"
+  [[ -n "$manifest_name" ]] || manifest_name="$repo_base"
+  if ! shim_name_valid "$manifest_name"; then
+    echo "invalid shim NAME: $manifest_name" >&2
+    rm -rf "$tmp"
+    return 1
+  fi
+  dest="$ATMUX_HOME/shims/$manifest_name"
+  mkdir -p "$ATMUX_HOME/shims"
+  if [[ -d "$dest/.git" ]]; then
+    existing_repo="$(normalize_github_repo "$(git -C "$dest" remote get-url origin 2>/dev/null || true)" || true)"
+    if [[ "$existing_repo" != "$repo_path" ]]; then
+      echo "shim already installed from different repo: $dest (existing: ${existing_repo:-unknown}, requested: $repo_path)" >&2
+      rm -rf "$tmp"
+      return 1
+    fi
+    if ! git -C "$dest" pull --ff-only >/dev/null; then
+      rm -rf "$tmp"
+      return 1
+    fi
+    if ! validate_shim_dir "$dest"; then
+      rm -rf "$tmp"
+      return 1
+    fi
+    rm -rf "$tmp"
+    echo "updated shim at $dest"
+    return
+  fi
+  if [[ -e "$dest" ]]; then
+    echo "path exists and is not a git shim repo: $dest" >&2
+    rm -rf "$tmp"
+    return 1
+  fi
+  mv "$tmp/repo" "$dest"
+  rm -rf "$tmp"
+  echo "installed shim at $dest"
+}
+
+cmd_install() {
+  local input="${1:-}"
+  [[ -n "$input" ]] || { echo "missing shim argument" >&2; exit 2; }
+  if normalize_github_repo "$input" >/dev/null 2>&1; then
+    install_github "$input"
+  else
+    install_shipped "$input"
+  fi
+}
+
+cmd_list() {
+  local base dir name seen=""
+  while IFS= read -r base; do
+    [[ -d "$base" ]] || continue
+    while IFS= read -r dir; do
+      [[ -z "$dir" ]] && continue
+      name="$(basename "$dir")"
+      case " $seen " in *" $name "*) continue ;; esac
+      if validate_shim_dir "$dir" >/dev/null 2>&1; then
+        printf '%s\t%s\n' "$name" "$dir"
+        seen="$seen $name"
+      fi
+    done < <(find "$base" -mindepth 1 -maxdepth 1 -type d | sort)
+  done < <(shim_search_paths)
+}
+
+cmd_show() {
+  local name="${1:-}" dir
+  [[ -n "$name" ]] || { echo "usage: atmux shim show <name>" >&2; exit 2; }
+  if ! dir="$(resolve_shim_dir "$name")"; then
+    echo "shim not found: $name" >&2
+    exit 1
+  fi
+  validate_shim_dir "$dir"
+  printf 'PATH=%s\n' "$dir"
+  read_manifest "$dir"
+}
+
+cmd_resolve() {
+  local name="${1:-}" dir
+  [[ -n "$name" ]] || { echo "usage: atmux shim resolve <name>" >&2; exit 2; }
+  if ! dir="$(resolve_shim_dir "$name")"; then
+    echo "shim not found: $name" >&2
+    exit 1
+  fi
+  validate_shim_dir "$dir"
+  printf '%s\n' "$dir"
+}
+
+sub="${1:-}"
+shift || true
+case "$sub" in
+  install) cmd_install "${1:-}" ;;
+  list) cmd_list ;;
+  show) cmd_show "${1:-}" ;;
+  resolve) cmd_resolve "${1:-}" ;;
+  -h|--help|help|"") usage ;;
+  *) echo "unknown shim command: $sub" >&2; usage >&2; exit 2 ;;
+esac

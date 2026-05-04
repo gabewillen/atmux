@@ -23,7 +23,7 @@ ADAPTER_DIR="$ROOT/adapter"
 TEMPLATE_DIR="$ROOT/templates"
 
 # Display order matches `bin/atmux`'s top-level `usage()`.
-RESOURCES=(agent team role issue pr message config env adapter shim watcher process pane path git)
+RESOURCES=(agent team role issue pr message config env adapter shim watcher process pane path git gh)
 VERBS=(send exec schedule notify update install)
 
 require_python3() {

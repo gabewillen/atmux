@@ -172,7 +172,7 @@ fetch_prs_poll_data() {
     -F repo="$repo" \
     --jq '
       .data.repository.pullRequests.nodes
-      | sort_by(.createdAt, .id)
+      | sort_by([.createdAt, .id])
       | .[]
       | "\(.createdAt)|\(.id)|\(.number)|\(.author.login // \"unknown\")|\(.state // \"\")|\(if .isDraft then \"draft\" else \"ready\" end)|\((.title // \"\" | gsub(\"[\\r\\n]+\"; \" \") | .[0:160]))|\(.url // \"\")"
     ' 2>/dev/null || return 1

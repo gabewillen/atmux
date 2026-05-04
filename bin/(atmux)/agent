@@ -480,6 +480,17 @@ resolve_shim_runner() {
 
 default_agent_shims() {
   printf '%s\n' git
+  local installed_dir="${ATMUX_HOME}/shims"
+  local dir name seen=" git "
+  [[ -d "$installed_dir" ]] || return 0
+  while IFS= read -r dir; do
+    [[ -d "$dir" ]] || continue
+    name="$(basename "$dir")"
+    shim_name_valid "$name" || continue
+    case "$seen" in *" $name "*) continue ;; esac
+    printf '%s\n' "$name"
+    seen="$seen$name "
+  done < <(find "$installed_dir" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort)
 }
 
 read_shim_binaries() {

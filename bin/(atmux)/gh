@@ -1,0 +1,251 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ATMUX_HOME="${ATMUX_HOME:-$HOME/.atmux}"
+HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=bin/(atmux)/notify
+source "$HERE/notify"
+
+usage() {
+  cat <<'USAGE'
+Usage:
+  atmux gh <gh-args...>
+
+Description:
+  Transparent wrapper around GitHub CLI (`gh`). Every invocation is forwarded
+  to the real `gh` executable with the same stdout, stderr, and exit code.
+
+  When run through the agent shim, successful `gh pr create` commands
+  automatically register the creating agent's pane for `atmux pr watch` on the
+  created GitHub pull request. The existing PR watcher then delivers comment
+  notifications until the PR closes or merges.
+USAGE
+}
+
+resolve_real_gh() {
+  if [[ -n "${ATMUX_REAL_GH:-}" && -x "$ATMUX_REAL_GH" ]]; then
+    printf '%s\n' "$ATMUX_REAL_GH"
+    return 0
+  fi
+  if [[ -n "${ATMUX_SHIM_REAL_BINARY:-}" && -x "$ATMUX_SHIM_REAL_BINARY" ]]; then
+    printf '%s\n' "$ATMUX_SHIM_REAL_BINARY"
+    return 0
+  fi
+
+  local self candidate resolved
+  self="$(cd -- "$HERE" && pwd -P)/gh"
+  while IFS= read -r candidate; do
+    [[ -n "$candidate" && -x "$candidate" ]] || continue
+    resolved="$(cd -- "$(dirname -- "$candidate")" 2>/dev/null && pwd -P)/$(basename -- "$candidate")"
+    [[ "$resolved" != "$self" ]] || continue
+    [[ "$resolved" != *'(atmux)/gh' ]] || continue
+    if [[ -n "${ATMUX_SHIM_PROXY_DIR:-}" && "$resolved" == "$(cd -- "$ATMUX_SHIM_PROXY_DIR" 2>/dev/null && pwd -P)/gh" ]]; then
+      continue
+    fi
+    case ":${ATMUX_ACTIVE_SHIM_DIRS:-}:" in
+      *":$(dirname -- "$resolved"):"*) continue ;;
+    esac
+    printf '%s\n' "$candidate"
+    return 0
+  done < <(PATH="$PATH" command -v -p gh 2>/dev/null
+           which -a gh 2>/dev/null
+           printf '%s\n' /usr/bin/gh /usr/local/bin/gh /opt/homebrew/bin/gh)
+
+  echo "atmux gh: cannot find real gh executable" >&2
+  return 1
+}
+
+github_url_from_text() {
+  local kind="$1" text="$2"
+  case "$kind" in
+    pr) printf '%s\n' "$text" | grep -Eo 'https://github\.com/[^[:space:]]+/[^[:space:]]+/pull/[0-9]+' | head -n 1 ;;
+    issue) printf '%s\n' "$text" | grep -Eo 'https://github\.com/[^[:space:]]+/[^[:space:]]+/issues/[0-9]+' | head -n 1 ;;
+  esac
+}
+
+repo_from_args() {
+  local arg
+  while [[ $# -gt 0 ]]; do
+    arg="$1"; shift
+    case "$arg" in
+      --repo|-R)
+        printf '%s\n' "${1:-}"
+        return 0
+        ;;
+      --repo=*|-R=*)
+        printf '%s\n' "${arg#*=}"
+        return 0
+        ;;
+    esac
+  done
+  return 1
+}
+
+repo_from_url() {
+  local url="$1" stripped path owner repo
+  stripped="${url#http://}"
+  stripped="${stripped#https://}"
+  stripped="${stripped#github.com/}"
+  path="${stripped#/}"
+  owner="$(printf '%s\n' "$path" | cut -d/ -f1)"
+  repo="$(printf '%s\n' "$path" | cut -d/ -f2)"
+  [[ -n "$owner" && -n "$repo" ]] || return 1
+  printf '%s/%s\n' "$owner" "$repo"
+}
+
+number_from_url() {
+  local url="$1"
+  printf '%s\n' "$url" | sed -E 's#.*/(pull|issues)/([0-9]+).*#\2#'
+}
+
+number_arg_after_verb() {
+  local arg
+  while [[ $# -gt 0 ]]; do
+    arg="$1"; shift
+    case "$arg" in
+      --repo|-R|--body|-b|--body-file|-F|--editor|-e)
+        shift || true
+        ;;
+      --repo=*|-R=*|--body=*|-b=*|--body-file=*|-F=*)
+        ;;
+      -*)
+        ;;
+      *)
+        printf '%s\n' "$arg"
+        return 0
+        ;;
+    esac
+  done
+  return 1
+}
+
+current_repo() {
+  local real_gh="$1"
+  shift || true
+  repo_from_args "$@" && return 0
+  "$real_gh" repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null || true
+}
+
+notify_existing_watchers() {
+  local kind="$1" repo="$2" number="$3" commenter="$4"
+  local owner repo_name key watch_dir watchers_dir watcher_file pane payload hint_type
+  owner="${repo%%/*}"
+  repo_name="${repo#*/}"
+  [[ -n "$owner" && -n "$repo_name" && "$owner" != "$repo_name" && "$number" =~ ^[0-9]+$ ]] || return 0
+
+  case "$kind" in
+    pr)
+      key="$(normalize_name "${owner}_${repo_name}_pr_${number}")"
+      watch_dir="$ATMUX_HOME/watch-pr/$key"
+      hint_type="pr-comment"
+      payload="$(build_notification "$hint_type" "$commenter" "atmux pr show $number --repo $repo" "pr=$number" "repo=$repo")"
+      ;;
+    issue)
+      key="$(normalize_name "${owner}_${repo_name}_issue_${number}")"
+      watch_dir="$ATMUX_HOME/watch-issue/$key"
+      hint_type="issue-comment"
+      payload="$(build_notification "$hint_type" "$commenter" "atmux issue show $number --repo $repo" "issue=$number" "repo=$repo")"
+      ;;
+    *) return 0 ;;
+  esac
+
+  watchers_dir="$watch_dir/watchers"
+  [[ -d "$watchers_dir" ]] || return 0
+  while IFS= read -r watcher_file; do
+    [[ -f "$watcher_file" ]] || continue
+    case "$watcher_file" in *.exec) continue ;; esac
+    pane="$(tr -d '\r\n' < "$watcher_file" 2>/dev/null | cut -d'|' -f1)"
+    [[ -n "$pane" ]] || continue
+    send_payload_to_pane "$pane" "$payload" || true
+  done < <(find "$watchers_dir" -mindepth 1 -maxdepth 1 -type f ! -name '*.exec' 2>/dev/null | sort)
+}
+
+arm_watch() {
+  local kind="$1" url="$2" real_gh="$3"
+  [[ -n "$url" ]] || return 0
+  case "$kind" in
+    pr)
+      ATMUX_NO_WRAP=1 ATMUX_GH_BIN="$real_gh" "$HERE/pr" watch "$url" --interval "${ATMUX_GH_SHIM_WATCH_INTERVAL:-30}" >/dev/null 2>&1 || true
+      ;;
+    issue)
+      ATMUX_NO_WRAP=1 ATMUX_GH_BIN="$real_gh" "$HERE/issue" watch "$url" --interval "${ATMUX_GH_SHIM_WATCH_INTERVAL:-30}" >/dev/null 2>&1 || true
+      ;;
+  esac
+}
+
+record_checkout_worktree() {
+  local repo="$1" number="$2"
+  [[ -n "${ATMUX_REPO:-}" && -n "${ATMUX_AGENT_NAME:-}" ]] || return 0
+  local dir path
+  path="$(pwd -P)"
+  dir="$ATMUX_HOME/agents/$ATMUX_REPO/$ATMUX_AGENT_NAME/gh-hooks"
+  mkdir -p "$dir"
+  printf '%s\n' "$path" > "$dir/last-pr-checkout-worktree"
+  printf '%s\n' "$repo" > "$dir/last-pr-checkout-repo"
+  printf '%s\n' "$number" > "$dir/last-pr-checkout-number"
+}
+
+run_hook() {
+  local real_gh="$1" stdout_file="$2"
+  shift 2
+  local area="${1:-}" verb="${2:-}" out url repo number commenter
+  out="$(cat "$stdout_file" 2>/dev/null || true)"
+  case "$area $verb" in
+    "pr create")
+      url="$(github_url_from_text pr "$out")"
+      if [[ -z "$url" ]]; then
+        url="$("$real_gh" pr view --json url --jq .url 2>/dev/null || true)"
+      fi
+      arm_watch pr "$url" "$real_gh"
+      ;;
+    "issue create")
+      url="$(github_url_from_text issue "$out")"
+      if [[ -z "$url" ]]; then
+        url="$("$real_gh" issue view --json url --jq .url 2>/dev/null || true)"
+      fi
+      arm_watch issue "$url" "$real_gh"
+      ;;
+    "pr comment")
+      repo="$(current_repo "$real_gh" "$@" || true)"
+      number="$(number_arg_after_verb "${@:3}" || true)"
+      commenter="$("$real_gh" api user --jq .login 2>/dev/null || printf github)"
+      notify_existing_watchers pr "$repo" "$number" "$commenter"
+      ;;
+    "issue comment")
+      repo="$(current_repo "$real_gh" "$@" || true)"
+      number="$(number_arg_after_verb "${@:3}" || true)"
+      commenter="$("$real_gh" api user --jq .login 2>/dev/null || printf github)"
+      notify_existing_watchers issue "$repo" "$number" "$commenter"
+      ;;
+    "pr checkout")
+      repo="$(current_repo "$real_gh" "$@" || true)"
+      number="$(number_arg_after_verb "${@:3}" || true)"
+      record_checkout_worktree "$repo" "$number"
+      ;;
+  esac
+}
+
+main() {
+  local real_gh stdout_file stderr_file rc
+  real_gh="$(resolve_real_gh)"
+  stdout_file="$(mktemp "${TMPDIR:-/tmp}/atmux-gh-stdout.XXXXXX")"
+  stderr_file="$(mktemp "${TMPDIR:-/tmp}/atmux-gh-stderr.XXXXXX")"
+  local stdout_q stderr_q
+  printf -v stdout_q '%q' "$stdout_file"
+  printf -v stderr_q '%q' "$stderr_file"
+  trap "rm -f $stdout_q $stderr_q" EXIT
+
+  set +e
+  "$real_gh" "$@" >"$stdout_file" 2>"$stderr_file"
+  rc=$?
+  set -e
+
+  cat "$stdout_file"
+  cat "$stderr_file" >&2
+  if [[ "$rc" -eq 0 ]]; then
+    run_hook "$real_gh" "$stdout_file" "$@" || true
+  fi
+  return "$rc"
+}
+
+main "$@"

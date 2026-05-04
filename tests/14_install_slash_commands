@@ -30,6 +30,9 @@ grep -Fx "config/install/project-root" "$tmp_project/.atmux/.gitignore" >/dev/nu
 [[ "$(cat "$tmp_project/.atmux/config/install/scope")" == "project" ]] || { echo "project install scope metadata missing" >&2; exit 1; }
 [[ "$(cat "$tmp_project/.atmux/config/install/project-root")" == "$tmp_project_real" ]] || { echo "project install root metadata missing" >&2; exit 1; }
 [[ -x "$tmp_project/.atmux/src/atmux/bin/atmux" ]] || { echo "project source install missing" >&2; exit 1; }
+[[ -x "$tmp_project/.atmux/shims/gh/gh" ]] || { echo "project install missing shipped gh shim" >&2; exit 1; }
+[[ -x "$tmp_project/.atmux/shims/git/git" ]] || { echo "project install missing shipped git shim" >&2; exit 1; }
+grep -Fx "!shims/" "$tmp_project/.atmux/.gitignore" >/dev/null || { echo "project .atmux gitignore should allow shims directory" >&2; exit 1; }
 [[ -f "$tmp_project/.claude/skills/atmux-send/SKILL.md" ]] || { echo "project claude atmux-send skill missing" >&2; exit 1; }
 [[ -f "$tmp_project/.gemini/commands/atmux-send.toml" ]] || { echo "project gemini atmux-send command missing" >&2; exit 1; }
 [[ -f "$tmp_project/.codex/prompts/atmux-send.md" ]] || { echo "project codex atmux-send prompt missing" >&2; exit 1; }
@@ -51,6 +54,7 @@ HOME="$tmp_home_system" ATMUX_ALLOW_OUTSIDE_TMUX=1 "$ATMUX_BIN" install --system
 [[ -f "$tmp_home_system/.claude/skills/atmux-send/SKILL.md" ]] || { echo "system claude atmux-send skill missing" >&2; exit 1; }
 [[ -f "$tmp_home_system/.gemini/commands/atmux-send.toml" ]] || { echo "system gemini atmux-send command missing" >&2; exit 1; }
 [[ -f "$tmp_home_system/.codex/prompts/atmux-send.md" ]] || { echo "system codex atmux-send prompt missing" >&2; exit 1; }
+[[ -x "$tmp_home_system/.atmux/shims/gh/gh" ]] || { echo "system install missing shipped gh shim" >&2; exit 1; }
 
 (cd "$tmp_project" && HOME="$tmp_home_system_from_project" ATMUX_ALLOW_OUTSIDE_TMUX=1 "$tmp_project/.atmux/bin/atmux" install --system --no-slash-commands >/dev/null)
 [[ -x "$tmp_home_system_from_project/.atmux/bin/atmux" ]] || { echo "system install from project launcher should use home .atmux" >&2; exit 1; }

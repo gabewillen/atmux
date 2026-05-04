@@ -88,6 +88,7 @@ Resources (use `atmux <noun> --help` for verbs):
   pane       tmux pane operations (watch)
   path       filesystem path operations (watch)
   git        git working tree operations (watch)
+  gh         GitHub CLI operations with PR notification hooks
 
 Verbs (no resource home):
   send       message another agent or team
@@ -219,7 +220,7 @@ should_wrap_command() {
   fi
 
   case "$cmd" in
-    exec|watch|notify|kill|install)
+    exec|watch|notify|kill|install|gh)
       return 1
       ;;
     agent)

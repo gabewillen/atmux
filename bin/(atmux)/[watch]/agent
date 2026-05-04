@@ -57,6 +57,48 @@ detect_stuck_prompt() {
   return 1
 }
 
+# watch_via_status: status-script-driven idle wait. Polls the adapter's
+# `scripts/status` every <interval> seconds; exits 0 once `state="idle"`
+# (or "errored" / "usage-limit" — both are terminal "not actively
+# working" states) has been observed continuously for <idle> seconds,
+# 124 on timeout.
+watch_via_status() {
+  local pane="$1" status_script="$2"
+  local idle_seconds="$3" timeout_sec="$4" interval="$5"
+
+  local deadline now state status_xml first_idle_ts=0
+  deadline=$(( $(date +%s) + timeout_sec ))
+
+  while true; do
+    now="$(date +%s)"
+    if (( now >= deadline )); then
+      return 124
+    fi
+
+    status_xml="$(ATMUX_HOME="$ATMUX_HOME" \
+      ATMUX_SOURCE_ROOT="${ATMUX_SOURCE_ROOT:-$ATMUX_HOME/src/atmux}" \
+      ATMUX_STATUS_PASSIVE=1 ATMUX_TARGET_PANE="$pane" \
+      "$status_script" 2>/dev/null || true)"
+    state="$(printf '%s' "$status_xml" | sed -n 's/.*state="\([^"]*\)".*/\1/p' | head -n1)"
+
+    case "$state" in
+      idle|errored|usage-limit)
+        if (( first_idle_ts == 0 )); then
+          first_idle_ts="$now"
+        fi
+        if (( now - first_idle_ts >= idle_seconds )); then
+          return 0
+        fi
+        ;;
+      *)
+        first_idle_ts=0
+        ;;
+    esac
+
+    sleep "$interval"
+  done
+}
+
 main() {
   local agent=""
   local idle_seconds="30"
@@ -112,6 +154,31 @@ main() {
   if [[ -z "$pane" ]]; then
     echo "no pane found for session: $session" >&2
     exit 1
+  fi
+
+  # Prefer the adapter's own status script when available — it reports
+  # `state="idle|active|busy|..."` directly and is robust to TUI
+  # animations (cursor-agent's footer ticks the context-window meter
+  # and file-edit count even when reasoning is done, which makes the
+  # byte-stability fallback below never satisfy `--idle`). Fall back
+  # to byte-stability when the adapter doesn't ship a status script.
+  local adapter status_script
+  adapter="$(tmux show-environment -t "$session" ATMUX_ADAPTER 2>/dev/null | sed -n 's/^ATMUX_ADAPTER=//p' || true)"
+  status_script=""
+  if [[ -n "$adapter" ]]; then
+    for candidate in \
+      "${ATMUX_SOURCE_ROOT:-$ATMUX_HOME/src/atmux}/adapter/$adapter/scripts/status" \
+      "$ATMUX_HOME/adapters/$adapter/scripts/status"; do
+      if [[ -x "$candidate" ]]; then
+        status_script="$candidate"
+        break
+      fi
+    done
+  fi
+
+  if [[ -n "$status_script" ]]; then
+    watch_via_status "$pane" "$status_script" "$idle_seconds" "$timeout_sec" "$interval"
+    exit $?
   fi
 
   local deadline last_change_ts snap recent

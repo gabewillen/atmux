@@ -1,92 +1,78 @@
 #!/usr/bin/env bash
-# Edge-triggered idle watcher: polls the driver's pane every IDLE_INTERVAL
-# seconds and fires exactly one notification per active→idle transition.
+# Edge-triggered idle watcher: a thin loop around `atmux agent watch`.
+# Each loop iteration waits for the driver to be idle for IDLE_INTERVAL
+# seconds, fires one `<watch type="agent" reason="idle"/>` notification
+# on the navigator's pane, then waits for the next active→idle cycle.
+#
+# `atmux agent watch` is the canonical "wait until agent is idle"
+# primitive — when the adapter has a status script it uses
+# adapter-reported state (robust to TUI animations); otherwise it
+# falls back to pane-output stability. Keeping the navigator's idle
+# detection in lock-step with that primitive avoids two competing
+# definitions of "idle".
 #
 # Usage: idle-watch <driver_name> <nav_pane_id> <state_log_path>
-#
-# State machine:
-#   - prev empty:                first poll, prime baseline, record activity
-#   - cur != prev:               driver is active — record activity, reset
-#   - cur == prev (saw activity, not yet notified, stable >= IDLE_AFTER_TICKS):
-#                                fire ONE notification; flag notified
-#   - cur == prev (notified):    silent — wait for next active→idle cycle
 set -u
 
 driver="${1:?usage: idle-watch <driver> <pane> <log>}"
 nav_pane="${2:?usage: idle-watch <driver> <pane> <log>}"
 log="${3:?usage: idle-watch <driver> <pane> <log>}"
 
-IDLE_INTERVAL="${IDLE_INTERVAL:-10}"   # seconds between pane samples
-IDLE_AFTER_TICKS="${IDLE_AFTER_TICKS:-3}"  # consecutive stable samples = idle
-# Lifetime guard: how many consecutive ticks of "session not resolvable"
-# before we consider this watcher orphaned and exit. With IDLE_INTERVAL
-# at 10s, 3 ticks = 30s of unbroken absence before we self-terminate —
-# enough to ride out brief atmux/tmux hiccups, short enough to prevent
-# multi-day orphan accumulation when the team is killed.
-LIFETIME_MISS_LIMIT="${LIFETIME_MISS_LIMIT:-3}"
+IDLE_SECONDS="${IDLE_SECONDS:-30}"   # how long idle before firing
+WATCH_TIMEOUT="${WATCH_TIMEOUT:-3600}"  # outer call cap (re-armed each loop)
+POLL_INTERVAL="${POLL_INTERVAL:-2}"
 
-# Resolve the navigator's tmux session from the pane id (`%NN`). The
-# pane id format is stable across the session's lifetime; tmux will
-# refuse to look it up once the session is gone, which is our exit cue.
+note() { printf '[%s] %s\n' "$(date +%H:%M:%S)" "$*" >> "$log"; }
+
+note "idle-watch start: driver=$driver pane=$nav_pane idle=${IDLE_SECONDS}s timeout=${WATCH_TIMEOUT}s"
+
 nav_session_active() {
   tmux display-message -p -t "$nav_pane" '#{session_name}' >/dev/null 2>&1
 }
 
-note() { printf '[%s] %s\n' "$(date +%H:%M:%S)" "$*" >> "$log"; }
-
-note "idle-watch start: driver=$driver pane=$nav_pane interval=${IDLE_INTERVAL}s ticks=${IDLE_AFTER_TICKS}"
-
-prev=""
-stable_ticks=0
-saw_activity=0
-notified=0
-miss_streak=0
-
-while sleep "$IDLE_INTERVAL"; do
-  # Self-terminate if the navigator's tmux session has been torn down.
-  # Without this, `nohup` watchers outlive their parent agent and pile
-  # up as orphans across team-kill / re-create cycles.
+while true; do
   if ! nav_session_active; then
     note "navigator pane $nav_pane no longer resolvable — exiting"
     exit 0
   fi
 
-  cur="$(atmux agent capture "$driver" --lines 80 2>/dev/null || true)"
-  if [[ -z "$cur" ]]; then
-    miss_streak=$(( miss_streak + 1 ))
-    note "tick: empty capture (miss_streak=$miss_streak/$LIFETIME_MISS_LIMIT)"
-    if (( miss_streak >= LIFETIME_MISS_LIMIT )); then
-      note "driver $driver unreachable for $LIFETIME_MISS_LIMIT ticks — exiting"
-      exit 0
-    fi
-    continue
-  fi
-  miss_streak=0
+  # Block until the driver is idle for IDLE_SECONDS or WATCH_TIMEOUT
+  # elapses. rc=0 → idle observed; rc=124 → timeout (try again next
+  # loop); other → error (also try again, with backoff).
+  rc=0
+  atmux agent watch "$driver" \
+    --idle "$IDLE_SECONDS" \
+    --timeout "$WATCH_TIMEOUT" \
+    --interval "$POLL_INTERVAL" \
+    >/dev/null 2>&1 || rc=$?
 
-  if [[ "$cur" != "$prev" ]]; then
-    if [[ -z "$prev" ]]; then
-      note "tick: priming baseline (len=${#cur})"
-    else
-      note "tick: pane changed (len=${#cur}) — resetting stable_ticks, saw_activity=1"
-    fi
-    prev="$cur"
-    stable_ticks=0
-    saw_activity=1
-    notified=0
-    continue
-  fi
-
-  stable_ticks=$(( stable_ticks + 1 ))
-  note "tick: pane stable (stable_ticks=$stable_ticks saw_activity=$saw_activity notified=$notified)"
-
-  if (( saw_activity == 1 )) && (( notified == 0 )) && (( stable_ticks >= IDLE_AFTER_TICKS )); then
-    stable_seconds=$(( stable_ticks * IDLE_INTERVAL ))
-    xml="<watch type=\"agent\" id=\"${driver}\" reason=\"idle\" stable_seconds=\"${stable_seconds}\"/>"
-    if atmux notify --pane "$nav_pane" --xml "$xml" >/dev/null 2>&1; then
-      note "idle notification fired (driver=$driver stable_seconds=${stable_seconds})"
-    else
-      note "atmux notify FAILED (pane=$nav_pane)"
-    fi
-    notified=1
-  fi
+  case "$rc" in
+    0)
+      xml="<watch type=\"agent\" id=\"${driver}\" reason=\"idle\" stable_seconds=\"${IDLE_SECONDS}\"/>"
+      if atmux notify --pane "$nav_pane" --xml "$xml" >/dev/null 2>&1; then
+        note "idle notification fired (driver=$driver stable_seconds=${IDLE_SECONDS})"
+      else
+        note "atmux notify FAILED (pane=$nav_pane)"
+      fi
+      # Wait for the driver to leave idle before re-arming, otherwise
+      # we'd fire repeatedly on a persistently-idle driver. `atmux
+      # agent watch` returns 0 immediately when already idle, so loop
+      # back into it would reuse the same idleness.
+      while nav_session_active; do
+        sleep "$POLL_INTERVAL"
+        # Check the adapter status — if not idle, break and re-arm.
+        if ! atmux agent watch "$driver" --idle 1 --timeout 1 --interval 1 >/dev/null 2>&1; then
+          break
+        fi
+      done
+      ;;
+    124)
+      # Timeout — driver was active the whole window. Loop again.
+      :
+      ;;
+    *)
+      note "atmux agent watch failed (rc=$rc) — backing off"
+      sleep "$POLL_INTERVAL"
+      ;;
+  esac
 done

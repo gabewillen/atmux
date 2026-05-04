@@ -133,13 +133,11 @@ build_message_payload_for_session() {
   local from_session="$2"
   local read_cmd="$3"
   local reply_required_value="$4"
-  local hint_text=""
 
-  printf -v hint_text 'run %s' "$read_cmd"
-
+  # build_notification renders the read_cmd as `hint="run \`<cmd>\`"`,
+  # so callers no longer need to pass a separate hint kvarg.
   build_notification "message" "$from_session" "$read_cmd" \
-    "reply_required=$reply_required_value" \
-    "hint=$hint_text"
+    "reply_required=$reply_required_value"
 }
 
 send_to_session() {

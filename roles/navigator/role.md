@@ -34,10 +34,10 @@ every detected diff you receive a signal-only notification (no diff
 body):
 
 ```xml
-<notification type="git-change" from="<watch-id>" cmd="atmux git snapshot --id <watch-id>"/>
+<notification type="git-change" from="<watch-id>" hint="run `atmux git snapshot --id <watch-id>`"/>
 ```
 
-When you receive this, **run the `cmd`**:
+When you receive this, **run the `hint` command**:
 
 ```sh
 atmux git snapshot --id <watch-id>

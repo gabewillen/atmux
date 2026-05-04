@@ -6,18 +6,18 @@
 # on Linux), so it fires within milliseconds of a filesystem change.
 # This script discards path-watch's payload (we only need the trigger)
 # and emits one canonical `<notification type="git-change" .../>` to
-# the navigator's pane carrying a `cmd` the navigator runs at review
+# the navigator's pane carrying a `hint` the navigator runs at review
 # time:
 #
 #   <notification type="git-change" from="<watch-id>"
-#                 cmd="atmux git snapshot --id <watch-id>"/>
+#                 hint="run `atmux git snapshot --id <watch-id>`"/>
 #
 # The navigator's role.md tells it: when this notification arrives,
-# run the cmd. That returns the rolling diff *as of read time*, not
-# whatever was current when the fs event fired — so reviews can't go
-# stale during LLM reasoning latency, and a burst of edits collapses
-# into one cumulative diff at review time instead of a queue of
-# point-in-time snapshots.
+# run the hint command. That returns the rolling diff *as of read
+# time*, not whatever was current when the fs event fired — so reviews
+# can't go stale during LLM reasoning latency, and a burst of edits
+# collapses into one cumulative diff at review time instead of a queue
+# of point-in-time snapshots.
 #
 # Args: <git-watch-id> <nav-pane>
 set -euo pipefail

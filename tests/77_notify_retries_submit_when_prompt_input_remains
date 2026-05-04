@@ -16,7 +16,9 @@ ATMUX_SEND_SUBMIT_VERIFY_SECONDS=1
 source "$NOTIFY_SCRIPT"
 
 prompt_prefix="›"
-prompt_input='<notification type="message" from="large-paste" cmd="atmux message read abc --repo repo" hint="run atmux message read abc --repo repo" />'
+# Built via the canonical builder so the fixture matches the real
+# notification format (single hint attr, no legacy cmd/hint duplicate).
+prompt_input="$(build_notification "message" "large-paste" "atmux message read abc --repo repo")"
 cursor_y=3
 enter_count=0
 

@@ -9,9 +9,10 @@ TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
 NOTIFY_SCRIPT="$REPO_ROOT/bin/(atmux)/notify"
 
-# Test basic notification format
+# Test basic notification format — the 3rd positional arg renders as
+# `hint="run \`<cmd>\`"`, framing the receiver action explicitly.
 out="$(ATMUX_HOME="${TMPDIR:-/tmp}" "$NOTIFY_SCRIPT" build "exec" "make test" "atmux agent capture worker" "exit_code=0")"
-expected='<notification type="exec" from="make test" cmd="atmux agent capture worker" exit_code="0"/>'
+expected='<notification type="exec" from="make test" hint="run `atmux agent capture worker`" exit_code="0"/>'
 [[ "$out" == "$expected" ]] || { echo "basic notification mismatch" >&2; echo "got:      $out" >&2; echo "expected: $expected" >&2; exit 1; }
 
 # Test with multiple key=value attributes
@@ -38,10 +39,10 @@ if ! printf '%s' "$out3" | grep -Fq '&gt;'; then
   echo "greater-than not escaped" >&2; exit 1
 fi
 
-# Test with empty cmd (should omit cmd attribute)
+# Test with empty hint-cmd (should omit hint attribute and any cmd legacy)
 out4="$(ATMUX_HOME="${TMPDIR:-/tmp}" "$NOTIFY_SCRIPT" build "message" "sender" "" "id=abc123")"
-if printf '%s' "$out4" | grep -Fq 'cmd='; then
-  echo "empty cmd should be omitted" >&2; exit 1
+if printf '%s' "$out4" | grep -Eq 'hint=|cmd='; then
+  echo "empty hint-cmd should omit hint/cmd attribute" >&2; exit 1
 fi
 if ! printf '%s' "$out4" | grep -Fq 'id="abc123"'; then
   echo "missing id attribute" >&2; exit 1

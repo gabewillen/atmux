@@ -1450,10 +1450,17 @@ send_notification() {
 }
 
 # Unified notification builder.
-# Usage: build_notification <type> <from> <cmd> [key=value ...]
-# Output: <notification type="..." from="..." cmd="..." key="value" ...>text</notification>
+# Usage: build_notification <type> <from> <hint-cmd> [key=value ...]
+# Output: <notification type="..." from="..." hint="run `<cmd>`" key="value" ...>text</notification>
+#
+# The 3rd positional arg is the bare atmux command the receiver should
+# run; build_notification wraps it as `hint="run \`<cmd>\`"`. Earlier
+# revisions emitted this as `cmd="<cmd>"`, but `cmd` was ambiguous
+# (producer-side command vs. receiver-side command). `hint` is
+# explicitly receiver-side and the `run \`...\`` framing makes the
+# intended action unmistakable.
 build_notification() {
-  local type="$1" from="$2" cmd="$3"
+  local type="$1" from="$2" hint_cmd="$3"
   shift 3
   local attrs=""
   local body=""
@@ -1469,15 +1476,15 @@ build_notification() {
     fi
     attrs+=" ${k}=\"$(xml_escape "$v")\""
   done
-  local cmd_attr=""
-  if [[ -n "$cmd" ]]; then
-    cmd_attr=" cmd=\"$(xml_escape "$cmd")\""
+  local hint_attr=""
+  if [[ -n "$hint_cmd" ]]; then
+    hint_attr=" hint=\"$(xml_escape "run \`$hint_cmd\`")\""
   fi
   if [[ "$has_body" -eq 1 ]]; then
     printf '<notification type="%s" from="%s"%s%s>%s</notification>' \
       "$(xml_escape "$type")" \
       "$(xml_escape "$from")" \
-      "$cmd_attr" \
+      "$hint_attr" \
       "$attrs" \
       "$(xml_escape "$body")"
   else
@@ -1491,7 +1498,7 @@ build_notification() {
     printf '<notification type="%s" from="%s"%s%s/>' \
       "$(xml_escape "$type")" \
       "$(xml_escape "$from")" \
-      "$cmd_attr" \
+      "$hint_attr" \
       "$attrs"
   fi
 }

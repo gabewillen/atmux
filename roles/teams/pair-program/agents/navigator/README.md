@@ -19,12 +19,6 @@ atmux team create <name> --role pair-program
 atmux send --to <name>-navigator "<your task description, plus any planning notes>"
 ```
 
-It can also be created directly:
-
-```sh
-atmux agent create navigator --role navigator
-```
-
 When used inside a pair-program team, the navigator receives worktree
 change notifications and driver-idle notifications from the team's
 hooks. It reviews the driver's changes and sends feedback with

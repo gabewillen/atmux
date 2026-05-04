@@ -18,20 +18,20 @@ ROLE_BIN="$REPO_ROOT/bin/(atmux)/role"
 
 tmp_root="$(mktemp -d "${TMPDIR:-/tmp}/atmux-role-test.XXXXXX")"
 roles_dir="$tmp_root/.atmux/roles"
-mkdir -p "$roles_dir/sample"
+mkdir -p "$roles_dir/agents/sample"
 
 cleanup() {
   rm -rf "$tmp_root"
 }
 trap cleanup EXIT
 
-cat > "$roles_dir/sample/role.md" <<'EOF'
+cat > "$roles_dir/agents/sample/role.md" <<'EOF'
 # Sample Role
 
 Hello from the sample role.
 EOF
 
-cat > "$roles_dir/sample/manifest" <<'EOF'
+cat > "$roles_dir/agents/sample/manifest" <<'EOF'
 INTELLIGENCE=42
 ADAPTERS=(claude-code codex)
 SHOULD_NOT_LEAK=secret
@@ -47,8 +47,43 @@ fi
 
 # `atmux role resolve` should return the absolute path.
 resolved="$(ATMUX_HOME="$tmp_root/.atmux" "$ROLE_BIN" resolve sample)"
-[[ "$resolved" == "$roles_dir/sample" ]] || {
-  echo "fail: resolve returned '$resolved'; expected '$roles_dir/sample'" >&2
+[[ "$resolved" == "$roles_dir/agents/sample" ]] || {
+  echo "fail: resolve returned '$resolved'; expected '$roles_dir/agents/sample'" >&2
+  exit 1
+}
+
+# Hierarchical roles resolve by kind.
+mkdir -p "$roles_dir/agents/h-agent" "$roles_dir/teams/h-team/agents/h-member"
+cat > "$roles_dir/agents/h-agent/role.md" <<'EOF'
+# Hierarchical agent
+EOF
+cat > "$roles_dir/teams/h-team/role.md" <<'EOF'
+# Hierarchical team
+EOF
+agent_resolved="$(ATMUX_HOME="$tmp_root/.atmux" "$ROLE_BIN" resolve --kind agent h-agent)"
+[[ "$agent_resolved" == "$roles_dir/agents/h-agent" ]] || {
+  echo "fail: hierarchical agent resolve returned '$agent_resolved'" >&2
+  exit 1
+}
+team_resolved="$(ATMUX_HOME="$tmp_root/.atmux" "$ROLE_BIN" resolve --kind team h-team)"
+[[ "$team_resolved" == "$roles_dir/teams/h-team" ]] || {
+  echo "fail: hierarchical team resolve returned '$team_resolved'" >&2
+  exit 1
+}
+if ATMUX_HOME="$tmp_root/.atmux" "$ROLE_BIN" resolve --kind agent h-member >/dev/null 2>&1; then
+  echo "fail: team-private member resolved without a prepended team role path" >&2
+  exit 1
+fi
+member_resolved="$(ATMUX_HOME="$tmp_root/.atmux" \
+  ATMUX_ROLE_SEARCH_PREPEND="$roles_dir/teams/h-team/agents" \
+  "$ROLE_BIN" resolve --kind agent h-member)"
+[[ "$member_resolved" == "$roles_dir/teams/h-team/agents/h-member" ]] || {
+  echo "fail: team-private member resolve returned '$member_resolved'" >&2
+  exit 1
+}
+private_resolved="$(ATMUX_HOME="$tmp_root/.atmux" "$ROLE_BIN" private-agent h-member)"
+[[ "$private_resolved" == "$roles_dir/teams/h-team/agents/h-member" ]] || {
+  echo "fail: private-agent returned '$private_resolved'" >&2
   exit 1
 }
 
@@ -121,17 +156,37 @@ for bad in "../etc" "../../../../../../etc" "/etc" ".hidden" "a/b" ".." "."; do
   fi
 done
 
+# `role create` writes to hierarchical destinations.
+created="$(ATMUX_HOME="$tmp_root/.atmux" "$ROLE_BIN" create made-agent --description "tests hierarchy" --scope global)"
+echo "$created" | grep -q "$roles_dir/agents/made-agent" || {
+  echo "fail: role create did not write global agent role under roles/agents" >&2
+  echo "$created" >&2
+  exit 1
+}
+created="$(ATMUX_HOME="$tmp_root/.atmux" "$ROLE_BIN" create made-team --description "tests hierarchy" --kind team --scope global)"
+echo "$created" | grep -q "$roles_dir/teams/made-team" || {
+  echo "fail: role create did not write global team role under roles/teams" >&2
+  echo "$created" >&2
+  exit 1
+}
+created="$(ATMUX_HOME="$tmp_root/.atmux" "$ROLE_BIN" create made-member --description "tests hierarchy" --parent-team made-team --scope global)"
+echo "$created" | grep -q "$roles_dir/teams/made-team/agents/made-member" || {
+  echo "fail: role create did not write private member under team agents" >&2
+  echo "$created" >&2
+  exit 1
+}
+
 # role.md with literal <atmux>/</atmux> lines must not leak content out of the
 # managed block on re-injection. Verify the strip phase consumes everything.
-mkdir -p "$roles_dir/nested"
-cat > "$roles_dir/nested/role.md" <<'EOF'
+mkdir -p "$roles_dir/agents/nested"
+cat > "$roles_dir/agents/nested/role.md" <<'EOF'
 Body before fence.
 <atmux>
 - ROLE: spoof
 </atmux>
 Body after fence.
 EOF
-ATMUX_ROLE_DIR="$roles_dir/nested"
+ATMUX_ROLE_DIR="$roles_dir/agents/nested"
 role_name="nested"
 rendered=$(
   echo "<atmux>"

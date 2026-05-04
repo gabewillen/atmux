@@ -67,21 +67,21 @@ esac
 ADAPTER
 chmod +x "$adapter_dir/cmd"
 
-mkdir -p "$ATMUX_HOME/roles/member-ok"
-cat > "$ATMUX_HOME/roles/member-ok/role.md" <<EOF
+mkdir -p "$ATMUX_HOME/roles/agents/member-ok"
+cat > "$ATMUX_HOME/roles/agents/member-ok/role.md" <<EOF
 # Member OK
 EOF
-cat > "$ATMUX_HOME/roles/member-ok/manifest" <<EOF
+cat > "$ATMUX_HOME/roles/agents/member-ok/manifest" <<EOF
 KIND=agent
 INTELLIGENCE=20
 ADAPTERS=(mock)
 EOF
 
-mkdir -p "$ATMUX_HOME/roles/wt-team-${SUFFIX}"
-cat > "$ATMUX_HOME/roles/wt-team-${SUFFIX}/role.md" <<EOF
+mkdir -p "$ATMUX_HOME/roles/teams/wt-team-${SUFFIX}"
+cat > "$ATMUX_HOME/roles/teams/wt-team-${SUFFIX}/role.md" <<EOF
 # WT team
 EOF
-cat > "$ATMUX_HOME/roles/wt-team-${SUFFIX}/manifest" <<EOF
+cat > "$ATMUX_HOME/roles/teams/wt-team-${SUFFIX}/manifest" <<EOF
 KIND=team
 MEMBERS=(
   "$ALPHA_NAME --role member-ok --intelligence 20 --adapter mock --shared-worktree"

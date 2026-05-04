@@ -59,11 +59,11 @@ ADAPTER
 chmod +x "$adapter_dir/cmd"
 
 # A working member role for scenario B
-mkdir -p "$ATMUX_HOME/roles/member-ok"
-cat > "$ATMUX_HOME/roles/member-ok/role.md" <<EOF
+mkdir -p "$ATMUX_HOME/roles/agents/member-ok"
+cat > "$ATMUX_HOME/roles/agents/member-ok/role.md" <<EOF
 # Member OK
 EOF
-cat > "$ATMUX_HOME/roles/member-ok/manifest" <<EOF
+cat > "$ATMUX_HOME/roles/agents/member-ok/manifest" <<EOF
 KIND=agent
 INTELLIGENCE=20
 ADAPTERS=(mock)
@@ -74,11 +74,11 @@ EOF
 # exit before any tmux/worktree state is created.
 team_short_a="failmemberspawn$$"
 team_session_a="${SESSION_PREFIX}team-${team_short_a}"
-mkdir -p "$ATMUX_HOME/roles/bad-flag-team"
-cat > "$ATMUX_HOME/roles/bad-flag-team/role.md" <<EOF
+mkdir -p "$ATMUX_HOME/roles/teams/bad-flag-team"
+cat > "$ATMUX_HOME/roles/teams/bad-flag-team/role.md" <<EOF
 # Bad-flag team role
 EOF
-cat > "$ATMUX_HOME/roles/bad-flag-team/manifest" <<EOF
+cat > "$ATMUX_HOME/roles/teams/bad-flag-team/manifest" <<EOF
 KIND=team
 MEMBERS=(
   "ghost$$ --role member-ok --intelligence 20 --adapter mock --bogus-flag"
@@ -107,21 +107,21 @@ team_session_b="${SESSION_PREFIX}team-${team_short_b}"
 member_for_b="memberB$$"
 state_dir_b="$ATMUX_HOME/teams/amux_sh/${team_short_b}/role"
 
-mkdir -p "$ATMUX_HOME/roles/failing-start-team"
-cat > "$ATMUX_HOME/roles/failing-start-team/role.md" <<EOF
+mkdir -p "$ATMUX_HOME/roles/teams/failing-start-team"
+cat > "$ATMUX_HOME/roles/teams/failing-start-team/role.md" <<EOF
 # Failing-start team role
 EOF
-cat > "$ATMUX_HOME/roles/failing-start-team/manifest" <<EOF
+cat > "$ATMUX_HOME/roles/teams/failing-start-team/manifest" <<EOF
 KIND=team
 MEMBERS=(
   "$member_for_b --role member-ok --intelligence 20 --adapter mock"
 )
 EOF
-cat > "$ATMUX_HOME/roles/failing-start-team/start" <<'EOF'
+cat > "$ATMUX_HOME/roles/teams/failing-start-team/start" <<'EOF'
 #!/usr/bin/env bash
 exit 17
 EOF
-chmod +x "$ATMUX_HOME/roles/failing-start-team/start"
+chmod +x "$ATMUX_HOME/roles/teams/failing-start-team/start"
 
 out_b="$( ATMUX_ALLOW_OUTSIDE_TMUX=1 "$ATMUX_BIN" team create "$team_short_b" --role failing-start-team 2>&1 || true )"
 

@@ -186,7 +186,7 @@ main() {
 
   # --once without --interval: true single-shot. Compute one snapshot,
   # emit diff vs the persisted baseline if non-empty, advance baseline,
-  # exit. Used by event-driven setups (e.g. roles/navigator/git-edit-watch
+  # exit. Used by event-driven setups (e.g. pair-program navigator's git-edit-watch
   # invoked by `atmux path watch`) where polling is wasteful — the
   # upstream event already proved a change happened, so we just need
   # to check git's view of it once and report. Empty diffs (untracked /

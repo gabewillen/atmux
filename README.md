@@ -22,7 +22,7 @@ Install by piping `curl` into `sh`, or clone the repo and run `./install.sh`. Th
 - **You can actually see the agents work.** It's just tmux. Attach to any session, watch the agent think in real time, detach and come back later. No custom TUI, no web dashboard, no log tailing.
 - **Git worktree per agent.** Each agent gets its own branch and working directory under `ATMUX_HOME/agents/`. Parallel agents can't stomp each other's changes, and cleanup is a single `atmux agent kill`.
 
-> **Experimental** — this project is under active development (current version: `0.19.0`). APIs, commands, and behavior may change without notice. Use at your own risk.
+> **Experimental** — this project is under active development (current version: `0.20.0`). APIs, commands, and behavior may change without notice. Use at your own risk.
 
 ## Install
 
@@ -91,15 +91,13 @@ atmux agent create tester   --role tester   --team platform --intelligence 55
 
 | Role | Description | Demo |
 |------|-------------|------|
-| [`driver`](roles/driver/README.md) | The `driver` role is the fast implementation half of the pair-programming workflow. It writes code, runs tests, and responds to navigator feedback. |  |
-| [`gh-pr-reviewer`](roles/gh-pr-reviewer/README.md) | The `gh-pr-reviewer` role reviews GitHub pull requests, looks for concrete risks in the diff, and posts structured review feedback with `gh`. |  |
-| [`navigator`](roles/navigator/README.md) | The `navigator` role is the review half of the pair-programming workflow. It watches a shared worktree, reviews rolling diffs, and steers the driver without editing files directly. |  |
+| [`gh-pr-reviewer`](roles/agents/gh-pr-reviewer/README.md) | The `gh-pr-reviewer` role reviews GitHub pull requests, looks for concrete risks in the diff, and posts structured review feedback with `gh`. |  |
 
 #### Built-in team roles
 
 | Role | Description | Demo |
 |------|-------------|------|
-| [`pair-program`](roles/pair-program/README.md) | A driver-and-navigator team role where a fast model writes code while a stronger model watches the shared worktree and interrupts with review notes when the implementation drifts. | [demo](roles/pair-program/demo.gif) |
+| [`pair-program`](roles/teams/pair-program/README.md) | A driver-and-navigator team role where a fast model writes code while a stronger model watches the shared worktree and interrupts with review notes when the implementation drifts. | [demo](roles/teams/pair-program/demo.gif) |
 
 ### Intelligence scale
 
@@ -281,10 +279,11 @@ agents can edit the same worktree without stomping the user's checkout.
 ```sh
 atmux role list
 atmux role show <name>
-atmux role resolve <name>
+atmux role resolve [--kind agent|team] <name>
 atmux role kind <name>
 atmux role create <name> (--from-file <path> | --from-stdin | --description <text>) \
                          [--kind agent|team] \
+                         [--parent-team <name>] \
                          [--intelligence <0-100>] [--adapters <a,b,...>] \
                          [--hooks <start,stop>] [--scope repo|global|auto] [--force]
 ```
@@ -300,9 +299,9 @@ Roles are adapter-agnostic. A role is a directory containing any of:
 
 The team start hook receives: `ATMUX_TEAM`, `ATMUX_REPO`, `ATMUX_WORKTREE`, `ATMUX_ROLE`, `ATMUX_ROLE_DIR`, `ATMUX_ROLE_STATE_DIR` (`~/.atmux/teams/<repo>/<team>/role/`).
 
-Resolution precedence (first match wins): `<repo>/.atmux/roles/<name>` → `~/.atmux/roles/<name>` → `<source-root>/roles/<name>`.
+Resolution precedence is kind-aware. Agent roles resolve from `roles/agents/<name>`, team roles resolve from `roles/teams/<name>`, and team member spawning temporarily prepends the parent team's `roles/teams/<team>/agents/` directory so private members like `driver` are only reachable from that team.
 
-`create` writes the role to `~/.atmux/roles/<name>` by default. `--scope repo` writes under `<repo>/.atmux/roles/<name>`; `--scope auto` picks repo if inside a git repo with an existing `.atmux/`, otherwise global.
+`create` writes agent roles to `roles/agents/<name>` and team roles to `roles/teams/<name>`. `--parent-team <team>` with `--kind agent` writes a team-private member role to `roles/teams/<team>/agents/<name>`. `--scope repo` writes under `<repo>/.atmux/roles/...`; `--scope auto` picks repo if inside a git repo with an existing `.atmux/`, otherwise global.
 
 #### `issue`
 

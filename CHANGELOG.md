@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.20.0 — Hierarchical role layout
+
+- Reorganized built-in roles into kind-aware directories: standalone agents
+  live under `roles/agents/`, team roles under `roles/teams/`, and
+  team-private members under `roles/teams/<team>/agents/`.
+- `atmux role resolve` now accepts `--kind agent|team`; `agent create` and
+  `team create` use kind-aware resolution only.
+- `atmux role create` now writes new roles into the hierarchical layout and
+  supports `--parent-team <name>` for private team member roles.
+
 ## 0.19.0 — Per-field overrides on `agent create` / `team create`
 
 Promotes `--model` and `--reasoning` to first-class flags and adds a generic repeatable `--set <key>=<value>` so you can override anything declared in a role manifest at launch time without editing the role on disk. On teams, `--set <member>.<field>=<value>` targets a single member spawned from the role's `MEMBERS=(...)` array.

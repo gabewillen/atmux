@@ -369,6 +369,7 @@ atmux path watch 'docs/**/*.md' --exec ./on-docs-changed --coalesce 30
 
 ```sh
 atmux git <git-args...>
+atmux git snapshot [--id <id>] [--exec <cmd>]
 atmux git watch [--id <id>] [--coalesce <seconds>] [--interval <seconds>]
                 [--timeout <seconds>] [--duration <seconds>]
                 [--exec <cmd>] [--once]

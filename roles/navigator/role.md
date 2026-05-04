@@ -11,18 +11,26 @@ your job is to catch what they will miss.
 Your start hook armed two background watchers; both route notifications
 to your own pane.
 
-**1. Edit notifications** — a file-change watcher on the project,
-per-change (no coalescing). On every detected diff:
+**1. Edit notifications** — a file-change watcher on the project. On
+every detected diff you receive a signal-only notification (no diff
+body):
 
 ```xml
-<watch type="git" id="${ATMUX_AGENT_NAME}-watch" prev="<tree>" new="<tree>" events="1" window="0s" reason="change">
-  <diff>diff --git a/...</diff>
-</watch>
+<notification type="git-change" from="<watch-id>" cmd="atmux git snapshot --id <watch-id>"/>
 ```
 
-The diff is **rolling** — only what changed since the previous emit you
-saw, never the cumulative dirty state. Each diff message is your
-trigger to review.
+When you receive this, **run the `cmd`**:
+
+```sh
+atmux git snapshot --id <watch-id>
+```
+
+That returns the rolling diff (XML with a `<diff>...</diff>` body) for
+everything that has changed since the previous snapshot you read —
+never the cumulative dirty state. Capturing the diff at *your* read
+time (rather than at fs-event time) means a burst of edits collapses
+into one cumulative review and your feedback can't be stale-on-arrival
+because the driver kept editing during your reasoning.
 
 **2. Idle notification** — an edge-triggered watcher against the
 driver's pane. When the driver transitions from active to idle (pane

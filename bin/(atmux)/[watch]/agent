@@ -361,9 +361,13 @@ main() {
     if detect_stuck_prompt "$recent"; then
       emit_idle_notification "$agent" "$idle_seconds" "$exec_cmd"
       (( repeat == 1 )) || exit 0
-      # Repeat against a stuck prompt would loop instantly; sleep one
-      # cycle so we don't busy-spin while the prompt persists.
-      sleep "$interval"
+      # Drain to next active event before re-entering the loop, so the
+      # idle countdown only starts after the agent moves off the stuck
+      # prompt (otherwise idle_seconds elapse with the same prompt
+      # still on screen and we'd fire a duplicate notification).
+      while read -r -t 1 _ <&8; do :; done   # drain
+      read -r _ <&8 || true                  # block for next event
+      last_change_ts="$(date +%s)"
       continue
     fi
   done

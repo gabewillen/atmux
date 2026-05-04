@@ -136,17 +136,25 @@ except Exception:
       my $field = quotemeta $ENV{ATMUX_FIELD};
       if (/"input"\s*:\s*\{[^{}]*"$field"\s*:\s*"((?:\\.|[^"\\])*)"/s) {
         my $v = $1;
-        # JSON string unescape: \\, \", \/, \b, \f, \n, \r, \t, \uXXXX
-        $v =~ s/\\u([0-9a-fA-F]{4})/chr(hex($1))/ge;
-        $v =~ s/\\n/\n/g;
-        $v =~ s/\\r/\r/g;
-        $v =~ s/\\t/\t/g;
-        $v =~ s/\\b/\b/g;
-        $v =~ s/\\f/\f/g;
-        $v =~ s/\\\//\//g;
-        $v =~ s/\\"/"/g;
-        $v =~ s/\\\\/\\/g;
-        print $v;
+        # JSON string unescape. A naive sequence of independent
+        # substitutions is wrong: `\\n` (a literal backslash + n) would
+        # be rewritten by the `\\n -> newline` pass before `\\\\ -> \\`
+        # ran. Walk left-to-right one escape at a time so each `\X` is
+        # only consumed once.
+        my $out = "";
+        while (length $v) {
+          if ($v =~ /^\\u([0-9a-fA-F]{4})/) { $out .= chr(hex($1)); $v = substr($v, 6); }
+          elsif ($v =~ /^\\n/) { $out .= "\n"; $v = substr($v, 2); }
+          elsif ($v =~ /^\\r/) { $out .= "\r"; $v = substr($v, 2); }
+          elsif ($v =~ /^\\t/) { $out .= "\t"; $v = substr($v, 2); }
+          elsif ($v =~ /^\\b/) { $out .= "\b"; $v = substr($v, 2); }
+          elsif ($v =~ /^\\f/) { $out .= "\f"; $v = substr($v, 2); }
+          elsif ($v =~ /^\\\//) { $out .= "/"; $v = substr($v, 2); }
+          elsif ($v =~ /^\\"/) { $out .= "\""; $v = substr($v, 2); }
+          elsif ($v =~ /^\\\\/) { $out .= "\\"; $v = substr($v, 2); }
+          else { $out .= substr($v, 0, 1); $v = substr($v, 1); }
+        }
+        print $out;
       }
     ' "$manifest_path"
     return 0

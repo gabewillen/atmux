@@ -1578,11 +1578,20 @@ do_create() {
 
   local name=""
   local role=""
-  local team="${ATMUX_TEAM:-}"
+  # ATMUX_TEAM signals "this session IS a member of <team>" — only set
+  # by team-spawned members. ATMUX_DEFAULT_TEAM is the soft hint a
+  # manager session picks up after running `atmux team create <team>`,
+  # so subsequent `atmux agent create` calls in that manager default
+  # to joining the same team. Both are fallbacks for the explicit
+  # `--team` flag.
+  local team="${ATMUX_TEAM:-${ATMUX_DEFAULT_TEAM:-}}"
   if [[ -z "$team" && -n "${TMUX:-}" ]]; then
     current_session_name="$(tmux display-message -p '#S' 2>/dev/null || true)"
     if [[ -n "$current_session_name" ]]; then
       team="$(tmux show-environment -t "$current_session_name" ATMUX_TEAM 2>/dev/null | sed -n 's/^ATMUX_TEAM=//p' || true)"
+      if [[ -z "$team" ]]; then
+        team="$(tmux show-environment -t "$current_session_name" ATMUX_DEFAULT_TEAM 2>/dev/null | sed -n 's/^ATMUX_DEFAULT_TEAM=//p' || true)"
+      fi
     fi
   fi
   local adapter="auto"

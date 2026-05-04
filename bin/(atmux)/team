@@ -151,13 +151,7 @@ teardown_team() {
   # state dir, then the team's owned worktree (if create_team made one).
   # Args: <repo_name> <team_name> <session> <role_state_dir> [<owned_worktree>]
   local repo="$1" team="$2" session="$3" state_dir="${4:-}" owned_wt="${5:-}"
-  # Member sessions are named `atmux-<repo>-<team>-<short>`. Anchor the
-  # prefix on the team name so the enumeration can't pick up unrelated
-  # sessions in the same repo (notably the manager session that ran
-  # `atmux team create` — which carries ATMUX_TEAM=<team> in its env
-  # because `team create` stamps it on the caller for nested-create
-  # inheritance, so the env check alone wouldn't filter it out).
-  local prefix="atmux-${repo}-${team}-"
+  local prefix="atmux-${repo}-"
   local atmux_bin member_session member_team member_short
   atmux_bin="$(resolve_atmux_runner_for_team || true)"
   local -a member_shorts=()
@@ -505,13 +499,20 @@ create_team() {
 
   # When invoked from within a repo agent session, remember this as the
   # default team for subsequent `atmux agent create ...` calls.
+  #
+  # Stamp `ATMUX_DEFAULT_TEAM` rather than `ATMUX_TEAM`. The latter is
+  # the kill predicate `atmux team kill` uses to enumerate members
+  # (membership signal); if we stamp it on the caller too, team kill
+  # treats the manager as a member and kills it. `ATMUX_DEFAULT_TEAM`
+  # is read by `agent create` purely as a fallback for `--team` when
+  # the user doesn't pass one explicitly.
   if [[ -n "${TMUX:-}" ]]; then
     local caller_session caller_repo
     caller_session="$(tmux display-message -p '#S' 2>/dev/null || true)"
     if [[ -n "$caller_session" ]] && tmux has-session -t "$caller_session" 2>/dev/null; then
       caller_repo="$(tmux show-environment -t "$caller_session" ATMUX_REPO 2>/dev/null | sed -n 's/^ATMUX_REPO=//p' || true)"
       if [[ -z "$caller_repo" || "$caller_repo" == "$repo_name" ]]; then
-        tmux set-environment -t "$caller_session" ATMUX_TEAM "$team_name" >/dev/null 2>&1 || true
+        tmux set-environment -t "$caller_session" ATMUX_DEFAULT_TEAM "$team_name" >/dev/null 2>&1 || true
       fi
     fi
   fi
@@ -609,17 +610,13 @@ case "$sub" in
     # has somewhere to log to.
     expanded=()
     if [[ -n "$r_repo" ]]; then
+      member_prefix="atmux-${r_repo}-"
       for tsession in "${resolved[@]}"; do
         team_short="$(get_session_env "$tsession" ATMUX_TEAM)"
         if [[ -z "$team_short" && "$tsession" == "atmux-${r_repo}-team-"* ]]; then
           team_short="${tsession#atmux-${r_repo}-team-}"
         fi
         if [[ -n "$team_short" ]]; then
-          # Member naming convention is `atmux-<repo>-<team>-<short>`.
-          # Anchoring the prefix on the team name keeps the manager
-          # session (which carries ATMUX_TEAM stamped by team create)
-          # out of the kill set; the env check alone doesn't filter it.
-          member_prefix="atmux-${r_repo}-${team_short}-"
           while IFS= read -r maybe_member; do
             [[ -z "$maybe_member" ]] && continue
             [[ "$maybe_member" == "$tsession" ]] && continue

@@ -754,7 +754,7 @@ submit_notification_input() {
   local deadline now
   local submit_verify_timeout="${ATMUX_SEND_SUBMIT_VERIFY_SECONDS:-2}"
 
-  [[ "$attempts" =~ ^[0-9]+$ ]] || attempts=4
+  [[ "$attempts" =~ ^[0-9]+$ ]] || attempts=3
   (( attempts > 0 )) || attempts=1
   [[ "$submit_verify_timeout" =~ ^[0-9]+$ ]] || submit_verify_timeout=2
 

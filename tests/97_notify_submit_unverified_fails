@@ -16,7 +16,11 @@ ATMUX_SEND_SUBMIT_VERIFY_SECONDS=1
 source "$NOTIFY_SCRIPT"
 
 prompt_prefix="›"
-prompt_input='<notification type="message" from="stuck" cmd="atmux message read abc --repo repo" />'
+# Build via the canonical builder so the test fixture cannot drift
+# from the real notification format. The `/ >` end-tag form (with a
+# space) survives this comparison because it's the exact byte sequence
+# stuck in the simulated prompt.
+prompt_input="$(build_notification "message" "stuck" "atmux message read abc --repo repo")"
 cursor_y=1
 enter_count=0
 

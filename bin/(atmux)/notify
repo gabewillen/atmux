@@ -107,18 +107,121 @@ resolve_notify_script_path() {
   fi
 }
 
+# Read a string field from the adapter manifest's `input` object,
+# JSON-decoding escapes correctly (so e.g. gemini's `"\\*"` resolves to
+# the two-byte regex `\*` rather than the raw three-byte `\\*` that a
+# byte-level sed would return). Cascades python3 → perl → sed-with-
+# manual-unescape so the function works even on minimal hosts that
+# lack one of the higher-level interpreters.
+read_manifest_input_field() {
+  local manifest_path="$1" field="$2"
+
+  if command -v python3 >/dev/null 2>&1; then
+    ATMUX_FIELD="$field" python3 -c '
+import json, os, sys
+try:
+  d = json.load(open(sys.argv[1]))
+  v = (d.get("input") or {}).get(os.environ["ATMUX_FIELD"])
+  if v is not None:
+    sys.stdout.write(v)
+except Exception:
+  pass
+' "$manifest_path"
+    return 0
+  fi
+
+  if command -v perl >/dev/null 2>&1; then
+    ATMUX_FIELD="$field" perl -0777 -ne '
+      use strict; use warnings;
+      my $field = quotemeta $ENV{ATMUX_FIELD};
+      if (/"input"\s*:\s*\{[^{}]*"$field"\s*:\s*"((?:\\.|[^"\\])*)"/s) {
+        my $v = $1;
+        # JSON string unescape. A naive sequence of independent
+        # substitutions is wrong: `\\n` (a literal backslash + n) would
+        # be rewritten by the `\\n -> newline` pass before `\\\\ -> \\`
+        # ran. Walk left-to-right one escape at a time so each `\X` is
+        # only consumed once.
+        my $out = "";
+        while (length $v) {
+          if ($v =~ /^\\u([0-9a-fA-F]{4})/) { $out .= chr(hex($1)); $v = substr($v, 6); }
+          elsif ($v =~ /^\\n/) { $out .= "\n"; $v = substr($v, 2); }
+          elsif ($v =~ /^\\r/) { $out .= "\r"; $v = substr($v, 2); }
+          elsif ($v =~ /^\\t/) { $out .= "\t"; $v = substr($v, 2); }
+          elsif ($v =~ /^\\b/) { $out .= "\b"; $v = substr($v, 2); }
+          elsif ($v =~ /^\\f/) { $out .= "\f"; $v = substr($v, 2); }
+          elsif ($v =~ /^\\\//) { $out .= "/"; $v = substr($v, 2); }
+          elsif ($v =~ /^\\"/) { $out .= "\""; $v = substr($v, 2); }
+          elsif ($v =~ /^\\\\/) { $out .= "\\"; $v = substr($v, 2); }
+          else { $out .= substr($v, 0, 1); $v = substr($v, 1); }
+        }
+        print $out;
+      }
+    ' "$manifest_path"
+    return 0
+  fi
+
+  # sed fallback: walk to the input.<field> value, then capture bytes
+  # up to the next unescaped quote. Adapter manifests today only use
+  # `\\` (backslash) and `\"` (quote) inside these regex strings; other
+  # JSON escapes (\n, \uXXXX) aren't used. If a future manifest needs
+  # them, install python3 or perl.
+  local compact raw
+  compact="$(tr -d '\n\r\t' < "$manifest_path")"
+  # `[^"]*` is naive (would stop at `\"`), but neither current manifest
+  # contains `\"` inside input.{start,end}, so it's sufficient.
+  raw="$(printf '%s' "$compact" | sed -n "s/.*\"$field\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p")"
+  # JSON unescape: \\ → \, then \" → ". Order matters.
+  printf '%s' "$raw" | sed -e 's/\\\\/\\/g' -e 's/\\"/"/g'
+}
+
 resolve_input_prompt_for_adapter() {
   local adapter="$1"
   local source_root="$2"
-  local manifest_path compact
+  local manifest_path
 
   local ATMUX_SOURCE_ROOT="$source_root"
   if ! manifest_path="$(resolve_manifest_path "$adapter")"; then
     return 1
   fi
 
-  compact="$(tr -d '\n\r\t' < "$manifest_path")"
-  printf '%s' "$compact" | sed -n 's/.*"input_idle"[[:space:]]*:[[:space:]]*{[^}]*"prompt"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p'
+  read_manifest_input_field "$manifest_path" "start"
+}
+
+# Returns the SGR sequence body that marks the end of the user-input
+# region, e.g. "[0;7m" for cursor-agent (the reverse-video cursor
+# cell). The full ANSI escape is `\e<value>`. When set,
+# extract_prompt_input switches to a styled (`-e`) capture and stops
+# at the first occurrence of this marker after the prompt prefix —
+# anything past it is the cursor cell + chrome (placeholder text,
+# slash-command palette, status footer) and gets dropped.
+#
+# Adapters that don't declare `input.end` get the legacy
+# capture-to-cursor-position behavior.
+resolve_input_end_for_adapter() {
+  local adapter="$1"
+  local source_root="$2"
+  local manifest_path
+
+  local ATMUX_SOURCE_ROOT="$source_root"
+  if ! manifest_path="$(resolve_manifest_path "$adapter")"; then
+    return 1
+  fi
+
+  read_manifest_input_field "$manifest_path" "end"
+}
+
+resolve_input_end_for_pane() {
+  local pane="$1"
+  local source_root="$2"
+  local sess adapter
+
+  sess="$(tmux display-message -t "$pane" -p "#{session_name}" 2>/dev/null || true)"
+  [[ -n "$sess" ]] || return 1
+
+  adapter="$(get_session_env "$sess" ATMUX_ADAPTER)"
+  [[ -n "$adapter" ]] || return 1
+
+  resolve_input_end_for_adapter "$adapter" "$source_root"
 }
 
 normalize_prompt_text() {
@@ -252,17 +355,24 @@ split_prompt_line() {
   local line prompt leading_trimmed rest
 
   line="$(normalize_prompt_text "${1:-}")"
+  # `prompt` is a regex pattern (manifest `input.start`). Trim whitespace
+  # from the regex itself the same way we trim it from the line.
   prompt="$(normalize_prompt_text "${2:-}")"
   prompt="${prompt%"${prompt##*[![:space:]]}"}"
   prompt="${prompt#"${prompt%%[![:space:]]*}"}"
   [[ -n "$prompt" ]] || return 1
 
   leading_trimmed="${line#"${line%%[![:space:]]*}"}"
-  [[ "$leading_trimmed" == "$prompt"* ]] || return 1
-
-  rest="${leading_trimmed#"$prompt"}"
-  rest="${rest#"${rest%%[![:space:]]*}"}"
-  printf '%s' "$rest"
+  # Bash =~ regex — anchored at start of leading_trimmed. Capture
+  # group 1 is the matched prompt; group 2 is the rest, used to
+  # return the user-visible content after the prompt.
+  if [[ "$leading_trimmed" =~ ^($prompt)(.*)$ ]]; then
+    rest="${BASH_REMATCH[2]}"
+    rest="${rest#"${rest%%[![:space:]]*}"}"
+    printf '%s' "$rest"
+    return 0
+  fi
+  return 1
 }
 
 resolve_prompt_prefix_for_pane() {
@@ -325,6 +435,29 @@ extract_prompt_input() {
 
   [[ -n "$prompt_prefix" ]] || return 0
 
+  # If the adapter declares an input.end marker, use it: capture with
+  # ANSI preserved, find the prompt prefix, then everything up to the
+  # first input.end SGR escape on that line is the user's input. Skips
+  # placeholder text, slash-command palettes, status footers, etc.
+  local input_end_marker=""
+  input_end_marker="$(resolve_input_end_for_pane "$pane" "${ATMUX_SOURCE_ROOT:-${ATMUX_HOME}/src/atmux}" 2>/dev/null || true)"
+  if [[ -n "$input_end_marker" ]]; then
+    # Only honor the end-marker path when perl is callable AND the
+    # extractor exits 0. If perl is missing or the script blows up,
+    # fall through to the legacy capture-to-cursor path below — empty
+    # stdout from a crashed perl is indistinguishable from "input was
+    # genuinely empty," so we can't trust it as the final answer.
+    if command -v perl >/dev/null 2>&1; then
+      local marker_out marker_rc=0
+      marker_out="$(extract_prompt_input_with_end_marker "$pane" "$prompt_prefix" "$input_end_marker")" || marker_rc=$?
+      if (( marker_rc == 0 )); then
+        printf '%s' "$marker_out"
+        return 0
+      fi
+    fi
+    # else: drop into the legacy path
+  fi
+
   snap="$(tmux capture-pane -p -t "$pane" 2>/dev/null || true)"
   while IFS= read -r line; do
     lines+=("$line")
@@ -361,6 +494,96 @@ extract_prompt_input() {
     saved_input+="${lines[idx]}"
   done
   printf '%s' "$saved_input"
+}
+
+# extract_prompt_input_with_end_marker: styled-capture variant used
+# when the adapter manifest declares `input.end`. Captures with `-e`,
+# walks lines bottom-up to find the prompt prefix, then takes
+# everything between the prefix and the first occurrence of the
+# end marker (`\e<end_marker>`) on the same logical input region.
+# ANSI codes are stripped from the captured text.
+extract_prompt_input_with_end_marker() {
+  local pane="$1"
+  local prompt_prefix="$2"
+  local end_marker="$3"
+  local snap
+
+  snap="$(tmux capture-pane -p -e -t "$pane" 2>/dev/null || true)"
+  [[ -n "$snap" ]] || return 0
+
+  # Both `input.start` and `input.end` are regex patterns (so a single
+  # manifest entry can match all forms an adapter renders, e.g.
+  # cursor-agent's cursor cell is `\e[0;7m` in placeholder mode and
+  # `\e[7m` once typed → `\[(?:0;)?7m` matches both). The end-marker
+  # regex is anchored after the escape: manifest writes the body that
+  # comes after `\e`.
+  ATMUX_PROMPT_PREFIX="$prompt_prefix" \
+  ATMUX_INPUT_END="$end_marker" \
+  perl -e '
+    use strict; use warnings;
+    my $prompt_re = qr/$ENV{ATMUX_PROMPT_PREFIX}/;
+    my $end_re    = qr/\e$ENV{ATMUX_INPUT_END}/;
+    my $snap      = do { local $/; <STDIN> };
+    my @lines     = split /\r?\n/, $snap, -1;
+
+    # Walk lines bottom-up; first line whose ANSI-stripped form
+    # contains the prompt prefix is the input prompt line.
+    my $idx = -1;
+    my $bare_match;
+    for (my $i = $#lines; $i >= 0; $i--) {
+      my $bare = $lines[$i];
+      $bare =~ s/\e\[[0-9;]*[a-zA-Z]//g;
+      if ($bare =~ $prompt_re) {
+        $idx = $i;
+        last;
+      }
+    }
+    exit 0 if $idx < 0;
+
+    my $line = $lines[$idx];
+    # Locate the prompt prefix in the styled bytes by skipping ANSI
+    # escapes (and leading whitespace) byte-by-byte until the prompt
+    # regex matches at the start of what remains.
+    my $scan = $line;
+    while ($scan ne "") {
+      # Skip ANSI CSI sequences so the prompt regex sees plain bytes.
+      if ($scan =~ /^\e\[[0-9;]*[a-zA-Z]/) {
+        $scan = substr($scan, length($&));
+        next;
+      }
+      # Skip leading whitespace (the rendered input box always has a
+      # left margin before the prompt prefix glyph).
+      if ($scan =~ /^\s+/) {
+        $scan = substr($scan, length($&));
+        next;
+      }
+      # Try the prompt regex.
+      if ($scan =~ /^$prompt_re/) {
+        $scan = substr($scan, length($&));
+        last;
+      }
+      # Some other byte before the prompt — drop it and retry.
+      $scan = substr($scan, 1);
+    }
+    # $scan now starts immediately after the prompt prefix.
+    my $rest = $scan;
+
+    # Stop at the first end-marker match. Everything before is the
+    # user input.
+    my $captured;
+    if ($rest =~ /^(.*?)(?:$end_re)/s) {
+      $captured = $1;
+    } else {
+      # No end marker on the prompt line — adapter promised one but
+      # render is in an unexpected state. Be conservative and return
+      # empty so we never re-paste chrome.
+      exit 0;
+    }
+    $captured =~ s/\e\[[0-9;]*[a-zA-Z]//g;
+    $captured =~ s/^\s+//;
+    $captured =~ s/\s+$//;
+    print $captured;
+  ' <<< "$snap"
 }
 
 pane_has_prompt_line() {
@@ -524,14 +747,14 @@ submit_notification_input() {
   local prompt_prefix="$2"
   local submit_keys="$3"
   local submit_wait="$4"
-  local attempts="${ATMUX_SEND_SUBMIT_RETRY_ATTEMPTS:-4}"
+  local attempts="${ATMUX_SEND_SUBMIT_RETRY_ATTEMPTS:-3}"
   local attempt sk
   local before_input before_cursor before_y
   local after_input after_cursor after_y
   local deadline now
   local submit_verify_timeout="${ATMUX_SEND_SUBMIT_VERIFY_SECONDS:-2}"
 
-  [[ "$attempts" =~ ^[0-9]+$ ]] || attempts=4
+  [[ "$attempts" =~ ^[0-9]+$ ]] || attempts=3
   (( attempts > 0 )) || attempts=1
   [[ "$submit_verify_timeout" =~ ^[0-9]+$ ]] || submit_verify_timeout=2
 
@@ -558,6 +781,15 @@ submit_notification_input() {
       debug_notify "deliver:submit_unverified_no_prompt pane=$(printf '%q' "$pane") attempt=$attempt"
       return 0
     fi
+
+    # Give the adapter a beat to actually process the Enter before we
+    # start polling. Without this delay the first extract runs ~0ms
+    # after send-keys returned, and a busy/slow adapter hasn't cleared
+    # the input box yet — we'd then count it as "input still present"
+    # and spuriously retry. The verify loop's deadline is small
+    # (default 2s); polling tight against a still-processing input
+    # just burns budget on noise. Wait once, then enter the loop.
+    sleep "$submit_wait"
 
     deadline=$(( $(date +%s) + submit_verify_timeout ))
     while true; do
@@ -782,22 +1014,92 @@ notification_item_due() {
 
 mark_notification_attempt_failed() {
   local item_dir="$1"
-  local attempts delay now
+  local attempts delay now max
   attempts="$(notification_item_attempts "$item_dir")"
   attempts=$(( attempts + 1 ))
-  delay="$(notification_retry_delay_seconds "$attempts")"
   now="$(date +%s)"
-  write_field "$item_dir/state" "retrying"
+  max="${ATMUX_NOTIFY_MAX_OUTER_ATTEMPTS:-3}"
+  [[ "$max" =~ ^[0-9]+$ ]] || max=3
+  (( max > 0 )) || max=3
+
   write_field "$item_dir/attempts" "$attempts"
   write_field "$item_dir/last_attempt_at" "$now"
-  write_field "$item_dir/next_attempt_at" "$(( now + delay ))"
   write_field "$item_dir/last_error" "delivery_unverified"
+
+  if (( attempts >= max )); then
+    # Give up. The worker loop notices state=failed and dispatches a
+    # delivery-failed notification back to the original sender (parsed
+    # from the payload's `from` attribute), then drops the item.
+    write_field "$item_dir/state" "failed"
+    return 0
+  fi
+
+  delay="$(notification_retry_delay_seconds "$attempts")"
+  write_field "$item_dir/state" "retrying"
+  write_field "$item_dir/next_attempt_at" "$(( now + delay ))"
 }
 
 mark_notification_delivered() {
   local item_dir="$1"
   write_field "$item_dir/state" "delivered"
   write_field "$item_dir/delivered_at" "$(timestamp_utc)"
+}
+
+# Parse a notification XML's `from=` attribute. Returns empty if not
+# found or malformed.
+notification_payload_from() {
+  local payload="$1"
+  printf '%s' "$payload" | sed -n 's/.*<notification[^>]* from="\([^"]*\)".*/\1/p' | head -n1
+}
+
+notification_payload_type() {
+  local payload="$1"
+  printf '%s' "$payload" | sed -n 's/.*<notification[^>]* type="\([^"]*\)".*/\1/p' | head -n1
+}
+
+# Send a `delivery-failed` notification back to the original sender so
+# they know the message never made it. The recipient is the session
+# named in the payload's `from=` attribute. Routed through `atmux send`
+# so all the usual session-name resolution (team/agent/raw session)
+# applies.
+dispatch_delivery_failed_notice() {
+  local recipient_pane="$1" item_dir="$2" payload="$3"
+  local from_session original_type attempts source_root atmux_bin
+  from_session="$(notification_payload_from "$payload")"
+  original_type="$(notification_payload_type "$payload")"
+  attempts="$(notification_item_attempts "$item_dir")"
+
+  if [[ -z "$from_session" ]]; then
+    debug_notify "deliver:failed_no_sender pane=$(printf '%q' "$recipient_pane") payload_summary=$(payload_debug_summary "$payload")"
+    return 0
+  fi
+
+  source_root="${ATMUX_SOURCE_ROOT:-$ATMUX_HOME/src/atmux}"
+  atmux_bin="$source_root/bin/atmux"
+  [[ -x "$atmux_bin" ]] || atmux_bin="atmux"
+
+  debug_notify "deliver:failed_dispatch pane=$(printf '%q' "$recipient_pane") sender=$(printf '%q' "$from_session") attempts=$attempts type=$(printf '%q' "$original_type")"
+
+  # Build the failure notice through the canonical builder so the
+  # sender receives the same shape as every other notification.
+  local notice_xml
+  notice_xml="$(build_notification "delivery-failed" "$recipient_pane" "" \
+    "original_type=$original_type" \
+    "attempts=$attempts")"
+
+  # Resolve the sender's session to its primary pane so we can enqueue
+  # the notification directly. Going through `atmux send` would wrap
+  # the XML inside another `<notification type="message">`, which is
+  # not what we want here.
+  local sender_pane
+  sender_pane="$(primary_pane_for_session "$from_session" 2>/dev/null || true)"
+  if [[ -z "$sender_pane" ]]; then
+    debug_notify "deliver:failed_unresolvable sender=$(printf '%q' "$from_session")"
+    return 0
+  fi
+
+  # Best-effort: if the sender's pane is gone, we've still logged.
+  "$atmux_bin" notify --pane "$sender_pane" --xml "$notice_xml" >/dev/null 2>&1 || true
 }
 
 notification_worker_pid_file() {
@@ -1094,6 +1396,13 @@ serve_notification_queue() {
       else
         debug_notify "worker:item_failed pane=$(printf '%q' "$pane") item_dir=$(printf '%q' "$item_dir")"
         mark_notification_attempt_failed "$item_dir"
+        # Once the cap is hit the item is in state=failed; notify the
+        # original sender so they know the message was not delivered,
+        # then remove the item so the queue doesn't keep retrying.
+        if [[ "$(read_state_field "$item_dir/state")" == "failed" ]]; then
+          dispatch_delivery_failed_notice "$pane" "$item_dir" "$payload"
+          rm -rf "$item_dir"
+        fi
         if (( batch_active == 1 )); then
           restore_after_failed_delivery "$pane" "$prompt_prefix" "$saved_input"
           prompt_prefix=""
@@ -1227,10 +1536,17 @@ send_notification() {
 }
 
 # Unified notification builder.
-# Usage: build_notification <type> <from> <cmd> [key=value ...]
-# Output: <notification type="..." from="..." cmd="..." key="value" ...>text</notification>
+# Usage: build_notification <type> <from> <hint-cmd> [key=value ...]
+# Output: <notification type="..." from="..." hint="run `<cmd>`" key="value" ...>text</notification>
+#
+# The 3rd positional arg is the bare atmux command the receiver should
+# run; build_notification wraps it as `hint="run \`<cmd>\`"`. Earlier
+# revisions emitted this as `cmd="<cmd>"`, but `cmd` was ambiguous
+# (producer-side command vs. receiver-side command). `hint` is
+# explicitly receiver-side and the `run \`...\`` framing makes the
+# intended action unmistakable.
 build_notification() {
-  local type="$1" from="$2" cmd="$3"
+  local type="$1" from="$2" hint_cmd="$3"
   shift 3
   local attrs=""
   local body=""
@@ -1246,22 +1562,29 @@ build_notification() {
     fi
     attrs+=" ${k}=\"$(xml_escape "$v")\""
   done
-  local cmd_attr=""
-  if [[ -n "$cmd" ]]; then
-    cmd_attr=" cmd=\"$(xml_escape "$cmd")\""
+  local hint_attr=""
+  if [[ -n "$hint_cmd" ]]; then
+    hint_attr=" hint=\"$(xml_escape "run \`$hint_cmd\`")\""
   fi
   if [[ "$has_body" -eq 1 ]]; then
     printf '<notification type="%s" from="%s"%s%s>%s</notification>' \
       "$(xml_escape "$type")" \
       "$(xml_escape "$from")" \
-      "$cmd_attr" \
+      "$hint_attr" \
       "$attrs" \
       "$(xml_escape "$body")"
   else
-    printf '<notification type="%s" from="%s"%s%s />' \
+    # Self-closing tag with NO space before `/>`. cursor-agent treats
+    # ` /<chars>` in its input box as a slash-command invocation; the
+    # space + `/` of ` />` would arm a stray `/notification` slash
+    # command and Enter would run that instead of submitting the
+    # message. The XML spec accepts both `<x />` and `<x/>` so this
+    # is purely a defensive tightening for adapters with sticky
+    # slash-command parsers.
+    printf '<notification type="%s" from="%s"%s%s/>' \
       "$(xml_escape "$type")" \
       "$(xml_escape "$from")" \
-      "$cmd_attr" \
+      "$hint_attr" \
       "$attrs"
   fi
 }
@@ -1582,6 +1905,12 @@ notify_cli_main() {
   done
 
   [[ -n "$pane" ]] || { echo "missing --pane" >&2; exit 2; }
+  if [[ "$xml_payload" == "-" ]]; then
+    # `--xml -` reads the payload from stdin so callers can chain it
+    # off another producer (e.g. `atmux agent watch ... --exec
+    # "atmux notify --pane $p --xml -"`).
+    xml_payload="$(cat)"
+  fi
   [[ -n "$xml_payload" ]] || { echo "missing --xml" >&2; exit 2; }
 
   local submit_keys=()

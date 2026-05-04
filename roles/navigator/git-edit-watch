@@ -1,17 +1,23 @@
 #!/usr/bin/env bash
-# git-edit-watch: bridge from `atmux path watch` to `atmux git watch --once`.
+# git-edit-watch: bridge from `atmux path watch` to a navigator
+# notification.
 #
-# `atmux path watch` is event-driven (fswatch on macOS, inotifywait on
-# Linux), so it fires within milliseconds of a filesystem change instead
-# of waiting for a polling tick. But it watches *paths*, not git state —
-# every write to .git/ or to an ignored file would otherwise trigger a
-# notification. So we use path-watch as a cheap edge trigger and let
-# `atmux git watch --once` be the source of truth: it computes the
-# rolling diff against the persisted baseline and stays silent when the
-# change doesn't affect tracked files.
+# `atmux path watch` is event-driven (fswatch on macOS, inotifywait
+# on Linux), so it fires within milliseconds of a filesystem change.
+# This script discards path-watch's payload (we only need the trigger)
+# and emits one canonical `<notification type="git-change" .../>` to
+# the navigator's pane carrying a `hint` the navigator runs at review
+# time:
 #
-# path-watch invokes us with its digest XML on stdin (which we discard)
-# and our argv carries the watch-id and the navigator pane id.
+#   <notification type="git-change" from="<watch-id>"
+#                 hint="run `atmux git snapshot --id <watch-id>`"/>
+#
+# The navigator's role.md tells it: when this notification arrives,
+# run the hint command. That returns the rolling diff *as of read
+# time*, not whatever was current when the fs event fired — so reviews
+# can't go stale during LLM reasoning latency, and a burst of edits
+# collapses into one cumulative diff at review time instead of a queue
+# of point-in-time snapshots.
 #
 # Args: <git-watch-id> <nav-pane>
 set -euo pipefail
@@ -19,14 +25,9 @@ set -euo pipefail
 watch_id="$1"
 nav_pane="$2"
 
-# Drain path-watch's stdin so it doesn't pile up; we only care about the
-# trigger, not the payload.
+# Drain path-watch's stdin; we only care about the trigger.
 cat >/dev/null
 
-# `git watch --once` exits 0 with no output on an empty diff (untracked
-# .gitignore'd file, transient .git/ ref churn). atmux notify only fires
-# when there's an actual XML payload to deliver, so untracked-file noise
-# never reaches the navigator's pane.
-exec atmux git watch --once \
-  --id "$watch_id" \
-  --exec "atmux notify --pane $(printf '%q' "$nav_pane") --xml \"\$(cat)\""
+# Build the canonical notification XML and hand it to the queue.
+xml="$(atmux notify build "git-change" "$watch_id" "atmux git snapshot --id $watch_id")"
+exec atmux notify --pane "$nav_pane" --xml "$xml"

@@ -499,13 +499,20 @@ create_team() {
 
   # When invoked from within a repo agent session, remember this as the
   # default team for subsequent `atmux agent create ...` calls.
+  #
+  # Stamp `ATMUX_DEFAULT_TEAM` rather than `ATMUX_TEAM`. The latter is
+  # the kill predicate `atmux team kill` uses to enumerate members
+  # (membership signal); if we stamp it on the caller too, team kill
+  # treats the manager as a member and kills it. `ATMUX_DEFAULT_TEAM`
+  # is read by `agent create` purely as a fallback for `--team` when
+  # the user doesn't pass one explicitly.
   if [[ -n "${TMUX:-}" ]]; then
     local caller_session caller_repo
     caller_session="$(tmux display-message -p '#S' 2>/dev/null || true)"
     if [[ -n "$caller_session" ]] && tmux has-session -t "$caller_session" 2>/dev/null; then
       caller_repo="$(tmux show-environment -t "$caller_session" ATMUX_REPO 2>/dev/null | sed -n 's/^ATMUX_REPO=//p' || true)"
       if [[ -z "$caller_repo" || "$caller_repo" == "$repo_name" ]]; then
-        tmux set-environment -t "$caller_session" ATMUX_TEAM "$team_name" >/dev/null 2>&1 || true
+        tmux set-environment -t "$caller_session" ATMUX_DEFAULT_TEAM "$team_name" >/dev/null 2>&1 || true
       fi
     fi
   fi

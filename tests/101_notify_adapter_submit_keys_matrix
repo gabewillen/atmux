@@ -83,7 +83,7 @@ check "empty adapter interrupt" "$empty_i" "Enter"
 fake_root="$(mktemp -d "${TMPDIR:-/tmp}/atmux-fake-adapter.XXXXXX")"
 mkdir -p "$fake_root/adapter/keysless"
 cat > "$fake_root/adapter/keysless/manifest.json" <<'EOF'
-{ "name": "keysless", "version": 1, "input_idle": { "prompt": "?" } }
+{ "name": "keysless", "version": 1, "input": { "start": "?" } }
 EOF
 (
   ATMUX_SOURCE_ROOT="$fake_root"

@@ -2,11 +2,12 @@
   "name": "claude-code",
   "version": 1,
   "submit_keys": {
-    "steer": ["Enter"],
-    "interrupt": ["Escape"]
-  },
-  "input_idle": {
-    "prompt": "❯"
+    "steer": [
+      "Enter"
+    ],
+    "interrupt": [
+      "Escape"
+    ]
   },
   "intelligence_map": [
     {
@@ -33,5 +34,8 @@
       "model": "opus",
       "reasoning_level": "high"
     }
-  ]
+  ],
+  "input": {
+    "start": "❯"
+  }
 }

@@ -28,6 +28,39 @@ if [[ -n "${ATMUX_SOURCE_ROOT:-}" && -x "${ATMUX_SOURCE_ROOT}/bin/atmux" ]]; the
   fi
 fi
 
+# Resolve a non-shimmed `git` for internal use. Adapter start hooks
+# prepend a `git`-shim directory to PATH (so agent-issued `git` calls
+# route through `atmux git` for hooks). Bare `git` here would hit that
+# shim, which `exec`s back into this dispatcher — which would then call
+# bare `git` again, looping until the system runs out of fds. The shim
+# exports ATMUX_REAL_GIT pointing at the real binary; if that's unset
+# we walk PATH ourselves and skip anything that resolves into a
+# `git-shim/git` location.
+_atmux_git() {
+  if [[ -n "${ATMUX_REAL_GIT:-}" && -x "$ATMUX_REAL_GIT" ]]; then
+    "$ATMUX_REAL_GIT" "$@"
+    return $?
+  fi
+  # Search the system default PATH first (skipping any agent-injected
+  # git shim), then fall back to `which -a` over the current PATH and
+  # finally a hardcoded list of common locations. We can't use
+  # `command -v -p` because bash silently ignores `-p` when `-v` is
+  # present; instead, prefix `PATH=$(getconf PATH)` so `command -v`
+  # resolves against the system default PATH for that one invocation.
+  local candidate resolved default_path
+  default_path="$(getconf PATH 2>/dev/null || printf '/usr/bin:/bin:/usr/sbin:/sbin')"
+  while IFS= read -r candidate; do
+    [[ -n "$candidate" && -x "$candidate" ]] || continue
+    resolved="$(cd -- "$(dirname -- "$candidate")" 2>/dev/null && pwd -P)/$(basename -- "$candidate")"
+    [[ "$resolved" != *'/git-shim/git' ]] || continue
+    "$candidate" "$@"
+    return $?
+  done < <(PATH="$default_path" command -v git 2>/dev/null
+           which -a git 2>/dev/null
+           printf '%s\n' /usr/bin/git /opt/homebrew/bin/git /usr/local/bin/git)
+  return 127
+}
+
 usage() {
   # The CLI is resource-first: most commands take the form `atmux <noun> <verb>`.
   # A handful of cross-cutting verbs have no resource home and are invoked
@@ -121,7 +154,7 @@ resolve_script_subcommand() {
   local repo_root=""
   local p=""
 
-  if repo_root="$(git rev-parse --show-toplevel 2>/dev/null)"; then
+  if repo_root="$(_atmux_git rev-parse --show-toplevel 2>/dev/null)"; then
     p="$repo_root/bin/(atmux)/${cmd}"
     if [[ -f "$p" && -x "$p" ]]; then
       printf '%s\n' "$p"
@@ -259,7 +292,7 @@ maybe_auto_update() {
   fi
   if [[ "$enabled" -eq 0 ]]; then
     local repo_root=""
-    if repo_root="$(git rev-parse --show-toplevel 2>/dev/null)"; then
+    if repo_root="$(_atmux_git rev-parse --show-toplevel 2>/dev/null)"; then
       cfg="$repo_root/.atmux/config/update/auto"
       if [[ -f "$cfg" ]]; then
         val="$(cat "$cfg")"

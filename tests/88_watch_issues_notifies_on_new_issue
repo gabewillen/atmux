@@ -57,7 +57,16 @@ snapshot_file="$atmux_home/watch-issues/octo_example_issues/snapshot"
 
 cleanup() {
   tmux kill-session -t "$session" >/dev/null 2>&1 || true
-  rm -rf "$tmp_root"
+  # Detached watcher subprocesses may still be unwinding their
+  # `atmux exec` state dir at trap-fire time, which races the rm and
+  # leaves a `detach-<pid>-<n>` subdir busy. Best-effort delete with
+  # a short retry so a slow teardown on CI doesn't fail the whole
+  # test after the assertions already passed.
+  for _ in 1 2 3 4 5; do
+    rm -rf "$tmp_root" 2>/dev/null && return 0
+    sleep 0.2
+  done
+  rm -rf "$tmp_root" 2>/dev/null || true
 }
 trap cleanup EXIT
 

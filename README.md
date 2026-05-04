@@ -22,7 +22,7 @@ Install by piping `curl` into `sh`, or clone the repo and run `./install.sh`. Th
 - **You can actually see the agents work.** It's just tmux. Attach to any session, watch the agent think in real time, detach and come back later. No custom TUI, no web dashboard, no log tailing.
 - **Git worktree per agent.** Each agent gets its own branch and working directory under `ATMUX_HOME/agents/`. Parallel agents can't stomp each other's changes, and cleanup is a single `atmux agent kill`.
 
-> **Experimental** — this project is under active development (current version: `0.18.0`). APIs, commands, and behavior may change without notice. Use at your own risk.
+> **Experimental** — this project is under active development (current version: `0.18.1`). APIs, commands, and behavior may change without notice. Use at your own risk.
 
 ## Install
 
@@ -450,6 +450,7 @@ atmux path watch 'docs/**/*.md' --exec ./on-docs-changed --coalesce 30
 
 ```sh
 atmux git <git-args...>
+atmux git snapshot [--id <id>] [--exec <cmd>]
 atmux git watch [--id <id>] [--coalesce <seconds>] [--interval <seconds>]
                 [--timeout <seconds>] [--duration <seconds>]
                 [--exec <cmd>] [--once]

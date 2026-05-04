@@ -35,7 +35,7 @@ sleep 0.5
 # Watch with long idle — should detect stuck prompt immediately and exit 0
 set +e
 ATMUX_REPO="$repo_name" ATMUX_ALLOW_OUTSIDE_TMUX=1 \
-  "$ATMUX_BIN" agent watch "$session" --idle 60 --timeout 10 --interval 1
+  "$ATMUX_BIN" agent watch "$session" --idle 60 --timeout 10 --interval 1 --once
 rc=$?
 set -e
 

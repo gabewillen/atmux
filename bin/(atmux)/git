@@ -27,6 +27,7 @@ usage() {
   cat <<'USAGE'
 Usage:
   atmux git <git-args...>
+  atmux git snapshot [--id <id>] [--exec <cmd>]
   atmux git watch [--id <id>] [--coalesce <seconds>] [--interval <seconds>]
                   [--timeout <seconds>] [--duration <seconds>]
                   [--exec <cmd>] [--once]
@@ -167,6 +168,16 @@ main() {
   if [[ "$verb" == "watch" ]]; then
     shift
     exec "$HERE/[watch]/git" "$@"
+  fi
+
+  # `atmux git snapshot` — pull-time alias for `git watch --once`. The
+  # navigator role uses this in response to a git-change notification:
+  # the notifier just signals "something moved", the navigator runs
+  # `atmux git snapshot --id <id>` when it's actually ready to review,
+  # so the diff it sees is current as of read time, not stale-by-arrival.
+  if [[ "$verb" == "snapshot" ]]; then
+    shift
+    exec "$HERE/[watch]/git" --once "$@"
   fi
 
   # Anything else: forward to real git. (`git help`, `git --help`,

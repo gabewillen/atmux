@@ -1376,15 +1376,33 @@ ensure_team_dashboard_for_agent() {
     rows=$(( (panes + cols - 1) / cols ))
     out_w=$(( cols * min_w + (cols - 1) ))
     out_h=$(( rows * min_h + (rows - 1) ))
-    printf '%s %s\n' "$out_w" "$out_h"
+    # Emit cols too so apply_team_layout can pick a layout that matches
+    # the actual sizing (otherwise an `ATMUX_TEAM_MAX_COLUMNS=1` setup
+    # gets a 1-column window with side-by-side `even-horizontal` panes
+    # — splits the configured min-width in half).
+    printf '%s %s %s\n' "$out_w" "$out_h" "$cols"
   }
 
   apply_team_layout() {
     local panes="$1"
-    read -r width height < <(team_dimensions_for_panes "$panes")
+    local cols
+    read -r width height cols < <(team_dimensions_for_panes "$panes")
     tmux set-window-option -t "${team_session}:0" window-size manual >/dev/null 2>&1 || true
     tmux resize-window -t "${team_session}:0" -x "$width" -y "$height" >/dev/null 2>&1 || true
-    tmux select-layout -t "${team_session}:0" tiled >/dev/null 2>&1 || true
+    # Default to `tiled` (tmux's grid layout). For 2 panes in 2 columns,
+    # use `even-horizontal` (side-by-side) so a typical wide monitor
+    # isn't wasted on a top/bottom split. For 2 panes in 1 column
+    # (ATMUX_TEAM_MAX_COLUMNS=1), use `even-vertical` (stacked) so each
+    # pane gets the full configured min-width.
+    local layout="tiled"
+    if (( panes == 2 )); then
+      if (( cols >= 2 )); then
+        layout="even-horizontal"
+      else
+        layout="even-vertical"
+      fi
+    fi
+    tmux select-layout -t "${team_session}:0" "$layout" >/dev/null 2>&1 || true
   }
 
   apply_team_scroll_settings() {
@@ -1560,11 +1578,20 @@ do_create() {
 
   local name=""
   local role=""
-  local team="${ATMUX_TEAM:-}"
+  # ATMUX_TEAM signals "this session IS a member of <team>" — only set
+  # by team-spawned members. ATMUX_DEFAULT_TEAM is the soft hint a
+  # manager session picks up after running `atmux team create <team>`,
+  # so subsequent `atmux agent create` calls in that manager default
+  # to joining the same team. Both are fallbacks for the explicit
+  # `--team` flag.
+  local team="${ATMUX_TEAM:-${ATMUX_DEFAULT_TEAM:-}}"
   if [[ -z "$team" && -n "${TMUX:-}" ]]; then
     current_session_name="$(tmux display-message -p '#S' 2>/dev/null || true)"
     if [[ -n "$current_session_name" ]]; then
       team="$(tmux show-environment -t "$current_session_name" ATMUX_TEAM 2>/dev/null | sed -n 's/^ATMUX_TEAM=//p' || true)"
+      if [[ -z "$team" ]]; then
+        team="$(tmux show-environment -t "$current_session_name" ATMUX_DEFAULT_TEAM 2>/dev/null | sed -n 's/^ATMUX_DEFAULT_TEAM=//p' || true)"
+      fi
     fi
   fi
   local adapter="auto"

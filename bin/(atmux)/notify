@@ -110,15 +110,26 @@ resolve_notify_script_path() {
 resolve_input_prompt_for_adapter() {
   local adapter="$1"
   local source_root="$2"
-  local manifest_path compact
+  local manifest_path
 
   local ATMUX_SOURCE_ROOT="$source_root"
   if ! manifest_path="$(resolve_manifest_path "$adapter")"; then
     return 1
   fi
 
-  compact="$(tr -d '\n\r\t' < "$manifest_path")"
-  printf '%s' "$compact" | sed -n 's/.*"input"[[:space:]]*:[[:space:]]*{[^}]*"start"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p'
+  # Use python so JSON escapes (e.g. `"\\*"` for gemini's regex prompt)
+  # decode to their actual bytes — sed would return the raw `\\*`,
+  # which makes bash =~ expect a literal backslash in the pane.
+  python3 -c '
+import json, sys
+try:
+  d = json.load(open(sys.argv[1]))
+  v = (d.get("input") or {}).get("start")
+  if v is not None:
+    sys.stdout.write(v)
+except Exception:
+  pass
+' "$manifest_path"
 }
 
 # Returns the SGR sequence body that marks the end of the user-input
@@ -134,15 +145,23 @@ resolve_input_prompt_for_adapter() {
 resolve_input_end_for_adapter() {
   local adapter="$1"
   local source_root="$2"
-  local manifest_path compact
+  local manifest_path
 
   local ATMUX_SOURCE_ROOT="$source_root"
   if ! manifest_path="$(resolve_manifest_path "$adapter")"; then
     return 1
   fi
 
-  compact="$(tr -d '\n\r\t' < "$manifest_path")"
-  printf '%s' "$compact" | sed -n 's/.*"input"[[:space:]]*:[[:space:]]*{[^}]*"end"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p'
+  python3 -c '
+import json, sys
+try:
+  d = json.load(open(sys.argv[1]))
+  v = (d.get("input") or {}).get("end")
+  if v is not None:
+    sys.stdout.write(v)
+except Exception:
+  pass
+' "$manifest_path"
 }
 
 resolve_input_end_for_pane() {
@@ -290,17 +309,24 @@ split_prompt_line() {
   local line prompt leading_trimmed rest
 
   line="$(normalize_prompt_text "${1:-}")"
+  # `prompt` is a regex pattern (manifest `input.start`). Trim whitespace
+  # from the regex itself the same way we trim it from the line.
   prompt="$(normalize_prompt_text "${2:-}")"
   prompt="${prompt%"${prompt##*[![:space:]]}"}"
   prompt="${prompt#"${prompt%%[![:space:]]*}"}"
   [[ -n "$prompt" ]] || return 1
 
   leading_trimmed="${line#"${line%%[![:space:]]*}"}"
-  [[ "$leading_trimmed" == "$prompt"* ]] || return 1
-
-  rest="${leading_trimmed#"$prompt"}"
-  rest="${rest#"${rest%%[![:space:]]*}"}"
-  printf '%s' "$rest"
+  # Bash =~ regex — anchored at start of leading_trimmed. Capture
+  # group 1 is the matched prompt; group 2 is the rest, used to
+  # return the user-visible content after the prompt.
+  if [[ "$leading_trimmed" =~ ^($prompt)(.*)$ ]]; then
+    rest="${BASH_REMATCH[2]}"
+    rest="${rest#"${rest%%[![:space:]]*}"}"
+    printf '%s' "$rest"
+    return 0
+  fi
+  return 1
 }
 
 resolve_prompt_prefix_for_pane() {
@@ -427,55 +453,74 @@ extract_prompt_input_with_end_marker() {
   snap="$(tmux capture-pane -p -e -t "$pane" 2>/dev/null || true)"
   [[ -n "$snap" ]] || return 0
 
+  # Both `input.start` and `input.end` are regex patterns (so a single
+  # manifest entry can match all forms an adapter renders, e.g.
+  # cursor-agent's cursor cell is `\e[0;7m` in placeholder mode and
+  # `\e[7m` once typed → `\[(?:0;)?7m` matches both). The end-marker
+  # regex is anchored after the escape: manifest writes the body that
+  # comes after `\e`.
   ATMUX_PROMPT_PREFIX="$prompt_prefix" \
   ATMUX_INPUT_END="$end_marker" \
   perl -e '
     use strict; use warnings;
-    my $prompt = $ENV{ATMUX_PROMPT_PREFIX};
-    my $end    = "\e" . $ENV{ATMUX_INPUT_END};
-    my $snap   = do { local $/; <STDIN> };
-    my @lines  = split /\r?\n/, $snap, -1;
+    my $prompt_re = qr/$ENV{ATMUX_PROMPT_PREFIX}/;
+    my $end_re    = qr/\e$ENV{ATMUX_INPUT_END}/;
+    my $snap      = do { local $/; <STDIN> };
+    my @lines     = split /\r?\n/, $snap, -1;
 
     # Walk lines bottom-up; first line whose ANSI-stripped form
     # contains the prompt prefix is the input prompt line.
     my $idx = -1;
+    my $bare_match;
     for (my $i = $#lines; $i >= 0; $i--) {
       my $bare = $lines[$i];
       $bare =~ s/\e\[[0-9;]*[a-zA-Z]//g;
-      if (index($bare, $prompt) >= 0) { $idx = $i; last; }
+      if ($bare =~ $prompt_re) {
+        $idx = $i;
+        last;
+      }
     }
     exit 0 if $idx < 0;
 
     my $line = $lines[$idx];
     # Locate the prompt prefix in the styled bytes by skipping ANSI
-    # escapes byte-by-byte until the visible bytes start with the
-    # prompt prefix.
+    # escapes (and leading whitespace) byte-by-byte until the prompt
+    # regex matches at the start of what remains.
     my $scan = $line;
-    my $pos  = 0;
-    while ($scan ne "" && index($scan, $prompt) != 0) {
+    while ($scan ne "") {
+      # Skip ANSI CSI sequences so the prompt regex sees plain bytes.
       if ($scan =~ /^\e\[[0-9;]*[a-zA-Z]/) {
-        my $len = length($&);
-        $scan = substr($scan, $len);
-        $pos += $len;
-      } else {
-        $scan = substr($scan, 1);
-        $pos++;
+        $scan = substr($scan, length($&));
+        next;
       }
+      # Skip leading whitespace (the rendered input box always has a
+      # left margin before the prompt prefix glyph).
+      if ($scan =~ /^\s+/) {
+        $scan = substr($scan, length($&));
+        next;
+      }
+      # Try the prompt regex.
+      if ($scan =~ /^$prompt_re/) {
+        $scan = substr($scan, length($&));
+        last;
+      }
+      # Some other byte before the prompt — drop it and retry.
+      $scan = substr($scan, 1);
     }
-    my $rest = substr($line, $pos + length($prompt));
+    # $scan now starts immediately after the prompt prefix.
+    my $rest = $scan;
 
-    # Stop at the first end marker; everything before is user input.
+    # Stop at the first end-marker match. Everything before is the
+    # user input.
     my $captured;
-    my $end_pos = index($rest, $end);
-    if ($end_pos >= 0) {
-      $captured = substr($rest, 0, $end_pos);
+    if ($rest =~ /^(.*?)(?:$end_re)/s) {
+      $captured = $1;
     } else {
       # No end marker on the prompt line — adapter promised one but
       # render is in an unexpected state. Be conservative and return
       # empty so we never re-paste chrome.
       exit 0;
     }
-    # Strip remaining ANSI codes and trim.
     $captured =~ s/\e\[[0-9;]*[a-zA-Z]//g;
     $captured =~ s/^\s+//;
     $captured =~ s/\s+$//;

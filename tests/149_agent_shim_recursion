@@ -1,0 +1,138 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+AGENT="$REPO_ROOT/bin/(atmux)/agent"
+
+tmp="$(mktemp -d "${TMPDIR:-/tmp}/atmux-shim-recursion.XXXXXX")"
+cleanup() { rm -rf "$tmp"; }
+trap cleanup EXIT
+
+fake_root="$tmp/source"
+realbin="$tmp/realbin"
+mkdir -p "$fake_root/adapter/recursor" \
+  "$fake_root/shims/git" \
+  "$realbin"
+
+cat > "$realbin/demo" <<'SH'
+#!/usr/bin/env bash
+printf 'real:%s\n' "$*"
+SH
+chmod +x "$realbin/demo"
+
+cat > "$fake_root/shims/git/manifest" <<'SH'
+NAME=git
+KIND=path-prefix
+BINARIES=(git)
+SH
+cat > "$fake_root/shims/git/git" <<'SH'
+#!/usr/bin/env bash
+exec "$ATMUX_SHIM_REAL_BINARY" "$@"
+SH
+chmod +x "$fake_root/shims/git/git"
+
+cat > "$fake_root/adapter/recursor/manifest" <<'SH'
+NAME=recursor
+VERSION=1
+SH
+cat > "$fake_root/adapter/recursor/cmd" <<'SH'
+#!/usr/bin/env bash
+case "${1:-}" in
+  prepare-prompt) cat >/dev/null ;;
+  start) demo ok > "$ATMUX_TEST_RESULT" ;;
+  *) exit 0 ;;
+esac
+SH
+chmod +x "$fake_root/adapter/recursor/cmd"
+
+result="$tmp/result"
+PATH="$realbin:$PATH" \
+ATMUX_HOME="$tmp/home" \
+ATMUX_SOURCE_ROOT="$fake_root" \
+ATMUX_REPO=repo \
+ATMUX_AGENT_NAME=agent \
+ATMUX_TEST_RESULT="$result" \
+  "$AGENT" _run-adapter --adapter recursor
+
+got="$(cat "$result")"
+[[ "$got" == "real:ok" ]] || {
+  echo "expected default git shim to leave unrelated demo binary alone, got $got" >&2
+  exit 1
+}
+
+cursor_home="$tmp/cursor-home"
+cursor_realbin="$tmp/cursor-realbin"
+mkdir -p "$cursor_home/.local/bin" "$cursor_home/.cursor/bin" "$cursor_realbin"
+cat > "$cursor_realbin/git" <<'SH'
+#!/usr/bin/env bash
+printf 'cursor-real:%s\n' "$*"
+SH
+chmod +x "$cursor_realbin/git"
+cat > "$cursor_home/.local/bin/agent" <<'SH'
+#!/usr/bin/env bash
+if [[ "$(command -v git)" == "$ATMUX_SHIM_PROXY_DIR/git" ]]; then
+  case ":$PATH:" in
+    *":$ATMUX_SHIM_PROXY_DIR-extra:"*) printf 'cursor-shim-active\n' > "$ATMUX_TEST_RESULT" ;;
+    *) printf 'cursor-path-corrupted:%s\n' "$PATH" > "$ATMUX_TEST_RESULT" ;;
+  esac
+else
+  printf 'cursor-shim-missing:%s\n' "$(command -v git)" > "$ATMUX_TEST_RESULT"
+fi
+SH
+chmod +x "$cursor_home/.local/bin/agent"
+
+cursor_result="$tmp/cursor-result"
+cursor_proxy_extra="$tmp/cursor-atmux-home/agents/repo/cursor/shims/bin-extra"
+HOME="$cursor_home" \
+PATH="$cursor_realbin:$cursor_proxy_extra:$PATH" \
+ATMUX_HOME="$tmp/cursor-atmux-home" \
+ATMUX_SOURCE_ROOT="$REPO_ROOT" \
+ATMUX_REPO=repo \
+ATMUX_AGENT_NAME=cursor \
+ATMUX_TEST_RESULT="$cursor_result" \
+  "$AGENT" _run-adapter --adapter cursor-agent
+
+cursor_got="$(cat "$cursor_result")"
+[[ "$cursor_got" == "cursor-shim-active" ]] || {
+  echo "expected default agent shim to activate git proxy, got $cursor_got" >&2
+  exit 1
+}
+
+codex_dir="$fake_root/adapter/codex"
+mkdir -p "$codex_dir"
+cat > "$codex_dir/manifest" <<'SH'
+NAME=codex
+VERSION=1
+SH
+cat > "$codex_dir/cmd" <<'SH'
+#!/usr/bin/env bash
+case "${1:-}" in
+  prepare-prompt) cat >/dev/null ;;
+  start)
+    if [[ "$(command -v git)" == "$ATMUX_SHIM_PROXY_DIR/git" ]]; then
+      printf 'default-shim-active\n' > "$ATMUX_TEST_RESULT"
+    else
+      printf 'default-shim-missing:%s\n' "$(command -v git)" > "$ATMUX_TEST_RESULT"
+    fi
+    ;;
+esac
+SH
+chmod +x "$codex_dir/cmd"
+
+codex_result="$tmp/codex-result"
+PATH="$cursor_realbin:$PATH" \
+ATMUX_HOME="$tmp/codex-atmux-home" \
+ATMUX_SOURCE_ROOT="$fake_root" \
+ATMUX_REPO=repo \
+ATMUX_AGENT_NAME=codex \
+ATMUX_TEST_RESULT="$codex_result" \
+  "$AGENT" _run-adapter --adapter codex
+
+codex_got="$(cat "$codex_result")"
+[[ "$codex_got" == "default-shim-active" ]] || {
+  echo "expected default git shim for non-cursor adapter, got $codex_got" >&2
+  exit 1
+}
+
+echo "ok: agent shim proxies activate default git shim for all agents"

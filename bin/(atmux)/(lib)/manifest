@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+# Shared non-executing readers for atmux sourced-bash manifest files.
+
+manifest_unquote_scalar() {
+  local raw="$1"
+  raw="${raw#"${raw%%[![:space:]]*}"}"
+  raw="${raw%"${raw##*[![:space:]]}"}"
+  case "$raw" in
+    \"*\")
+      raw="${raw#\"}"
+      raw="${raw%\"}"
+      raw="${raw//\\\"/\"}"
+      raw="${raw//\\\\/\\}"
+      ;;
+    \'*\')
+      raw="${raw#\'}"
+      raw="${raw%\'}"
+      ;;
+  esac
+  printf '%s' "$raw"
+}
+
+read_manifest_scalar_assignment() {
+  local manifest_path="$1" var="$2" line raw
+  line="$(grep -E "^[[:space:]]*${var}=" "$manifest_path" 2>/dev/null | tail -n 1 || true)"
+  [[ -n "$line" ]] || return 1
+  raw="${line#*=}"
+  manifest_unquote_scalar "$raw"
+}
+
+read_manifest_array_assignment() {
+  local manifest_path="$1" var="$2" line raw item
+  line="$(grep -E "^[[:space:]]*${var}=" "$manifest_path" 2>/dev/null | tail -n 1 || true)"
+  [[ -n "$line" ]] || return 1
+  raw="${line#*=}"
+  raw="${raw#"${raw%%[![:space:]]*}"}"
+  [[ "$raw" == \(*\) ]] || return 1
+  raw="${raw#\(}"
+  raw="${raw%\)}"
+  for item in $raw; do
+    [[ "$item" =~ ^[A-Za-z0-9._+-]+$ ]] || continue
+    manifest_unquote_scalar "$item"
+    printf '\n'
+  done
+}
+
+resolve_profile_from_manifest() {
+  local intelligence="$1" manifest_path="$2"
+  local in_map=0 line raw row min max model reasoning
+
+  [[ "$intelligence" =~ ^[0-9]+$ ]] || return 1
+  [[ -f "$manifest_path" ]] || return 1
+
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if (( ! in_map )); then
+      [[ "$line" =~ ^[[:space:]]*INTELLIGENCE_MAP=[[:space:]]*\( ]] || continue
+      in_map=1
+      continue
+    fi
+
+    raw="${line#"${line%%[![:space:]]*}"}"
+    raw="${raw%"${raw##*[![:space:]]}"}"
+    [[ -n "$raw" ]] || continue
+    [[ "$raw" == ")" ]] && break
+
+    row="$(manifest_unquote_scalar "$raw")"
+    read -r min max model reasoning _ <<< "$row"
+    [[ "$min" =~ ^[0-9]+$ && "$max" =~ ^[0-9]+$ ]] || continue
+    [[ -n "$model" && -n "$reasoning" ]] || continue
+    if (( intelligence >= min && intelligence <= max )); then
+      printf '%s %s\n' "$model" "$reasoning"
+      return 0
+    fi
+  done < "$manifest_path"
+
+  return 1
+}
+
+shim_name_valid() {
+  local name="$1"
+  [[ -n "$name" ]] || return 1
+  case "$name" in .|..|.*|*/*|*..*) return 1 ;; esac
+  [[ "$name" =~ ^[A-Za-z0-9._-]+$ ]]
+}
+
+shim_binary_valid() {
+  local name="$1"
+  [[ -n "$name" ]] || return 1
+  case "$name" in .|..|.*|*/*|*..*) return 1 ;; esac
+  [[ "$name" =~ ^[A-Za-z0-9._+-]+$ ]]
+}

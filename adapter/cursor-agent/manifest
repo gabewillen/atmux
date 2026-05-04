@@ -1,0 +1,12 @@
+NAME=cursor-agent
+VERSION=1
+SUBMIT_KEYS_STEER=(Enter)
+SUBMIT_KEYS_INTERRUPT=(C-c)
+INTELLIGENCE_MAP=(
+  "0 39 composer-2-fast low"
+  "40 74 composer-2 medium"
+  "75 89 gpt-5.3-codex-high high"
+  "90 100 gpt-5.3-codex-xhigh extra-high"
+)
+INPUT_START="→"
+INPUT_END="\\[(?:0;)?7m"

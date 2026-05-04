@@ -2,7 +2,7 @@
 # atmux git — transparent wrapper around `git`.
 #
 # Forwards every git invocation to the real git executable so callers
-# (and a `git` shim that re-points $PATH at this wrapper) can use atmux
+# (and the shipped `git` shim) can use atmux
 # git interchangeably with git. The only verb atmux owns is `watch`,
 # which is the atmux-specific rolling-diff watcher and never reaches
 # real git.
@@ -53,9 +53,8 @@ Hooks (current):
 USAGE
 }
 
-# Resolve the *real* git executable, bypassing any `git` shim that may
-# be on PATH ahead of it (the cursor-agent adapter prepends a shim dir
-# specifically so `git` routes through atmux). We try in order:
+# Resolve the *real* git executable, bypassing any active shim/proxy that may
+# be on PATH ahead of it. We try in order:
 #   1) $ATMUX_REAL_GIT (escape hatch)
 #   2) the first `git` on PATH whose realpath is NOT this script
 #   3) common system locations (/usr/bin/git, /opt/homebrew/bin/git)
@@ -77,8 +76,12 @@ resolve_real_git() {
     # Reject anything that ends in `(atmux)/git` — defends against PATH
     # entries that point at the source tree's own bin/(atmux) dir.
     [[ "$resolved" != *'(atmux)/git' ]] || continue
-    # Reject our git shim (it would call us right back).
-    [[ "$resolved" != *'/git-shim/git' ]] || continue
+    if [[ -n "${ATMUX_SHIM_PROXY_DIR:-}" && "$resolved" == "$(cd -- "$ATMUX_SHIM_PROXY_DIR" 2>/dev/null && pwd -P)/git" ]]; then
+      continue
+    fi
+    case ":${ATMUX_ACTIVE_SHIM_DIRS:-}:" in
+      *":$(dirname -- "$resolved"):"*) continue ;;
+    esac
     printf '%s\n' "$candidate"
     return 0
   done < <(PATH="$PATH" command -v -p git 2>/dev/null

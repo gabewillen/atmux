@@ -1,0 +1,113 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+ATMUX="$REPO_ROOT/bin/atmux"
+
+ATMUX_HOME="$(mktemp -d "${TMPDIR:-/tmp}/atmux-shim-cli.XXXXXX")"
+export ATMUX_HOME ATMUX_SOURCE_ROOT="$REPO_ROOT"
+cleanup() { rm -rf "$ATMUX_HOME"; }
+trap cleanup EXIT
+
+resolved="$("$ATMUX" shim resolve git)"
+[[ "$resolved" == "$REPO_ROOT/shims/git" ]] || {
+  echo "expected shipped git shim resolution, got $resolved" >&2
+  exit 1
+}
+
+show="$("$ATMUX" shim show git)"
+printf '%s\n' "$show" | grep -Fxq "NAME=git" || { echo "shim show missing NAME=git" >&2; exit 1; }
+printf '%s\n' "$show" | grep -Fxq "KIND=path-prefix" || { echo "shim show missing KIND" >&2; exit 1; }
+printf '%s\n' "$show" | grep -Fxq "BINARY=git" || { echo "shim show missing BINARY=git" >&2; exit 1; }
+
+"$ATMUX" shim install git >/dev/null
+installed="$("$ATMUX" shim resolve git)"
+[[ "$installed" == "$ATMUX_HOME/shims/git" ]] || {
+  echo "expected installed user shim to win, got $installed" >&2
+  exit 1
+}
+
+list="$("$ATMUX" shim list)"
+printf '%s\n' "$list" | grep -Fq $'git\t'"$ATMUX_HOME/shims/git" || {
+  echo "shim list missing installed git shim" >&2
+  exit 1
+}
+
+if "$ATMUX" shim resolve ../git >/tmp/atmux-shim-bad.out 2>/tmp/atmux-shim-bad.err; then
+  echo "shim resolve accepted traversal name" >&2
+  exit 1
+fi
+
+mkdir -p "$ATMUX_HOME/shims/evil"
+marker="$ATMUX_HOME/manifest-executed"
+cat > "$ATMUX_HOME/shims/evil/manifest" <<EOF
+NAME=evil
+KIND=path-prefix
+DESCRIPTION=\$(touch "$marker")
+BINARIES=(evil)
+EOF
+cat > "$ATMUX_HOME/shims/evil/evil" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+chmod +x "$ATMUX_HOME/shims/evil/evil"
+"$ATMUX" shim show evil >/dev/null
+[[ ! -e "$marker" ]] || {
+  echo "shim manifest inspection executed shell code" >&2
+  exit 1
+}
+
+fakebin="$ATMUX_HOME/fakebin"
+mkdir -p "$fakebin" "$ATMUX_HOME/tmp"
+cat > "$fakebin/git" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "-C" ]]; then
+  dir="$2"; shift 2
+  case "$1 $2 $3" in
+    "remote get-url origin")
+      cat "$dir/.git/origin"
+      exit 0
+      ;;
+    "pull --ff-only ")
+      touch "$ATMUX_HOME/pulled"
+      exit 0
+      ;;
+  esac
+fi
+if [[ "${1:-}" == "clone" ]]; then
+  url="$2"
+  dest="$3"
+  mkdir -p "$dest/.git"
+  printf '%s\n' "$url" > "$dest/.git/origin"
+  cat > "$dest/manifest" <<'SH'
+NAME=shared
+KIND=path-prefix
+BINARIES=(shared)
+SH
+  cat > "$dest/shared" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+  chmod +x "$dest/shared"
+  exit 0
+fi
+exit 1
+EOF
+chmod +x "$fakebin/git"
+
+PATH="$fakebin:$PATH" TMPDIR="$ATMUX_HOME/tmp" "$ATMUX" shim install alice/shared >/dev/null
+if PATH="$fakebin:$PATH" TMPDIR="$ATMUX_HOME/tmp" "$ATMUX" shim install bob/shared >/tmp/atmux-shim-mismatch.out 2>/tmp/atmux-shim-mismatch.err; then
+  echo "github shim install accepted mismatched existing remote" >&2
+  exit 1
+fi
+[[ ! -e "$ATMUX_HOME/pulled" ]] || {
+  echo "github shim install pulled existing remote despite requested repo mismatch" >&2
+  exit 1
+}
+if find "$ATMUX_HOME/tmp" -maxdepth 1 -type d -name 'atmux-shim-install.*' | grep -q .; then
+  echo "github shim install leaked temp directory on mismatch failure" >&2
+  exit 1
+fi
+
+echo "ok: shim CLI resolves, shows, installs, lists, and rejects traversal"

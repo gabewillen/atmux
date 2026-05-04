@@ -82,8 +82,10 @@ check "empty adapter interrupt" "$empty_i" "Enter"
 # and leave the payload stuck in the input).
 fake_root="$(mktemp -d "${TMPDIR:-/tmp}/atmux-fake-adapter.XXXXXX")"
 mkdir -p "$fake_root/adapter/keysless"
-cat > "$fake_root/adapter/keysless/manifest.json" <<'EOF'
-{ "name": "keysless", "version": 1, "input": { "start": "?" } }
+cat > "$fake_root/adapter/keysless/manifest" <<'EOF'
+NAME=keysless
+VERSION=1
+INPUT_START="?"
 EOF
 (
   ATMUX_SOURCE_ROOT="$fake_root"
@@ -92,6 +94,26 @@ EOF
   [[ "$s" == "Enter" ]] || { echo "FAIL: keysless steer: $s" >&2; exit 1; }
   [[ "$i" == "Enter" ]] || { echo "FAIL: keysless interrupt: $i" >&2; exit 1; }
   echo "  ok: keysless manifest                                -> Enter / Enter"
+)
+rm -rf "$fake_root"
+
+fake_root="$(mktemp -d "${TMPDIR:-/tmp}/atmux-manifest-noexec.XXXXXX")"
+mkdir -p "$fake_root/adapter/malicious"
+marker="$fake_root/manifest-executed"
+cat > "$fake_root/adapter/malicious/manifest" <<EOF
+NAME=malicious
+VERSION=1
+SUBMIT_KEYS_STEER=(\$(touch "$marker") Enter)
+INPUT_START=\$(touch "$marker")
+EOF
+(
+  ATMUX_SOURCE_ROOT="$fake_root"
+  s="$(resolve_submit_keys "malicious" steer | normalize_keys)"
+  [[ "$s" == "Enter" ]] || { echo "FAIL: malicious steer keys: $s" >&2; exit 1; }
+  prompt="$(resolve_input_prompt_for_adapter "malicious" "$fake_root" || true)"
+  [[ -n "$prompt" ]] || true
+  [[ ! -e "$marker" ]] || { echo "FAIL: adapter manifest metadata read executed shell code" >&2; exit 1; }
+  echo "  ok: adapter manifest metadata reads do not execute shell"
 )
 rm -rf "$fake_root"
 
@@ -104,8 +126,10 @@ echo "matrix: strict resolver returns empty for missing modes" >&2
 
 fake_root="$(mktemp -d "${TMPDIR:-/tmp}/atmux-strict-resolver.XXXXXX")"
 mkdir -p "$fake_root/adapter/steer-only"
-cat > "$fake_root/adapter/steer-only/manifest.json" <<'EOF'
-{ "name": "steer-only", "version": 1, "submit_keys": { "steer": ["Enter"] } }
+cat > "$fake_root/adapter/steer-only/manifest" <<'EOF'
+NAME=steer-only
+VERSION=1
+SUBMIT_KEYS_STEER=(Enter)
 EOF
 (
   ATMUX_SOURCE_ROOT="$fake_root"

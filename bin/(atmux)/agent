@@ -459,6 +459,133 @@ resolve_adapter_cmd_for_session() {
   return 1
 }
 
+resolve_shim_runner() {
+  local here
+  here="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+  if [[ -x "$here/shim" ]]; then
+    printf '%s\n' "$here/shim"
+    return 0
+  fi
+  if [[ -n "${ATMUX_SOURCE_ROOT:-}" && -x "${ATMUX_SOURCE_ROOT}/bin/(atmux)/shim" ]]; then
+    printf '%s\n' "${ATMUX_SOURCE_ROOT}/bin/(atmux)/shim"
+    return 0
+  fi
+  local atmux_home="${ATMUX_HOME:-$HOME/.atmux}"
+  if [[ -x "$atmux_home/src/atmux/bin/(atmux)/shim" ]]; then
+    printf '%s\n' "$atmux_home/src/atmux/bin/(atmux)/shim"
+    return 0
+  fi
+  return 1
+}
+
+default_agent_shims() {
+  printf '%s\n' git
+}
+
+read_shim_binaries() {
+  local shim_dir="$1"
+  local manifest="$shim_dir/manifest" kind
+  kind="$(read_manifest_scalar_assignment "$manifest" KIND || true)"
+  [[ "$kind" == "path-prefix" ]] || { echo "unsupported shim KIND: ${kind:-missing}" >&2; return 1; }
+  read_manifest_array_assignment "$manifest" BINARIES
+}
+
+write_shim_proxy() {
+  local proxy_path="$1" binary="$2" shim_dir="$3" shim_exec="$4" active_dirs="$5" proxy_dir="$6"
+  {
+    printf '%s\n' '#!/usr/bin/env bash'
+    printf '%s\n' 'set -euo pipefail'
+    printf 'binary=%q\n' "$binary"
+    printf 'shim_dir=%q\n' "$shim_dir"
+    printf 'shim_exec=%q\n' "$shim_exec"
+    printf 'active_dirs=%q\n' "$active_dirs"
+    printf 'proxy_dir=%q\n' "$proxy_dir"
+    cat <<'PROXY'
+strip_path() {
+  local out="" part skip
+  local IFS=:
+  for part in $PATH; do
+    [[ -n "$part" ]] || continue
+    skip=0
+    [[ "$part" == "$proxy_dir" ]] && skip=1
+    local active
+    for active in $active_dirs; do
+      [[ "$part" == "$active" ]] && skip=1
+    done
+    [[ "$skip" -eq 0 ]] || continue
+    case ":$out:" in *":$part:"*) continue ;; esac
+    if [[ -z "$out" ]]; then out="$part"; else out="$out:$part"; fi
+  done
+  printf '%s\n' "$out"
+}
+
+sanitized_path="$(strip_path)"
+real_binary="$(PATH="$sanitized_path" command -v "$binary" 2>/dev/null || true)"
+if [[ -z "$real_binary" ]]; then
+  echo "atmux shim proxy: cannot find real $binary executable" >&2
+  exit 127
+fi
+
+export PATH="$sanitized_path"
+export ATMUX_SHIM_BINARY="$binary"
+export ATMUX_SHIM_REAL_BINARY="$real_binary"
+export ATMUX_SHIM_DIR="$shim_dir"
+export ATMUX_ACTIVE_SHIM_DIRS="$active_dirs"
+export ATMUX_SHIM_PROXY_DIR="$proxy_dir"
+exec "$shim_exec" "$@"
+PROXY
+  } > "$proxy_path"
+  chmod +x "$proxy_path"
+}
+
+activate_agent_shims() {
+  local shim_runner shim_name shim_dir binary active_dirs="" provided="" proxy_dir seen_shims=""
+  shim_runner="$(resolve_shim_runner)" || { echo "atmux: shim command not found" >&2; return 1; }
+
+  local -a shim_names=()
+  while IFS= read -r shim_name; do
+    [[ -n "$shim_name" ]] || continue
+    shim_name_valid "$shim_name" || { echo "atmux: invalid default shim name: $shim_name" >&2; return 1; }
+    case " $seen_shims " in *" $shim_name "*) continue ;; esac
+    shim_names+=("$shim_name")
+    seen_shims="$seen_shims $shim_name"
+  done < <(default_agent_shims)
+
+  ((${#shim_names[@]})) || return 0
+
+  local state_base="${ATMUX_HOME}/agents/${ATMUX_REPO:-repo}/${ATMUX_AGENT_NAME:-agent}/shims"
+  proxy_dir="$state_base/bin"
+  rm -rf "$state_base"
+  mkdir -p "$proxy_dir"
+
+  local -a shim_dirs=()
+  for shim_name in "${shim_names[@]}"; do
+    shim_dir="$("$shim_runner" resolve "$shim_name")" || return 1
+    shim_dirs+=("$shim_dir")
+    if [[ -z "$active_dirs" ]]; then active_dirs="$shim_dir"; else active_dirs="$active_dirs:$shim_dir"; fi
+  done
+
+  local i
+  for i in "${!shim_names[@]}"; do
+    shim_name="${shim_names[$i]}"
+    shim_dir="${shim_dirs[$i]}"
+    while IFS= read -r binary; do
+      [[ -n "$binary" ]] || continue
+      shim_binary_valid "$binary" || { echo "atmux: invalid binary in shim $shim_name: $binary" >&2; return 1; }
+      case " $provided " in
+        *" $binary "*) echo "atmux: duplicate shim binary requested: $binary" >&2; return 1 ;;
+      esac
+      [[ -x "$shim_dir/$binary" ]] || { echo "atmux: shim binary is not executable: $shim_dir/$binary" >&2; return 1; }
+      write_shim_proxy "$proxy_dir/$binary" "$binary" "$shim_dir" "$shim_dir/$binary" "$active_dirs" "$proxy_dir"
+      provided="$provided $binary"
+    done < <(read_shim_binaries "$shim_dir")
+  done
+
+  export ATMUX_ACTIVE_SHIM_DIRS="$active_dirs"
+  export ATMUX_SHIM_PROXY_DIR="$proxy_dir"
+  export PATH="$proxy_dir:$PATH"
+}
+
 resolve_auto_candidates() {
   local auto_cmd=""
   auto_cmd="$(resolve_adapter_cmd_path "auto" || true)"
@@ -900,6 +1027,7 @@ run_adapter() {
     fi
 
     prepare_atmux_prompt "$(pwd)"
+    activate_agent_shims
 
     if [[ -n "${ATMUX_ROLE_START:-}" ]]; then
       ATMUX_ROLE_STATE_DIR="${ATMUX_HOME}/agents/${ATMUX_REPO:-repo}/${ATMUX_AGENT_NAME:-agent}/role"

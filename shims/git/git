@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Route git calls through `atmux git` while the generated shim proxy keeps
+# PATH sanitized so a nested `git` lookup resolves to the real binary.
+set -euo pipefail
+
+if [[ -n "${ATMUX_SHIM_REAL_BINARY:-}" && -x "$ATMUX_SHIM_REAL_BINARY" ]]; then
+  export ATMUX_REAL_GIT="$ATMUX_SHIM_REAL_BINARY"
+fi
+
+exec atmux git "$@"

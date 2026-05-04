@@ -76,7 +76,7 @@ Each adapter owns its CLI-specific startup arguments, status parsing, model vali
 
 ### Intelligence Mapping
 
-The user-facing `--intelligence 0-100` scale is translated by each adapter's `manifest.json`.
+The user-facing `--intelligence 0-100` scale is translated by each adapter's `manifest`.
 
 For Gemini, low intelligence intentionally selects the lite model:
 

@@ -1,0 +1,11 @@
+NAME=claude-code
+VERSION=1
+SUBMIT_KEYS_STEER=(Enter)
+SUBMIT_KEYS_INTERRUPT=(Escape)
+INTELLIGENCE_MAP=(
+  "0 39 sonnet low"
+  "40 74 sonnet medium"
+  "75 89 sonnet high"
+  "90 100 opus high"
+)
+INPUT_START="❯"

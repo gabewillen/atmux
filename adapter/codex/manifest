@@ -1,0 +1,11 @@
+NAME=codex
+VERSION=1
+SUBMIT_KEYS_STEER=(Enter)
+SUBMIT_KEYS_INTERRUPT=(Escape)
+INTELLIGENCE_MAP=(
+  "0 29 gpt-5.5 low"
+  "30 59 gpt-5.5 medium"
+  "60 84 gpt-5.5 high"
+  "85 100 gpt-5.5 extra-high"
+)
+INPUT_START="›"

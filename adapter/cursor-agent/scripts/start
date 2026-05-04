@@ -3,18 +3,25 @@ set -euo pipefail
 
 # tmux / non-login shells often omit ~/.local/bin where `agent` is installed.
 export PATH="${HOME}/.local/bin:${HOME}/.cursor/bin:/opt/homebrew/bin:/usr/local/bin:${PATH}"
-
-# Prepend the atmux git shim so agent-issued `git` invocations route
-# through `atmux git`. This lets atmux observe specific git operations
-# (today: hooking `worktree add` so the navigator can follow whatever
-# worktree the driver creates). The shim transparently forwards
-# anything else to real git, so non-hooked verbs are unchanged.
-if [[ -n "${ATMUX_SOURCE_ROOT:-}" ]]; then
-  shim_dir="$ATMUX_SOURCE_ROOT/bin/(atmux)/(internal)/git-shim"
-  if [[ -x "$shim_dir/git" ]]; then
-    export PATH="$shim_dir:$PATH"
+if [[ -n "${ATMUX_SHIM_PROXY_DIR:-}" ]]; then
+  shim_safe_entries=()
+  IFS=: read -r -a path_entries <<< "$PATH"
+  for path_entry in "${path_entries[@]}"; do
+    [[ -n "$path_entry" ]] || continue
+    [[ "$path_entry" == "$ATMUX_SHIM_PROXY_DIR" ]] && continue
+    shim_safe_entries+=("$path_entry")
+  done
+  if ((${#shim_safe_entries[@]})); then
+    shim_safe_path=$(IFS=:; printf '%s' "${shim_safe_entries[*]}")
+    export PATH="$ATMUX_SHIM_PROXY_DIR:$shim_safe_path"
+  else
+    export PATH="$ATMUX_SHIM_PROXY_DIR"
   fi
 fi
+
+manifest_lib="${ATMUX_SOURCE_ROOT:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../.." && pwd)}/bin/(atmux)/(lib)/manifest"
+# shellcheck source=bin/(atmux)/(lib)/manifest
+source "$manifest_lib"
 
 resolve_agent_bin() {
   if command -v agent >/dev/null 2>&1; then
@@ -88,34 +95,6 @@ mkdir -p "$state_dir"
 # shellcheck disable=SC1090
 source "$state_file"
 
-resolve_profile_from_manifest() {
-  local intelligence="$1"
-  local manifest_path="$2"
-  local map item min max model reasoning compact
-
-  [[ -f "$manifest_path" ]] || return 1
-  compact="$(tr -d '\n\r\t ' < "$manifest_path")"
-  map="$(printf '%s\n' "$compact" | sed -n "s/.*\"intelligence_map\":\[\(.*\)\][,}].*/\1/p")"
-  [[ -n "$map" ]] || return 1
-
-  while IFS= read -r item; do
-    min="$(printf '%s\n' "$item" | sed -n 's/.*"min":\([0-9][0-9]*\).*/\1/p')"
-    max="$(printf '%s\n' "$item" | sed -n 's/.*"max":\([0-9][0-9]*\).*/\1/p')"
-    model="$(printf '%s\n' "$item" | sed -n 's/.*"model":"\([^"]*\)".*/\1/p')"
-    reasoning="$(printf '%s\n' "$item" | sed -n 's/.*"reasoning_level":"\([^"]*\)".*/\1/p')"
-
-    if [[ -z "$min" || -z "$max" || -z "$model" || -z "$reasoning" ]]; then
-      continue
-    fi
-    if (( intelligence >= min && intelligence <= max )); then
-      printf '%s %s\n' "$model" "$reasoning"
-      return 0
-    fi
-  done < <(printf '%s\n' "$map" | sed 's/},{/}\n{/g')
-
-  return 1
-}
-
 arg_present() {
   local needle="$1"
   shift || true
@@ -145,7 +124,7 @@ normalize_reasoning() {
 
 if [[ -n "${ATMUX_INTELLIGENCE:-}" && "${ATMUX_INTELLIGENCE}" =~ ^[0-9]+$ ]] \
   && (( ATMUX_INTELLIGENCE >= 0 && ATMUX_INTELLIGENCE <= 100 )); then
-  manifest_path="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)/manifest.json"
+  manifest_path="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)/manifest"
   profile="$(resolve_profile_from_manifest "$ATMUX_INTELLIGENCE" "$manifest_path" || true)"
   if [[ -n "$profile" ]]; then
     prof_model="${profile%% *}"

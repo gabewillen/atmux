@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.21.0 — Canonical agent shims
+
+- Added first-class `atmux shim install/list/show/resolve` support for shipped
+  shims and single-shim GitHub repositories.
+- Moved the shipped git shim to `shims/git` and activate a recursion-safe git
+  proxy for every agent session.
+- Replaced adapter `manifest.json` files with sourced-bash `manifest` files
+  while keeping metadata reads non-executing.
+
 ## 0.20.0 — Hierarchical role layout
 
 - Reorganized built-in roles into kind-aware directories: standalone agents

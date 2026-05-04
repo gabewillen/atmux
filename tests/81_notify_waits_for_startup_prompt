@@ -63,16 +63,10 @@ cleanup() {
 trap cleanup EXIT
 
 mkdir -p "$ATMUX_SOURCE_ROOT/adapter/mock"
-cat > "$ATMUX_SOURCE_ROOT/adapter/mock/manifest.json" <<EOF
-{
-  "name": "mock",
-  "submit_keys": {
-    "steer": ["Enter"]
-  },
-  "input": {
-    "start": "$prompt_prefix"
-  }
-}
+cat > "$ATMUX_SOURCE_ROOT/adapter/mock/manifest" <<EOF
+NAME=mock
+SUBMIT_KEYS_STEER=(Enter)
+INPUT_START="$prompt_prefix"
 EOF
 
 tmux kill-session -t "$session" >/dev/null 2>&1 || true

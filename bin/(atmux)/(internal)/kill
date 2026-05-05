@@ -123,7 +123,7 @@ prs_watch_dir() {
   printf '%s/watch-prs/%s\n' "$ATMUX_HOME" "$key"
 }
 
-team_message_watch_dir() {
+team_message_watch_dir_for_key() {
   local key="$1"
   printf '%s/watch-team-message/%s\n' "$ATMUX_HOME" "$key"
 }
@@ -145,7 +145,7 @@ prs_watch_watchers_dir() {
 
 team_message_watch_watchers_dir() {
   local key="$1"
-  printf '%s/watchers\n' "$(team_message_watch_dir "$key")"
+  printf '%s/watchers\n' "$(team_message_watch_dir_for_key "$key")"
 }
 
 pr_watch_pid_file() {

@@ -10,7 +10,7 @@ fast model can go with smart oversight.
 - **driver** — `cursor-agent` at intelligence 20 (composer-2-fast). Picks
   up the task from the user, writes code, runs tests, iterates quickly.
 - **navigator** — `codex` at intelligence 80 (gpt-5.5 high). Watches the
-  shared worktree via `atmux git watch`. On every diff, reviews against
+  shared worktree via the `git watch` shim. On every diff, reviews against
   the task, the agent file (`AGENTS.md` / `CLAUDE.md`), and any planning
   docs in the repo. Sends `atmux send --to <team>-driver --interrupt`
   with a corrective note when the driver veers, errors, takes a
@@ -24,7 +24,7 @@ fast model can go with smart oversight.
 `--shared-worktree`, so the navigator sees the driver's edits without
 copying — and your actual checkout stays untouched.
 
-The navigator's `start` hook arms a `git watch` against the worktree at
+The navigator's `start` hook arms the `git watch` shim against the worktree at
 a 10s poll interval, with `--coalesce 0` so each detected change
 becomes its own review trigger before more changes pile on top. Diffs
 are rolling — each review message contains only what changed since the

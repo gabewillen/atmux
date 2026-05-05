@@ -11,9 +11,9 @@ Usage:
   atmux watcher kill <id> [--timeout <seconds>]
 
 Description:
-  List or remove background watcher registrations created by `atmux pr watch
-  --feed`, `atmux issue watch --feed`, and `atmux pr watch <id|url>` (the
-  long-running fan-out modes).
+  List or remove background watcher registrations.
+  Watchers are created by `atmux pr watch --feed`, `atmux issue watch --feed`,
+  and `atmux pr watch <id|url>`.
 
   Watcher ids have the form <kind>:<key>:<watcher_name>, e.g.:
     pr:owner_repo_pr_123:atmux-myrepo-worker-_12

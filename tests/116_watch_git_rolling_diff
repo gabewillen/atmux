@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Verifies `atmux git watch` semantics:
+# Verifies `git watch` shim semantics:
 #   - emits a digest per change (rolling baseline — each emit's `prev`
 #     equals the previous emit's `new`)
 #   - the second emit's diff body contains ONLY the second change, not the
@@ -13,7 +13,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/isolate-tmux.sh"
 
 TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
-ATMUX_BIN="$REPO_ROOT/bin/atmux"
+GIT_SHIM="$REPO_ROOT/shims/git/git"
 
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/atmux-git-watch.XXXXXX")"
 trap 'rm -rf "$WORK"' EXIT
@@ -38,7 +38,7 @@ OUT="$WORK/run1.out"
 writer=$!
 
 rc=0
-ATMUX_ALLOW_OUTSIDE_TMUX=1 "$ATMUX_BIN" git watch \
+ATMUX_ALLOW_OUTSIDE_TMUX=1 ATMUX_SOURCE_ROOT="$REPO_ROOT" "$GIT_SHIM" watch \
   --id rolling --interval 1 --coalesce 1 --duration 8 > "$OUT" 2>&1 || rc=$?
 wait "$writer" 2>/dev/null || true
 
@@ -93,7 +93,7 @@ expected="$(extract_attr "$WORK/emit-2" new)"
 # Second run with no changes must emit nothing and exit 124 on duration.
 OUT2="$WORK/run2.out"
 rc2=0
-ATMUX_ALLOW_OUTSIDE_TMUX=1 "$ATMUX_BIN" git watch \
+ATMUX_ALLOW_OUTSIDE_TMUX=1 ATMUX_SOURCE_ROOT="$REPO_ROOT" "$GIT_SHIM" watch \
   --id rolling --interval 1 --coalesce 1 --duration 3 > "$OUT2" 2>&1 || rc2=$?
 [[ "$rc2" -eq 124 ]] || { echo "second run: expected 124, got $rc2" >&2; cat "$OUT2" >&2; exit 1; }
 [[ ! -s "$OUT2" ]] || { echo "second run should be silent, got:" >&2; cat "$OUT2" >&2; exit 1; }

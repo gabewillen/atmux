@@ -1,0 +1,117 @@
+#!/usr/bin/env bash
+# Shared command discovery and usage parsing for generated help/docs.
+
+atmux_command_files() {
+  local cmd_dir="$1" scope="${2:-public}" file
+  while IFS= read -r file; do
+    if grep -q '^# ATMUX_DOCS_HIDE=1$' "$file" 2>/dev/null; then
+      continue
+    fi
+    if [[ "$scope" == "contextual-help" ]] \
+      && [[ -n "${ATMUX_AGENT_NAME:-}${ATMUX_TEAM:-}${ATMUX_SESSION_NAME:-}" ]] \
+      && grep -q '^# ATMUX_AGENT_HELP_HIDE=1$' "$file" 2>/dev/null; then
+      continue
+    fi
+    printf '%s\n' "$file"
+  done < <(find "$cmd_dir" -maxdepth 1 -type f -perm -u+x 2>/dev/null | sort)
+}
+
+atmux_extract_usage_block() {
+  local file="$1"
+  awk '
+    done_one { next }
+    /^[[:space:]]*cat[[:space:]]*<<'\''[A-Za-z_][A-Za-z0-9_]*'\''[[:space:]]*$/ {
+      delim=$0
+      sub(/^.*<<'\''/, "", delim)
+      sub(/'\''.*/, "", delim)
+      capturing=1
+      buf=""
+      first_seen=0
+      next
+    }
+    capturing && $0 == delim {
+      if (first_seen) { print buf; done_one=1 }
+      capturing=0
+      delim=""
+      next
+    }
+    capturing {
+      if (!first_seen) {
+        if ($0 ~ /^[[:space:]]*$/) next
+        if ($0 !~ /^Usage:/) { capturing=0; delim=""; next }
+        first_seen=1
+        buf = $0
+        next
+      }
+      buf = buf "\n" $0
+    }
+  ' "$file" | awk '
+    { lines[NR]=$0 }
+    END {
+      end=NR
+      while (end>0 && lines[end] ~ /^[[:space:]]*$/) end--
+      for (i=1; i<=end; i++) print lines[i]
+    }
+  '
+}
+
+atmux_split_usage_sections() {
+  awk '
+    BEGIN { section="" }
+    /^(Usage|Description|Examples|Options|Notes|Durations):[[:space:]]*$/ {
+      section=$1
+      sub(/:.*/, "", section)
+      print "##SECTION##" section
+      next
+    }
+    section != "" {
+      line=$0
+      sub(/^  /, "", line)
+      print line
+    }
+  '
+}
+
+atmux_extract_description_summary() {
+  awk '
+    BEGIN { in_desc=0; started=0; out="" }
+    /^##SECTION##Description$/ { in_desc=1; next }
+    /^##SECTION##/ {
+      if (in_desc) exit
+      next
+    }
+    in_desc {
+      line=$0
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", line)
+      if (line == "") {
+        if (started) exit
+        next
+      }
+      if (line ~ /^[-`]/ || line ~ /^[[:alnum:]_.-]+[[:space:]]{2,}/ || line ~ /^--/) next
+      if (started) out = out " " line
+      else { out = line; started = 1 }
+      if (out ~ /\./) {
+        sub(/\..*/, ".", out)
+        print out
+        printed=1
+        exit
+      }
+    }
+    END { if (!printed) print out }
+  '
+}
+
+atmux_extract_primary_usage() {
+  awk '
+    BEGIN { in_usage=0 }
+    /^##SECTION##Usage$/ { in_usage=1; next }
+    /^##SECTION##/ { if (in_usage) exit; next }
+    in_usage {
+      line=$0
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", line)
+      if (line == "" || line ~ /^\(/ || line ~ /^`/) next
+      print line
+      exit
+    }
+  '
+}

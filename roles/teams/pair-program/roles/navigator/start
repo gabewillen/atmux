@@ -2,7 +2,7 @@
 # Navigator start hook: arms three background watchers and routes their
 # emissions to the navigator's own pane via `atmux notify`.
 #
-#   1. `atmux git watch` against the shared worktree — emits a
+#   1. `git watch` against the shared worktree — emits a
 #      `<watch type="git">` XML for each detected diff. Per-change
 #      (--coalesce 0) so every edit is its own review trigger.
 #   2. An edge-triggered idle watcher against the driver's pane — emits
@@ -108,7 +108,7 @@ spawn_window() {
 
 # Use `atmux path watch` as a low-latency edge trigger (fswatch on macOS,
 # inotifywait on Linux, polling fallback elsewhere) and let the
-# `git-edit-watch` wrapper invoke `atmux git watch --once` per event. Two
+# `git-edit-watch` wrapper invoke `git watch --once` per event. Two
 # wins over the old polling git-watch (--interval 10):
 #   - reaction time drops from ~10s to milliseconds
 #   - changes to .gitignore'd files / .git/ refs trigger path-watch but
@@ -149,7 +149,7 @@ spawn_window "idle-watch" "$state/idle-watch.log" \
 # --- 3. follow-the-worktree tracker ------------------------------------------
 
 # Watches $ATMUX_HOME/agents/<repo>/<driver>/git-hooks/last-worktree-add
-# (written by the atmux git wrapper any time the driver runs `git
+# (written by the git shim any time the driver runs `git
 # worktree add ...`) and re-arms the git-watch window to follow.
 worktree_tracker_script="$ATMUX_ROLE_DIR/worktree-tracker"
 if [[ ! -x "$worktree_tracker_script" ]]; then

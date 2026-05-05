@@ -49,10 +49,37 @@ assert_selected_model() {
     cat "$args_file" >&2
     exit 1
   }
+  grep -Fx -- "-y" "$args_file" >/dev/null || {
+    echo "missing -y for intelligence $intelligence" >&2
+    cat "$args_file" >&2
+    exit 1
+  }
 }
 
 assert_selected_model 0 gemini-3.1-flash-lite-preview
 assert_selected_model 50 gemini-3-flash-preview
 assert_selected_model 95 gemini-3.1-pro-preview
+
+approval_args="$tmp_dir/args-approval-mode"
+approval_home="$tmp_dir/home-approval-mode"
+approval_worktree="$tmp_dir/work-approval-mode"
+mkdir -p "$approval_worktree"
+(
+  cd "$approval_worktree"
+  PATH="$tmp_dir/bin:$PATH" \
+    ATMUX_HOME="$approval_home" \
+    ATMUX_FAKE_ARGS="$approval_args" \
+    "$START_SCRIPT" --approval-mode default >/dev/null
+)
+if grep -Fx -- "-y" "$approval_args" >/dev/null; then
+  echo "unexpected -y when --approval-mode is present" >&2
+  cat "$approval_args" >&2
+  exit 1
+fi
+grep -Fx -- "--approval-mode" "$approval_args" >/dev/null || {
+  echo "missing explicit --approval-mode" >&2
+  cat "$approval_args" >&2
+  exit 1
+}
 
 echo "ok: gemini intelligence selects lite, flash, and pro tiers"

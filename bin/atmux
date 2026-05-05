@@ -28,6 +28,9 @@ if [[ -n "${ATMUX_SOURCE_ROOT:-}" && -x "${ATMUX_SOURCE_ROOT}/bin/atmux" ]]; the
   fi
 fi
 
+# shellcheck source=bin/(atmux)/(lib)/command-docs
+source "$ATMUX_SOURCE_ROOT/bin/(atmux)/(lib)/command-docs"
+
 # Resolve a non-shimmed `git` for internal use. Agent shim proxies keep
 # PATH sanitized and export ATMUX_REAL_GIT for git, but this dispatcher can
 # also run in inherited agent environments, so it still defensively skips
@@ -61,47 +64,46 @@ _atmux_git() {
   return 127
 }
 
+command_dir() {
+  printf '%s\n' "${ATMUX_SOURCE_ROOT:-$(cd -- "$ATMUX_BIN_ORIGIN/.." && pwd)}/bin/(atmux)"
+}
+
+command_files() {
+  atmux_command_files "$(command_dir)" contextual-help
+}
+
+extract_usage_block() {
+  atmux_extract_usage_block "$1"
+}
+
+command_summary() {
+  local block="$1"
+  printf '%s\n' "$block" | atmux_split_usage_sections | atmux_extract_description_summary
+}
+
+print_commands() {
+  local file name block summary
+  while IFS= read -r file; do
+    name="$(basename "$file")"
+    block="$(extract_usage_block "$file")"
+    [[ -n "$block" ]] || continue
+    summary="$(command_summary "$block")"
+    [[ -n "$summary" ]] || summary="Run atmux $name --help."
+    printf '  %-10s %s\n' "$name" "$summary"
+  done < <(command_files)
+}
+
 usage() {
-  # The CLI is resource-first: most commands take the form `atmux <noun> <verb>`.
-  # A handful of cross-cutting verbs have no resource home and are invoked
-  # directly. Render them in two static groups so the shape is obvious.
-  cat <<'USAGE'
-Usage:
-  atmux <noun> <verb> [args...]    # resource operations
-  atmux <verb> [args...]           # cross-cutting verbs
-
-atmux is an agent multiplexer across adapters.
-
-Resources (use `atmux <noun> --help` for verbs):
-  agent      manage agent sessions (create, attach, list, kill, capture, watch, resolve)
-  team       manage team sessions (create, list, kill, capture, resolve)
-  role       manage role definitions (create, list, show, resolve)
-  issue      filesystem issue tickets (create, list, show, assign, claim, comment, watch)
-  pr         filesystem pull request tickets (create, list, show, assign, claim, comment, watch)
-  message    inter-agent messages (read, list)
-  config     atmux configuration (get, set, unset, list)
-  env        environment vars (get, list)
-  adapter    AI CLI adapters (install, ...)
-  shim       executable shims for agent sessions (install, list, show, resolve)
-  watcher    background watcher registrations (list, kill)
-  process    atmux exec-tracked processes (watch, kill)
-  pane       tmux pane operations (watch)
-  path       filesystem path operations (watch)
-  git        git working tree operations (watch)
-  gh         GitHub CLI operations with PR notification hooks
-
-Verbs (no resource home):
-  send       message another agent or team
-  exec       run a command with notification on exit
-  schedule   schedule a one-shot or recurring action
-  notify     low-level notification CLI (mostly internal)
-  update     update atmux to the latest version
-  install    install atmux into a project or system
-
-Run:
-  atmux <subcommand> --help
-for more information.
-USAGE
+  printf '%s\n' \
+    "Usage:" \
+    "  atmux <resource> <verb> [args...]" \
+    "  atmux <verb> [args...]" \
+    "" \
+    "tmux-first orchestration for AI coding agents." \
+    "" \
+    "Commands:"
+  print_commands
+  printf '%s\n' "" "Run:" "  atmux <command> --help"
 }
 
 ensure_atmux_home() {
@@ -220,7 +222,7 @@ should_wrap_command() {
   fi
 
   case "$cmd" in
-    exec|watch|notify|kill|install|gh)
+    exec|watch|notify|kill|install)
       return 1
       ;;
     agent)

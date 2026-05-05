@@ -2,7 +2,7 @@
 #
 # A fast low-intelligence model writes code while a high-intelligence
 # model watches the worktree in real time and steers the driver when it
-# goes off-track. The navigator hooks `atmux git watch` and uses
+# goes off-track. The navigator hooks the `git watch` shim and uses
 # `--interrupt` messages to course-correct.
 
 KIND=team

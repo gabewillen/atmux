@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Verify README.md and CLAUDE.md's `# atmux help` block are in sync with
-# their sources of truth (each command's `usage()` heredoc + adapter
-# manifests). When this fails, run:
+# Verify README.md is in sync with its sources of truth (command `usage()`
+# heredocs, executable command layout, roles, and adapter manifests).
+# When this fails, run:
 #
 #     bin/(atmux)/(internal)/render-docs all
 #
@@ -25,4 +25,4 @@ if ! "$RENDER" all --check; then
   exit 1
 fi
 
-echo "ok: README.md and CLAUDE.md help block match generated output"
+echo "ok: README.md matches generated output"

@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# ATMUX_DOCS_HIDE=1
+# ATMUX_AGENT_HELP_HIDE=1
 set -euo pipefail
 
 ATMUX_HOME="${ATMUX_HOME:-$HOME/.atmux}"
@@ -15,7 +17,7 @@ Usage:
   atmux shim resolve <name>
 
 Description:
-  Manage executable shims activated for agent sessions.
+  Manage executable shims activated for agents.
 
   A shim is a directory containing:
     manifest      sourced bash: NAME, KIND=path-prefix, DESCRIPTION, BINARIES=(...)

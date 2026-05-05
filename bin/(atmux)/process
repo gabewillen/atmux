@@ -13,7 +13,8 @@ Usage:
   atmux process kill <pid> [--timeout <seconds>] [--signal <NAME>]
 
 Description:
-  Operate on an atmux exec-tracked child process by pid (see ~/.atmux/exec/<repo>/<pid>/).
+  Watch or stop an atmux exec-tracked child process.
+  Process state lives at ~/.atmux/exec/<repo>/<pid>/.
 
   watch          Wait for the process to finish; receive the same exit
                  notification XML as the executor when it does.

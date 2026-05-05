@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Verifies `atmux git watch` snapshots cover untracked (non-ignored) files
+# Verifies `git watch` shim snapshots cover untracked (non-ignored) files
 # in addition to tracked modifications. Without this, fresh-file work
 # (the most common driver case in pair-program teams) is invisible to the
 # navigator because `git stash create` skips untracked content by default.
@@ -9,7 +9,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/isolate-tmux.sh"
 
 TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
-ATMUX_BIN="$REPO_ROOT/bin/atmux"
+GIT_SHIM="$REPO_ROOT/shims/git/git"
 
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/atmux-git-watch-untracked.XXXXXX")"
 trap 'rm -rf "$WORK"' EXIT
@@ -39,7 +39,7 @@ OUT="$WORK/run.out"
 writer=$!
 
 rc=0
-ATMUX_ALLOW_OUTSIDE_TMUX=1 "$ATMUX_BIN" git watch \
+ATMUX_ALLOW_OUTSIDE_TMUX=1 ATMUX_SOURCE_ROOT="$REPO_ROOT" "$GIT_SHIM" watch \
   --id untracked --interval 1 --coalesce 1 --duration 7 > "$OUT" 2>&1 || rc=$?
 wait "$writer" 2>/dev/null || true
 

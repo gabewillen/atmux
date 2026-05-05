@@ -24,15 +24,14 @@ Usage:
   atmux team resolve <name> [<repo_name>]
 
 Description:
-  Manage repo-scoped team tmux sessions.
-  Team session format: atmux-<repo>-team-<name>
+  Manage repo-scoped teams of agents.
 
   Every team gets its own fresh git worktree by default — members spawned
   with `--shared-worktree` inherit it via ATMUX_WORKTREE, so a pair of
   agents can edit the same worktree without stomping the user's checkout.
   `team kill` removes the worktree and branch.
 
-  --role <name>       Apply a KIND=team role: opens the session, spawns
+  --role <name>       Apply a KIND=team role: creates the team, spawns
                       each MEMBERS entry from the role manifest, then
                       runs the role's optional `start` hook for any
                       cross-cutting wiring. `team kill` auto-kills the

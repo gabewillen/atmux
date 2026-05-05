@@ -85,7 +85,9 @@ args=("$@")
 if ! arg_present --model "${args[@]-}"; then
   args=(--model "$MODEL" "${args[@]-}")
 fi
-if ! arg_present -y "${args[@]-}" && ! arg_present --yolo "${args[@]-}" && ! arg_present --approval-mode "${args[@]-}"; then
+if ! arg_present -y "${args[@]-}" \
+  && ! arg_present --yolo "${args[@]-}" \
+  && ! arg_present --approval-mode "${args[@]-}"; then
   args=(-y "${args[@]-}")
 fi
 

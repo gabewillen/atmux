@@ -10,7 +10,7 @@
 # time:
 #
 #   <notification type="git-change" from="<watch-id>"
-#                 hint="run `atmux git snapshot --id <watch-id>`"/>
+#                 hint="run `git snapshot --id <watch-id>`"/>
 #
 # The navigator's role.md tells it: when this notification arrives,
 # run the hint command. That returns the rolling diff *as of read
@@ -29,5 +29,5 @@ nav_pane="$2"
 cat >/dev/null
 
 # Build the canonical notification XML and hand it to the queue.
-xml="$(atmux notify build "git-change" "$watch_id" "atmux git snapshot --id $watch_id")"
+xml="$(atmux notify build "git-change" "$watch_id" "git snapshot --id $watch_id")"
 exec atmux notify --pane "$nav_pane" --xml "$xml"

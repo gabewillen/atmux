@@ -15,9 +15,9 @@ ATMUX_HOME="${ATMUX_HOME:-$HOME/.atmux}"
 usage() {
   cat <<'USAGE'
 Usage:
-  atmux git watch [--id <id>] [--coalesce <seconds>] [--interval <seconds>]
-                  [--timeout <seconds>] [--duration <seconds>]
-                  [--exec <cmd>] [--once]
+  git watch [--id <id>] [--coalesce <seconds>] [--interval <seconds>]
+            [--timeout <seconds>] [--duration <seconds>]
+            [--exec <cmd>] [--once]
 
 Description:
   Watch the current repo for worktree changes; emit `git diff` as XML for
@@ -144,7 +144,7 @@ main() {
   [[ "$duration"    =~ ^[0-9]+$ ]] || { echo "invalid --duration: $duration" >&2; exit 2; }
 
   if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    echo "atmux git watch: not inside a git working tree" >&2
+    echo "git watch: not inside a git working tree" >&2
     exit 2
   fi
 

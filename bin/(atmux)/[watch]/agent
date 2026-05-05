@@ -17,7 +17,7 @@ Usage:
 Description:
   Continuously emit one notification per active→idle transition of the
   named agent. Same edge-triggered, repeat-by-default semantics as
-  `atmux git watch` and `atmux path watch` — pass --once for single-shot.
+  `git watch` and `atmux path watch` — pass --once for single-shot.
 
   Stuck interactive prompts (e.g. "Enter to select" / "Esc to cancel")
   are always treated as idle.
@@ -25,7 +25,7 @@ Description:
   On each idle, emits a canonical notification XML to stdout:
     <notification type="agent-idle" from="<name>" reason="idle" stable_seconds="N"/>
   --exec <cmd> additionally pipes that XML to `bash -c <cmd>` (matches
-  `atmux git watch` / `atmux path watch`).
+  `git watch` / `atmux path watch`).
 
   --once exits after the first emit (rc 0 = idle observed, 124 = timeout
   before idle).

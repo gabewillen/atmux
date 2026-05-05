@@ -47,18 +47,19 @@ assert_not_contains() {
 
 # Human help: no XML envelope, just the heredoc.
 help_cli="$(run_atmux --help)"
-assert_contains   "help cli: usage line"     "atmux is an agent multiplexer" "$help_cli"
+assert_contains   "help cli: usage line"     "Usage:" "$help_cli"
+assert_contains   "help cli: command map"    "Commands:" "$help_cli"
 assert_not_contains "help cli: no envelope"  "<atmux command="            "$help_cli"
 
 # Agent help: wrapped envelope.
 help_xml="$(ATMUX_AGENT_NAME=tester run_atmux --help)"
 assert_contains "help xml: envelope" '<atmux command="help"' "$help_xml"
-assert_contains "help xml: payload"  "atmux is an agent multiplexer"      "$help_xml"
+assert_contains "help xml: payload"  "Commands:"      "$help_xml"
 
 # Override: ATMUX_REPORTER=cli wins over agent context.
 help_forced_cli="$(ATMUX_AGENT_NAME=tester ATMUX_REPORTER=cli run_atmux --help)"
 assert_not_contains "help forced cli: no envelope" "<atmux command="    "$help_forced_cli"
-assert_contains     "help forced cli: payload"     "atmux is an agent"  "$help_forced_cli"
+assert_contains     "help forced cli: payload"     "Commands:"         "$help_forced_cli"
 
 # Override: ATMUX_REPORTER=xml wraps even without agent context.
 help_forced_xml="$(ATMUX_REPORTER=xml run_atmux --help)"

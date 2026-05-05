@@ -1,26 +1,16 @@
-# Agent TMUX (**atmux**)
+# atmux
 
-**atmux** is a tmux-first toolkit for running and coordinating multiple AI coding agents in parallel. It handles session lifecycle, inter-agent messaging, work assignment, output capture, and notifications — across different AI CLIs (Claude Code, Gemini, Codex, Cursor) and git repos.
+**atmux** is a tmux-first toolkit for running multiple AI coding agents in one repo. It manages agents, isolated worktrees, messaging, work assignment, output capture, and notifications across Claude Code, Gemini, Codex, and Cursor.
 
-The whole point: because the install lives inside your project and every command is plain shell, the agents you run can read, patch, and extend atmux itself. When the tool doesn't do what your workflow needs, the agent fixes the tool — in the same commit as the work.
+The default install is project-local: atmux lives in `<project>/.atmux`, its source is plain shell, and agents can patch the tool in the same repo they are working on. There is no daemon, server, database, build step, or language runtime beyond ordinary Unix tools (`bash`, `git`, `tmux`).
 
-## No frills. No dependencies. No build.
+## Why Use It
 
-- **No build step.** Pure shell scripts — nothing to compile, bundle, or transpile. `git clone` and run.
-- **No runtime.** No Node, Python, Go, or Rust toolchain required. No package manager, no lockfiles, no `node_modules`.
-- **No dependencies** beyond what's already on every Unix box you'd run an agent on: `bash`, `git`, and `tmux`. That's it.
-- **No daemon, no server, no database.** State lives in plain files under `ATMUX_HOME` (`<project>/.atmux` by default). Inspect it with `ls` and `cat`.
-- **No frills.** One shell script per command. Read the source, patch it in place, move on.
-
-Install by piping `curl` into `sh`, or clone the repo and run `./install.sh`. The installer defaults to a project-local install so it does not modify system-level agent config unless you choose `--system`. Uninstall by deleting the install directory.
-
-## What makes it different
-
-- **The agents can change atmux itself.** This is the headline feature, not a side effect. Project-local install + plain shell + no build step means the source sits next to your code, in the same git history, editable by the same agent that's doing the work. Hit a missing flag? The agent adds it. Found a bug in `pr watch`? The agent patches it and the next command picks up the fix. No fork, no rebuild, no upstream wait, no "file an issue and hope." The tool adapts to your project at the speed of the project.
-- **CLI-agnostic via adapters.** Run Claude Code, Gemini, Codex, and Cursor side-by-side in the same session. Swap vendors without rewriting your workflow. Third-party adapters install with `atmux adapter install owner/repo`.
-- **Intelligence scale, not model names.** Say `--intelligence 80` and the adapter picks the right model and reasoning level. Portable across vendors, survives model renames — no more hardcoding `claude-opus-4-7` or `gpt-5-codex` across your scripts.
-- **You can actually see the agents work.** It's just tmux. Attach to any session, watch the agent think in real time, detach and come back later. No custom TUI, no web dashboard, no log tailing.
-- **Git worktree per agent.** Each agent gets its own branch and working directory under `ATMUX_HOME/agents/`. Parallel agents can't stomp each other's changes, and cleanup is a single `atmux agent kill`.
+- **Visible agents.** Every agent runs in tmux, so you can attach, inspect, and kill it with familiar tools.
+- **Isolated work.** Agents get their own git worktree by default, so parallel edits do not collide.
+- **Adapter portable.** The same workflow can run Claude Code, Gemini, Codex, Cursor, or a third-party adapter.
+- **Role and team aware.** Roles define reusable prompts/hooks; teams spawn coordinated member agents.
+- **Agent-editable.** A project install keeps atmux source next to your code, so missing workflow glue can be patched locally.
 
 > **Experimental** — this project is under active development (current version: `{{VERSION}}`). APIs, commands, and behavior may change without notice. Use at your own risk.
 
@@ -36,15 +26,15 @@ Or from a local checkout:
 ./install.sh
 ```
 
-By default this installs `atmux` into `<project>/.atmux`, installs Claude Code/Gemini/Codex commands under the project-local `.claude`, `.gemini`, and `.codex` directories, and leaves shell profiles untouched. The project `.atmux/.gitignore` keeps runtime state out of git while allowing the launcher and installed source to be committed. Add the project launcher to your shell when you want to use it:
+By default this installs `atmux` into `<project>/.atmux`, installs project-local Claude/Gemini/Codex commands, and leaves shell profiles untouched. Add the project launcher to your shell when you want to use it:
 
 ```sh
 export PATH="$PWD/.atmux/bin:$PATH"
 ```
 
-Use `./install.sh --system` for the legacy user-level install into `~/.atmux` and user-level CLI command directories. Slash commands are installed by default in either scope; pass `--no-slash-commands` to skip them.
+Use `./install.sh --system` for a user-level install in `~/.atmux`. Slash commands are installed by default in either scope; pass `--no-slash-commands` to skip them.
 
-Then launch a tmux session with `atmux` on the path:
+Then start atmux:
 
 ```sh
 atmux
@@ -69,15 +59,15 @@ atmux issue create --title "stabilize parser" --assign-to planner \
   --todo "verify green"
 ```
 
-## Concepts
+## Core Concepts
 
-### Sessions and agents
+### Agents
 
-Each agent runs in a named tmux session: `atmux-<repo>-<agent>`. By default, agents get their own git worktree at `ATMUX_HOME/agents/<repo>-<name>`, keeping their changes isolated. Worktree creation initializes submodules with `git submodule update --init --recursive`. Pass `--shared-worktree` to skip worktree creation and run the new agent in the caller's current worktree instead (`--no-worktree` is a deprecated alias).
+Each agent is a named worker running an AI CLI in tmux. By default, `atmux agent create` gives it a private worktree under `ATMUX_HOME/agents/`. Pass `--shared-worktree` when an agent should work in the caller's current checkout.
 
 ### Teams
 
-Agents can be grouped into teams (capped at 4 per team). Teams share a layout and can be messaged collectively.
+Teams group up to four agents. A team role can spawn member agents, wire watchers, and share a team worktree.
 
 ```sh
 atmux team create platform
@@ -91,7 +81,7 @@ atmux agent create tester   --role tester   --team platform --intelligence 55
 
 ### Intelligence scale
 
-The `--intelligence 0–100` flag selects a model and reasoning level automatically via the adapter's manifest. Higher values use more capable (and slower/costlier) models.
+The `--intelligence 0–100` flag selects a model and reasoning level via the adapter manifest. Higher values use more capable and usually slower/costlier settings.
 
 {{INTELLIGENCE_SCALE}}
 
@@ -113,36 +103,25 @@ Install a third-party adapter:
 atmux adapter install owner/repo
 ```
 
-Install a shipped or third-party shim:
+## Command Map
 
-```sh
-atmux shim install git
-atmux shim install owner/repo
-```
+Most commands are resource-first: `atmux <noun> <verb> [args]`. Cross-cutting verbs such as `send`, `exec`, `schedule`, `update`, and `install` are direct. Run `atmux <command> --help` for complete options.
 
-## Command reference
-
-Most commands take the form `atmux <noun> <verb> [args]`. A handful of cross-cutting verbs (`send`, `exec`, `schedule`, `notify`, `update`, `install`) have no resource home and stay verb-shaped. Run `atmux <noun> --help` (or `atmux <verb> --help`) for the full flag list of any single command.
-
-The top-level entrypoint summarises the surface:
+The top-level help is generated from `bin/atmux`:
 
 {{TOP_LEVEL_USAGE}}
 
-### Resources
+### Common Commands
 
-{{RESOURCE_REFERENCE}}
-
-### Cross-cutting verbs
-
-{{VERB_REFERENCE}}
+{{COMMAND_INDEX}}
 
 ## Environment variables
 
 {{ENV_VARS_TABLE}}
 
-## Agent coordination rules
+## Agent Coordination Rules
 
-Agents running inside `atmux` sessions are expected to:
+Agents running under `atmux` are expected to:
 
 - Acknowledge manager messages quickly with a short plan.
 - Report completion with validation evidence (not just "done").
@@ -152,9 +131,9 @@ Agents running inside `atmux` sessions are expected to:
 - Check `atmux team list` before creating new team members.
 - Never silently change scope — ask the manager first.
 
-## Docs
+## More Docs
 
-- `docs/atmux.md` — full command and session reference
+- `docs/atmux.md` — full command reference
 - `docs/agent.md` — agent and worktree concepts
 - `docs/architecture.md` — internal architecture overview
 - `docs/cli.md` — CLI implementation notes
@@ -162,5 +141,5 @@ Agents running inside `atmux` sessions are expected to:
 <!--
   This file is generated. Edit templates/README.md.tmpl and the underlying
   command `usage()` heredocs / adapter manifests, then run:
-    bin/(atmux)/(internal)/render-docs all
+    bin/(atmux)/(internal)/render-docs readme
 -->

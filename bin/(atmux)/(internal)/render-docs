@@ -1,11 +1,9 @@
 #!/usr/bin/env bash
-# Render README.md and the CLAUDE.md `# atmux help` block from the same
-# sources of truth: each command's `usage()` heredoc and the adapter
-# manifests under adapter/*/manifest.
+# Render README.md from the same sources of truth: command `usage()`
+# heredocs, executable command layout, roles, and adapter manifests.
 #
 #   render-docs readme        # write README.md
-#   render-docs claude-help   # rewrite the marker block in CLAUDE.md
-#   render-docs all           # both
+#   render-docs all           # all generated docs (currently README.md)
 #   render-docs all --check   # render to a tmpdir and diff vs on-disk
 #
 # Pure bash + python3 (used only for adapter manifest parsing). Pure
@@ -22,9 +20,8 @@ CMD_DIR="$ROOT/bin/(atmux)"
 ADAPTER_DIR="$ROOT/adapter"
 TEMPLATE_DIR="$ROOT/templates"
 
-# Display order matches `bin/atmux`'s top-level `usage()`.
-RESOURCES=(agent team role issue pr message config env adapter shim watcher process pane path git gh)
-VERBS=(send exec schedule notify update install)
+# shellcheck source=bin/(atmux)/(lib)/command-docs
+source "$ROOT/bin/(atmux)/(lib)/command-docs"
 
 require_python3() {
   if ! command -v python3 >/dev/null 2>&1; then
@@ -33,47 +30,16 @@ require_python3() {
   fi
 }
 
+command_files() {
+  atmux_command_files "$CMD_DIR" public
+}
+
 # Extract the first heredoc inside a `usage()`-like function. Matches
 # `cat <<'<DELIM>'` where the body's first non-empty line begins with
 # `Usage:`. Captures lines up to the closing `<DELIM>`. Trims trailing
 # blank lines.
 extract_usage_block() {
-  local file="$1"
-  awk '
-    done_one { next }
-    /^[[:space:]]*cat[[:space:]]*<<'\''[A-Za-z_][A-Za-z0-9_]*'\''[[:space:]]*$/ {
-      delim=$0
-      sub(/^.*<<'\''/, "", delim)
-      sub(/'\''.*/, "", delim)
-      capturing=1
-      buf=""
-      first_seen=0
-      next
-    }
-    capturing && $0 == delim {
-      if (first_seen) { print buf; done_one=1 }
-      capturing=0
-      delim=""
-      next
-    }
-    capturing {
-      if (!first_seen) {
-        if ($0 ~ /^[[:space:]]*$/) next
-        if ($0 !~ /^Usage:/) { capturing=0; delim=""; next }
-        first_seen=1
-        buf = $0
-        next
-      }
-      buf = buf "\n" $0
-    }
-  ' "$file" | awk '
-    { lines[NR]=$0 }
-    END {
-      end=NR
-      while (end>0 && lines[end] ~ /^[[:space:]]*$/) end--
-      for (i=1; i<=end; i++) print lines[i]
-    }
-  '
+  atmux_extract_usage_block "$1"
 }
 
 # Split a usage block on its top-level section labels (Usage:, Description:,
@@ -86,23 +52,6 @@ extract_usage_block() {
 #   ...
 # Body lines are de-indented by stripping the leading two spaces that the
 # heredocs use.
-split_usage_sections() {
-  awk '
-    BEGIN { section="" }
-    /^(Usage|Description|Examples|Options|Notes|Durations):[[:space:]]*$/ {
-      section=$1
-      sub(/:.*/, "", section)
-      print "##SECTION##" section
-      next
-    }
-    section != "" {
-      line=$0
-      sub(/^  /, "", line)
-      print line
-    }
-  '
-}
-
 render_command_section() {
   local name="$1" file="$2" heading="$3"
   if [[ ! -f "$file" ]]; then
@@ -164,32 +113,48 @@ render_command_section() {
     if [[ -n "$current" ]]; then
       body+="$line"$'\n'
     fi
-  done < <(printf '%s\n' "$block" | split_usage_sections)
+  done < <(printf '%s\n' "$block" | atmux_split_usage_sections)
   flush
 }
 
-render_resource_reference() {
-  for n in "${RESOURCES[@]}"; do
-    render_command_section "$n" "$CMD_DIR/$n" "####"
-  done
+extract_description_summary() {
+  atmux_extract_description_summary
 }
 
-render_verb_reference() {
-  for n in "${VERBS[@]}"; do
-    render_command_section "$n" "$CMD_DIR/$n" "####"
-  done
+extract_primary_usage() {
+  atmux_extract_primary_usage
 }
 
-# Combined reference (used by CLAUDE.md help block where one flat list is
-# preferable).
-render_command_reference() {
-  render_resource_reference
-  render_verb_reference
+command_summary_row() {
+  local name="$1" file="$2" block sections usage desc
+  [[ -f "$file" ]] || return 0
+  block="$(extract_usage_block "$file")"
+  [[ -n "$block" ]] || return 0
+  sections="$(printf '%s\n' "$block" | atmux_split_usage_sections)"
+  usage="$(printf '%s\n' "$sections" | extract_primary_usage)"
+  desc="$(printf '%s\n' "$sections" | extract_description_summary)"
+  [[ -n "$usage" ]] || usage="atmux $name"
+  [[ -n "$desc" ]] || desc="Run \`atmux $name --help\` for details."
+  usage="${usage//|/\\|}"
+  desc="${desc//|/\\|}"
+  printf '| `%s` | %s |\n' "$usage" "$desc"
+}
+
+render_command_index() {
+  printf '| Command | Purpose |\n'
+  printf '|---------|---------|\n'
+  local file
+  while IFS= read -r file; do
+    command_summary_row "$(basename "$file")" "$file"
+  done < <(command_files)
 }
 
 render_top_level_usage() {
-  local block
-  block="$(extract_usage_block "$ROOT/bin/atmux")"
+  local tmp_home block
+  tmp_home="$(mktemp -d "${TMPDIR:-/tmp}/atmux-render-help.XXXXXX")"
+  block="$(env -u ATMUX_AGENT_NAME -u ATMUX_TEAM -u ATMUX_SESSION_NAME \
+    ATMUX_HOME="$tmp_home" ATMUX_SOURCE_ROOT="$ROOT" ATMUX_NO_WRAP=1 "$ROOT/bin/atmux" --help)"
+  rm -rf "$tmp_home"
   printf '```text\n%s\n```\n' "$block"
 }
 
@@ -397,9 +362,7 @@ render_template() {
   render_top_level_usage          > "$tmpdir/TOP_LEVEL_USAGE"
   render_intelligence_scale       > "$tmpdir/INTELLIGENCE_SCALE"
   render_adapter_list             > "$tmpdir/ADAPTER_LIST"
-  render_command_reference        > "$tmpdir/COMMAND_REFERENCE"
-  render_resource_reference       > "$tmpdir/RESOURCE_REFERENCE"
-  render_verb_reference           > "$tmpdir/VERB_REFERENCE"
+  render_command_index            > "$tmpdir/COMMAND_INDEX"
   render_env_vars_table           > "$tmpdir/ENV_VARS_TABLE"
   render_builtin_roles            > "$tmpdir/BUILT_IN_ROLES"
   render_version                  > "$tmpdir/VERSION"
@@ -455,37 +418,6 @@ render_readme() {
   render_template "$TEMPLATE_DIR/README.md.tmpl"
 }
 
-render_claude_help_block() {
-  render_template "$TEMPLATE_DIR/CLAUDE-help.md.tmpl"
-}
-
-# Replace the lines between `<!-- ATMUX-HELP-BEGIN -->` and `<!-- ATMUX-HELP-END -->`
-# in CLAUDE.md with `block`. Markers are preserved.
-splice_claude_help() {
-  local block_file="$1"
-  local target="$ROOT/CLAUDE.md"
-  if ! grep -q '<!-- ATMUX-HELP-BEGIN -->' "$target" || ! grep -q '<!-- ATMUX-HELP-END -->' "$target"; then
-    echo "render-docs: CLAUDE.md is missing <!-- ATMUX-HELP-BEGIN --> / <!-- ATMUX-HELP-END --> markers" >&2
-    exit 3
-  fi
-  awk -v bf="$block_file" '
-    BEGIN { in_block=0 }
-    /<!-- ATMUX-HELP-BEGIN -->/ {
-      print
-      while ((getline l < bf) > 0) print l
-      close(bf)
-      in_block=1
-      next
-    }
-    /<!-- ATMUX-HELP-END -->/ {
-      in_block=0
-      print
-      next
-    }
-    !in_block { print }
-  ' "$target"
-}
-
 write_or_check() {
   local target="$1"
   local content="$2"
@@ -493,7 +425,7 @@ write_or_check() {
     if ! diff -u "$target" <(printf '%s' "$content"); then
       echo
       echo "render-docs: $target is out of sync." >&2
-      echo "Run: bin/(atmux)/(internal)/render-docs all" >&2
+      echo "Run: bin/(atmux)/(internal)/render-docs readme" >&2
       DRIFT=1
     fi
   else
@@ -508,19 +440,8 @@ cmd_readme() {
   write_or_check "$ROOT/README.md" "$out"
 }
 
-cmd_claude_help() {
-  local block_file
-  block_file="$(mktemp)"
-  trap "rm -f $block_file" RETURN
-  render_claude_help_block > "$block_file"
-  local out
-  out="$(splice_claude_help "$block_file")"
-  write_or_check "$ROOT/CLAUDE.md" "$out"
-}
-
 cmd_all() {
   cmd_readme
-  cmd_claude_help
 }
 
 main() {
@@ -530,7 +451,7 @@ main() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --check) CHECK=1; shift ;;
-      readme|claude-help|all) cmd="$1"; shift ;;
+      readme|all) cmd="$1"; shift ;;
       -h|--help)
         sed -n '2,12p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
         exit 0
@@ -542,12 +463,11 @@ main() {
     esac
   done
   if [[ -z "$cmd" ]]; then
-    echo "render-docs: usage: render-docs {readme|claude-help|all} [--check]" >&2
+    echo "render-docs: usage: render-docs {readme|all} [--check]" >&2
     exit 64
   fi
   case "$cmd" in
     readme)       cmd_readme ;;
-    claude-help)  cmd_claude_help ;;
     all)          cmd_all ;;
   esac
   if (( CHECK && DRIFT )); then

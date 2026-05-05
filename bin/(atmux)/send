@@ -9,15 +9,15 @@ source "$HERE/notify"
 usage() {
   cat <<'USAGE'
 Usage:
-  atmux send --to <name|session> [--reply-required] [--interrupt] "message"
+  atmux send --to <agent|team> [--reply-required] [--interrupt] "message"
 
 Description:
   Send XML messages to a single agent or every agent in a team. Without
   --interrupt, the message is queued and delivered when the receiving agent
   is at its idle prompt.
   Resolution order for --to:
-    1) Team session/name
-    2) Agent session/name
+    1) Team name
+    2) Agent name
   --interrupt  Hard interrupt: send the adapter's abort key sequence
                (`SUBMIT_KEYS_INTERRUPT` in the manifest) to stop the current
                operation, then submit the message. Use sparingly — this aborts
@@ -201,7 +201,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ -z "$target_name" ]]; then
-  echo "missing required flag: --to <name|session>" >&2
+  echo "missing required flag: --to <agent|team>" >&2
   exit 2
 fi
 if [[ -z "$message" ]]; then

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# ATMUX_AGENT_HELP_HIDE=1
 set -euo pipefail
 
 ATMUX_HOME="${ATMUX_HOME:-$HOME/.atmux}"

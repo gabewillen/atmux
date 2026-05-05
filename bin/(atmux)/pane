@@ -11,9 +11,9 @@ Usage:
                             [--lines <n>]
 
 Description:
-  Operate on a tmux pane by id (e.g. %12, @3:1.0). The only verb today is
-  `watch`, which polls the pane and exits 0 when <needle> appears, non-zero
-  on timeout.
+  Watch tmux pane text.
+  Targets may be pane ids or window ids (for example %12 or @3:1.0).
+  `watch` exits 0 when <needle> appears and non-zero on timeout.
 
 Examples:
   atmux pane watch %12 --scope pane --text "Select Model and Effort"

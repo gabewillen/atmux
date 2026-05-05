@@ -12,6 +12,9 @@ Usage:
   atmux config unset <key> [--global]
   atmux config list [--global]
 
+Description:
+  Read and write atmux configuration values.
+
 Options:
   --global  Operate on global config (~/.atmux/config/<key>).
             Default: local repo config (<repo>/.atmux/config/<key>).

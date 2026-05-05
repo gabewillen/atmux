@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# ATMUX_AGENT_HELP_HIDE=1
 set -euo pipefail
 
 ATMUX_HOME="${ATMUX_HOME:-$HOME/.atmux}"
@@ -17,6 +18,9 @@ Usage:
   atmux update [--project] [--project-root <dir>] [--check] [--version <version>]
   atmux update [--project] [--project-root <dir>] --auto
   atmux update [--project] [--project-root <dir>] --no-auto
+
+Description:
+  Update atmux from the latest GitHub release.
 
 Options:
   --check              Only report whether an update is available; do not install.

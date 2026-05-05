@@ -1,10 +1,165 @@
 #!/usr/bin/env bash
-# Route git calls through `atmux git` while the generated shim proxy keeps
-# PATH sanitized so a nested `git` lookup resolves to the real binary.
 set -euo pipefail
 
-if [[ -n "${ATMUX_SHIM_REAL_BINARY:-}" && -x "$ATMUX_SHIM_REAL_BINARY" ]]; then
-  export ATMUX_REAL_GIT="$ATMUX_SHIM_REAL_BINARY"
-fi
+ATMUX_HOME="${ATMUX_HOME:-$HOME/.atmux}"
 
-exec atmux git "$@"
+shim_lib=""
+for candidate in \
+  "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd -P || true)/source-root" \
+  "${ATMUX_SOURCE_ROOT:-}/shims/source-root" \
+  "$ATMUX_HOME/src/atmux/shims/source-root"; do
+  [[ -f "$candidate" ]] || continue
+  shim_lib="$candidate"
+  break
+done
+[[ -n "$shim_lib" ]] || { echo "git shim: cannot locate atmux shim library" >&2; exit 1; }
+# shellcheck source=shims/source-root
+source "$shim_lib"
+
+SOURCE_ROOT="$(atmux_shim_source_root git "${BASH_SOURCE[0]}")"
+CMD_DIR="$SOURCE_ROOT/bin/(atmux)"
+
+usage() {
+  cat <<'USAGE'
+Usage:
+  git <git-args...>
+  git snapshot [--id <id>] [--exec <cmd>]
+  git watch [--id <id>] [--coalesce <seconds>] [--interval <seconds>]
+            [--timeout <seconds>] [--duration <seconds>]
+            [--exec <cmd>] [--once]
+
+Description:
+  Agent shim around `git`. Every verb except `watch` and `snapshot` is
+  forwarded to the real git executable with git's stdout, stderr, and exit
+  code.
+
+  `git watch` is an atmux rolling-diff watcher that emits XML notifications
+  on each change since the last emit.
+USAGE
+}
+
+resolve_real_git() {
+  if [[ -n "${ATMUX_REAL_GIT:-}" && -x "$ATMUX_REAL_GIT" ]]; then
+    printf '%s\n' "$ATMUX_REAL_GIT"
+    return 0
+  fi
+  if [[ -n "${ATMUX_SHIM_REAL_BINARY:-}" && -x "$ATMUX_SHIM_REAL_BINARY" ]]; then
+    printf '%s\n' "$ATMUX_SHIM_REAL_BINARY"
+    return 0
+  fi
+
+  local self
+  self="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/$(basename -- "${BASH_SOURCE[0]}")"
+
+  local candidate resolved
+  while IFS= read -r candidate; do
+    [[ -n "$candidate" && -x "$candidate" ]] || continue
+    resolved="$(cd -- "$(dirname -- "$candidate")" 2>/dev/null && pwd -P)/$(basename -- "$candidate")"
+    [[ "$resolved" != "$self" ]] || continue
+    if [[ -n "${ATMUX_SHIM_PROXY_DIR:-}" && "$resolved" == "$(cd -- "$ATMUX_SHIM_PROXY_DIR" 2>/dev/null && pwd -P)/git" ]]; then
+      continue
+    fi
+    case ":${ATMUX_ACTIVE_SHIM_DIRS:-}:" in
+      *":$(dirname -- "$resolved"):"*) continue ;;
+    esac
+    printf '%s\n' "$candidate"
+    return 0
+  done < <(PATH="$PATH" command -v -p git 2>/dev/null
+           which -a git 2>/dev/null
+           printf '%s\n' /usr/bin/git /usr/local/bin/git /opt/homebrew/bin/git)
+
+  echo "git shim: cannot find real git executable" >&2
+  return 1
+}
+
+hook_worktree_add() {
+  local target_path=""
+  local skip_next=0
+  local end_of_options=0
+  local arg
+  for arg in "$@"; do
+    if (( skip_next == 1 )); then
+      skip_next=0
+      continue
+    fi
+    if (( end_of_options == 1 )); then
+      target_path="$arg"
+      break
+    fi
+    case "$arg" in
+      --)
+        end_of_options=1
+        continue
+        ;;
+      -b|-B|--orphan|--reason)
+        skip_next=1
+        ;;
+      --orphan=*|--reason=*)
+        ;;
+      -*)
+        ;;
+      *)
+        target_path="$arg"
+        break
+        ;;
+    esac
+  done
+  [[ -n "$target_path" ]] || return 0
+
+  local abs
+  abs="$(cd -- "$target_path" 2>/dev/null && pwd -P)" || return 0
+
+  local agent="${ATMUX_AGENT_NAME:-}"
+  local repo="${ATMUX_REPO:-}"
+  [[ -n "$agent" && -n "$repo" ]] || return 0
+
+  local hook_dir="$ATMUX_HOME/agents/$repo/$agent/git-hooks"
+  mkdir -p "$hook_dir" 2>/dev/null || return 0
+  printf '%s\n' "$abs" > "$hook_dir/last-worktree-add" 2>/dev/null || return 0
+}
+
+main() {
+  local verb="${1:-}"
+
+  if [[ -z "$verb" ]]; then
+    usage >&2
+    exit 2
+  fi
+
+  if [[ "$verb" == "--help" || "$verb" == "-h" ]]; then
+    usage
+    exit 0
+  fi
+
+  if [[ "$verb" == "watch" ]]; then
+    shift
+    exec "$CMD_DIR/[watch]/git" "$@"
+  fi
+
+  if [[ "$verb" == "snapshot" ]]; then
+    shift
+    exec "$CMD_DIR/[watch]/git" --once "$@"
+  fi
+
+  local real_git
+  real_git="$(resolve_real_git)" || exit 1
+
+  local is_worktree_add=0
+  if [[ "$verb" == "worktree" && "${2:-}" == "add" ]]; then
+    is_worktree_add=1
+  fi
+
+  set +e
+  "$real_git" "$@"
+  local rc=$?
+  set -e
+
+  if (( is_worktree_add )) && (( rc == 0 )); then
+    shift 2 || true
+    hook_worktree_add "$@" || true
+  fi
+
+  exit "$rc"
+}
+
+main "$@"

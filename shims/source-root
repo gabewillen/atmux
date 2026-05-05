@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+
+atmux_shim_source_root() {
+  local tool="$1" shim_path="${2:-}"
+  if [[ -n "${ATMUX_SOURCE_ROOT:-}" && -d "$ATMUX_SOURCE_ROOT/bin/(atmux)" ]]; then
+    printf '%s\n' "$ATMUX_SOURCE_ROOT"
+    return 0
+  fi
+
+  local self_root=""
+  if [[ -n "$shim_path" ]]; then
+    self_root="$(cd -- "$(dirname -- "$shim_path")/../.." 2>/dev/null && pwd -P || true)"
+  fi
+  if [[ -n "$self_root" && -d "$self_root/bin/(atmux)" ]]; then
+    printf '%s\n' "$self_root"
+    return 0
+  fi
+
+  if [[ -d "$ATMUX_HOME/src/atmux/bin/(atmux)" ]]; then
+    printf '%s\n' "$ATMUX_HOME/src/atmux"
+    return 0
+  fi
+
+  echo "$tool shim: cannot locate atmux source root" >&2
+  return 1
+}

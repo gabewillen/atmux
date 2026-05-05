@@ -28,7 +28,7 @@ Usage:
     keys emit a warning and are passed through unchanged.
   atmux agent list [--all] [--status]
   atmux agent status [<name>]
-  atmux agent attach <name|session>
+  atmux agent attach <name>
   atmux agent kill <name|pattern> [<name|pattern>...]
   atmux agent kill --all [--yes]
   atmux agent capture <name> [--lines <n>]
@@ -38,10 +38,10 @@ Usage:
   atmux agent resolve <name> [<repo_name>]
 
 Description:
-  Manage atmux agents — sessions running an AI CLI under tmux. Agents are
-  scoped to the current repo. `create` works both as a top-level command
-  (no manager required) and from inside a manager agent. When run
-  interactively without a manager, the new agent is attached to.
+  Manage repo-scoped AI agents running under tmux.
+  `create` works both as a top-level command (no manager required) and from
+  inside a manager agent. When run interactively without a manager, atmux
+  attaches to the new agent.
 
 Notes:
   agent attach must be run outside tmux.
@@ -1441,7 +1441,7 @@ spawn_agent_session() {
 attach_agent() {
   local target="${1:-}"
   if [[ -z "$target" ]]; then
-    echo "usage: atmux agent attach <name|session>" >&2
+    echo "usage: atmux agent attach <name>" >&2
     exit 2
   fi
   if [[ -n "${TMUX:-}" ]]; then
@@ -2211,7 +2211,7 @@ case "$sub" in
   watch)
     here_agent="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
     if [[ $# -eq 0 || "${1:0:1}" == "-" ]]; then
-      echo "usage: atmux agent watch <name|session> [--idle N] [--timeout N] [--interval N] [--lines N]" >&2
+      echo "usage: atmux agent watch <name> [--idle N] [--timeout N] [--interval N] [--lines N]" >&2
       exit 2
     fi
     target_name="$1"; shift

@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # Follow-the-worktree tracker. Watches the driver's `git worktree add`
-# hook file and re-arms `atmux git watch` to follow whichever worktree
+# hook file and re-arms the `git watch` shim to follow whichever worktree
 # the driver actually creates.
 #
 # How the signal arrives:
 #
 #   The agent's PATH has an atmux-managed `git` shim ahead of the real
-#   git. Any `git worktree add <path>` call routes through `atmux git`,
+#   git. Any `git worktree add <path>` call routes through the git shim,
 #   which forwards to real git AND, on success, writes the new
 #   worktree's absolute path to
 #     $ATMUX_HOME/agents/<repo>/<driver>/git-hooks/last-worktree-add

@@ -21,7 +21,7 @@ that the driver can apply it; don't apply it yourself. The driver
 writes; you steer.
 
 Read-only inspection is fine — `git diff`, `git log`, `cat`, `rg`,
-`atmux git snapshot`, reading planning docs. If you're tempted to run
+`git snapshot`, reading planning docs. If you're tempted to run
 something that writes, stop and message the driver instead.
 
 ## How you receive changes
@@ -34,13 +34,13 @@ every detected diff you receive a signal-only notification (no diff
 body):
 
 ```xml
-<notification type="git-change" from="<watch-id>" hint="run `atmux git snapshot --id <watch-id>`"/>
+<notification type="git-change" from="<watch-id>" hint="run `git snapshot --id <watch-id>`"/>
 ```
 
 When you receive this, **run the `hint` command**:
 
 ```sh
-atmux git snapshot --id <watch-id>
+git snapshot --id <watch-id>
 ```
 
 That returns the rolling diff (XML with a `<diff>...</diff>` body) for

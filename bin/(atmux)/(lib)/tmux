@@ -1,0 +1,102 @@
+#!/usr/bin/env bash
+# Shared tmux defaults for atmux-managed sessions.
+
+atmux_real_tmux_bin() {
+  local candidate resolved self_path
+  if [[ -n "${ATMUX_REAL_TMUX:-}" && -x "$ATMUX_REAL_TMUX" ]]; then
+    printf '%s\n' "$ATMUX_REAL_TMUX"
+    return 0
+  fi
+
+  self_path=""
+  if [[ -n "${ATMUX_SOURCE_ROOT:-}" && -x "$ATMUX_SOURCE_ROOT/bin/tmux" ]]; then
+    self_path="$(cd -- "$ATMUX_SOURCE_ROOT/bin" 2>/dev/null && pwd -P)/tmux"
+  fi
+
+  while IFS= read -r candidate; do
+    [[ -n "$candidate" && -x "$candidate" ]] || continue
+    resolved="$(cd -- "$(dirname -- "$candidate")" 2>/dev/null && pwd -P)/$(basename -- "$candidate")"
+    [[ -n "$self_path" && "$resolved" == "$self_path" ]] && continue
+    printf '%s\n' "$candidate"
+    return 0
+  done < <(
+    type -P tmux 2>/dev/null || true
+    printf '%s\n' /opt/homebrew/bin/tmux /usr/local/bin/tmux /usr/bin/tmux /bin/tmux
+  )
+  return 1
+}
+
+atmux_tmux_socket() {
+  local atmux_home="${ATMUX_HOME:-$HOME/.atmux}" socket socket_dir socket_id
+  if [[ -n "${ATMUX_TMUX_SOCKET:-}" ]]; then
+    printf '%s\n' "$ATMUX_TMUX_SOCKET"
+    return 0
+  fi
+  socket="$atmux_home/tmux/server.sock"
+  if (( ${#socket} < 100 )); then
+    printf '%s\n' "$socket"
+    return 0
+  fi
+
+  socket_dir="${ATMUX_TMUX_SOCKET_DIR:-/tmp/atmux-tmux-${UID:-$(command id -u)}}"
+  socket_id="$(printf '%s' "$atmux_home" | cksum | awk '{print $1}')"
+  printf '%s/%s.sock\n' "$socket_dir" "$socket_id"
+}
+
+tmux() {
+  local real_tmux socket
+  real_tmux="$(atmux_real_tmux_bin)" || {
+    echo "atmux: real tmux binary is unavailable" >&2
+    return 127
+  }
+  socket="$(atmux_tmux_socket)"
+  mkdir -p "$(dirname -- "$socket")"
+  if [[ "${ATMUX_DEBUG_TMUX:-0}" == "1" ]]; then
+    printf 'atmux tmux: %q -S %q' "$real_tmux" "$socket" >&2
+    printf ' %q' "$@" >&2
+    printf '\n' >&2
+  fi
+  ATMUX_ALLOW_REAL_TMUX=1 "$real_tmux" -S "$socket" "$@"
+}
+
+atmux_tmux_attach_command() {
+  local real_tmux socket
+  real_tmux="$(atmux_real_tmux_bin)" || return 1
+  socket="$(atmux_tmux_socket)"
+  printf '%q -S %q' "$real_tmux" "$socket"
+}
+
+atmux_tmux_current_client_is_project_server() {
+  local socket tmux_socket
+  [[ -n "${TMUX:-}" ]] || return 1
+  socket="$(atmux_tmux_socket)"
+  tmux_socket="${TMUX%%,*}"
+  [[ "$tmux_socket" == "$socket" ]]
+}
+
+atmux_configure_tmux_pane_defaults() {
+  local session="${1:-}"
+  local history_limit mouse_mode window_id
+  history_limit="${ATMUX_TMUX_HISTORY_LIMIT:-200000}"
+  mouse_mode="${ATMUX_TMUX_MOUSE:-off}"
+  case "$mouse_mode" in
+    on|off) ;;
+    *) mouse_mode="off" ;;
+  esac
+
+  tmux set-window-option -g history-limit "$history_limit" >/dev/null 2>&1 || true
+  if [[ -n "$session" ]]; then
+    # Default mouse off for managed sessions. Observers can still enter tmux
+    # copy-mode from the keyboard when they need to scroll.
+    tmux set-option -t "$session" mouse "$mouse_mode" >/dev/null 2>&1 || true
+    while IFS= read -r window_id; do
+      [[ -z "$window_id" ]] && continue
+      tmux set-window-option -t "$window_id" history-limit "$history_limit" >/dev/null 2>&1 || true
+    done < <(tmux list-windows -t "$session" -F '#{window_id}' 2>/dev/null || true)
+  else
+    while IFS= read -r window_id; do
+      [[ -z "$window_id" ]] && continue
+      tmux set-window-option -t "$window_id" history-limit "$history_limit" >/dev/null 2>&1 || true
+    done < <(tmux list-windows -a -F '#{window_id}' 2>/dev/null || true)
+  fi
+}

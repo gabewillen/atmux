@@ -5,6 +5,8 @@
 
 ATMUX_NOTIFY_SCRIPT_PATH="${BASH_SOURCE[0]}"
 ATMUX_NOTIFY_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=bin/(atmux)/(lib)/tmux
+source "$ATMUX_NOTIFY_DIR/(lib)/tmux"
 # shellcheck source=bin/(atmux)/(lib)/manifest
 source "$ATMUX_NOTIFY_DIR/(lib)/manifest"
 

@@ -6,4 +6,5 @@ ATMUX_WORKTREE	Working directory (worktree or repo root)
 ATMUX_TEAM	Team this agent belongs to
 ATMUX_SESSION_ID	Unique agent run identifier
 ATMUX_SESSION_KIND	`agent` or `team`
+ATMUX_TMUX_SOCKET	Tmux server socket for the project; defaults to `$ATMUX_HOME/tmux/server.sock` when short enough, otherwise a stable per-project socket under `/tmp/atmux-tmux-<uid>/`
 ATMUX_TMUX_MOUSE	Tmux mouse mode for managed agents and teams, `off` by default to avoid accidental copy-mode blocking notifications; set `on` to restore tmux mouse scrolling

@@ -12,7 +12,7 @@ The default install is project-local: atmux lives in `<project>/.atmux`, its sou
 - **Role and team aware.** Roles define reusable prompts/hooks; teams spawn coordinated member agents.
 - **Agent-editable.** A project install keeps atmux source next to your code, so missing workflow glue can be patched locally.
 
-> **Experimental** — this project is under active development (current version: `0.21.1`). APIs, commands, and behavior may change without notice. Use at your own risk.
+> **Experimental** — this project is under active development (current version: `0.21.2`). APIs, commands, and behavior may change without notice. Use at your own risk.
 
 ## Install
 
@@ -209,6 +209,7 @@ Run:
 | `ATMUX_TEAM` | Team this agent belongs to |
 | `ATMUX_SESSION_ID` | Unique agent run identifier |
 | `ATMUX_SESSION_KIND` | `agent` or `team` |
+| `ATMUX_TMUX_SOCKET` | Tmux server socket for the project; defaults to `$ATMUX_HOME/tmux/server.sock` when short enough, otherwise a stable per-project socket under `/tmp/atmux-tmux-<uid>/` |
 | `ATMUX_TMUX_MOUSE` | Tmux mouse mode for managed agents and teams, `off` by default to avoid accidental copy-mode blocking notifications; set `on` to restore tmux mouse scrolling |
 
 ## Agent Coordination Rules

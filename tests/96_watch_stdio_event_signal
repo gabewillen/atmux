@@ -35,6 +35,8 @@ session_exec="atmux-${repo_name}-exec"
 session_watch="atmux-${repo_name}-watch"
 atmux_home="$tmp_home/.atmux"
 exec_root="$atmux_home/exec/$repo_name"
+worker_script="$tmp_home/stdio-worker.sh"
+trigger_file="$tmp_home/emit-output"
 
 cleanup() {
   tmux kill-session -t "$session_exec" >/dev/null 2>&1 || true
@@ -48,11 +50,23 @@ tmux kill-session -t "$session_watch" >/dev/null 2>&1 || true
 tmux new-session -d -s "$session_exec" -n "$session_exec" -x 160 -y 40 -c "$REPO_ROOT" "/bin/bash" -l
 tmux new-session -d -s "$session_watch" -n "$session_watch" -x 160 -y 40 -c "$REPO_ROOT" "/bin/bash" -l
 
+cat > "$worker_script" <<'WORKER'
+#!/usr/bin/env bash
+set -euo pipefail
+trigger_file="$1"
+while [[ ! -f "$trigger_file" ]]; do
+  sleep 0.1
+done
+echo event-wave
+sleep 5
+WORKER
+chmod +x "$worker_script"
+
 pane_exec="$(tmux list-panes -t "$session_exec" -F '#{pane_id}' 2>/dev/null | head -n1)"
 pane_watch="$(tmux list-panes -t "$session_watch" -F '#{pane_id}' 2>/dev/null | head -n1)"
 [[ -n "$pane_exec" && -n "$pane_watch" ]] || { echo "missing panes" >&2; exit 1; }
 
-tmux send-keys -t "$pane_exec" "ATMUX_HOME=\"$atmux_home\" ATMUX_REPO=\"$repo_name\" ATMUX_AGENT_NAME=\"exec\" ATMUX_SESSION_NAME=\"$session_exec\" \"$ATMUX_BIN\" exec --detach -- bash -lc 'sleep 1; echo event-wave; sleep 1'" C-m
+tmux send-keys -t "$pane_exec" "ATMUX_HOME=\"$atmux_home\" ATMUX_REPO=\"$repo_name\" ATMUX_AGENT_NAME=\"exec\" ATMUX_SESSION_NAME=\"$session_exec\" \"$ATMUX_BIN\" exec --detach -- \"$worker_script\" \"$trigger_file\"" C-m
 
 deadline=$(( $(date +%s) + 10 ))
 pid=""
@@ -74,7 +88,27 @@ while [[ -z "$pid" ]]; do
   [[ -n "$pid" ]] || sleep 0.05
 done
 
-tmux send-keys -t "$pane_watch" "ATMUX_HOME=\"$atmux_home\" ATMUX_REPO=\"$repo_name\" ATMUX_AGENT_NAME=\"watch\" ATMUX_SESSION_NAME=\"$session_watch\" \"$ATMUX_BIN\" process watch \"$pid\" --stdio --duration 10 --timeout 5 --interval 999" C-m
+deadline=$(( $(date +%s) + 10 ))
+while true; do
+  exec_dir="$exec_root/$pid"
+  if [[ -d "$exec_dir" \
+        && "$(tr -d '\r\n' < "$exec_dir/pid" 2>/dev/null || true)" == "$pid" \
+        && "$(tr -d '\r\n' < "$exec_dir/repo" 2>/dev/null || true)" == "$repo_name" \
+        && -n "$(tr -d '\r\n' < "$exec_dir/executor_pane" 2>/dev/null || true)" \
+        && "$(tr -d '\r\n' < "$exec_dir/state" 2>/dev/null || true)" == "running" ]]; then
+    break
+  fi
+  if (( $(date +%s) >= deadline )); then
+    echo "timeout waiting for exec ownership metadata" >&2
+    find "$exec_root" -maxdepth 2 -type f -print -exec sh -c 'printf "%s=" "$1"; cat "$1"; printf "\n"' sh {} \; >&2 || true
+    exit 1
+  fi
+  sleep 0.05
+done
+
+tmux send-keys -t "$pane_watch" "ATMUX_HOME=\"$atmux_home\" ATMUX_REPO=\"$repo_name\" ATMUX_AGENT_NAME=\"watch\" ATMUX_SESSION_NAME=\"$session_watch\" \"$ATMUX_BIN\" process watch \"$pid\" --stdio --duration 10 --timeout 5 --interval 999 --coalesce 0" C-m
+sleep 1
+: > "$trigger_file"
 
 if ! wait_for_text "$pane_watch" 'type="exec_output"' 8; then
   echo "process watch --stdio did not notify from pane output event" >&2

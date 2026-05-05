@@ -23,6 +23,9 @@ if [[ -z "${ATMUX_TESTS_TMUX_TMPDIR:-}" ]]; then
   trap cleanup_isolated_tmux EXIT INT TERM
 fi
 export TMUX_TMPDIR="$ATMUX_TESTS_TMUX_TMPDIR"
+export ATMUX_TMUX_SOCKET="$ATMUX_TESTS_TMUX_TMPDIR/tmux-$(id -u)/default"
+mkdir -p "$(dirname -- "$ATMUX_TMUX_SOCKET")"
+chmod 700 "$(dirname -- "$ATMUX_TMUX_SOCKET")"
 
 # Notify-queue state in the developer's ~/.atmux/notify-queue/ is keyed on
 # (session_name, pane_id). With an isolated tmux server, pane ids reset to

@@ -233,7 +233,7 @@ fetch_pr_poll_data() {
           | "\(.updatedAt)|\(.kind)|\(.id)|\(.author)|\(.state)|\((.body | gsub("[\\r\\n]+"; " ") | .[0:160]))"
           )
         ] | .[]
-    ' || return 1
+    ' 2>/dev/null || return 1
 }
 
 notification_payload_for_line() {

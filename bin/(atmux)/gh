@@ -86,10 +86,10 @@ number_arg_after_verb() {
   while [[ $# -gt 0 ]]; do
     arg="$1"; shift
     case "$arg" in
-      --repo|-R|--body|-b|--body-file|-F)
+      --repo|-R|--body|-b|--body-file|-F|--branch)
         shift || true
         ;;
-      --repo=*|-R=*|--body=*|-b=*|--body-file=*|-F=*)
+      --repo=*|-R=*|--body=*|-b=*|--body-file=*|-F=*|--branch=*)
         ;;
       --editor|-e)
         ;;

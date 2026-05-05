@@ -42,6 +42,9 @@ case "$1" in
       *'#{pane_id}'*) printf '%%7\n' ;;
     esac
     ;;
+  has-session|new-session|new-window)
+    exit 1
+    ;;
   *)
     exit 0
     ;;
@@ -50,7 +53,7 @@ SH
 chmod +x "$fakebin/tmux"
 
 ATMUX_TEST_GH_LOG="$tmp/gh.log" \
-PATH="$REPO_ROOT/bin:$fakebin:$PATH" \
+PATH="$fakebin:$REPO_ROOT/bin:$PATH" \
 ATMUX_HOME="$atmux_home" \
 ATMUX_SOURCE_ROOT="$REPO_ROOT" \
 ATMUX_SHIM_REAL_BINARY="$fakebin/gh" \
@@ -90,7 +93,7 @@ grep -Fq '%7|0' "$watcher_file" || {
 }
 
 ATMUX_TEST_GH_LOG="$tmp/gh.log" \
-PATH="$REPO_ROOT/bin:$fakebin:$PATH" \
+PATH="$fakebin:$REPO_ROOT/bin:$PATH" \
 ATMUX_HOME="$atmux_home" \
 ATMUX_SOURCE_ROOT="$REPO_ROOT" \
 ATMUX_SHIM_REAL_BINARY="$fakebin/gh" \
@@ -106,7 +109,7 @@ checkout_number="$(tr -d '\r\n' < "$atmux_home/agents/demo/agent/gh-hooks/last-p
 }
 
 ATMUX_TEST_GH_LOG="$tmp/gh.log" \
-PATH="$REPO_ROOT/bin:$fakebin:$PATH" \
+PATH="$fakebin:$REPO_ROOT/bin:$PATH" \
 ATMUX_HOME="$atmux_home" \
 ATMUX_SOURCE_ROOT="$REPO_ROOT" \
 ATMUX_SHIM_REAL_BINARY="$fakebin/gh" \

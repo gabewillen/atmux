@@ -95,9 +95,9 @@ atmux agent create tester   --role tester   --team platform --intelligence 55
 
 #### Built-in team roles
 
-| Role | Description | Demo |
-|------|-------------|------|
-| [`pair-program`](roles/teams/pair-program/README.md) | A driver-and-navigator team role where a fast model writes code while a stronger model watches the shared worktree and interrupts with review notes when the implementation drifts. | [demo](roles/teams/pair-program/demo.gif) |
+| Role | Description | Members | Demo |
+|------|-------------|---------|------|
+| [`pair-program`](roles/teams/pair-program/README.md) | A driver-and-navigator team role where a fast model writes code while a stronger model watches the shared worktree and interrupts with review notes when the implementation drifts. | [`driver`](roles/teams/pair-program/roles/driver/README.md): The `driver` role is the fast implementation half of the pair-programming workflow. It writes code, runs tests, and responds to navigator feedback.<br>[`navigator`](roles/teams/pair-program/roles/navigator/README.md): The `navigator` role is the review half of the pair-programming workflow. It watches a shared worktree, reviews rolling diffs, and steers the driver without editing files directly. | [demo](roles/teams/pair-program/demo.gif) |
 
 ### Intelligence scale
 
@@ -308,9 +308,9 @@ Roles are adapter-agnostic. A role is a directory containing any of:
 
 The team start hook receives: `ATMUX_TEAM`, `ATMUX_REPO`, `ATMUX_WORKTREE`, `ATMUX_ROLE`, `ATMUX_ROLE_DIR`, `ATMUX_ROLE_STATE_DIR` (`~/.atmux/teams/<repo>/<team>/role/`).
 
-Resolution precedence is kind-aware. Agent roles resolve from `roles/agents/<name>`, team roles resolve from `roles/teams/<name>`, and team member spawning temporarily prepends the parent team's `roles/teams/<team>/agents/` directory so private members like `driver` are only reachable from that team.
+Resolution precedence is kind-aware. Agent roles resolve from `roles/agents/<name>`, team roles resolve from `roles/teams/<name>`, and team member spawning temporarily prepends the parent team's `roles/teams/<team>/roles/` directory so private members like `driver` are only reachable from that team.
 
-`create` writes agent roles to `roles/agents/<name>` and team roles to `roles/teams/<name>`. `--parent-team <team>` with `--kind agent` writes a team-private member role to `roles/teams/<team>/agents/<name>`. `--scope repo` writes under `<repo>/.atmux/roles/...`; `--scope auto` picks repo if inside a git repo with an existing `.atmux/`, otherwise global.
+`create` writes agent roles to `roles/agents/<name>` and team roles to `roles/teams/<name>`. `--parent-team <team>` with `--kind agent` writes a team-private member role to `roles/teams/<team>/roles/<name>`. `--scope repo` writes under `<repo>/.atmux/roles/...`; `--scope auto` picks repo if inside a git repo with an existing `.atmux/`, otherwise global.
 
 #### `issue`
 

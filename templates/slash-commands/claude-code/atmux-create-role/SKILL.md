@@ -21,7 +21,7 @@ Use `atmux role create` to scaffold a new role directory. Standalone agent roles
 | 4 | `adapters` | no | Comma-separated subset (e.g. `claude-code,codex`). |
 | 5 | `hooks` | no | Comma-separated subset of `start,stop` (or `none`). |
 | 6 | `scope` | no | `repo` \| `global` \| `auto` (default `auto`). |
-| 7 | `parent-team` | no | Team name for a private member role under `roles/teams/<team>/agents/<name>`. |
+| 7 | `parent-team` | no | Team name for a private member role under `roles/teams/<team>/roles/<name>`. |
 | 8 | `kind` | no | `agent` \| `team` (default `agent`; must be `agent` when `parent-team` is set). |
 
 Examples:

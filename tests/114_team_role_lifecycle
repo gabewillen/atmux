@@ -69,10 +69,10 @@ chmod +x "$adapter_dir/cmd"
 
 # The team role itself — declares two MEMBERS plus a start/stop pair so we
 # can assert the hooks run with the expected env. Its member role lives under
-# the team's private agents/ directory, so bare `--role member-probe` only
+# the team's private roles/ directory, so bare `--role member-probe` only
 # resolves while this team is spawning MEMBERS.
 team_role_dir="$ATMUX_HOME/roles/teams/probe-pair"
-member_role_dir="$team_role_dir/agents/member-probe"
+member_role_dir="$team_role_dir/roles/member-probe"
 mkdir -p "$member_role_dir"
 cat > "$member_role_dir/role.md" <<EOF
 # Member probe role

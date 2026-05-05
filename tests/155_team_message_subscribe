@@ -1,0 +1,97 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+source "$(dirname "${BASH_SOURCE[0]}")/lib/isolate-tmux.sh"
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPTS_DIR="$TESTS_DIR/scripts"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+
+wait_for_text() {
+  local target="$1"
+  local needle="$2"
+  local timeout="${3:-10}"
+  local deadline now snap compact
+  deadline=$(( $(date +%s) + timeout ))
+  while true; do
+    snap="$(tmux capture-pane -p -t "$target" -S -300 2>/dev/null || true)"
+    compact="$(printf '%s' "$snap" | tr -d '\r\n')"
+    if printf '%s' "$compact" | grep -Fq "$needle"; then
+      return 0
+    fi
+    now="$(date +%s)"
+    (( now < deadline )) || return 1
+    sleep 0.1
+  done
+}
+
+tmp_root="$(mktemp -d "${TMPDIR:-/tmp}/atmux-team-message-subscribe.XXXXXX")"
+atmux_home="$tmp_root/.atmux"
+observer_session=""
+outsider_session=""
+
+cleanup() {
+  [[ -z "$observer_session" ]] || tmux kill-session -t "$observer_session" >/dev/null 2>&1 || true
+  [[ -z "$outsider_session" ]] || tmux kill-session -t "$outsider_session" >/dev/null 2>&1 || true
+  if [[ -n "${TEAM_SESSION:-}" ]]; then
+    "$SCRIPTS_DIR/teardown" --team-session "$TEAM_SESSION" --agent1-session "$AGENT1_SESSION" --agent2-session "$AGENT2_SESSION"
+  fi
+  rm -rf "$tmp_root"
+}
+trap cleanup EXIT
+
+setup_out="$(ATMUX_HOME="$atmux_home" "$SCRIPTS_DIR/setup")"
+eval "$setup_out"
+
+observer_session="atmux-${REPO_NAME}-observer"
+outsider_session="atmux-${REPO_NAME}-outsider"
+tmux new-session -d -s "$observer_session" -n "$observer_session" -c "$REPO_ROOT" "cat"
+tmux set-environment -t "$observer_session" ATMUX_REPO "$REPO_NAME"
+tmux set-environment -t "$observer_session" ATMUX_AGENT_NAME "observer"
+tmux set-environment -t "$observer_session" ATMUX_SESSION_NAME "$observer_session"
+observer_pane="$(tmux list-panes -t "$observer_session" -F '#{pane_id}' 2>/dev/null | head -n1)"
+
+tmux new-session -d -s "$outsider_session" -n "$outsider_session" -c "$REPO_ROOT" "cat"
+tmux set-environment -t "$outsider_session" ATMUX_REPO "$REPO_NAME"
+tmux set-environment -t "$outsider_session" ATMUX_AGENT_NAME "outsider"
+tmux set-environment -t "$outsider_session" ATMUX_SESSION_NAME "$outsider_session"
+
+subscribe_out="$(ATMUX_HOME="$atmux_home" ATMUX_REPO="$REPO_NAME" ATMUX_AGENT_NAME="observer" ATMUX_SESSION_NAME="$observer_session" \
+  "$ATMUX_BIN" message subscribe --team "$TEAM_NAME")"
+watcher_id="$(printf '%s\n' "$subscribe_out" | sed -n 's/.*watcher_id="\([^"]*\)".*/\1/p' | head -n1)"
+[[ -n "$watcher_id" ]] || { echo "failed to parse watcher id" >&2; printf '%s\n' "$subscribe_out" >&2; exit 1; }
+printf '%s\n' "$watcher_id" | grep -Fq 'team-message:'
+
+subscriptions="$(ATMUX_HOME="$atmux_home" ATMUX_REPO="$REPO_NAME" "$ATMUX_BIN" message subscriptions --team "$TEAM_NAME")"
+printf '%s\n' "$subscriptions" | grep -Fq "$watcher_id"
+watchers="$(ATMUX_HOME="$atmux_home" ATMUX_REPO="$REPO_NAME" "$ATMUX_BIN" watcher list)"
+printf '%s\n' "$watchers" | grep -Fq "$watcher_id"
+
+send_out="$(ATMUX_HOME="$atmux_home" ATMUX_REPO="$REPO_NAME" ATMUX_AGENT_NAME="sender" ATMUX_SESSION_NAME="$AGENT1_SESSION" \
+  "$ATMUX_BIN" send --to "$TEAM_NAME" "subscriber-can-read-${RANDOM}")"
+message_id="$(printf '%s\n' "$send_out" | sed -n 's/.*message_id="\([^"]*\)".*/\1/p' | head -n1)"
+[[ -n "$message_id" ]] || { echo "failed to parse team message id" >&2; exit 1; }
+printf '%s\n' "$send_out" | grep -Fq 'kind="subscriber"'
+
+if ! wait_for_text "$observer_pane" '<notification type="team_message"' 10; then
+  echo "observer subscriber did not receive team notification" >&2
+  tmux capture-pane -p -t "$observer_pane" -S -120 >&2 || true
+  exit 1
+fi
+
+observer_read="$(ATMUX_HOME="$atmux_home" ATMUX_REPO="$REPO_NAME" ATMUX_AGENT_NAME="observer" ATMUX_SESSION_NAME="$observer_session" \
+  "$ATMUX_BIN" message read "$message_id" --team "$TEAM_NAME")"
+printf '%s\n' "$observer_read" | grep -Fq 'type="team"'
+printf '%s\n' "$observer_read" | grep -Fq 'subscriber-can-read-'
+
+if outsider_read="$(
+  ATMUX_HOME="$atmux_home" ATMUX_REPO="$REPO_NAME" ATMUX_AGENT_NAME="outsider" ATMUX_SESSION_NAME="$outsider_session" \
+    "$ATMUX_BIN" message read "$message_id" --team "$TEAM_NAME" 2>&1
+)"; then
+  echo "unsubscribed outsider unexpectedly read team message" >&2
+  printf '%s\n' "$outsider_read" >&2
+  exit 1
+fi
+printf '%s\n' "$outsider_read" | grep -Fq 'message not found'
+
+echo "ok: outside agents can subscribe to team message notifications and read subscribed team messages"

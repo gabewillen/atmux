@@ -123,6 +123,11 @@ prs_watch_dir() {
   printf '%s/watch-prs/%s\n' "$ATMUX_HOME" "$key"
 }
 
+team_message_watch_dir() {
+  local key="$1"
+  printf '%s/watch-team-message/%s\n' "$ATMUX_HOME" "$key"
+}
+
 pr_watch_watchers_dir() {
   local key="$1"
   printf '%s/watchers\n' "$(pr_watch_dir "$key")"
@@ -136,6 +141,11 @@ issues_watch_watchers_dir() {
 prs_watch_watchers_dir() {
   local key="$1"
   printf '%s/watchers\n' "$(prs_watch_dir "$key")"
+}
+
+team_message_watch_watchers_dir() {
+  local key="$1"
+  printf '%s/watchers\n' "$(team_message_watch_dir "$key")"
 }
 
 pr_watch_pid_file() {
@@ -303,6 +313,16 @@ kill_watcher() {
       if [[ "${remaining:-0}" -eq 0 ]] && prs_worker_running_for_key "$key"; then
         wait_for_prs_worker_exit "$key" "$timeout_sec" || true
       fi
+      ;;
+    team-message)
+      local watcher_file
+      watcher_file="$(team_message_watch_watchers_dir "$key")/$watcher_name"
+      if [[ ! -e "$watcher_file" ]]; then
+        echo "atmux watcher kill: watcher not found: $watcher_id" >&2
+        exit 2
+      fi
+
+      rm -rf "$watcher_file"
       ;;
     *)
       echo "atmux watcher kill: unsupported watcher type: $kind" >&2

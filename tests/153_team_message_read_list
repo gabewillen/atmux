@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+source "$(dirname "${BASH_SOURCE[0]}")/lib/isolate-tmux.sh"
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPTS_DIR="$TESTS_DIR/scripts"
+
+tmp_root="$(mktemp -d "${TMPDIR:-/tmp}/atmux-team-message-read.XXXXXX")"
+atmux_home="$tmp_root/.atmux"
+
+cleanup() {
+  if [[ -n "${TEAM_SESSION:-}" ]]; then
+    "$SCRIPTS_DIR/teardown" --team-session "$TEAM_SESSION" --agent1-session "$AGENT1_SESSION" --agent2-session "$AGENT2_SESSION"
+  fi
+  rm -rf "$tmp_root"
+}
+trap cleanup EXIT
+
+setup_out="$(ATMUX_HOME="$atmux_home" "$SCRIPTS_DIR/setup")"
+eval "$setup_out"
+
+send_out="$(ATMUX_HOME="$atmux_home" ATMUX_REPO="$REPO_NAME" ATMUX_AGENT_NAME="sender" ATMUX_SESSION_NAME="$AGENT1_SESSION" \
+  "$ATMUX_BIN" send --to "$TEAM_NAME" "team-read-list-${RANDOM}")"
+message_id="$(printf '%s\n' "$send_out" | sed -n 's/.*message_id="\([^"]*\)".*/\1/p' | head -n1)"
+[[ -n "$message_id" ]] || { echo "failed to parse team message id" >&2; printf '%s\n' "$send_out" >&2; exit 1; }
+
+team_dir="$atmux_home/team-messages/$REPO_NAME/$TEAM_NAME/$message_id"
+[[ -d "$team_dir" ]] || { echo "team message dir missing: $team_dir" >&2; exit 1; }
+[[ -f "$team_dir/body" ]] || { echo "team message body missing" >&2; exit 1; }
+[[ ! -d "$atmux_home/messages/$REPO_NAME/$message_id" ]] || { echo "team message leaked into direct message root" >&2; exit 1; }
+
+receiver_read="$(ATMUX_HOME="$atmux_home" ATMUX_REPO="$REPO_NAME" ATMUX_AGENT_NAME="receiver" ATMUX_SESSION_NAME="$AGENT2_SESSION" \
+  "$ATMUX_BIN" message read "$message_id" --team "$TEAM_NAME")"
+printf '%s\n' "$receiver_read" | grep -Fq 'type="team"'
+printf '%s\n' "$receiver_read" | grep -Fq "team=\"$TEAM_NAME\""
+printf '%s\n' "$receiver_read" | grep -Fq 'team-read-list-'
+
+sender_read="$(ATMUX_HOME="$atmux_home" ATMUX_REPO="$REPO_NAME" ATMUX_AGENT_NAME="sender" ATMUX_SESSION_NAME="$AGENT1_SESSION" \
+  "$ATMUX_BIN" message read "$message_id" --team "$TEAM_NAME")"
+printf '%s\n' "$sender_read" | grep -Fq 'type="team"'
+
+direct_list="$(ATMUX_HOME="$atmux_home" ATMUX_REPO="$REPO_NAME" ATMUX_AGENT_NAME="receiver" ATMUX_SESSION_NAME="$AGENT2_SESSION" \
+  "$ATMUX_BIN" message list)"
+if printf '%s\n' "$direct_list" | grep -Fq "$message_id"; then
+  echo "team message leaked into direct message list" >&2
+  printf '%s\n' "$direct_list" >&2
+  exit 1
+fi
+
+send_out_2="$(ATMUX_HOME="$atmux_home" ATMUX_REPO="$REPO_NAME" ATMUX_AGENT_NAME="sender" ATMUX_SESSION_NAME="$AGENT1_SESSION" \
+  "$ATMUX_BIN" send --to "$TEAM_NAME" "team-unread-${RANDOM}")"
+message_id_2="$(printf '%s\n' "$send_out_2" | sed -n 's/.*message_id="\([^"]*\)".*/\1/p' | head -n1)"
+[[ -n "$message_id_2" ]] || { echo "failed to parse second team message id" >&2; exit 1; }
+
+receiver_unread="$(ATMUX_HOME="$atmux_home" ATMUX_REPO="$REPO_NAME" ATMUX_AGENT_NAME="receiver" ATMUX_SESSION_NAME="$AGENT2_SESSION" \
+  "$ATMUX_BIN" message list --team "$TEAM_NAME" --unread)"
+printf '%s\n' "$receiver_unread" | grep -Fq "$message_id_2"
+
+ATMUX_HOME="$atmux_home" ATMUX_REPO="$REPO_NAME" ATMUX_AGENT_NAME="receiver" ATMUX_SESSION_NAME="$AGENT2_SESSION" \
+  "$ATMUX_BIN" message read "$message_id_2" --team "$TEAM_NAME" >/dev/null
+
+receiver_unread_after="$(ATMUX_HOME="$atmux_home" ATMUX_REPO="$REPO_NAME" ATMUX_AGENT_NAME="receiver" ATMUX_SESSION_NAME="$AGENT2_SESSION" \
+  "$ATMUX_BIN" message list --team "$TEAM_NAME" --unread)"
+if printf '%s\n' "$receiver_unread_after" | grep -Fq "$message_id_2"; then
+  echo "receiver still sees read team message as unread" >&2
+  printf '%s\n' "$receiver_unread_after" >&2
+  exit 1
+fi
+
+sender_unread="$(ATMUX_HOME="$atmux_home" ATMUX_REPO="$REPO_NAME" ATMUX_AGENT_NAME="sender" ATMUX_SESSION_NAME="$AGENT1_SESSION" \
+  "$ATMUX_BIN" message list --team "$TEAM_NAME" --unread)"
+printf '%s\n' "$sender_unread" | grep -Fq "$message_id_2"
+
+echo "ok: team messages persist separately and track unread per reader"

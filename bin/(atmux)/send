@@ -79,17 +79,6 @@ self_send_error() {
   echo "cannot send to yourself; for self reminders/ticks use: atmux schedule --once <duration> --notification \"<text>\"" >&2
 }
 
-filter_nonself_members() {
-  local sender="$1"
-  shift
-  local member
-  for member in "$@"; do
-    [[ -n "$member" ]] || continue
-    [[ "$member" == "$sender" ]] && continue
-    printf '%s\n' "$member"
-  done
-}
-
 store_message() {
   local repo="$1" from="$2" to="$3" body="$4" reply_required="$5"
   local root id dir ts
@@ -105,6 +94,38 @@ store_message() {
   write_field "$dir/reply_required" "$reply_required"
   write_field "$dir/timestamp" "$ts"
   printf '%s\n' "$id"
+}
+
+team_message_root_for_team() {
+  local repo="$1" team="$2"
+  printf '%s/team-messages/%s/%s\n' "$ATMUX_HOME" "$repo" "$team"
+}
+
+store_team_message() {
+  local repo="$1" from="$2" team="$3" body="$4" reply_required="$5"
+  local root id dir ts
+  root="$(team_message_root_for_team "$repo" "$team")"
+  mkdir -p "$root"
+  id="$(id)"
+  dir="$root/$id"
+  mkdir -p "$dir"
+  ts="$(timestamp_utc)"
+  write_field "$dir/from" "$from"
+  write_field "$dir/team" "$team"
+  write_field "$dir/body" "$body"
+  write_field "$dir/reply_required" "$reply_required"
+  write_field "$dir/timestamp" "$ts"
+  printf '%s\n' "$id"
+}
+
+team_message_watch_key() {
+  local repo="$1" team="$2"
+  normalize_name "${repo}_${team}"
+}
+
+team_message_watchers_dir() {
+  local repo="$1" team="$2"
+  printf '%s/watch-team-message/%s/watchers\n' "$ATMUX_HOME" "$(team_message_watch_key "$repo" "$team")"
 }
 
 resolve_steer_keys() {
@@ -140,6 +161,23 @@ build_message_payload_for_session() {
     "reply_required=$reply_required_value"
 }
 
+build_team_message_payload() {
+  local from_session="$1"
+  local team_name="$2"
+  local read_cmd="$3"
+  local reply_required_value="$4"
+
+  build_notification "team_message" "$from_session" "$read_cmd" \
+    "team=$team_name" \
+    "reply_required=$reply_required_value"
+}
+
+text_has_line() {
+  local text="$1" needle="$2"
+  [[ -n "$needle" ]] || return 1
+  grep -Fxq "$needle" <<< "$text"
+}
+
 send_to_session() {
   local target_session="$1"
   local payload="$2"
@@ -158,6 +196,18 @@ send_to_session() {
   fi
   debug_notify "send:target_resolved session=$(printf '%q' "$target_session") pane=$(printf '%q' "$target_pane") submit_keys=$(printf '%q' "${submit_keys[*]:-Enter}") $(payload_debug_summary "$payload")"
   send_payload_to_pane "$target_pane" "$payload" ${submit_keys[@]+"${submit_keys[@]}"}
+}
+
+send_to_pane() {
+  local target_pane="$1"
+  local payload="$2"
+
+  if [[ -z "$target_pane" ]] || ! pane_exists "$target_pane"; then
+    debug_notify "send:target_pane_missing pane=$(printf '%q' "$target_pane")"
+    return 1
+  fi
+  debug_notify "send:target_pane_resolved pane=$(printf '%q' "$target_pane") $(payload_debug_summary "$payload")"
+  send_payload_to_pane "$target_pane" "$payload"
 }
 
 send_to_type=""
@@ -227,30 +277,19 @@ if [[ -n "$team_session" ]]; then
     [[ -n "$s" ]] || continue
     members+=("$s")
   done < <(tmux list-panes -t "${team_session}:0" -F '#{@atmux_agent_session}' 2>/dev/null | awk 'NF' | sort -u)
-  filtered_members=()
-  if [[ "${#members[@]}" -gt 0 ]]; then
-    while IFS= read -r s; do
-      [[ -n "$s" ]] || continue
-      filtered_members+=("$s")
-    done < <(filter_nonself_members "$from_session" "${members[@]}")
-  fi
-  members=("${filtered_members[@]+"${filtered_members[@]}"}")
 
-  if [[ "${#members[@]}" -eq 0 ]]; then
-    self_send_error
-    exit 2
-  fi
-
-  msg_id="$(store_message "$repo_name" "$from_session" "$target_name" "$message" "$reply_required_value")"
-  printf -v read_cmd 'atmux message read %q --repo %q' "$msg_id" "$repo_name"
+  msg_id="$(store_team_message "$repo_name" "$from_session" "$target_name" "$message" "$reply_required_value")"
+  printf -v read_cmd 'atmux message read %q --team %q --repo %q' "$msg_id" "$target_name" "$repo_name"
 
   attempted=0
   delivered=0
   failed=0
   results=""
+  notified_sessions=""
+  notified_panes=""
   for s in "${members[@]}"; do
     attempted=$((attempted + 1))
-    payload="$(build_message_payload_for_session "$s" "$from_session" "$read_cmd" "$reply_required_value")"
+    payload="$(build_team_message_payload "$from_session" "$target_name" "$read_cmd" "$reply_required_value")"
     member_keys=()
     member_pre_keys=""
     member_bypass=""
@@ -271,12 +310,41 @@ if [[ -n "$team_session" ]]; then
        ATMUX_NOTIFY_BYPASS_IDLE="$member_bypass" \
        send_to_session "$s" "$payload" ${member_keys[@]+"${member_keys[@]}"}; then
       delivered=$((delivered + 1))
-      results+="  <target session=\"$(xml_escape "$s")\" queued=\"true\" />"$'\n'
+      notified_sessions+="$s"$'\n'
+      member_pane="$(primary_pane_for_session "$s")"
+      [[ -n "$member_pane" ]] && notified_panes+="$member_pane"$'\n'
+      results+="  <target kind=\"member\" session=\"$(xml_escape "$s")\" queued=\"true\" />"$'\n'
     else
       failed=$((failed + 1))
-      results+="  <target session=\"$(xml_escape "$s")\" queued=\"false\" />"$'\n'
+      results+="  <target kind=\"member\" session=\"$(xml_escape "$s")\" queued=\"false\" />"$'\n'
     fi
   done
+
+  subscribers_dir="$(team_message_watchers_dir "$repo_name" "$target_name")"
+  if [[ -d "$subscribers_dir" ]]; then
+    while IFS= read -r subscriber; do
+      [[ -e "$subscriber" ]] || continue
+      subscriber_name="$(basename "$subscriber")"
+      subscriber_pane="$(cat "$subscriber/pane" 2>/dev/null || cat "$subscriber" 2>/dev/null || true)"
+      subscriber_session="$(cat "$subscriber/session" 2>/dev/null || true)"
+      [[ -n "$subscriber_pane" ]] || continue
+      if text_has_line "$notified_sessions" "$subscriber_session" || text_has_line "$notified_panes" "$subscriber_pane"; then
+        continue
+      fi
+
+      attempted=$((attempted + 1))
+      payload="$(build_team_message_payload "$from_session" "$target_name" "$read_cmd" "$reply_required_value")"
+      if send_to_pane "$subscriber_pane" "$payload"; then
+        delivered=$((delivered + 1))
+        notified_panes+="$subscriber_pane"$'\n'
+        [[ -n "$subscriber_session" ]] && notified_sessions+="$subscriber_session"$'\n'
+        results+="  <target kind=\"subscriber\" watcher=\"$(xml_escape "$subscriber_name")\" pane=\"$(xml_escape "$subscriber_pane")\" queued=\"true\" />"$'\n'
+      else
+        failed=$((failed + 1))
+        results+="  <target kind=\"subscriber\" watcher=\"$(xml_escape "$subscriber_name")\" pane=\"$(xml_escape "$subscriber_pane")\" queued=\"false\" />"$'\n'
+      fi
+    done < <(find "$subscribers_dir" -mindepth 1 -maxdepth 1 \( -type f -o -type d \) 2>/dev/null | sort)
+  fi
 
   printf '<send to="team" name="%s" session="%s" message_id="%s" queued="%s" attempted="%s" failed="%s">\n%s</send>\n' \
     "$(xml_escape "$target_name")" \

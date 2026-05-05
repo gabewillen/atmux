@@ -278,11 +278,45 @@ extract_first_markdown_paragraph() {
   ' "$file"
 }
 
+render_builtin_team_member_list() {
+  local team_dir="$1"
+  local roles_dir="$team_dir/roles"
+  [[ -d "$roles_dir" ]] || return 0
+
+  local member_dir name readme role_md link_target desc sep
+  sep=""
+  set -- "$roles_dir"/*
+  for member_dir in "$@"; do
+    [[ -d "$member_dir" ]] || continue
+    name="$(basename "$member_dir")"
+
+    readme="$member_dir/README.md"
+    role_md="$member_dir/role.md"
+    if [[ -f "$readme" ]]; then
+      link_target="${member_dir#"$ROOT/"}"/README.md
+      desc="$(extract_first_markdown_paragraph "$readme")"
+    else
+      link_target="${member_dir#"$ROOT/"}"/role.md
+      desc="$(extract_first_markdown_paragraph "$role_md")"
+    fi
+    if [[ -z "$desc" && -f "$role_md" ]]; then
+      desc="$(extract_first_markdown_paragraph "$role_md")"
+    fi
+    desc="${desc//|/\\|}"
+
+    printf '%s[`%s`](%s)' "$sep" "$name" "$link_target"
+    if [[ -n "$desc" ]]; then
+      printf ': %s' "$desc"
+    fi
+    sep="<br>"
+  done
+}
+
 render_builtin_role_rows() {
   local target_kind="$1"
   [[ -d "$ROOT/roles" ]] || return 0
 
-  local role_dir name readme role_md link_target desc demo
+  local role_dir name readme role_md link_target desc demo members
   case "$target_kind" in
     agent)
       set -- "$ROOT"/roles/agents/*
@@ -317,7 +351,12 @@ render_builtin_role_rows() {
       demo="[demo](${role_dir#"$ROOT/"}/demo.gif)"
     fi
 
-    printf '| [`%s`](%s) | %s | %s |\n' "$name" "$link_target" "$desc" "$demo"
+    if [[ "$target_kind" == "team" ]]; then
+      members="$(render_builtin_team_member_list "$role_dir")"
+      printf '| [`%s`](%s) | %s | %s | %s |\n' "$name" "$link_target" "$desc" "$members" "$demo"
+    else
+      printf '| [`%s`](%s) | %s | %s |\n' "$name" "$link_target" "$desc" "$demo"
+    fi
   done
 }
 
@@ -327,8 +366,13 @@ render_builtin_role_table() {
   [[ -n "$rows" ]] || return 0
 
   printf '#### %s\n\n' "$title"
-  printf '| Role | Description | Demo |\n'
-  printf '|------|-------------|------|\n'
+  if [[ "$kind" == "team" ]]; then
+    printf '| Role | Description | Members | Demo |\n'
+    printf '|------|-------------|---------|------|\n'
+  else
+    printf '| Role | Description | Demo |\n'
+    printf '|------|-------------|------|\n'
+  fi
   printf '%s\n\n' "$rows"
 }
 

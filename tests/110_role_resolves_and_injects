@@ -53,7 +53,7 @@ resolved="$(ATMUX_HOME="$tmp_root/.atmux" "$ROLE_BIN" resolve sample)"
 }
 
 # Hierarchical roles resolve by kind.
-mkdir -p "$roles_dir/agents/h-agent" "$roles_dir/teams/h-team/agents/h-member"
+mkdir -p "$roles_dir/agents/h-agent" "$roles_dir/teams/h-team/roles/h-member"
 cat > "$roles_dir/agents/h-agent/role.md" <<'EOF'
 # Hierarchical agent
 EOF
@@ -75,14 +75,14 @@ if ATMUX_HOME="$tmp_root/.atmux" "$ROLE_BIN" resolve --kind agent h-member >/dev
   exit 1
 fi
 member_resolved="$(ATMUX_HOME="$tmp_root/.atmux" \
-  ATMUX_ROLE_SEARCH_PREPEND="$roles_dir/teams/h-team/agents" \
+  ATMUX_ROLE_SEARCH_PREPEND="$roles_dir/teams/h-team/roles" \
   "$ROLE_BIN" resolve --kind agent h-member)"
-[[ "$member_resolved" == "$roles_dir/teams/h-team/agents/h-member" ]] || {
+[[ "$member_resolved" == "$roles_dir/teams/h-team/roles/h-member" ]] || {
   echo "fail: team-private member resolve returned '$member_resolved'" >&2
   exit 1
 }
 private_resolved="$(ATMUX_HOME="$tmp_root/.atmux" "$ROLE_BIN" private-agent h-member)"
-[[ "$private_resolved" == "$roles_dir/teams/h-team/agents/h-member" ]] || {
+[[ "$private_resolved" == "$roles_dir/teams/h-team/roles/h-member" ]] || {
   echo "fail: private-agent returned '$private_resolved'" >&2
   exit 1
 }
@@ -170,8 +170,8 @@ echo "$created" | grep -q "$roles_dir/teams/made-team" || {
   exit 1
 }
 created="$(ATMUX_HOME="$tmp_root/.atmux" "$ROLE_BIN" create made-member --description "tests hierarchy" --parent-team made-team --scope global)"
-echo "$created" | grep -q "$roles_dir/teams/made-team/agents/made-member" || {
-  echo "fail: role create did not write private member under team agents" >&2
+echo "$created" | grep -q "$roles_dir/teams/made-team/roles/made-member" || {
+  echo "fail: role create did not write private member under team roles" >&2
   echo "$created" >&2
   exit 1
 }

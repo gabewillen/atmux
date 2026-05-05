@@ -13,7 +13,7 @@
 
 - Reorganized built-in roles into kind-aware directories: standalone agents
   live under `roles/agents/`, team roles under `roles/teams/`, and
-  team-private members under `roles/teams/<team>/agents/`.
+  team-private members under `roles/teams/<team>/roles/`.
 - `atmux role resolve` now accepts `--kind agent|team`; `agent create` and
   `team create` use kind-aware resolution only.
 - `atmux role create` now writes new roles into the hierarchical layout and

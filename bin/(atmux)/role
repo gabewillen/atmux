@@ -41,7 +41,7 @@ Resolution precedence (first match wins):
 
 `create` writes agents under roles/agents/<name> and teams under
 roles/teams/<name>. Use --parent-team <team> with --kind agent to create a
-team-private member role under roles/teams/<team>/agents/<name>.
+team-private member role under roles/teams/<team>/roles/<name>.
 USAGE
 }
 
@@ -136,7 +136,7 @@ role_path_kind() {
   local dir="$1" fallback="${2:-}"
   case "$dir" in
     */roles/agents/*) printf '%s\n' "agent"; return 0 ;;
-    */roles/teams/*/agents/*) printf '%s\n' "agent"; return 0 ;;
+    */roles/teams/*/roles/*) printf '%s\n' "agent"; return 0 ;;
     */roles/teams/*) printf '%s\n' "team"; return 0 ;;
   esac
   if [[ -n "$fallback" ]]; then
@@ -193,7 +193,7 @@ resolve_private_agent_role_dir() {
       [[ -d "$dir" ]] || continue
       printf '%s\n' "$dir"
       return 0
-    done < <(find "$base/teams" -mindepth 3 -maxdepth 3 -type d -path "*/agents/$name" 2>/dev/null | sort)
+    done < <(find "$base/teams" -mindepth 3 -maxdepth 3 -type d -path "*/roles/$name" 2>/dev/null | sort)
   done < <(role_search_paths)
   return 1
 }
@@ -248,7 +248,7 @@ resolve_create_dest() {
   # Args: <name> <scope> <kind> <parent_team>
   local name="$1" scope="$2" kind="$3" parent_team="${4:-}" rr="" rel=""
   if [[ -n "$parent_team" ]]; then
-    rel="teams/$parent_team/agents/$name"
+    rel="teams/$parent_team/roles/$name"
   elif [[ "$kind" == "team" ]]; then
     rel="teams/$name"
   else

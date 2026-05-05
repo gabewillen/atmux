@@ -572,7 +572,7 @@ create_team() {
     # 1) Spawn declared MEMBERS first. Atmux owns these — `team kill` will
     #    auto-kill any agent whose ATMUX_TEAM matches this team's name.
     if [[ -n "${member_lines:-}" ]]; then
-      if ! ATMUX_ROLE_SEARCH_PREPEND="$role_dir/agents${ATMUX_ROLE_SEARCH_PREPEND:+:$ATMUX_ROLE_SEARCH_PREPEND}" \
+      if ! ATMUX_ROLE_SEARCH_PREPEND="$role_dir/roles${ATMUX_ROLE_SEARCH_PREPEND:+:$ATMUX_ROLE_SEARCH_PREPEND}" \
            spawn_team_members "$repo_name" "$team_name" "$member_lines" "$team_work_dir"; then
         echo "atmux team create: tearing down team after member spawn failure" >&2
         teardown_team "$repo_name" "$team_name" "$session" "$role_state_dir" \

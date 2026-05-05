@@ -53,36 +53,6 @@ message_root_for_repo() {
   printf '%s/messages/%s\n' "$ATMUX_HOME" "$repo"
 }
 
-team_message_root_for_team() {
-  local repo="$1" team="$2"
-  printf '%s/team-messages/%s/%s\n' "$ATMUX_HOME" "$repo" "$team"
-}
-
-team_message_watch_key() {
-  local repo="$1" team="$2"
-  normalize_name "${repo}_${team}"
-}
-
-team_message_watch_dir() {
-  local repo="$1" team="$2"
-  printf '%s/watch-team-message/%s\n' "$ATMUX_HOME" "$(team_message_watch_key "$repo" "$team")"
-}
-
-team_message_watchers_dir() {
-  local repo="$1" team="$2"
-  printf '%s/watchers\n' "$(team_message_watch_dir "$repo" "$team")"
-}
-
-team_message_watcher_file() {
-  local repo="$1" team="$2" watcher_name="$3"
-  printf '%s/%s\n' "$(team_message_watchers_dir "$repo" "$team")" "$watcher_name"
-}
-
-team_message_watcher_id() {
-  local repo="$1" team="$2" watcher_name="$3"
-  printf 'team-message:%s:%s\n' "$(team_message_watch_key "$repo" "$team")" "$watcher_name"
-}
-
 current_session_name() {
   if [[ -n "${ATMUX_SESSION_NAME:-}" ]]; then
     printf '%s\n' "$ATMUX_SESSION_NAME"
@@ -186,19 +156,20 @@ current_context_is_empty() {
 
 current_agent_is_team_member() {
   local team="$1" repo="$2"
-  local team_session="" member="" recipients_text="" candidate=""
+  local team_session="" members_text="" member="" recipients_text="" candidate=""
 
   team_session="$(team_session_for_name "$team" "$repo")"
   [[ -n "$team_session" ]] || return 1
 
   recipients_text="$(current_message_recipients "$repo")"
+  members_text="$(tmux list-panes -t "${team_session}:0" -F '#{@atmux_agent_session}' 2>/dev/null | awk 'NF' | sort -u || true)"
   while IFS= read -r member; do
     [[ -n "$member" ]] || continue
     while IFS= read -r candidate; do
       [[ -n "$candidate" ]] || continue
       [[ "$member" == "$candidate" ]] && return 0
     done <<< "$recipients_text"
-  done < <(tmux list-panes -t "${team_session}:0" -F '#{@atmux_agent_session}' 2>/dev/null | awk 'NF' | sort -u)
+  done <<< "$members_text"
 
   return 1
 }

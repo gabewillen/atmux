@@ -61,6 +61,7 @@ subscribe_out="$(ATMUX_HOME="$atmux_home" ATMUX_REPO="$REPO_NAME" ATMUX_AGENT_NA
 watcher_id="$(printf '%s\n' "$subscribe_out" | sed -n 's/.*watcher_id="\([^"]*\)".*/\1/p' | head -n1)"
 [[ -n "$watcher_id" ]] || { echo "failed to parse watcher id" >&2; printf '%s\n' "$subscribe_out" >&2; exit 1; }
 printf '%s\n' "$watcher_id" | grep -Fq 'team-message:'
+printf '%s\n' "$watcher_id" | grep -Fq "team-message:${REPO_NAME}--team--${TEAM_NAME}:"
 
 subscriptions="$(ATMUX_HOME="$atmux_home" ATMUX_REPO="$REPO_NAME" "$ATMUX_BIN" message subscriptions --team "$TEAM_NAME")"
 printf '%s\n' "$subscriptions" | grep -Fq "$watcher_id"

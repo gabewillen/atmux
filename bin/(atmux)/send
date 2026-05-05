@@ -96,11 +96,6 @@ store_message() {
   printf '%s\n' "$id"
 }
 
-team_message_root_for_team() {
-  local repo="$1" team="$2"
-  printf '%s/team-messages/%s/%s\n' "$ATMUX_HOME" "$repo" "$team"
-}
-
 store_team_message() {
   local repo="$1" from="$2" team="$3" body="$4" reply_required="$5"
   local root id dir ts
@@ -116,16 +111,6 @@ store_team_message() {
   write_field "$dir/reply_required" "$reply_required"
   write_field "$dir/timestamp" "$ts"
   printf '%s\n' "$id"
-}
-
-team_message_watch_key() {
-  local repo="$1" team="$2"
-  normalize_name "${repo}_${team}"
-}
-
-team_message_watchers_dir() {
-  local repo="$1" team="$2"
-  printf '%s/watch-team-message/%s/watchers\n' "$ATMUX_HOME" "$(team_message_watch_key "$repo" "$team")"
 }
 
 resolve_steer_keys() {
@@ -210,7 +195,6 @@ send_to_pane() {
   send_payload_to_pane "$target_pane" "$payload"
 }
 
-send_to_type=""
 target_name=""
 reply_required=0
 interrupt=0
@@ -287,7 +271,7 @@ if [[ -n "$team_session" ]]; then
   results=""
   notified_sessions=""
   notified_panes=""
-  for s in "${members[@]}"; do
+  for s in "${members[@]+"${members[@]}"}"; do
     attempted=$((attempted + 1))
     payload="$(build_team_message_payload "$from_session" "$target_name" "$read_cmd" "$reply_required_value")"
     member_keys=()
@@ -327,7 +311,10 @@ if [[ -n "$team_session" ]]; then
       subscriber_name="$(basename "$subscriber")"
       subscriber_pane="$(cat "$subscriber/pane" 2>/dev/null || cat "$subscriber" 2>/dev/null || true)"
       subscriber_session="$(cat "$subscriber/session" 2>/dev/null || true)"
+      subscriber_repo="$(cat "$subscriber/repo" 2>/dev/null || true)"
+      subscriber_team="$(cat "$subscriber/team" 2>/dev/null || true)"
       [[ -n "$subscriber_pane" ]] || continue
+      [[ "$subscriber_repo" == "$repo_name" && "$subscriber_team" == "$target_name" ]] || continue
       if text_has_line "$notified_sessions" "$subscriber_session" || text_has_line "$notified_panes" "$subscriber_pane"; then
         continue
       fi

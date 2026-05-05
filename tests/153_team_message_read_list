@@ -8,8 +8,10 @@ SCRIPTS_DIR="$TESTS_DIR/scripts"
 
 tmp_root="$(mktemp -d "${TMPDIR:-/tmp}/atmux-team-message-read.XXXXXX")"
 atmux_home="$tmp_root/.atmux"
+empty_team_session=""
 
 cleanup() {
+  [[ -z "$empty_team_session" ]] || tmux kill-session -t "$empty_team_session" >/dev/null 2>&1 || true
   if [[ -n "${TEAM_SESSION:-}" ]]; then
     "$SCRIPTS_DIR/teardown" --team-session "$TEAM_SESSION" --agent1-session "$AGENT1_SESSION" --agent2-session "$AGENT2_SESSION"
   fi
@@ -71,5 +73,18 @@ fi
 sender_unread="$(ATMUX_HOME="$atmux_home" ATMUX_REPO="$REPO_NAME" ATMUX_AGENT_NAME="sender" ATMUX_SESSION_NAME="$AGENT1_SESSION" \
   "$ATMUX_BIN" message list --team "$TEAM_NAME" --unread)"
 printf '%s\n' "$sender_unread" | grep -Fq "$message_id_2"
+
+empty_team="empty${RANDOM}"
+empty_out="$(ATMUX_HOME="$atmux_home" ATMUX_REPO="$REPO_NAME" "$ATMUX_BIN" team create "$empty_team" --shared-worktree)"
+empty_team_session="$(printf '%s\n' "$empty_out" | sed -n 's/.*session="\([^"]*\)".*/\1/p' | head -n1)"
+[[ -n "$empty_team_session" ]] || { echo "failed to parse empty team session" >&2; exit 1; }
+
+empty_send="$(ATMUX_HOME="$atmux_home" ATMUX_REPO="$REPO_NAME" ATMUX_AGENT_NAME="sender" ATMUX_SESSION_NAME="$AGENT1_SESSION" \
+  "$ATMUX_BIN" send --to "$empty_team" "empty-team-${RANDOM}")"
+empty_message_id="$(printf '%s\n' "$empty_send" | sed -n 's/.*message_id="\([^"]*\)".*/\1/p' | head -n1)"
+[[ -n "$empty_message_id" ]] || { echo "failed to parse empty team message id" >&2; exit 1; }
+printf '%s\n' "$empty_send" | grep -Fq 'attempted="0"'
+[[ -d "$atmux_home/team-messages/$REPO_NAME/$empty_team/$empty_message_id" ]] \
+  || { echo "empty team message was not stored" >&2; exit 1; }
 
 echo "ok: team messages persist separately and track unread per reader"

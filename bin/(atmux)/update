@@ -7,23 +7,28 @@ ATMUX_API_BASE="https://api.github.com/repos/${ATMUX_GITHUB_REPO}"
 
 CHECK_ONLY=0
 TARGET_VERSION=""
-AUTO_UPDATE_CONFIG="$ATMUX_HOME/config/update/auto"
+PROJECT_MODE=0
+PROJECT_ROOT=""
+ACTION="update"
 
 usage() {
   cat <<'EOF'
 Usage:
-  atmux update [--check] [--version <version>]
-  atmux update --auto
-  atmux update --no-auto
+  atmux update [--project] [--project-root <dir>] [--check] [--version <version>]
+  atmux update [--project] [--project-root <dir>] --auto
+  atmux update [--project] [--project-root <dir>] --no-auto
 
 Options:
   --check              Only report whether an update is available; do not install.
   --version <version>  Install a specific version (e.g. 0.2.0). Defaults to latest.
+  --project            Update the current project's <project>/.atmux install.
+  --project-root <dir> Project directory for --project (default: git root or cwd).
   --auto               Enable background auto-update on every atmux command (hourly throttle).
   --no-auto            Disable background auto-update.
 
 Examples:
   atmux update
+  atmux update --project
   atmux update --check
   atmux update --version 0.2.0
   atmux update --auto
@@ -32,7 +37,8 @@ EOF
 }
 
 installed_version() {
-  local f="$ATMUX_HOME/src/atmux/VERSION"
+  local home="$1"
+  local f="$home/src/atmux/VERSION"
   if [[ -f "$f" ]]; then
     tr -d '[:space:]' < "$f"
   else
@@ -41,7 +47,8 @@ installed_version() {
 }
 
 install_scope() {
-  local f="$ATMUX_HOME/config/install/scope"
+  local home="$1"
+  local f="$home/config/install/scope"
   if [[ -f "$f" ]]; then
     case "$(tr -d '[:space:]' < "$f")" in
       project) echo "project"; return ;;
@@ -52,20 +59,35 @@ install_scope() {
 }
 
 install_project_root() {
-  local f="$ATMUX_HOME/config/install/project-root"
+  local home="$1"
+  local f="$home/config/install/project-root"
   if [[ -f "$f" ]]; then
     tr -d '\n' < "$f"
     return
   fi
 
-  case "$ATMUX_HOME" in
+  case "$home" in
     */.atmux)
-      dirname "$ATMUX_HOME"
+      dirname "$home"
       ;;
     *)
       pwd
       ;;
   esac
+}
+
+default_project_root() {
+  if [[ -n "$PROJECT_ROOT" ]]; then
+    (cd "$PROJECT_ROOT" && pwd)
+    return 0
+  fi
+
+  local git_root
+  if git_root="$(git rev-parse --show-toplevel 2>/dev/null)"; then
+    printf '%s\n' "$git_root"
+  else
+    pwd
+  fi
 }
 
 # Returns 0 if $1 > $2 (semver comparison)
@@ -96,25 +118,64 @@ main() {
     case "$1" in
       --check) CHECK_ONLY=1; shift ;;
       --version) TARGET_VERSION="$2"; shift 2 ;;
+      --project) PROJECT_MODE=1; shift ;;
+      --project-root)
+        [[ $# -ge 2 ]] || { echo "--project-root requires a path" >&2; exit 2; }
+        PROJECT_ROOT="$2"
+        PROJECT_MODE=1
+        shift 2
+        ;;
+      --project-root=*)
+        PROJECT_ROOT="${1#--project-root=}"
+        PROJECT_MODE=1
+        shift
+        ;;
       --auto)
-        mkdir -p "$(dirname "$AUTO_UPDATE_CONFIG")"
-        printf '1\n' > "$AUTO_UPDATE_CONFIG"
-        echo "auto-update enabled"
-        exit 0
+        ACTION="auto"
+        shift
         ;;
       --no-auto)
-        rm -f "$AUTO_UPDATE_CONFIG"
-        rmdir "$(dirname "$AUTO_UPDATE_CONFIG")" 2>/dev/null || true
-        echo "auto-update disabled"
-        exit 0
+        ACTION="no-auto"
+        shift
         ;;
       -h|--help) usage; exit 0 ;;
       *) echo "unknown flag: $1" >&2; usage >&2; exit 2 ;;
     esac
   done
 
+  local target_home
+  if [[ "$PROJECT_MODE" -eq 1 ]]; then
+    PROJECT_ROOT="$(default_project_root)"
+    target_home="$PROJECT_ROOT/.atmux"
+  else
+    target_home="$ATMUX_HOME"
+  fi
+
+  case "$ACTION" in
+    auto)
+      mkdir -p "$target_home/config/update"
+      printf '1\n' > "$target_home/config/update/auto"
+      if [[ "$PROJECT_MODE" -eq 1 ]]; then
+        echo "auto-update enabled for project: $PROJECT_ROOT"
+      else
+        echo "auto-update enabled"
+      fi
+      exit 0
+      ;;
+    no-auto)
+      rm -f "$target_home/config/update/auto"
+      rmdir "$target_home/config/update" 2>/dev/null || true
+      if [[ "$PROJECT_MODE" -eq 1 ]]; then
+        echo "auto-update disabled for project: $PROJECT_ROOT"
+      else
+        echo "auto-update disabled"
+      fi
+      exit 0
+      ;;
+  esac
+
   local current
-  current="$(installed_version)"
+  current="$(installed_version "$target_home")"
   echo "installed: ${current}"
 
   # Fetch release info
@@ -187,11 +248,21 @@ main() {
   chmod +x "$install_script"
 
   local scope
-  scope="$(install_scope)"
-  if [[ "$scope" == "project" ]]; then
-    ATMUX_HOME="$ATMUX_HOME" "$install_script" --project --project-root "$(install_project_root)" --no-slash-commands
+  if [[ "$PROJECT_MODE" -eq 1 ]]; then
+    scope="project"
   else
-    ATMUX_HOME="$ATMUX_HOME" "$install_script" --system --no-slash-commands
+    scope="$(install_scope "$target_home")"
+  fi
+  if [[ "$scope" == "project" ]]; then
+    local project_root
+    if [[ "$PROJECT_MODE" -eq 1 ]]; then
+      project_root="$PROJECT_ROOT"
+    else
+      project_root="$(install_project_root "$target_home")"
+    fi
+    ATMUX_HOME="$target_home" "$install_script" --project --project-root "$project_root" --no-slash-commands
+  else
+    ATMUX_HOME="$target_home" "$install_script" --system --no-slash-commands
   fi
   echo ""
   echo "updated to ${latest_version}"

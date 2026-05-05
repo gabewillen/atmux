@@ -540,9 +540,9 @@ atmux notify --pane %12 --xml '<notification type="abort" from="mgr" />' --inter
 #### `update`
 
 ```sh
-atmux update [--check] [--version <version>]
-atmux update --auto
-atmux update --no-auto
+atmux update [--project] [--project-root <dir>] [--check] [--version <version>]
+atmux update [--project] [--project-root <dir>] --auto
+atmux update [--project] [--project-root <dir>] --no-auto
 ```
 
 **Options**
@@ -550,12 +550,15 @@ atmux update --no-auto
 ```
 --check              Only report whether an update is available; do not install.
 --version <version>  Install a specific version (e.g. 0.2.0). Defaults to latest.
+--project            Update the current project's <project>/.atmux install.
+--project-root <dir> Project directory for --project (default: git root or cwd).
 --auto               Enable background auto-update on every atmux command (hourly throttle).
 --no-auto            Disable background auto-update.
 ```
 
 ```sh
 atmux update
+atmux update --project
 atmux update --check
 atmux update --version 0.2.0
 atmux update --auto

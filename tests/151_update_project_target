@@ -1,0 +1,106 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+source "$(dirname "${BASH_SOURCE[0]}")/lib/isolate-tmux.sh"
+
+ROOT="$(git rev-parse --show-toplevel)"
+UPDATE="$ROOT/bin/(atmux)/update"
+
+tmp="$(mktemp -d "${TMPDIR:-/tmp}/atmux-update-project.XXXXXX")"
+trap 'rm -rf "$tmp"' EXIT
+
+system_home="$tmp/system-home/.atmux"
+project="$tmp/project"
+project_home="$project/.atmux"
+fakebin="$tmp/bin"
+payload_root="$tmp/payload/atmux-9.9.9"
+tarball="$tmp/release.tgz"
+record="$tmp/install-record"
+
+mkdir -p "$system_home/src/atmux" "$project_home/src/atmux" "$fakebin" "$payload_root" "$project/subdir"
+project_real="$(cd "$project" && pwd -P)"
+project_home_real="$project_real/.atmux"
+printf '8.8.8\n' > "$system_home/src/atmux/VERSION"
+printf '1.0.0\n' > "$project_home/src/atmux/VERSION"
+
+git -C "$project" init -q
+
+cat > "$payload_root/install.sh" <<'INSTALL'
+#!/usr/bin/env bash
+set -euo pipefail
+{
+  printf 'ATMUX_HOME=%s\n' "${ATMUX_HOME:-}"
+  printf 'ARGS='
+  for arg in "$@"; do
+    printf '\t%s' "$arg"
+  done
+  printf '\n'
+} > "$ATMUX_TEST_INSTALL_RECORD"
+INSTALL
+chmod +x "$payload_root/install.sh"
+LC_ALL=C tar czf "$tarball" -C "$tmp/payload" atmux-9.9.9
+
+cat > "$fakebin/curl" <<'CURL'
+#!/usr/bin/env bash
+set -euo pipefail
+url="${@: -1}"
+case "$url" in
+  *api.github.com*)
+    printf '{"tag_name":"v9.9.9","tarball_url":"https://example.test/atmux-9.9.9.tgz"}\n'
+    ;;
+  https://example.test/atmux-9.9.9.tgz)
+    cat "$ATMUX_TEST_TARBALL"
+    ;;
+  *)
+    echo "unexpected curl URL: $url" >&2
+    exit 22
+    ;;
+esac
+CURL
+chmod +x "$fakebin/curl"
+
+out="$(
+  cd "$project/subdir"
+  PATH="$fakebin:$PATH" \
+    LC_ALL=C \
+    ATMUX_HOME="$system_home" \
+    ATMUX_TEST_TARBALL="$tarball" \
+    ATMUX_TEST_INSTALL_RECORD="$record" \
+    "$UPDATE" --project
+)"
+
+printf '%s\n' "$out" | grep -Fq "installed: 1.0.0" || {
+  echo "update --project did not read the project install version" >&2
+  echo "$out" >&2
+  exit 1
+}
+grep -Fx "ATMUX_HOME=$project_home_real" "$record" >/dev/null || {
+  echo "update --project did not run installer against project ATMUX_HOME" >&2
+  cat "$record" >&2
+  exit 1
+}
+grep -F -- "--project" "$record" >/dev/null || {
+  echo "update --project did not pass --project to installer" >&2
+  cat "$record" >&2
+  exit 1
+}
+grep -F -- "--project-root	$project_real" "$record" >/dev/null || {
+  echo "update --project did not pass the git project root to installer" >&2
+  cat "$record" >&2
+  exit 1
+}
+
+PATH="$fakebin:$PATH" ATMUX_HOME="$system_home" "$UPDATE" --project --project-root "$project" --auto >/dev/null
+[[ "$(cat "$project_home/config/update/auto")" == "1" ]] || {
+  echo "update --project --auto did not write project auto-update config" >&2
+  exit 1
+}
+
+rm -f "$project_home/config/update/auto"
+PATH="$fakebin:$PATH" ATMUX_HOME="$system_home" "$UPDATE" --auto --project-root "$project" >/dev/null
+[[ "$(cat "$project_home/config/update/auto")" == "1" ]] || {
+  echo "update --auto --project-root did not honor project flag order" >&2
+  exit 1
+}
+
+echo "ok: update --project targets the project-local atmux install"

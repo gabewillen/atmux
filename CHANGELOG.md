@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.21.1 — Project update target
+
+- Added `atmux update --project` and `--project-root <dir>` so a system
+  installed atmux can update a project-local `<project>/.atmux` install.
+- `atmux update --project --auto` and `--no-auto` now manage the project's
+  auto-update config instead of the running system install.
+
 ## 0.21.0 — Canonical agent shims
 
 - Added first-class `atmux shim install/list/show/resolve` support for shipped

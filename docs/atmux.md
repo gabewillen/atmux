@@ -70,10 +70,19 @@ Current built-in mapping:
 - Creates a filesystem pull request in `<ATMUX_HOME>/pull-requests/{{repo}}/`.
 
 ### `atmux send --to <name|session> [--reply-required] "message"`
-- Sends a message to a specific agent session or every agent in a team.
+- Sends a direct message to a specific agent session, or a team message to every agent in a team.
+- Team messages are stored in `<ATMUX_HOME>/team-messages/{{repo}}/{{team}}/{{id}}/`.
+- Team-message notifications include `atmux message read <id> --team <team> --repo <repo>`.
 - Resolution order for `--to`:
   1) Team session/name
   2) Agent session/name
+
+### `atmux message read <id> [--repo <repo>] [--team <team>]`
+### `atmux message list [--unread] [--repo <repo>] [--team <team>]`
+### `atmux message subscribe --team <team> [--repo <repo>]`
+- Without `--team`, reads or lists direct messages under `<ATMUX_HOME>/messages/{{repo}}/{{id}}/`.
+- With `--team`, reads or lists team messages visible to current team members or subscribed outside agents.
+- `message subscribe --team` registers the current pane for future team-message notifications. Remove it with `message unsubscribe --team` or `watcher kill <watcher_id>`.
 
 ### `atmux schedule (--interval <duration> | --once <duration>) --notification "text"`
 ### `atmux schedule (--interval <duration> | --once <duration>) -- <command> [args...]`

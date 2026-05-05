@@ -11,12 +11,16 @@ source "$HERE/(internal)/reporter"
 usage() {
   cat <<'USAGE'
 Usage:
-  atmux message read <id> [--repo <repo>]
-  atmux message list [--unread]
+  atmux message read <id> [--repo <repo>] [--team <team>]
+  atmux message list [--unread] [--repo <repo>] [--team <team>]
+  atmux message subscribe --team <team> [--repo <repo>]
+  atmux message unsubscribe --team <team> [--repo <repo>]
+  atmux message subscriptions [--repo <repo>] [--team <team>]
 
 Description:
-  Read or list filesystem-backed messages.
-  Messages are stored at: ~/.atmux/messages/<repo>/<id>/
+  Read, list, or subscribe to filesystem-backed messages.
+  Direct messages are stored at: ~/.atmux/messages/<repo>/<id>/
+  Team messages are stored at: ~/.atmux/team-messages/<repo>/<team>/<id>/
 USAGE
 }
 
@@ -104,13 +108,128 @@ message_is_for_current_agent() {
   return 1
 }
 
+team_session_for_name() {
+  local team="$1" repo="$2"
+  "$HERE/team" resolve "$team" "$repo" 2>/dev/null || true
+}
+
+current_reader_key() {
+  local session="" pane=""
+  session="$(current_session_name)"
+  if [[ -n "$session" ]]; then
+    normalize_name "session-$session"
+    return 0
+  fi
+  if [[ -n "${ATMUX_AGENT_NAME:-}" ]]; then
+    normalize_name "agent-$ATMUX_AGENT_NAME"
+    return 0
+  fi
+  pane="$(current_pane)"
+  if [[ -n "$pane" ]]; then
+    normalize_name "pane-$pane"
+    return 0
+  fi
+  printf 'local\n'
+}
+
+current_subscription_pane() {
+  local pane="" session=""
+  pane="$(current_pane)"
+  if [[ -n "$pane" ]]; then
+    printf '%s\n' "$pane"
+    return 0
+  fi
+  session="$(current_session_name)"
+  if [[ -n "$session" ]]; then
+    pane="$(primary_pane_for_session "$session")"
+    if [[ -n "$pane" ]]; then
+      printf '%s\n' "$pane"
+      return 0
+    fi
+  fi
+  return 1
+}
+
+current_context_is_empty() {
+  [[ -z "${ATMUX_AGENT_NAME:-}" && -z "${ATMUX_SESSION_NAME:-}" && -z "${TMUX:-}" && -z "${TMUX_PANE:-}" ]]
+}
+
+current_agent_is_team_member() {
+  local team="$1" repo="$2"
+  local team_session="" members_text="" member="" recipients_text="" candidate=""
+
+  team_session="$(team_session_for_name "$team" "$repo")"
+  [[ -n "$team_session" ]] || return 1
+
+  recipients_text="$(current_message_recipients "$repo")"
+  members_text="$(tmux list-panes -t "${team_session}:0" -F '#{@atmux_agent_session}' 2>/dev/null | awk 'NF' | sort -u || true)"
+  while IFS= read -r member; do
+    [[ -n "$member" ]] || continue
+    while IFS= read -r candidate; do
+      [[ -n "$candidate" ]] || continue
+      [[ "$member" == "$candidate" ]] && return 0
+    done <<< "$recipients_text"
+  done <<< "$members_text"
+
+  return 1
+}
+
+current_agent_is_team_message_subscriber() {
+  local team="$1" repo="$2"
+  local watchers_dir="" file="" pane="" session="" agent=""
+  local current_p="" current_s="" current_agent="${ATMUX_AGENT_NAME:-}"
+
+  watchers_dir="$(team_message_watchers_dir "$repo" "$team")"
+  [[ -d "$watchers_dir" ]] || return 1
+
+  current_p="$(current_pane)"
+  current_s="$(current_session_name)"
+
+  while IFS= read -r file; do
+    [[ -e "$file" ]] || continue
+    pane="$(cat "$file/pane" 2>/dev/null || cat "$file" 2>/dev/null || true)"
+    session="$(cat "$file/session" 2>/dev/null || true)"
+    agent="$(cat "$file/agent" 2>/dev/null || true)"
+    [[ -n "$current_p" && "$pane" == "$current_p" ]] && return 0
+    [[ -n "$current_s" && "$session" == "$current_s" ]] && return 0
+    [[ -n "$current_agent" && "$agent" == "$current_agent" ]] && return 0
+  done < <(find "$watchers_dir" -mindepth 1 -maxdepth 1 \( -type f -o -type d \) 2>/dev/null | sort)
+
+  return 1
+}
+
+team_message_is_for_current_context() {
+  local team="$1" repo="$2"
+
+  if current_context_is_empty; then
+    return 0
+  fi
+  current_agent_is_team_member "$team" "$repo" && return 0
+  current_agent_is_team_message_subscriber "$team" "$repo" && return 0
+  return 1
+}
+
+mark_team_message_read() {
+  local dir="$1" reader_key="$2"
+  mkdir -p "$dir/read"
+  if [[ ! -f "$dir/read/$reader_key" ]]; then
+    write_field "$dir/read/$reader_key" "$(timestamp_utc)"
+  fi
+}
+
+team_message_read_at_file() {
+  local dir="$1" reader_key="$2"
+  printf '%s/read/%s\n' "$dir" "$reader_key"
+}
+
 read_message() {
   local id="${1:-}"
   shift || true
   local explicit_repo=""
+  local team_name=""
 
   if [[ -z "$id" ]]; then
-    echo "usage: atmux message read <id> [--repo <repo>]" >&2
+    echo "usage: atmux message read <id> [--repo <repo>] [--team <team>]" >&2
     exit 2
   fi
 
@@ -118,6 +237,10 @@ read_message() {
     case "$1" in
       --repo)
         explicit_repo="${2:-}"
+        shift 2
+        ;;
+      --team)
+        team_name="$(normalize_name "${2:-}")"
         shift 2
         ;;
       *)
@@ -129,6 +252,44 @@ read_message() {
 
   local repo root dir
   repo="$(resolve_repo_name "$explicit_repo")"
+
+  if [[ -n "$team_name" ]]; then
+    root="$(team_message_root_for_team "$repo" "$team_name")"
+    dir="$root/$id"
+
+    if [[ ! -d "$dir" ]]; then
+      echo "message not found: $id" >&2
+      exit 1
+    fi
+
+    if ! team_message_is_for_current_context "$team_name" "$repo"; then
+      echo "message not found: $id" >&2
+      exit 1
+    fi
+
+    local from body reply_required timestamp stopped reader_key stopped_attr=""
+    from="$(cat "$dir/from" 2>/dev/null || true)"
+    body="$(cat "$dir/body" 2>/dev/null || true)"
+    reply_required="$(cat "$dir/reply_required" 2>/dev/null || true)"
+    timestamp="$(cat "$dir/timestamp" 2>/dev/null || true)"
+    stopped="$(cat "$dir/stopped" 2>/dev/null || true)"
+    [[ -n "$stopped" ]] && stopped_attr=" stopped=\"$(xml_escape "$stopped")\""
+
+    printf '<message id="%s" type="team" from="%s" team="%s" reply_required="%s" timestamp="%s"%s>\n' \
+      "$(xml_escape "$id")" \
+      "$(xml_escape "$from")" \
+      "$(xml_escape "$team_name")" \
+      "$(xml_escape "$reply_required")" \
+      "$(xml_escape "$timestamp")" \
+      "$stopped_attr"
+    printf '  <body>%s</body>\n' "$body"
+    printf '</message>\n'
+
+    reader_key="$(current_reader_key)"
+    mark_team_message_read "$dir" "$reader_key"
+    return 0
+  fi
+
   root="$(message_root_for_repo "$repo")"
   dir="$root/$id"
 
@@ -172,6 +333,7 @@ read_message() {
 list_messages() {
   local explicit_repo=""
   local unread_only=0
+  local team_name=""
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -183,6 +345,10 @@ list_messages() {
         unread_only=1
         shift
         ;;
+      --team)
+        team_name="$(normalize_name "${2:-}")"
+        shift 2
+        ;;
       *)
         echo "unknown flag: $1" >&2
         exit 2
@@ -192,6 +358,41 @@ list_messages() {
 
   local repo root
   repo="$(resolve_repo_name "$explicit_repo")"
+
+  if [[ -n "$team_name" ]]; then
+    root="$(team_message_root_for_team "$repo" "$team_name")"
+    if ! team_message_is_for_current_context "$team_name" "$repo"; then
+      echo "message team not found or not subscribed: $team_name" >&2
+      exit 1
+    fi
+
+    local reader_key
+    reader_key="$(current_reader_key)"
+    report_open messages repo="$repo" team="$team_name" type="team"
+    if [[ -d "$root" ]]; then
+      local dir id from reply_required timestamp
+      while IFS= read -r dir; do
+        [[ -d "$dir" ]] || continue
+        id="$(basename "$dir")"
+        if [[ "$unread_only" -eq 1 && -f "$(team_message_read_at_file "$dir" "$reader_key")" ]]; then
+          continue
+        fi
+        from="$(cat "$dir/from" 2>/dev/null || true)"
+        reply_required="$(cat "$dir/reply_required" 2>/dev/null || true)"
+        timestamp="$(cat "$dir/timestamp" 2>/dev/null || true)"
+        report_record message \
+          id="$id" \
+          type="team" \
+          from="$from" \
+          team="$team_name" \
+          reply_required="$reply_required" \
+          timestamp="$timestamp"
+      done < <(find "$root" -mindepth 1 -maxdepth 1 -type d | sort)
+    fi
+    report_close messages
+    return 0
+  fi
+
   root="$(message_root_for_repo "$repo")"
 
   report_open messages repo="$repo"
@@ -221,6 +422,155 @@ list_messages() {
   report_close messages
 }
 
+subscribe_team_messages() {
+  local explicit_repo="" team_name=""
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --repo)
+        explicit_repo="${2:-}"
+        shift 2
+        ;;
+      --team)
+        team_name="$(normalize_name "${2:-}")"
+        shift 2
+        ;;
+      *)
+        echo "unknown flag: $1" >&2
+        exit 2
+        ;;
+    esac
+  done
+
+  [[ -n "$team_name" ]] || { echo "missing required flag: --team <team>" >&2; exit 2; }
+
+  local repo team_session pane session agent watcher_name watcher_dir
+  repo="$(resolve_repo_name "$explicit_repo")"
+  team_session="$(team_session_for_name "$team_name" "$repo")"
+  if [[ -z "$team_session" ]]; then
+    echo "team not found: $team_name" >&2
+    exit 1
+  fi
+  pane="$(current_subscription_pane || true)"
+  if [[ -z "$pane" ]]; then
+    echo "message subscribe requires a tmux pane or ATMUX_SESSION_NAME" >&2
+    exit 2
+  fi
+
+  session="$(tmux display-message -t "$pane" -p '#{session_name}' 2>/dev/null || current_session_name || true)"
+  agent="${ATMUX_AGENT_NAME:-}"
+  watcher_name="$(pane_queue_key "$pane")"
+  watcher_dir="$(team_message_watcher_file "$repo" "$team_name" "$watcher_name")"
+  mkdir -p "$watcher_dir"
+  write_field "$watcher_dir/pane" "$pane"
+  write_field "$watcher_dir/session" "$session"
+  write_field "$watcher_dir/agent" "$agent"
+  write_field "$watcher_dir/repo" "$repo"
+  write_field "$watcher_dir/team" "$team_name"
+  write_field "$watcher_dir/subscribed_at" "$(timestamp_utc)"
+
+  printf '<subscription type="team-message" repo="%s" team="%s" watcher_id="%s" pane="%s" />\n' \
+    "$(xml_escape "$repo")" \
+    "$(xml_escape "$team_name")" \
+    "$(xml_escape "$(team_message_watcher_id "$repo" "$team_name" "$watcher_name")")" \
+    "$(xml_escape "$pane")"
+}
+
+unsubscribe_team_messages() {
+  local explicit_repo="" team_name=""
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --repo)
+        explicit_repo="${2:-}"
+        shift 2
+        ;;
+      --team)
+        team_name="$(normalize_name "${2:-}")"
+        shift 2
+        ;;
+      *)
+        echo "unknown flag: $1" >&2
+        exit 2
+        ;;
+    esac
+  done
+
+  [[ -n "$team_name" ]] || { echo "missing required flag: --team <team>" >&2; exit 2; }
+
+  local repo pane watcher_name watcher_dir
+  repo="$(resolve_repo_name "$explicit_repo")"
+  pane="$(current_subscription_pane || true)"
+  if [[ -z "$pane" ]]; then
+    echo "message unsubscribe requires a tmux pane or ATMUX_SESSION_NAME" >&2
+    exit 2
+  fi
+  watcher_name="$(pane_queue_key "$pane")"
+  watcher_dir="$(team_message_watcher_file "$repo" "$team_name" "$watcher_name")"
+  if [[ ! -d "$watcher_dir" && ! -f "$watcher_dir" ]]; then
+    echo "subscription not found for team: $team_name" >&2
+    exit 1
+  fi
+  rm -rf "$watcher_dir"
+
+  printf '<subscription type="team-message" repo="%s" team="%s" watcher_id="%s" removed="true" />\n' \
+    "$(xml_escape "$repo")" \
+    "$(xml_escape "$team_name")" \
+    "$(xml_escape "$(team_message_watcher_id "$repo" "$team_name" "$watcher_name")")"
+}
+
+list_team_message_subscriptions() {
+  local explicit_repo="" team_name=""
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --repo)
+        explicit_repo="${2:-}"
+        shift 2
+        ;;
+      --team)
+        team_name="$(normalize_name "${2:-}")"
+        shift 2
+        ;;
+      *)
+        echo "unknown flag: $1" >&2
+        exit 2
+        ;;
+    esac
+  done
+
+  local repo root watcher_dir watcher_name key file pane session agent sub_team sub_repo
+  repo="$(resolve_repo_name "$explicit_repo")"
+  report_open subscriptions repo="$repo" type="team-message"
+  root="$ATMUX_HOME/watch-team-message"
+  if [[ -d "$root" ]]; then
+    while IFS= read -r watcher_dir; do
+      [[ -d "$watcher_dir" ]] || continue
+      key="$(basename "$(dirname "$watcher_dir")")"
+      while IFS= read -r file; do
+        [[ -e "$file" ]] || continue
+        watcher_name="$(basename "$file")"
+        pane="$(cat "$file/pane" 2>/dev/null || cat "$file" 2>/dev/null || true)"
+        session="$(cat "$file/session" 2>/dev/null || true)"
+        agent="$(cat "$file/agent" 2>/dev/null || true)"
+        sub_repo="$(cat "$file/repo" 2>/dev/null || true)"
+        sub_team="$(cat "$file/team" 2>/dev/null || true)"
+        [[ "$sub_repo" == "$repo" ]] || continue
+        [[ -z "$team_name" || "$sub_team" == "$team_name" ]] || continue
+        report_record subscription \
+          type="team-message" \
+          repo="$sub_repo" \
+          team="$sub_team" \
+          watcher_id="team-message:$key:$watcher_name" \
+          pane="$pane" \
+          session="$session" \
+          agent="$agent"
+      done < <(find "$watcher_dir" -mindepth 1 -maxdepth 1 \( -type f -o -type d \) 2>/dev/null | sort)
+    done < <(find "$root" -mindepth 2 -maxdepth 2 -type d -name watchers 2>/dev/null | sort)
+  fi
+  report_close subscriptions
+}
+
 sub="${1:-}"
 shift || true
 
@@ -230,6 +580,15 @@ case "$sub" in
     ;;
   list|ls)
     list_messages "$@"
+    ;;
+  subscribe)
+    subscribe_team_messages "$@"
+    ;;
+  unsubscribe|unsub)
+    unsubscribe_team_messages "$@"
+    ;;
+  subscriptions)
+    list_team_message_subscriptions "$@"
     ;;
   -h|--help|help|"")
     usage

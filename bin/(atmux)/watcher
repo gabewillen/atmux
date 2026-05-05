@@ -13,18 +13,19 @@ Usage:
 Description:
   List or remove background watcher registrations.
   Watchers are created by `atmux pr watch --feed`, `atmux issue watch --feed`,
-  and `atmux pr watch <id|url>`.
+  `atmux pr watch <id|url>`, and `atmux message subscribe --team`.
 
   Watcher ids have the form <kind>:<key>:<watcher_name>, e.g.:
     pr:owner_repo_pr_123:atmux-myrepo-worker-_12
     issues:owner_repo_issues:atmux-myrepo-worker-_12
     prs:owner_repo_prs:atmux-myrepo-worker-_12
+    team-message:myrepo_platform:atmux-myrepo-observer-_12
 USAGE
 }
 
 list_watchers() {
   local kind dir watchers_dir watcher_file id
-  for kind in pr issues prs; do
+  for kind in pr issues prs team-message; do
     dir="$ATMUX_HOME/watch-$kind"
     [[ -d "$dir" ]] || continue
     while IFS= read -r watchers_dir; do
@@ -32,14 +33,14 @@ list_watchers() {
       local key
       key="$(basename "$(dirname "$watchers_dir")")"
       while IFS= read -r watcher_file; do
-        [[ -f "$watcher_file" ]] || continue
+        [[ -e "$watcher_file" ]] || continue
         local watcher_name
         watcher_name="$(basename "$watcher_file")"
         # Skip the .exec sidecar files emitted by --exec watchers.
         case "$watcher_name" in *.exec) continue ;; esac
         id="${kind}:${key}:${watcher_name}"
         printf '%s\n' "$id"
-      done < <(find "$watchers_dir" -mindepth 1 -maxdepth 1 -type f 2>/dev/null | sort)
+      done < <(find "$watchers_dir" -mindepth 1 -maxdepth 1 \( -type f -o -type d \) 2>/dev/null | sort)
     done < <(find "$dir" -mindepth 2 -maxdepth 2 -type d -name watchers 2>/dev/null | sort)
   done
 }

@@ -1,0 +1,112 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+source "$(dirname "${BASH_SOURCE[0]}")/lib/isolate-tmux.sh"
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPTS_DIR="$TESTS_DIR/scripts"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+
+wait_for_text() {
+  local target="$1"
+  local needle="$2"
+  local timeout="${3:-10}"
+  local deadline now snap compact
+  deadline=$(( $(date +%s) + timeout ))
+  while true; do
+    snap="$(tmux capture-pane -p -t "$target" -S -300 2>/dev/null || true)"
+    compact="$(printf '%s' "$snap" | tr -d '\r\n')"
+    if printf '%s' "$compact" | grep -Fq "$needle"; then
+      return 0
+    fi
+    now="$(date +%s)"
+    (( now < deadline )) || return 1
+    sleep 0.1
+  done
+}
+
+wait_for_absence() {
+  local target="$1"
+  local needle="$2"
+  local timeout="${3:-2}"
+  local deadline now
+  deadline=$(( $(date +%s) + timeout ))
+  while true; do
+    if wait_for_text "$target" "$needle" 1; then
+      return 1
+    fi
+    now="$(date +%s)"
+    (( now < deadline )) || return 0
+  done
+}
+
+tmp_root="$(mktemp -d "${TMPDIR:-/tmp}/atmux-team-message-unsubscribe.XXXXXX")"
+atmux_home="$tmp_root/.atmux"
+observer_session=""
+
+cleanup() {
+  [[ -z "$observer_session" ]] || tmux kill-session -t "$observer_session" >/dev/null 2>&1 || true
+  if [[ -n "${TEAM_SESSION:-}" ]]; then
+    "$SCRIPTS_DIR/teardown" --team-session "$TEAM_SESSION" --agent1-session "$AGENT1_SESSION" --agent2-session "$AGENT2_SESSION"
+  fi
+  rm -rf "$tmp_root"
+}
+trap cleanup EXIT
+
+setup_out="$(ATMUX_HOME="$atmux_home" "$SCRIPTS_DIR/setup")"
+eval "$setup_out"
+
+observer_session="atmux-${REPO_NAME}-observer"
+tmux new-session -d -s "$observer_session" -n "$observer_session" -c "$REPO_ROOT" "cat"
+tmux set-environment -t "$observer_session" ATMUX_REPO "$REPO_NAME"
+tmux set-environment -t "$observer_session" ATMUX_AGENT_NAME "observer"
+tmux set-environment -t "$observer_session" ATMUX_SESSION_NAME "$observer_session"
+observer_pane="$(tmux list-panes -t "$observer_session" -F '#{pane_id}' 2>/dev/null | head -n1)"
+[[ -n "$observer_pane" ]] || { echo "observer pane missing" >&2; exit 1; }
+
+subscribe_once() {
+  ATMUX_HOME="$atmux_home" ATMUX_REPO="$REPO_NAME" ATMUX_AGENT_NAME="observer" ATMUX_SESSION_NAME="$observer_session" \
+    "$ATMUX_BIN" message subscribe --team "$TEAM_NAME"
+}
+
+subscribe_out="$(subscribe_once)"
+watcher_id="$(printf '%s\n' "$subscribe_out" | sed -n 's/.*watcher_id="\([^"]*\)".*/\1/p' | head -n1)"
+[[ -n "$watcher_id" ]] || { echo "failed to parse watcher id" >&2; exit 1; }
+
+unsub_out="$(ATMUX_HOME="$atmux_home" ATMUX_REPO="$REPO_NAME" ATMUX_AGENT_NAME="observer" ATMUX_SESSION_NAME="$observer_session" \
+  "$ATMUX_BIN" message unsubscribe --team "$TEAM_NAME")"
+printf '%s\n' "$unsub_out" | grep -Fq 'removed="true"'
+
+send_out="$(ATMUX_HOME="$atmux_home" ATMUX_REPO="$REPO_NAME" ATMUX_AGENT_NAME="sender" ATMUX_SESSION_NAME="$AGENT1_SESSION" \
+  "$ATMUX_BIN" send --to "$TEAM_NAME" "after-unsubscribe-${RANDOM}")"
+message_id="$(printf '%s\n' "$send_out" | sed -n 's/.*message_id="\([^"]*\)".*/\1/p' | head -n1)"
+[[ -n "$message_id" ]] || { echo "failed to parse message id after unsubscribe" >&2; exit 1; }
+if ! wait_for_absence "$observer_pane" "$message_id" 2; then
+  echo "observer received notification after message unsubscribe" >&2
+  tmux capture-pane -p -t "$observer_pane" -S -120 >&2 || true
+  exit 1
+fi
+
+subscribe_out="$(subscribe_once)"
+watcher_id="$(printf '%s\n' "$subscribe_out" | sed -n 's/.*watcher_id="\([^"]*\)".*/\1/p' | head -n1)"
+[[ -n "$watcher_id" ]] || { echo "failed to parse watcher id after resubscribe" >&2; exit 1; }
+ATMUX_HOME="$atmux_home" ATMUX_REPO="$REPO_NAME" "$ATMUX_BIN" watcher kill "$watcher_id"
+
+watchers_after="$(ATMUX_HOME="$atmux_home" ATMUX_REPO="$REPO_NAME" "$ATMUX_BIN" watcher list)"
+if printf '%s\n' "$watchers_after" | grep -Fq "$watcher_id"; then
+  echo "team-message watcher survived watcher kill" >&2
+  printf '%s\n' "$watchers_after" >&2
+  exit 1
+fi
+
+send_out_2="$(ATMUX_HOME="$atmux_home" ATMUX_REPO="$REPO_NAME" ATMUX_AGENT_NAME="sender" ATMUX_SESSION_NAME="$AGENT1_SESSION" \
+  "$ATMUX_BIN" send --to "$TEAM_NAME" "after-watcher-kill-${RANDOM}")"
+message_id_2="$(printf '%s\n' "$send_out_2" | sed -n 's/.*message_id="\([^"]*\)".*/\1/p' | head -n1)"
+[[ -n "$message_id_2" ]] || { echo "failed to parse message id after watcher kill" >&2; exit 1; }
+if ! wait_for_absence "$observer_pane" "$message_id_2" 2; then
+  echo "observer received notification after watcher kill" >&2
+  tmux capture-pane -p -t "$observer_pane" -S -120 >&2 || true
+  exit 1
+fi
+
+echo "ok: team message subscriptions can be removed by unsubscribe and watcher kill"

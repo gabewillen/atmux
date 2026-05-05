@@ -5,6 +5,11 @@ set -euo pipefail
 # default tmux server. Idempotent if the runner already isolated.
 source "$(dirname "${BASH_SOURCE[0]}")/lib/isolate-tmux.sh"
 
+# Project install derives ATMUX_HOME from the project root; system install
+# uses $HOME/.atmux unless ATMUX_HOME is already set. Agent harnesses export
+# ATMUX_HOME, so drop it here to keep installs inside the synthetic HOME dirs.
+unset ATMUX_HOME
+
 TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
 ATMUX_BIN="$REPO_ROOT/bin/atmux"
@@ -29,6 +34,11 @@ HOME="$tmp_home" ATMUX_ALLOW_OUTSIDE_TMUX=1 "$ATMUX_BIN" install --project-root 
 grep -Fx "config/install/project-root" "$tmp_project/.atmux/.gitignore" >/dev/null || { echo "project .atmux gitignore should ignore local project-root metadata" >&2; exit 1; }
 [[ "$(cat "$tmp_project/.atmux/config/install/scope")" == "project" ]] || { echo "project install scope metadata missing" >&2; exit 1; }
 [[ "$(cat "$tmp_project/.atmux/config/install/project-root")" == "$tmp_project_real" ]] || { echo "project install root metadata missing" >&2; exit 1; }
+[[ -f "$tmp_project/.atmux/config/install/stamp" ]] || { echo "project install stamp missing" >&2; exit 1; }
+proj_stamp="$(tr -d '[:space:]' < "$tmp_project/.atmux/config/install/stamp")"
+[[ "$proj_stamp" =~ ^[0-9]{4}\.[0-9]{2}\.[0-9]{2}-[0-9a-f]{7,40}$ ]] \
+  || [[ "$proj_stamp" =~ ^[0-9]{4}\.[0-9]{2}\.[0-9]{2}-unknown$ ]] \
+  || { echo "project install stamp has unexpected shape: $proj_stamp" >&2; exit 1; }
 [[ -x "$tmp_project/.atmux/src/atmux/bin/atmux" ]] || { echo "project source install missing" >&2; exit 1; }
 [[ -x "$tmp_project/.atmux/shims/gh/gh" ]] || { echo "project install missing shipped gh shim" >&2; exit 1; }
 [[ -x "$tmp_project/.atmux/shims/git/git" ]] || { echo "project install missing shipped git shim" >&2; exit 1; }
@@ -50,6 +60,7 @@ HOME="$tmp_home_system" ATMUX_ALLOW_OUTSIDE_TMUX=1 "$ATMUX_BIN" install --system
 
 [[ -x "$tmp_home_system/.atmux/bin/atmux" ]] || { echo "system launcher missing after atmux install --system" >&2; exit 1; }
 [[ "$(cat "$tmp_home_system/.atmux/config/install/scope")" == "system" ]] || { echo "system install scope metadata missing" >&2; exit 1; }
+[[ -f "$tmp_home_system/.atmux/config/install/stamp" ]] || { echo "system install stamp missing" >&2; exit 1; }
 [[ ! -e "$tmp_home_system/.atmux/config/install/project-root" ]] || { echo "system install should not write project root metadata" >&2; exit 1; }
 [[ -f "$tmp_home_system/.claude/skills/atmux-send/SKILL.md" ]] || { echo "system claude atmux-send skill missing" >&2; exit 1; }
 [[ -f "$tmp_home_system/.gemini/commands/atmux-send.toml" ]] || { echo "system gemini atmux-send command missing" >&2; exit 1; }

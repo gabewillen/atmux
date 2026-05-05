@@ -74,12 +74,16 @@ Examples:
 
 ## message
 Usage:
-  atmux message read <id> [--repo <repo>]
-  atmux message list [--unread]
+  atmux message read <id> [--repo <repo>] [--team <team>]
+  atmux message list [--unread] [--repo <repo>] [--team <team>]
+  atmux message subscribe --team <team> [--repo <repo>]
+  atmux message unsubscribe --team <team> [--repo <repo>]
+  atmux message subscriptions [--repo <repo>] [--team <team>]
 
 Description:
-  Read or list filesystem-backed messages.
-  Messages are stored at: ~/.atmux/messages/<repo>/<id>/
+  Read, list, or subscribe to filesystem-backed messages.
+  Direct messages are stored at: ~/.atmux/messages/<repo>/<id>/
+  Team messages are stored at: ~/.atmux/team-messages/<repo>/<team>/<id>/
 
 ## schedule
 Usage:

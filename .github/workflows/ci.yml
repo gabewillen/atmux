@@ -24,7 +24,7 @@ jobs:
   test-shard:
     # 16 shards in parallel. Each runs ~7 tests via round-robin
     # selection (see tests/runner --shard). Per-shard timeout caps at
-    # 1 minute so any individual shard that overshoots fails the PR.
+    # 2 minutes so any individual shard that overshoots fails the PR.
     # Was 12; bumped because adding tests reshuffled the round-robin
     # and three slow watch/notify tests landed on the same shard.
     name: Integration tests (shard ${{ matrix.shard }}/16)
@@ -40,7 +40,7 @@ jobs:
         run: sudo apt-get install -y tmux
 
       - name: Run tests
-        timeout-minutes: 1
+        timeout-minutes: 2
         env:
           ATMUX_ALLOW_OUTSIDE_TMUX: "1"
         run: ./tests/runner --shard ${{ matrix.shard }}/16

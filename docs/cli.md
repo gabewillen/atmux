@@ -24,7 +24,13 @@ Creates a filesystem-backed pull request under `<ATMUX_HOME>/pull-requests/<repo
 
 ### `atmux send --to <agent|session|team> [--reply-required] [--interrupt] "message"`
 
-Queues a notification into another agent pane. Target resolution prefers teams, then agents/sessions. `--interrupt` uses the adapter interrupt submit key when available.
+Queues a notification into another agent pane. Target resolution prefers teams, then agents/sessions. Team targets are stored under `<ATMUX_HOME>/team-messages/<repo>/<team>/`, notify every current team member, and also notify outside panes registered with `atmux message subscribe --team <team>`. `--interrupt` uses the adapter interrupt submit key when available.
+
+### `atmux message read <id> [--repo <repo>] [--team <team>]`
+### `atmux message list [--unread] [--repo <repo>] [--team <team>]`
+### `atmux message subscribe --team <team> [--repo <repo>]`
+
+Reads and lists filesystem-backed direct messages by default. Pass `--team <team>` to read or list team messages. Team members can read team messages automatically; outside agents can subscribe for future team-message notifications and read access with `atmux message subscribe --team <team>`. Subscriptions can be removed with `atmux message unsubscribe --team <team>` or `atmux watcher kill <watcher_id>`.
 
 ### `atmux issue create --title <title> --assign-to <agent|session> [--description <description>] [--todo <todo>]...`
 
@@ -82,7 +88,7 @@ Stops an `atmux exec` tracked process, waits for completion notifications and wa
 
 ### `atmux watcher kill <id> [--timeout <seconds>]`
 
-Removes a watcher registration by id. Supports watcher ids emitted by `atmux pr watch <url>`, `atmux issue watch --feed`, and `atmux pr watch --feed`.
+Removes a watcher registration by id. Supports watcher ids emitted by `atmux pr watch <url>`, `atmux issue watch --feed`, `atmux pr watch --feed`, and `atmux message subscribe --team`.
 
 ### `atmux install [--project|--system] [--project-root <dir>] [--no-slash-commands]`
 

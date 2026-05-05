@@ -156,7 +156,7 @@ Commands:
   exec       Execute a command with passthrough stdio and unchanged exit behavior.
   install    Install atmux for a project by default, or system-wide when requested.
   issue      Repo-scoped issue tickets on filesystem.
-  message    Read or list filesystem-backed messages.
+  message    Read, list, or subscribe to filesystem-backed messages.
   notify     Send an ATMUX XML notification to a tmux pane.
   pane       Watch tmux pane text.
   path       Operate on filesystem paths matched by a glob.
@@ -184,7 +184,7 @@ Run:
 | `atmux exec [--detach \| --shared] [--] <command> [args...]` | Execute a command with passthrough stdio and unchanged exit behavior. |
 | `atmux install [--project\|--system] [--project-root <dir>] [--no-slash-commands]` | Install atmux for a project by default, or system-wide when requested. |
 | `atmux issue create --title <title> [--description <description>]` | Repo-scoped issue tickets on filesystem. |
-| `atmux message read <id> [--repo <repo>]` | Read or list filesystem-backed messages. |
+| `atmux message read <id> [--repo <repo>] [--team <team>]` | Read, list, or subscribe to filesystem-backed messages. |
 | `atmux notify --pane <tmux-pane-id> --xml <payload> [--interrupt]` | Send an ATMUX XML notification to a tmux pane. |
 | `atmux pane watch <target> --text <needle> [--scope pane\|window\|session]` | Watch tmux pane text. |
 | `atmux path watch <glob> [--timeout <seconds>] [--duration <seconds>]` | Operate on filesystem paths matched by a glob. |

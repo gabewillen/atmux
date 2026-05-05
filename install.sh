@@ -2,7 +2,8 @@
 set -euo pipefail
 
 ATMUX_REPO_URL="${ATMUX_REPO_URL:-https://github.com/gabewillen/atmux.git}"
-# ATMUX_VERSION takes precedence over ATMUX_REPO_REF when set (e.g. ATMUX_VERSION=0.2.0)
+# Remote clone ref: ATMUX_VERSION is a release tag (becomes v0.2.0), not the semver file at repo root.
+# Install identity for this machine is recorded separately in config/install/stamp (date + git short hash).
 if [[ -n "${ATMUX_VERSION:-}" ]]; then
   ATMUX_REPO_REF="v${ATMUX_VERSION}"
 else
@@ -262,6 +263,30 @@ write_install_metadata() {
   fi
 }
 
+# Records when/from what commit this tree was installed (UTC date + git short SHA).
+# Override with ATMUX_INSTALL_STAMP for reproducible or CI installs.
+write_install_stamp_from_source() {
+  local src_root="${1:-}"
+  mkdir -p "$ATMUX_HOME/config/install"
+  local stamp short=""
+  if [[ -n "${ATMUX_INSTALL_STAMP:-}" ]]; then
+    stamp="$ATMUX_INSTALL_STAMP"
+  else
+    if [[ -n "$src_root" && -d "$src_root/.git" ]]; then
+      short="$(git -C "$src_root" rev-parse --short HEAD 2>/dev/null || true)"
+    fi
+    if [[ -z "$short" && -d "${ATMUX_SRC_DIR:-}" && -d "$ATMUX_SRC_DIR/.git" ]]; then
+      short="$(git -C "$ATMUX_SRC_DIR" rev-parse --short HEAD 2>/dev/null || true)"
+    fi
+    if [[ -n "$short" ]]; then
+      stamp="$(date -u +%Y.%m.%d)-$short"
+    else
+      stamp="$(date -u +%Y.%m.%d)-unknown"
+    fi
+  fi
+  printf '%s\n' "$stamp" > "$ATMUX_HOME/config/install/stamp"
+}
+
 write_project_gitignore() {
   [[ "$INSTALL_SCOPE" == "project" ]] || return 0
 
@@ -353,6 +378,8 @@ USAGE
     install_from_remote
   fi
 
+  write_install_stamp_from_source "$src_root"
+
   write_launcher
   install_subcommands
   install_shipped_shims
@@ -361,9 +388,12 @@ USAGE
   fi
   add_path_hint
 
-  local installed_version=""
+  local installed_version="" install_stamp=""
   if [[ -f "$ATMUX_SRC_DIR/VERSION" ]]; then
     installed_version="$(tr -d '[:space:]' < "$ATMUX_SRC_DIR/VERSION")"
+  fi
+  if [[ -f "$ATMUX_HOME/config/install/stamp" ]]; then
+    install_stamp="$(tr -d '[:space:]' < "$ATMUX_HOME/config/install/stamp")"
   fi
 
   say ""
@@ -373,6 +403,7 @@ USAGE
   say "  home:     $ATMUX_HOME"
   say "  launcher: $ATMUX_BIN_DIR/atmux"
   [[ -n "$installed_version" ]] && say "  version:  $installed_version"
+  [[ -n "$install_stamp" ]] && say "  install:  $install_stamp"
   say ""
   say "Try: atmux --help"
 }

@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Route gh calls through `atmux gh` while the generated shim proxy keeps
+# PATH sanitized so a nested `gh` lookup resolves to the real binary.
+set -euo pipefail
+
+if [[ -n "${ATMUX_SHIM_REAL_BINARY:-}" && -x "$ATMUX_SHIM_REAL_BINARY" ]]; then
+  export ATMUX_REAL_GH="$ATMUX_SHIM_REAL_BINARY"
+fi
+
+ATMUX_NO_WRAP=1 exec atmux gh "$@"

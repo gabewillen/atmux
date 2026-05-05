@@ -1,0 +1,4 @@
+NAME=gh
+KIND=path-prefix
+DESCRIPTION="Route agent-issued GitHub CLI calls through atmux gh hooks."
+BINARIES=(gh)

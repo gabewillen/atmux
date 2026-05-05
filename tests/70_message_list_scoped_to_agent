@@ -23,8 +23,8 @@ id_sender="$(printf '%s\n' "$send_to_sender" | sed -n 's/.*message_id="\([^"]*\)
 
 receiver_list="$(ATMUX_REPO="$REPO_NAME" ATMUX_AGENT_NAME="receiver" ATMUX_SESSION_NAME="$AGENT2_SESSION" \
   "$ATMUX_BIN" message list)"
-printf '%s\n' "$receiver_list" | grep -Fq "$id_receiver"
-if printf '%s\n' "$receiver_list" | grep -Fq "$id_sender"; then
+grep -Fq "$id_receiver" <<< "$receiver_list"
+if grep -Fq "$id_sender" <<< "$receiver_list"; then
   echo "receiver list leaked sender-scoped message" >&2
   printf '%s\n' "$receiver_list" >&2
   exit 1
@@ -32,8 +32,8 @@ fi
 
 sender_list="$(ATMUX_REPO="$REPO_NAME" ATMUX_AGENT_NAME="sender" ATMUX_SESSION_NAME="$AGENT1_SESSION" \
   "$ATMUX_BIN" message list)"
-printf '%s\n' "$sender_list" | grep -Fq "$id_sender"
-if printf '%s\n' "$sender_list" | grep -Fq "$id_receiver"; then
+grep -Fq "$id_sender" <<< "$sender_list"
+if grep -Fq "$id_receiver" <<< "$sender_list"; then
   echo "sender list leaked receiver-scoped message" >&2
   printf '%s\n' "$sender_list" >&2
   exit 1

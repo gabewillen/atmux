@@ -50,15 +50,20 @@ chmod +x "$atmux_home/adapters/probe/cmd"
 
 tmux kill-session -t "$session" >/dev/null 2>&1 || true
 
-(
+agent_create_out="$(
   cd "$REPO_ROOT"
   HOME="$tmp_home" \
     ATMUX_HOME="$atmux_home" \
     ATMUX_SOURCE_ROOT="$REPO_ROOT" \
     ATMUX_ALLOW_OUTSIDE_TMUX=1 \
     "$ATMUX_BIN" agent create --name "$agent" --role probe --intelligence 50 \
-      --shared-worktree --adapter probe >/dev/null
-)
+      --shared-worktree --adapter probe 2>&1
+)" || {
+  rc=$?
+  echo "agent create failed with rc $rc" >&2
+  printf '%s\n' "$agent_create_out" >&2
+  exit "$rc"
+}
 
 deadline=$(( $(date +%s) + 10 ))
 while [[ ! -f "$atmux_home/tmux-alias-rc" ]]; do
@@ -71,6 +76,12 @@ done
 
 tmux_path="$(tr -d '\r\n' < "$atmux_home/tmux-path")"
 [[ "$tmux_path" == "$REPO_ROOT/bin/tmux" ]] || { echo "expected tmux shim path, got ${tmux_path:-missing}" >&2; exit 1; }
+
+mouse_value="$(tmux display-message -t "$session" -p '#{mouse}' 2>/dev/null | tr -d '\r\n' || true)"
+case "$mouse_value" in
+  0|off) ;;
+  *) echo "expected managed agent session mouse=off to prevent accidental copy-mode, got ${mouse_value:-missing}" >&2; exit 1 ;;
+esac
 
 allow_value="$(tr -d '\r\n' < "$atmux_home/tmux-allow")"
 [[ -z "$allow_value" ]] || { echo "adapter inherited real tmux allowance: $allow_value" >&2; exit 1; }

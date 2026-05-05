@@ -20,7 +20,7 @@ say() {
 }
 
 ensure_dirs() {
-  mkdir -p "$ATMUX_HOME" "$ATMUX_BIN_DIR" "$ATMUX_BIN_DIR/scripts" "$ATMUX_HOME/agents" "$ATMUX_HOME/adapters"
+  mkdir -p "$ATMUX_HOME" "$ATMUX_BIN_DIR" "$ATMUX_BIN_DIR/scripts" "$ATMUX_HOME/agents" "$ATMUX_HOME/adapters" "$ATMUX_HOME/shims"
 }
 
 write_file() {
@@ -129,6 +129,26 @@ install_subcommands() {
     cp -R "$src_scripts"/. "$dst_scripts"/
     find "$dst_scripts" -type f -exec chmod +x {} \;
   fi
+}
+
+install_shipped_shims() {
+  local src_shims="$ATMUX_SRC_DIR/shims"
+  local dst_shims="$ATMUX_HOME/shims"
+  local src name dst
+  [[ -d "$src_shims" ]] || return 0
+  mkdir -p "$dst_shims"
+  while IFS= read -r src; do
+    [[ -d "$src" ]] || continue
+    name="$(basename "$src")"
+    dst="$dst_shims/$name"
+    if [[ -d "$dst/.git" ]]; then
+      say "Leaving third-party shim in place: $name"
+      continue
+    fi
+    rm -rf "$dst"
+    cp -R "$src" "$dst"
+    find "$dst" -type f -perm -u+x -exec chmod +x {} \;
+  done < <(find "$src_shims" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort)
 }
 
 add_path_hint() {
@@ -254,6 +274,8 @@ write_project_gitignore() {
 !src/**
 !adapters/
 !adapters/**
+!shims/
+!shims/**
 !config/
 !config/**
 config/install/project-root
@@ -333,6 +355,7 @@ USAGE
 
   write_launcher
   install_subcommands
+  install_shipped_shims
   if [[ "$INSTALL_SLASH_COMMANDS" -eq 1 ]]; then
     install_slash_commands
   fi

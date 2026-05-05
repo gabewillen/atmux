@@ -1,0 +1,119 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+GH_SHIM="$REPO_ROOT/shims/gh/gh"
+
+tmp="$(mktemp -d "${TMPDIR:-/tmp}/atmux-gh-shim.XXXXXX")"
+cleanup() { rm -rf "$tmp"; }
+trap cleanup EXIT
+
+fakebin="$tmp/fakebin"
+atmux_home="$tmp/home"
+mkdir -p "$fakebin" "$atmux_home"
+
+cat > "$fakebin/gh" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$ATMUX_TEST_GH_LOG"
+case "$1 $2" in
+  "pr create")
+    printf 'https://github.com/gabewillen/atmux/pull/24\n'
+    ;;
+  "repo view")
+    printf 'gabewillen/atmux\n'
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+SH
+chmod +x "$fakebin/gh"
+
+cat > "$fakebin/tmux" <<'SH'
+#!/usr/bin/env bash
+case "$1" in
+  display-message)
+    case "$*" in
+      *'#{session_name}'*) printf 'atmux-demo-agent\n' ;;
+      *'#{pane_id}'*) printf '%%7\n' ;;
+    esac
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+SH
+chmod +x "$fakebin/tmux"
+
+ATMUX_TEST_GH_LOG="$tmp/gh.log" \
+PATH="$REPO_ROOT/bin:$fakebin:$PATH" \
+ATMUX_HOME="$atmux_home" \
+ATMUX_SOURCE_ROOT="$REPO_ROOT" \
+ATMUX_SHIM_REAL_BINARY="$fakebin/gh" \
+ATMUX_REPO=demo \
+ATMUX_AGENT_NAME=agent \
+TMUX_PANE="%7" \
+ATMUX_GH_SHIM_WATCH_INTERVAL=1 \
+  "$GH_SHIM" pr create --title "shim test" >"$tmp/out"
+
+grep -Fxq 'https://github.com/gabewillen/atmux/pull/24' "$tmp/out" || {
+  echo "gh pr create output was not passed through" >&2
+  cat "$tmp/out" >&2
+  exit 1
+}
+
+watchers_dir="$atmux_home/watch-pr/gabewillen_atmux_pr_24/watchers"
+[[ -d "$watchers_dir" ]] || {
+  echo "gh pr create did not create PR watcher directory" >&2
+  find "$atmux_home" -maxdepth 4 -type f -o -type d >&2 || true
+  exit 1
+}
+
+watcher_count="$(find "$watchers_dir" -mindepth 1 -maxdepth 1 -type f ! -name '*.exec' | wc -l | tr -d ' ')"
+[[ "$watcher_count" == "1" ]] || {
+  echo "expected one watcher registration, got $watcher_count" >&2
+  find "$watchers_dir" -maxdepth 1 -type f -print -exec cat {} \; >&2
+  exit 1
+}
+
+watcher_file="$(find "$watchers_dir" -mindepth 1 -maxdepth 1 -type f ! -name '*.exec' | head -n 1)"
+grep -Fq '%7|0' "$watcher_file" || {
+  echo "watcher registration does not target creating pane" >&2
+  cat "$watcher_file" >&2
+  exit 1
+}
+
+ATMUX_TEST_GH_LOG="$tmp/gh.log" \
+PATH="$REPO_ROOT/bin:$fakebin:$PATH" \
+ATMUX_HOME="$atmux_home" \
+ATMUX_SOURCE_ROOT="$REPO_ROOT" \
+ATMUX_SHIM_REAL_BINARY="$fakebin/gh" \
+ATMUX_REPO=demo \
+ATMUX_AGENT_NAME=agent \
+TMUX_PANE="%7" \
+  "$GH_SHIM" pr checkout --editor 24 >/dev/null
+
+checkout_number="$(tr -d '\r\n' < "$atmux_home/agents/demo/agent/gh-hooks/last-pr-checkout-number")"
+[[ "$checkout_number" == "24" ]] || {
+  echo "gh shim treated boolean --editor as a value-consuming flag; checkout number: ${checkout_number:-missing}" >&2
+  exit 1
+}
+
+ATMUX_TEST_GH_LOG="$tmp/gh.log" \
+PATH="$REPO_ROOT/bin:$fakebin:$PATH" \
+ATMUX_HOME="$atmux_home" \
+ATMUX_SOURCE_ROOT="$REPO_ROOT" \
+ATMUX_SHIM_REAL_BINARY="$fakebin/gh" \
+ATMUX_REPO=demo \
+ATMUX_AGENT_NAME=agent \
+TMUX_PANE="%7" \
+  "$GH_SHIM" pr checkout --branch feature-branch 25 >/dev/null
+
+checkout_number="$(tr -d '\r\n' < "$atmux_home/agents/demo/agent/gh-hooks/last-pr-checkout-number")"
+[[ "$checkout_number" == "25" ]] || {
+  echo "gh shim treated --branch value as checkout number; checkout number: ${checkout_number:-missing}" >&2
+  exit 1
+}
+
+echo "ok: gh shim auto-registers PR watcher after gh pr create"

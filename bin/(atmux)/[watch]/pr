@@ -197,16 +197,10 @@ fetch_pr_poll_data() {
     -F number="$number" \
     --jq '
       .data.repository.pullRequest as $pr
-      | (
-          if $pr.mergedAt != null or $pr.state == "MERGED" then "merged"
-          elif $pr.state == "CLOSED" then "closed"
-          else "open"
-          end
-        ) as $watch_state
-      | "STATE|\($watch_state)",
-        (
-          [
-            $pr.comments.nodes[]? |
+      | [
+          "STATE|\(if $pr.mergedAt != null or $pr.state == "MERGED" then "merged" elif $pr.state == "CLOSED" then "closed" else "open" end)",
+          ([
+            ($pr.comments.nodes[]? |
               {
                 updatedAt,
                 kind: "issue_comment",
@@ -214,8 +208,8 @@ fetch_pr_poll_data() {
                 author: (.author.login // "unknown"),
                 state: "",
                 body: (.body // "")
-              },
-            $pr.reviews.nodes[]? |
+              }),
+            ($pr.reviews.nodes[]? |
               {
                 updatedAt,
                 kind: "review",
@@ -223,8 +217,8 @@ fetch_pr_poll_data() {
                 author: (.author.login // "unknown"),
                 state: (.state // ""),
                 body: (.body // "")
-              },
-            $pr.reviews.nodes[]?.comments.nodes[]? |
+              }),
+            ($pr.reviews.nodes[]? as $review | $review.comments.nodes[]? |
               {
                 updatedAt,
                 kind: "review_comment",
@@ -232,12 +226,13 @@ fetch_pr_poll_data() {
                 author: (.author.login // "unknown"),
                 state: "",
                 body: (.body // "")
-              }
+              })
           ]
-          | sort_by(.updatedAt, .id)
+          | sort_by([.updatedAt, .id])
           | .[]
-          | "\(.updatedAt)|\(.kind)|\(.id)|\(.author)|\(.state)|\((.body | gsub(\"[\\r\\n]+\"; \" \") | .[0:160]))"
-        )
+          | "\(.updatedAt)|\(.kind)|\(.id)|\(.author)|\(.state)|\((.body | gsub("[\\r\\n]+"; " ") | .[0:160]))"
+          )
+        ] | .[]
     ' 2>/dev/null || return 1
 }
 

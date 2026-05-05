@@ -181,6 +181,7 @@ Resources (use `atmux <noun> --help` for verbs):
   pane       tmux pane operations (watch)
   path       filesystem path operations (watch)
   git        git working tree operations (watch)
+  gh         GitHub CLI operations with PR notification hooks
 
 Verbs (no resource home):
   send       message another agent or team
@@ -430,6 +431,9 @@ Resolution precedence:
 ~/.atmux/shims/<name>
 <source_root>/shims/<name>
 
+Installed shims are active for every adapter by default. An adapter can opt
+out by setting SHIMS=off in its manifest.
+
 #### `watcher`
 
 ```sh
@@ -534,6 +538,20 @@ worktree add  Records the new worktree's absolute path at
               $ATMUX_HOME/agents/<repo>/<agent>/git-hooks/last-worktree-add
               on success. Pair-program's navigator uses this to
               follow the driver's worktree.
+
+#### `gh`
+
+```sh
+atmux gh <gh-args...>
+```
+
+Transparent wrapper around GitHub CLI (`gh`). Every invocation is forwarded
+to the real `gh` executable with the same stdout, stderr, and exit code.
+
+When run through the agent shim, successful `gh pr create` commands
+automatically register the creating agent's pane for `atmux pr watch` on the
+created GitHub pull request. The existing PR watcher then delivers comment
+notifications until the PR closes or merges.
 
 ### Cross-cutting verbs
 
@@ -685,6 +703,7 @@ atmux install --no-slash-commands
 | `ATMUX_TEAM` | Team this agent belongs to |
 | `ATMUX_SESSION_ID` | Unique session identifier |
 | `ATMUX_SESSION_KIND` | `agent` or `team` |
+| `ATMUX_TMUX_MOUSE` | Tmux mouse mode for managed sessions, `off` by default to avoid accidental copy-mode blocking notifications; set `on` to restore tmux mouse scrolling |
 
 ## Agent coordination rules
 

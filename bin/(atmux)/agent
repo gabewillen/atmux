@@ -5,6 +5,8 @@ ATMUX_HOME="${ATMUX_HOME:-$HOME/.atmux}"
 HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=bin/(atmux)/notify
 source "$HERE/notify"
+# shellcheck source=bin/(atmux)/(lib)/tmux
+source "$HERE/(lib)/tmux"
 
 usage() {
   cat <<'USAGE'
@@ -634,27 +636,7 @@ adapter_name_valid() {
 }
 
 resolve_real_tmux_bin() {
-  local candidate=""
-
-  if [[ -n "${ATMUX_REAL_TMUX:-}" && -x "$ATMUX_REAL_TMUX" ]]; then
-    printf '%s\n' "$ATMUX_REAL_TMUX"
-    return 0
-  fi
-
-  for candidate in /opt/homebrew/bin/tmux /usr/local/bin/tmux /usr/bin/tmux /bin/tmux; do
-    if [[ -x "$candidate" ]]; then
-      printf '%s\n' "$candidate"
-      return 0
-    fi
-  done
-
-  candidate="$(command -v tmux 2>/dev/null || true)"
-  if [[ -n "$candidate" && -x "$candidate" && "$candidate" != "${ATMUX_SOURCE_ROOT:-}/bin/tmux" ]]; then
-    printf '%s\n' "$candidate"
-    return 0
-  fi
-
-  return 1
+  atmux_real_tmux_bin
 }
 
 adapter_in_list() {
@@ -700,34 +682,10 @@ attach_or_switch() {
     return
   fi
 
-  if [[ -n "${TMUX:-}" ]]; then
+  if atmux_tmux_current_client_is_project_server; then
     tmux switch-client -t "$session"
   else
-    tmux attach-session -t "$session"
-  fi
-}
-
-ensure_tmux_pane_defaults() {
-  local history_limit mouse_mode
-  history_limit="${ATMUX_TMUX_HISTORY_LIMIT:-200000}"
-  mouse_mode="${ATMUX_TMUX_MOUSE:-off}"
-  case "$mouse_mode" in
-    on|off) ;;
-    *) mouse_mode="off" ;;
-  esac
-
-  tmux set-window-option -g history-limit "$history_limit" >/dev/null 2>&1 || true
-
-  while IFS= read -r window_id; do
-    [[ -z "$window_id" ]] && continue
-    tmux set-window-option -t "$window_id" history-limit "$history_limit" >/dev/null 2>&1 || true
-  done < <(tmux list-windows -a -F '#{window_id}' 2>/dev/null || true)
-
-  # Default mouse off for managed agent sessions. Mouse wheel scrolling puts
-  # tmux panes into copy-mode, and notification delivery intentionally waits
-  # while a pane is in copy-mode so it cannot paste into the mode layer.
-  if [[ -n "${1:-}" ]]; then
-    tmux set-option -t "$1" mouse "$mouse_mode" >/dev/null 2>&1 || true
+    TMUX= tmux attach-session -t "$session"
   fi
 }
 
@@ -1324,7 +1282,7 @@ spawn_agent_session() {
     else
       export ATMUX_SOURCE_ROOT="$repo_root"
     fi
-    ensure_tmux_scroll_enabled
+    atmux_configure_tmux_pane_defaults "$session"
     attach_or_switch "$session"
     return
   fi
@@ -1374,7 +1332,7 @@ spawn_agent_session() {
   session_id="$(id)"
 
   tmux new-session -d -s "$session" -n "$session" -c "$work_dir"
-  ensure_tmux_pane_defaults "$session"
+  atmux_configure_tmux_pane_defaults "$session"
   tmux set-environment -t "$session" ATMUX_REPO "$repo_name"
   tmux set-environment -t "$session" ATMUX_HOME "$ATMUX_HOME"
   tmux set-environment -t "$session" ATMUX_SESSION_ID "$session_id"
@@ -1495,7 +1453,7 @@ attach_agent() {
   else
     export ATMUX_SOURCE_ROOT="$repo_root"
   fi
-  ensure_tmux_scroll_enabled
+  atmux_configure_tmux_pane_defaults "$session"
   attach_or_switch "$session"
 }
 
@@ -1512,6 +1470,7 @@ ensure_team_dashboard_for_agent() {
   local hard_min_w hard_min_h
   local team_cap current_count
   local team_history_limit team_alternate_screen
+  local attach_cmd
 
   int_or_default() {
     local value="${1:-}"
@@ -1611,6 +1570,7 @@ ensure_team_dashboard_for_agent() {
   team_height="$(max_int "$team_height" "$hard_min_h")"
   team_history_limit="$(int_or_default "${ATMUX_TEAM_HISTORY_LIMIT:-300000}" 300000)"
   team_alternate_screen="${ATMUX_TEAM_ALTERNATE_SCREEN:-off}"
+  attach_cmd="$(atmux_tmux_attach_command)" || return 1
 
   if tmux has-session -t "$team_session" 2>/dev/null; then
     current_count="$(team_member_count "$team_session")"
@@ -1624,7 +1584,7 @@ ensure_team_dashboard_for_agent() {
   fi
 
   if ! tmux has-session -t "$team_session" 2>/dev/null; then
-    tmux new-session -d -x "$team_width" -y "$team_height" -s "$team_session" -n "$team_session" -c "$repo_root" "TMUX= tmux attach-session -r -t \"$agent_session\""
+    tmux new-session -d -x "$team_width" -y "$team_height" -s "$team_session" -n "$team_session" -c "$repo_root" "TMUX= $attach_cmd attach-session -r -t \"$agent_session\""
     tmux set-environment -t "$team_session" ATMUX_REPO "$repo_name" >/dev/null 2>&1 || true
     tmux set-environment -t "$team_session" ATMUX_TEAM "$team_name" >/dev/null 2>&1 || true
     tmux set-environment -t "$team_session" ATMUX_SESSION_NAME "$team_session" >/dev/null 2>&1 || true
@@ -1649,17 +1609,17 @@ ensure_team_dashboard_for_agent() {
       pane_id="$reusable_pane"
       tmux send-keys -t "$pane_id" C-c >/dev/null 2>&1 || true
       tmux send-keys -t "$pane_id" C-u >/dev/null 2>&1 || true
-      tmux send-keys -t "$pane_id" "TMUX= tmux attach-session -r -t \"$agent_session\"" C-m >/dev/null 2>&1 || true
+      tmux send-keys -t "$pane_id" "TMUX= $attach_cmd attach-session -r -t \"$agent_session\"" C-m >/dev/null 2>&1 || true
     else
       pane_count="$(tmux list-panes -t "${team_session}:0" 2>/dev/null | wc -l | tr -d ' ')"
       if ! [[ "$pane_count" =~ ^[0-9]+$ ]]; then
         pane_count=1
       fi
       apply_team_layout $(( pane_count + 1 ))
-      pane_id="$(tmux split-window -d -t "${team_session}:0" -c "$repo_root" -P -F '#{pane_id}' "TMUX= tmux attach-session -r -t \"$agent_session\"" 2>/dev/null || true)"
+      pane_id="$(tmux split-window -d -t "${team_session}:0" -c "$repo_root" -P -F '#{pane_id}' "TMUX= $attach_cmd attach-session -r -t \"$agent_session\"" 2>/dev/null || true)"
       if [[ -z "$pane_id" ]]; then
         apply_team_layout $(( pane_count + 2 ))
-        pane_id="$(tmux split-window -d -t "${team_session}:0" -c "$repo_root" -P -F '#{pane_id}' "TMUX= tmux attach-session -r -t \"$agent_session\"" 2>/dev/null || true)"
+        pane_id="$(tmux split-window -d -t "${team_session}:0" -c "$repo_root" -P -F '#{pane_id}' "TMUX= $attach_cmd attach-session -r -t \"$agent_session\"" 2>/dev/null || true)"
       fi
     fi
   fi

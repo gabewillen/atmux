@@ -30,6 +30,9 @@ else
 fi
 
 export TMUX_TMPDIR="$ATMUX_TESTS_TMUX_TMPDIR"
+export ATMUX_TMUX_SOCKET="$ATMUX_TESTS_TMUX_TMPDIR/tmux-$(id -u)/default"
+mkdir -p "$(dirname -- "$ATMUX_TMUX_SOCKET")"
+chmod 700 "$(dirname -- "$ATMUX_TMUX_SOCKET")"
 
 # Hard-fail if TMUX_TMPDIR is somehow empty after our setup. This should
 # never happen, but a refusal is better than silently polluting the

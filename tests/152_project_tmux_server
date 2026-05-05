@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+source "$(dirname "${BASH_SOURCE[0]}")/lib/isolate-tmux.sh"
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+ATMUX_BIN="$REPO_ROOT/bin/atmux"
+
+tmp_root="$(mktemp -d "${TMPDIR:-/tmp}/atmux-project-tmux.XXXXXX")"
+tmp_home="$tmp_root/home"
+atmux_home="$tmp_root/project/.atmux"
+repo_name="$(basename "$REPO_ROOT" | sed -E 's/[^A-Za-z0-9_-]+/_/g; s/_+/_/g; s/^_+//; s/_+$//')"
+[[ -n "$repo_name" ]] || repo_name="repo"
+agent="project-tmux-${RANDOM}"
+session="atmux-${repo_name}-${agent}"
+project_socket="$(env -u ATMUX_TMUX_SOCKET ATMUX_HOME="$atmux_home" bash -c 'source "$1"; atmux_tmux_socket' bash "$REPO_ROOT/bin/(atmux)/(lib)/tmux")"
+
+cleanup() {
+  tmux -S "$project_socket" kill-server >/dev/null 2>&1 || true
+  tmux kill-session -t "$session" >/dev/null 2>&1 || true
+  rm -rf "$tmp_root"
+}
+trap cleanup EXIT
+
+mkdir -p "$tmp_home" "$atmux_home/adapters/probe"
+cat > "$atmux_home/adapters/probe/cmd" <<'ADAPTER'
+#!/usr/bin/env bash
+set -euo pipefail
+case "${1:-}" in
+  control-file) ;;
+  start) sleep 30 ;;
+  status) printf '<adapter-state state="idle" />\n' ;;
+  *) ;;
+esac
+ADAPTER
+chmod +x "$atmux_home/adapters/probe/cmd"
+
+(
+  cd "$REPO_ROOT"
+  unset ATMUX_TMUX_SOCKET
+  HOME="$tmp_home" \
+    ATMUX_HOME="$atmux_home" \
+    ATMUX_SOURCE_ROOT="$REPO_ROOT" \
+    ATMUX_ALLOW_OUTSIDE_TMUX=1 \
+    "$ATMUX_BIN" agent create --name "$agent" --role probe --intelligence 50 \
+      --shared-worktree --adapter probe >/dev/null
+)
+
+tmux -S "$project_socket" has-session -t "$session" 2>/dev/null \
+  || { echo "expected project tmux server to own $session" >&2; exit 1; }
+
+if tmux has-session -t "$session" 2>/dev/null; then
+  echo "expected default tmux server not to own $session" >&2
+  exit 1
+fi
+
+mouse_value="$(tmux -S "$project_socket" display-message -t "$session" -p '#{mouse}' 2>/dev/null | tr -d '\r\n' || true)"
+case "$mouse_value" in
+  0|off) ;;
+  *) echo "expected project tmux session mouse=off, got ${mouse_value:-missing}" >&2; exit 1 ;;
+esac
+
+global_history_limit="$(tmux -S "$project_socket" show-options -gwqv history-limit 2>/dev/null | tr -d '\r\n' || true)"
+[[ "$global_history_limit" == "200000" ]] \
+  || { echo "expected project tmux server global history-limit=200000, got ${global_history_limit:-missing}" >&2; exit 1; }
+
+echo "ok: managed agent uses project tmux server with mouse off and high scrollback"

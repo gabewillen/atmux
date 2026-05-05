@@ -12,7 +12,8 @@ ATMUX_BIN="$REPO_ROOT/bin/atmux"
 tmp_root="$(mktemp -d "${TMPDIR:-/tmp}/atmux-tmux-shim.XXXXXX")"
 tmp_home="$tmp_root/home"
 atmux_home="$tmp_home/.atmux"
-repo_name="amux_sh"
+repo_name="$(basename "$REPO_ROOT" | sed -E 's/[^A-Za-z0-9_-]+/_/g; s/_+/_/g; s/^_+//; s/_+$//')"
+[[ -n "$repo_name" ]] || repo_name="repo"
 agent="shim-${RANDOM}"
 session="atmux-${repo_name}-${agent}"
 
@@ -98,5 +99,9 @@ if ! grep -Fq '<atmux command="agent list --all"' "$atmux_home/tmux-alias-out"; 
   cat "$atmux_home/tmux-alias-out" >&2 || true
   exit 1
 fi
+
+real_tmux_env="$(tmux show-environment -t "$session" ATMUX_REAL_TMUX 2>/dev/null | sed -n 's/^ATMUX_REAL_TMUX=//p' || true)"
+[[ -n "$real_tmux_env" && -x "$real_tmux_env" ]] \
+  || { echo "expected managed agent session to record real tmux path, got ${real_tmux_env:-missing}" >&2; exit 1; }
 
 echo "ok: agent tmux command resolves to atmux shim while atmux internals keep real tmux"

@@ -19,10 +19,14 @@ fi
 kind="$(tmux show-environment -t "$TEAM_SESSION" ATMUX_SESSION_KIND 2>/dev/null | sed -n 's/^ATMUX_SESSION_KIND=//p')"
 repo="$(tmux show-environment -t "$TEAM_SESSION" ATMUX_REPO 2>/dev/null | sed -n 's/^ATMUX_REPO=//p')"
 team="$(tmux show-environment -t "$TEAM_SESSION" ATMUX_TEAM 2>/dev/null | sed -n 's/^ATMUX_TEAM=//p')"
+mouse="$(tmux display-message -t "$TEAM_SESSION" -p '#{mouse}' 2>/dev/null | tr -d '\r\n' || true)"
 
 [[ "$kind" == "team" ]] || { echo "expected ATMUX_SESSION_KIND=team, got: ${kind:-<empty>}" >&2; exit 1; }
 [[ "$repo" == "$REPO_NAME" ]] || { echo "expected ATMUX_REPO=$REPO_NAME, got: ${repo:-<empty>}" >&2; exit 1; }
 [[ "$team" == "$TEAM_NAME" ]] || { echo "expected ATMUX_TEAM=$TEAM_NAME, got: ${team:-<empty>}" >&2; exit 1; }
+case "$mouse" in
+  0|off) ;;
+  *) echo "expected team session mouse=off so observers scroll via keyboard copy-mode, got: ${mouse:-<empty>}" >&2; exit 1 ;;
+esac
 
 echo "ok: team created and tagged ($TEAM_SESSION)"
-

@@ -32,6 +32,9 @@ chmod +x "$fakebin/gh"
 
 cat > "$fakebin/tmux" <<'SH'
 #!/usr/bin/env bash
+if [[ "${1:-}" == "-S" ]]; then
+  shift 2
+fi
 case "$1" in
   display-message)
     case "$*" in
@@ -70,14 +73,16 @@ watchers_dir="$atmux_home/watch-pr/gabewillen_atmux_pr_24/watchers"
   exit 1
 }
 
-watcher_count="$(find "$watchers_dir" -mindepth 1 -maxdepth 1 -type f ! -name '*.exec' | wc -l | tr -d ' ')"
+watcher_list="$tmp/watchers.list"
+find "$watchers_dir" -mindepth 1 -maxdepth 1 -type f ! -name '*.exec' | sort > "$watcher_list"
+watcher_count="$(wc -l < "$watcher_list" | tr -d ' ')"
 [[ "$watcher_count" == "1" ]] || {
   echo "expected one watcher registration, got $watcher_count" >&2
   find "$watchers_dir" -maxdepth 1 -type f -print -exec cat {} \; >&2
   exit 1
 }
 
-watcher_file="$(find "$watchers_dir" -mindepth 1 -maxdepth 1 -type f ! -name '*.exec' | head -n 1)"
+watcher_file="$(sed -n '1p' "$watcher_list")"
 grep -Fq '%7|0' "$watcher_file" || {
   echo "watcher registration does not target creating pane" >&2
   cat "$watcher_file" >&2

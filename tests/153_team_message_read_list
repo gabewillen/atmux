@@ -9,9 +9,11 @@ SCRIPTS_DIR="$TESTS_DIR/scripts"
 tmp_root="$(mktemp -d "${TMPDIR:-/tmp}/atmux-team-message-read.XXXXXX")"
 atmux_home="$tmp_root/.atmux"
 empty_team_session=""
+raw_team_session=""
 
 cleanup() {
   [[ -z "$empty_team_session" ]] || tmux kill-session -t "$empty_team_session" >/dev/null 2>&1 || true
+  [[ -z "$raw_team_session" ]] || tmux kill-session -t "$raw_team_session" >/dev/null 2>&1 || true
   if [[ -n "${TEAM_SESSION:-}" ]]; then
     "$SCRIPTS_DIR/teardown" --team-session "$TEAM_SESSION" --agent1-session "$AGENT1_SESSION" --agent2-session "$AGENT2_SESSION"
   fi
@@ -86,5 +88,22 @@ empty_message_id="$(printf '%s\n' "$empty_send" | sed -n 's/.*message_id="\([^"]
 printf '%s\n' "$empty_send" | grep -Fq 'attempted="0"'
 [[ -d "$atmux_home/team-messages/$REPO_NAME/$empty_team/$empty_message_id" ]] \
   || { echo "empty team message was not stored" >&2; exit 1; }
+
+raw_team="raw team ${RANDOM}"
+normalized_raw_team="${raw_team// /_}"
+raw_out="$(ATMUX_HOME="$atmux_home" ATMUX_REPO="$REPO_NAME" "$ATMUX_BIN" team create "$raw_team" --shared-worktree)"
+raw_team_session="$(printf '%s\n' "$raw_out" | sed -n 's/.*session="\([^"]*\)".*/\1/p' | head -n1)"
+[[ -n "$raw_team_session" ]] || { echo "failed to parse raw team session" >&2; exit 1; }
+
+raw_send="$(ATMUX_HOME="$atmux_home" ATMUX_REPO="$REPO_NAME" ATMUX_AGENT_NAME="sender" ATMUX_SESSION_NAME="$AGENT1_SESSION" \
+  "$ATMUX_BIN" send --to "$raw_team" "raw-team-${RANDOM}")"
+raw_message_id="$(printf '%s\n' "$raw_send" | sed -n 's/.*message_id="\([^"]*\)".*/\1/p' | head -n1)"
+[[ -n "$raw_message_id" ]] || { echo "failed to parse raw team message id" >&2; exit 1; }
+printf '%s\n' "$raw_send" | grep -Fq "name=\"$normalized_raw_team\""
+[[ -d "$atmux_home/team-messages/$REPO_NAME/$normalized_raw_team/$raw_message_id" ]] \
+  || { echo "raw team message was not stored under normalized team name" >&2; exit 1; }
+raw_read="$(ATMUX_HOME="$atmux_home" ATMUX_REPO="$REPO_NAME" \
+  "$ATMUX_BIN" message read "$raw_message_id" --team "$raw_team")"
+printf '%s\n' "$raw_read" | grep -Fq "id=\"$raw_message_id\""
 
 echo "ok: team messages persist separately and track unread per reader"

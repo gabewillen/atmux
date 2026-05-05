@@ -252,18 +252,27 @@ repo_name="$(repo_name_from_context)"
 from_session="$(sender_session)"
 debug_notify "send:start from=$(printf '%q' "$from_session") to=$(printf '%q' "$target_name") repo=$(printf '%q' "$repo_name") interrupt=$interrupt reply_required=$reply_required"
 
+team_name="$(normalize_name "$target_name")"
 team_session="$("$HERE/team" resolve "$target_name" "$repo_name" || true)"
+if [[ -z "$team_session" && "$team_name" != "$target_name" ]]; then
+  team_session="$("$HERE/team" resolve "$team_name" "$repo_name" || true)"
+fi
 
 if [[ -n "$team_session" ]]; then
-  debug_notify "send:team_resolved target=$(printf '%q' "$target_name") session=$(printf '%q' "$team_session")"
+  case "$team_session" in
+    "atmux-${repo_name}-team-"*)
+      team_name="${team_session#atmux-${repo_name}-team-}"
+      ;;
+  esac
+  debug_notify "send:team_resolved target=$(printf '%q' "$target_name") team=$(printf '%q' "$team_name") session=$(printf '%q' "$team_session")"
   members=()
   while IFS= read -r s; do
     [[ -n "$s" ]] || continue
     members+=("$s")
   done < <(tmux list-panes -t "${team_session}:0" -F '#{@atmux_agent_session}' 2>/dev/null | awk 'NF' | sort -u)
 
-  msg_id="$(store_team_message "$repo_name" "$from_session" "$target_name" "$message" "$reply_required_value")"
-  printf -v read_cmd 'atmux message read %q --team %q --repo %q' "$msg_id" "$target_name" "$repo_name"
+  msg_id="$(store_team_message "$repo_name" "$from_session" "$team_name" "$message" "$reply_required_value")"
+  printf -v read_cmd 'atmux message read %q --team %q --repo %q' "$msg_id" "$team_name" "$repo_name"
 
   attempted=0
   delivered=0
@@ -273,7 +282,7 @@ if [[ -n "$team_session" ]]; then
   notified_panes=""
   for s in "${members[@]+"${members[@]}"}"; do
     attempted=$((attempted + 1))
-    payload="$(build_team_message_payload "$from_session" "$target_name" "$read_cmd" "$reply_required_value")"
+    payload="$(build_team_message_payload "$from_session" "$team_name" "$read_cmd" "$reply_required_value")"
     member_keys=()
     member_pre_keys=""
     member_bypass=""
@@ -304,7 +313,7 @@ if [[ -n "$team_session" ]]; then
     fi
   done
 
-  subscribers_dir="$(team_message_watchers_dir "$repo_name" "$target_name")"
+  subscribers_dir="$(team_message_watchers_dir "$repo_name" "$team_name")"
   if [[ -d "$subscribers_dir" ]]; then
     while IFS= read -r subscriber; do
       [[ -e "$subscriber" ]] || continue
@@ -314,13 +323,13 @@ if [[ -n "$team_session" ]]; then
       subscriber_repo="$(cat "$subscriber/repo" 2>/dev/null || true)"
       subscriber_team="$(cat "$subscriber/team" 2>/dev/null || true)"
       [[ -n "$subscriber_pane" ]] || continue
-      [[ "$subscriber_repo" == "$repo_name" && "$subscriber_team" == "$target_name" ]] || continue
+      [[ "$subscriber_repo" == "$repo_name" && "$subscriber_team" == "$team_name" ]] || continue
       if text_has_line "$notified_sessions" "$subscriber_session" || text_has_line "$notified_panes" "$subscriber_pane"; then
         continue
       fi
 
       attempted=$((attempted + 1))
-      payload="$(build_team_message_payload "$from_session" "$target_name" "$read_cmd" "$reply_required_value")"
+      payload="$(build_team_message_payload "$from_session" "$team_name" "$read_cmd" "$reply_required_value")"
       if send_to_pane "$subscriber_pane" "$payload"; then
         delivered=$((delivered + 1))
         notified_panes+="$subscriber_pane"$'\n'
@@ -334,7 +343,7 @@ if [[ -n "$team_session" ]]; then
   fi
 
   printf '<send to="team" name="%s" session="%s" message_id="%s" queued="%s" attempted="%s" failed="%s">\n%s</send>\n' \
-    "$(xml_escape "$target_name")" \
+    "$(xml_escape "$team_name")" \
     "$(xml_escape "$team_session")" \
     "$(xml_escape "$msg_id")" \
     "$(xml_escape "$delivered")" \
@@ -343,7 +352,7 @@ if [[ -n "$team_session" ]]; then
     "$results"
 
   if (( failed > 0 )); then
-    notify_sender_failed_send "$target_name" "failed to queue for ${failed} team target(s)"
+    notify_sender_failed_send "$team_name" "failed to queue for ${failed} team target(s)"
     exit 1
   fi
   exit 0

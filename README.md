@@ -22,7 +22,7 @@ Install by piping `curl` into `sh`, or clone the repo and run `./install.sh`. Th
 - **You can actually see the agents work.** It's just tmux. Attach to any session, watch the agent think in real time, detach and come back later. No custom TUI, no web dashboard, no log tailing.
 - **Git worktree per agent.** Each agent gets its own branch and working directory under `ATMUX_HOME/agents/`. Parallel agents can't stomp each other's changes, and cleanup is a single `atmux agent kill`.
 
-> **Experimental** — this project is under active development (current version: `0.21.0`). APIs, commands, and behavior may change without notice. Use at your own risk.
+> **Experimental** — this project is under active development (current version: `0.21.1`). APIs, commands, and behavior may change without notice. Use at your own risk.
 
 ## Install
 
@@ -643,9 +643,9 @@ atmux notify --pane %12 --xml '<notification type="abort" from="mgr" />' --inter
 #### `update`
 
 ```sh
-atmux update [--check] [--version <version>]
-atmux update --auto
-atmux update --no-auto
+atmux update [--project] [--project-root <dir>] [--check] [--version <version>]
+atmux update [--project] [--project-root <dir>] --auto
+atmux update [--project] [--project-root <dir>] --no-auto
 ```
 
 **Options**
@@ -653,12 +653,15 @@ atmux update --no-auto
 ```
 --check              Only report whether an update is available; do not install.
 --version <version>  Install a specific version (e.g. 0.2.0). Defaults to latest.
+--project            Update the current project's <project>/.atmux install.
+--project-root <dir> Project directory for --project (default: git root or cwd).
 --auto               Enable background auto-update on every atmux command (hourly throttle).
 --no-auto            Disable background auto-update.
 ```
 
 ```sh
 atmux update
+atmux update --project
 atmux update --check
 atmux update --version 0.2.0
 atmux update --auto

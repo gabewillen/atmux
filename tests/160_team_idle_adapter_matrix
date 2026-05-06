@@ -1,0 +1,204 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+source "$(dirname "${BASH_SOURCE[0]}")/lib/isolate-tmux.sh"
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+ATMUX_BIN="$REPO_ROOT/bin/atmux"
+
+adapters=(codex gemini claude-code cursor-agent auto)
+
+wait_for_text() {
+  local target="$1"
+  local needle="$2"
+  local timeout="${3:-10}"
+  local deadline now snap compact
+  deadline=$(( $(date +%s) + timeout ))
+  while true; do
+    snap="$(tmux capture-pane -p -t "$target" -S -300 2>/dev/null || true)"
+    compact="$(printf '%s' "$snap" | tr -d '\r\n')"
+    if printf '%s' "$compact" | grep -Fq "$needle"; then
+      return 0
+    fi
+    now="$(date +%s)"
+    (( now < deadline )) || return 1
+    sleep 0.1
+  done
+}
+
+normalize_name() {
+  local raw="${1:-}"
+  local normalized
+  normalized="$(printf '%s' "$raw" | sed -E 's/[^A-Za-z0-9_-]+/_/g; s/_+/_/g; s/^_+//; s/_+$//')"
+  [[ -n "$normalized" ]] || normalized="repo"
+  printf '%s\n' "$normalized"
+}
+
+tmp_root="$(mktemp -d "${TMPDIR:-/tmp}/atmux-team-idle-matrix.XXXXXX")"
+atmux_home="$tmp_root/.atmux"
+repo_name="teamidlematrix${RANDOM}"
+creator_session="atmux-${repo_name}-creator"
+creator_pane=""
+created_sessions=()
+watcher_pids=()
+
+cleanup() {
+  local session pid
+  for pid in "${watcher_pids[@]+"${watcher_pids[@]}"}"; do
+    [[ -n "$pid" ]] || continue
+    kill "$pid" >/dev/null 2>&1 || true
+    wait "$pid" >/dev/null 2>&1 || true
+  done
+  for session in "${created_sessions[@]+"${created_sessions[@]}"}" "$creator_session"; do
+    [[ -n "$session" ]] || continue
+    tmux kill-session -t "$session" >/dev/null 2>&1 || true
+  done
+  rm -rf "$tmp_root"
+}
+trap cleanup EXIT
+
+tmux new-session -d -s "$creator_session" -n "$creator_session" -c "$REPO_ROOT" "/bin/bash" -l
+tmux set-environment -t "$creator_session" ATMUX_HOME "$atmux_home"
+tmux set-environment -t "$creator_session" ATMUX_REPO "$repo_name"
+tmux set-environment -t "$creator_session" ATMUX_SOURCE_ROOT "$REPO_ROOT"
+tmux set-environment -t "$creator_session" ATMUX_AGENT_NAME "creator"
+tmux set-environment -t "$creator_session" ATMUX_SESSION_NAME "$creator_session"
+tmux set-environment -t "$creator_session" ATMUX_SESSION_KIND "agent"
+creator_pane="$(tmux list-panes -t "$creator_session" -F '#{pane_id}' 2>/dev/null | head -n1)"
+[[ -n "$creator_pane" ]] || { echo "creator pane missing" >&2; exit 1; }
+
+busy_text_for_adapter() {
+  case "$1" in
+    codex) printf 'disabled while a task is in progress\n' ;;
+    gemini) printf 'working\n' ;;
+    claude-code) printf 'working\n' ;;
+    cursor-agent) printf 'running command\n' ;;
+    auto) printf 'auto selected\n' ;;
+    *) printf 'working\n' ;;
+  esac
+}
+
+idle_text_for_adapter() {
+  case "$1" in
+    gemini) printf '{"type":"result","status":"success"}\n' ;;
+    cursor-agent) printf '{"type":"result","status":"success"}\n' ;;
+    *) printf 'ready\n' ;;
+  esac
+}
+
+write_member_pane() {
+  local session="$1" text="$2" pane cmd
+  pane="$(tmux list-panes -t "$session" -F '#{pane_id}' 2>/dev/null | head -n1)"
+  tmux clear-history -t "$pane" >/dev/null 2>&1 || true
+  printf -v cmd "printf '%%s\\n' %q; sleep 100000" "$text"
+  tmux respawn-pane -k -t "$pane" "$cmd"
+  sleep 0.2
+}
+
+create_member() {
+  local team="$1" adapter="$2" name="$3" session
+  session="atmux-${repo_name}-${name}"
+  tmux new-session -d -s "$session" -n "$session" -c "$REPO_ROOT" "sleep 100000"
+  tmux set-environment -t "$session" ATMUX_HOME "$atmux_home"
+  tmux set-environment -t "$session" ATMUX_REPO "$repo_name"
+  tmux set-environment -t "$session" ATMUX_SOURCE_ROOT "$REPO_ROOT"
+  tmux set-environment -t "$session" ATMUX_AGENT_NAME "$name"
+  tmux set-environment -t "$session" ATMUX_SESSION_NAME "$session"
+  tmux set-environment -t "$session" ATMUX_ADAPTER "$adapter"
+  tmux set-environment -t "$session" ATMUX_ADAPTER_SELECTED "codex"
+  tmux set-environment -t "$session" ATMUX_TEAM "$team"
+  write_member_pane "$session" "$(busy_text_for_adapter "$adapter")"
+  printf '%s\n' "$session"
+}
+
+record_member() {
+  local team="$1" session="$2" name="$3" adapter="$4" members_dir member_dir
+  members_dir="$atmux_home/teams/$repo_name/$team/members"
+  member_dir="$members_dir/$(normalize_name "$session")"
+  mkdir -p "$member_dir"
+  printf '%s\n' "$session" > "$member_dir/session"
+  printf '%s\n' "$name" > "$member_dir/name"
+  printf '%s\n' "$adapter" > "$member_dir/adapter"
+}
+
+create_team_and_watcher() {
+  local team="$1" watcher_name watcher_dir pid
+  ATMUX_HOME="$atmux_home" ATMUX_REPO="$repo_name" ATMUX_SOURCE_ROOT="$REPO_ROOT" \
+    "$ATMUX_BIN" team create "$team" --shared-worktree >/dev/null
+
+  watcher_name="$(normalize_name "matrix-$team")"
+  watcher_dir="$atmux_home/watch-team-idle/$(normalize_name "${repo_name}--team--${team}")/watchers/$watcher_name"
+  mkdir -p "$watcher_dir"
+  printf '%s\n' "$creator_pane" > "$watcher_dir/pane"
+  printf '%s\n' "$creator_session" > "$watcher_dir/session"
+  printf '%s\n' "creator" > "$watcher_dir/agent"
+  printf '%s\n' "$repo_name" > "$watcher_dir/repo"
+  printf '%s\n' "$team" > "$watcher_dir/team"
+
+  ATMUX_HOME="$atmux_home" ATMUX_REPO="$repo_name" ATMUX_SOURCE_ROOT="$REPO_ROOT" \
+    ATMUX_TEAM_IDLE_SECONDS=1 ATMUX_TEAM_IDLE_INTERVAL=1 \
+    "$ATMUX_BIN" team _idle-watch --repo "$repo_name" --team "$team" --watcher "$watcher_name" \
+      >"$watcher_dir/worker.log" 2>&1 &
+  pid="$!"
+  watcher_pids+=("$pid")
+  printf '%s\n' "$pid" > "$watcher_dir/worker.pid"
+}
+
+assert_no_team_idle() {
+  local team="$1"
+  if wait_for_text "$creator_pane" "team=\"$team\" reason=\"all_idle\"" 1; then
+    echo "team-idle fired too early for $team" >&2
+    exit 1
+  fi
+}
+
+assert_team_idle() {
+  local team="$1"
+  if ! wait_for_text "$creator_pane" "team=\"$team\" reason=\"all_idle\"" 10; then
+    echo "team-idle did not fire for $team" >&2
+    tmux capture-pane -p -t "$creator_pane" -S -200 >&2 || true
+    exit 1
+  fi
+}
+
+for adapter in "${adapters[@]}"; do
+  team="single-${adapter//-/_}"
+  member_name="${team}-member"
+  create_team_and_watcher "$team"
+  member_session="$(create_member "$team" "$adapter" "$member_name")"
+  created_sessions+=("$member_session")
+  record_member "$team" "$member_session" "$member_name" "$adapter"
+  if [[ "$adapter" != "auto" ]]; then
+    sleep 2
+    assert_no_team_idle "$team"
+  fi
+  write_member_pane "$member_session" "$(idle_text_for_adapter "$adapter")"
+  assert_team_idle "$team"
+done
+
+mixed_team="all-adapters"
+create_team_and_watcher "$mixed_team"
+mixed_sessions=()
+for adapter in "${adapters[@]}"; do
+  member_name="all-${adapter//-/_}"
+  member_session="$(create_member "$mixed_team" "$adapter" "$member_name")"
+  created_sessions+=("$member_session")
+  mixed_sessions+=("$member_session")
+  record_member "$mixed_team" "$member_session" "$member_name" "$adapter"
+done
+
+sleep 2
+assert_no_team_idle "$mixed_team"
+
+for i in "${!adapters[@]}"; do
+  adapter="${adapters[$i]}"
+  write_member_pane "${mixed_sessions[$i]}" "$(idle_text_for_adapter "$adapter")"
+  if (( i < ${#adapters[@]} - 1 )); then
+    sleep 2
+    assert_no_team_idle "$mixed_team"
+  fi
+done
+assert_team_idle "$mixed_team"
+
+echo "ok: team-idle watches every adapter and an all-adapter team"

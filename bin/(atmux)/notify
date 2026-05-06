@@ -212,6 +212,31 @@ team_message_watcher_id() {
   printf 'team-message:%s:%s\n' "$(team_message_watch_key "$repo" "$team")" "$watcher_name"
 }
 
+team_idle_watch_key() {
+  local repo="$1" team="$2"
+  normalize_name "${repo}--team--${team}"
+}
+
+team_idle_watch_dir() {
+  local repo="$1" team="$2"
+  printf '%s/watch-team-idle/%s\n' "$ATMUX_HOME" "$(team_idle_watch_key "$repo" "$team")"
+}
+
+team_idle_watchers_dir() {
+  local repo="$1" team="$2"
+  printf '%s/watchers\n' "$(team_idle_watch_dir "$repo" "$team")"
+}
+
+team_idle_watcher_dir() {
+  local repo="$1" team="$2" watcher_name="$3"
+  printf '%s/%s\n' "$(team_idle_watchers_dir "$repo" "$team")" "$watcher_name"
+}
+
+team_idle_watcher_id() {
+  local repo="$1" team="$2" watcher_name="$3"
+  printf 'team-idle:%s:%s\n' "$(team_idle_watch_key "$repo" "$team")" "$watcher_name"
+}
+
 resolve_notify_script_path() {
   local source_root="$1"
   local notify_script="$source_root/bin/(atmux)/notify"

@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.23.0 — Team idle notifications
+
+- Automatically subscribe an agent that creates a team to a team-idle
+  notification for that team.
+- Added a `team-idle` watcher that emits once all current team members report
+  idle through their adapter status hooks, and re-arms after any member becomes
+  active again.
+- Extended watcher listing and removal to include automatic team-idle
+  subscriptions.
+
 ## 0.22.0 — Role-defined collaboration teams
 
 - Removed the legacy global manager prompt/control-file behavior; team coordination now belongs in team/member roles.

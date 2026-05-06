@@ -1,0 +1,3 @@
+KIND=agent
+INTELLIGENCE=40
+ADAPTERS=(cursor-agent)

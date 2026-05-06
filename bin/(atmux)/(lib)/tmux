@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Shared tmux defaults for atmux-managed sessions.
+# Shared tmux defaults for atmux sessions.
 
 atmux_real_tmux_bin() {
   local candidate resolved self_path
@@ -86,7 +86,7 @@ atmux_configure_tmux_pane_defaults() {
 
   tmux set-window-option -g history-limit "$history_limit" >/dev/null 2>&1 || true
   if [[ -n "$session" ]]; then
-    # Default mouse off for managed sessions. Observers can still enter tmux
+    # Default mouse off for atmux sessions. Observers can still enter tmux
     # copy-mode from the keyboard when they need to scroll.
     tmux set-option -t "$session" mouse "$mouse_mode" >/dev/null 2>&1 || true
     while IFS= read -r window_id; do

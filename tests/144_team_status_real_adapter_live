@@ -150,7 +150,7 @@ ENVS=(ATMUX_ALLOW_OUTSIDE_TMUX=1 "ATMUX_HOME=$ATMUX_HOME"
 spawn_worker() {
   local name="$1" adapter="$2" out
   out="$(env "${ENVS[@]}" \
-    ATMUX_ROLE="implementer" ATMUX_INTELLIGENCE="50" ATMUX_MANAGER="manager" \
+    ATMUX_ROLE="implementer" ATMUX_INTELLIGENCE="50" \
     "$ATMUX_BIN" agent create --name "$name" --role worker --intelligence 50 \
       --adapter auto --adapters "$adapter" --team alpha --shared-worktree)"
   [[ -n "$out" ]] || { echo "create failed for $name" >&2; exit 1; }
@@ -182,8 +182,8 @@ grep -Fq 'name="worker-b"' <<<"$drill" || { echo "FAIL: drill missing worker-b" 
 # 3. Send notifications to both, observe drain on each.
 for w in worker-a worker-b; do
   send_out="$(env "${ENVS[@]}" \
-    ATMUX_AGENT_NAME="manager" \
-    ATMUX_SESSION_NAME="atmux-${repo}-manager" \
+    ATMUX_AGENT_NAME="sender" \
+    ATMUX_SESSION_NAME="atmux-${repo}-sender" \
     "$ATMUX_BIN" send --to "$w" "team status live ping ${RANDOM}")"
   message_id="$(sed -n 's/.*message_id="\([^"]*\)".*/\1/p' <<<"$send_out" | head -n1)"
   [[ -n "$message_id" ]] || { echo "FAIL: no message_id for $w send" >&2; exit 1; }

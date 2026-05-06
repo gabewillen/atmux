@@ -12,7 +12,7 @@ The default install is project-local: atmux lives in `<project>/.atmux`, its sou
 - **Role and team aware.** Roles define reusable prompts/hooks; teams spawn coordinated member agents.
 - **Agent-editable.** A project install keeps atmux source next to your code, so missing workflow glue can be patched locally.
 
-> **Experimental** — this project is under active development (current version: `0.21.2`). APIs, commands, and behavior may change without notice. Use at your own risk.
+> **Experimental** — this project is under active development (current version: `0.22.0`). APIs, commands, and behavior may change without notice. Use at your own risk.
 
 ## Install
 
@@ -67,7 +67,7 @@ Each agent is a named worker running an AI CLI in tmux. By default, `atmux agent
 
 ### Teams
 
-Teams group up to four agents. A team role can spawn member agents, wire watchers, and share a team worktree.
+Teams group any number of tmux-backed agents in filesystem state under `ATMUX_HOME`. A team role can spawn member agents, wire watchers, apply a time limit, and share a team worktree. `atmux team view <team>` creates an optional multiagent tmux view when you want to watch the members together.
 
 ```sh
 atmux team create platform
@@ -87,6 +87,7 @@ atmux agent create tester   --role tester   --team platform --intelligence 55
 
 | Role | Description | Members | Demo |
 |------|-------------|---------|------|
+| [`collab`](roles/teams/collab/README.md) | Create a multi-agent deliberation team: | [`arbiter`](roles/teams/collab/roles/arbiter/role.md): You are the Arbitrator for collab team `${ATMUX_TEAM}`.<br>[`collaborator`](roles/teams/collab/roles/collaborator/role.md): You are a substantive collaborator in collab team `${ATMUX_TEAM}`.<br>[`leader`](roles/teams/collab/roles/leader/role.md): You are the Leader for collab team `${ATMUX_TEAM}`.<br>[`recorder`](roles/teams/collab/roles/recorder/role.md): You are the Recorder for collab team `${ATMUX_TEAM}`. |  |
 | [`pair-program`](roles/teams/pair-program/README.md) | A driver-and-navigator team role where a fast model writes code while a stronger model watches the shared worktree and interrupts with review notes when the implementation drifts. | [`driver`](roles/teams/pair-program/roles/driver/README.md): The `driver` role is the fast implementation half of the pair-programming workflow. It writes code, runs tests, and responds to navigator feedback.<br>[`navigator`](roles/teams/pair-program/roles/navigator/README.md): The `navigator` role is the review half of the pair-programming workflow. It watches a shared worktree, reviews rolling diffs, and steers the driver without editing files directly. | [demo](roles/teams/pair-program/demo.gif) |
 
 ### Intelligence scale
@@ -204,25 +205,12 @@ Run:
 | `ATMUX_HOME` | Installation/state root (default: `<project>/.atmux` for project installs, `~/.atmux` for system installs) |
 | `ATMUX_REPO` | Repository name for the current agent or team |
 | `ATMUX_AGENT_NAME` | Current agent's name |
-| `ATMUX_MANAGER` | Parent manager agent name |
 | `ATMUX_WORKTREE` | Working directory (worktree or repo root) |
 | `ATMUX_TEAM` | Team this agent belongs to |
 | `ATMUX_SESSION_ID` | Unique agent run identifier |
 | `ATMUX_SESSION_KIND` | `agent` or `team` |
 | `ATMUX_TMUX_SOCKET` | Tmux server socket for the project; defaults to `$ATMUX_HOME/tmux/server.sock` when short enough, otherwise a stable per-project socket under `/tmp/atmux-tmux-<uid>/` |
-| `ATMUX_TMUX_MOUSE` | Tmux mouse mode for managed agents and teams, `off` by default to avoid accidental copy-mode blocking notifications; set `on` to restore tmux mouse scrolling |
-
-## Agent Coordination Rules
-
-Agents running under `atmux` are expected to:
-
-- Acknowledge manager messages quickly with a short plan.
-- Report completion with validation evidence (not just "done").
-- Message their manager when stuck: `atmux send --to <manager> "..."`
-- Escalate blockers immediately — never leave them unreported.
-- Reuse idle agents before spawning new ones.
-- Check `atmux team list` before creating new team members.
-- Never silently change scope — ask the manager first.
+| `ATMUX_TMUX_MOUSE` | Tmux mouse mode for agents and teams, `off` by default to avoid accidental copy-mode blocking notifications; set `on` to restore tmux mouse scrolling |
 
 ## More Docs
 

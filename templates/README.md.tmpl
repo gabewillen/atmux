@@ -67,7 +67,7 @@ Each agent is a named worker running an AI CLI in tmux. By default, `atmux agent
 
 ### Teams
 
-Teams group up to four agents. A team role can spawn member agents, wire watchers, and share a team worktree.
+Teams group any number of tmux-backed agents in filesystem state under `ATMUX_HOME`. A team role can spawn member agents, wire watchers, apply a time limit, and share a team worktree. `atmux team view <team>` creates an optional multiagent tmux view when you want to watch the members together.
 
 ```sh
 atmux team create platform
@@ -118,18 +118,6 @@ The top-level help is generated from `bin/atmux`:
 ## Environment variables
 
 {{ENV_VARS_TABLE}}
-
-## Agent Coordination Rules
-
-Agents running under `atmux` are expected to:
-
-- Acknowledge manager messages quickly with a short plan.
-- Report completion with validation evidence (not just "done").
-- Message their manager when stuck: `atmux send --to <manager> "..."`
-- Escalate blockers immediately — never leave them unreported.
-- Reuse idle agents before spawning new ones.
-- Check `atmux team list` before creating new team members.
-- Never silently change scope — ask the manager first.
 
 ## More Docs
 

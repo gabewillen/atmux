@@ -175,7 +175,7 @@ resolve_script_subcommand() {
 
 is_agent_context() {
   # An "agent" is any caller that has the ATMUX_AGENT_NAME export set —
-  # this is how managed agents and their child processes identify themselves.
+  # this is how agents and their child processes identify themselves.
   [[ -n "${ATMUX_AGENT_NAME:-}" ]]
 }
 
@@ -213,17 +213,8 @@ should_wrap_command() {
       ;;
     agent)
       case "${1:-}" in
-        attach|_run-adapter)
+        attach|_run-adapter|create|_create)
           return 1
-          ;;
-        create|_create)
-          # Top-level create (no manager) attaches to the new session
-          # interactively, so it must not be wrapped in the XML envelope —
-          # wrapping redirects stdout to a temp file and would defeat attach.
-          # Sub-agent creates (manager set) keep wrapping for XML output.
-          if [[ -z "${ATMUX_AGENT_NAME:-}" ]]; then
-            return 1
-          fi
           ;;
       esac
       ;;

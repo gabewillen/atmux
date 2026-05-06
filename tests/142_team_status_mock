@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Verifies `atmux team status` rolls up across team members. Members
-# are registered by tagging panes in the team session with
-# `@atmux_agent_session`; this is what `agent create --team` does for
-# real, mocked here so we don't need real adapters.
+# are registered in filesystem-backed team state, which is what
+# `agent create --team` does for real, mocked here so we don't need
+# real adapters.
 set -euo pipefail
 
 source "$(dirname "${BASH_SOURCE[0]}")/lib/isolate-tmux.sh"
@@ -61,6 +61,11 @@ queue_key() {
   printf '%s\n' "${session}-${pane}" | sed 's/[^A-Za-z0-9_.-]/_/g'
 }
 
+state_key() {
+  local session="$1"
+  printf '%s\n' "$session" | sed -E 's/[^A-Za-z0-9_-]+/_/g; s/_+/_/g; s/^_+//; s/_+$//'
+}
+
 spawn_agent() {
   local name="$1" adapter="${2:-claude-code}" team="${3:-}"
   local session="atmux-${repo}-${name}"
@@ -74,31 +79,24 @@ spawn_agent() {
   tmux list-panes -t "$session" -F '#{pane_id}' | head -n1
 }
 
-# Spawn a team session and tag its single window's panes with member
-# session names. agent create normally splits the team window into
-# multiple panes, one per member; we mimic that with split-window.
+# Register a team and its member sessions in filesystem-backed state.
 spawn_team() {
   local team_name="$1"; shift
   local session="atmux-${repo}-team-${team_name}"
-  sessions+=("$session")
-  tmux kill-session -t "$session" >/dev/null 2>&1 || true
-  tmux new-session -d -s "$session" -n "$session" -x 120 -y 30 "cat"
-  tmux set-environment -t "$session" ATMUX_REPO "$repo"
-  tmux set-environment -t "$session" ATMUX_TEAM "$team_name"
-  tmux set-environment -t "$session" ATMUX_SESSION_KIND "team"
+  local state_dir="$ATMUX_HOME/teams/$repo/$team_name"
+  mkdir -p "$state_dir/members"
+  printf '%s\n' "$team_name" > "$state_dir/name"
+  printf '%s\n' "$repo" > "$state_dir/repo"
+  printf '%s\n' "$session" > "$state_dir/session_name"
 
-  local pane member i=0
+  local member member_session member_dir key
   for member in "$@"; do
-    if (( i == 0 )); then
-      pane="$(tmux list-panes -t "$session" -F '#{pane_id}' | head -n1)"
-    else
-      # `-P -F '#{pane_id}'` returns the *new* pane id deterministically;
-      # `list-panes | tail` sorts by position and is unreliable.
-      pane="$(tmux split-window -t "$session" -d -P -F '#{pane_id}' "cat")"
-    fi
-    tmux set-option -p -t "$pane" @atmux_agent_session "atmux-${repo}-${member}" \
-      >/dev/null 2>&1
-    i=$((i + 1))
+    member_session="atmux-${repo}-${member}"
+    key="$(state_key "$member_session")"
+    member_dir="$state_dir/members/$key"
+    mkdir -p "$member_dir"
+    printf '%s\n' "$member_session" > "$member_dir/session"
+    printf '%s\n' "$member" > "$member_dir/name"
   done
 }
 

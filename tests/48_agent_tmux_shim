@@ -81,7 +81,7 @@ tmux_path="$(tr -d '\r\n' < "$atmux_home/tmux-path")"
 mouse_value="$(tmux display-message -t "$session" -p '#{mouse}' 2>/dev/null | tr -d '\r\n' || true)"
 case "$mouse_value" in
   0|off) ;;
-  *) echo "expected managed agent session mouse=off to prevent accidental copy-mode, got ${mouse_value:-missing}" >&2; exit 1 ;;
+  *) echo "expected atmux agent session mouse=off to prevent accidental copy-mode, got ${mouse_value:-missing}" >&2; exit 1 ;;
 esac
 
 allow_value="$(tr -d '\r\n' < "$atmux_home/tmux-allow")"
@@ -102,6 +102,6 @@ fi
 
 real_tmux_env="$(tmux show-environment -t "$session" ATMUX_REAL_TMUX 2>/dev/null | sed -n 's/^ATMUX_REAL_TMUX=//p' || true)"
 [[ -n "$real_tmux_env" && -x "$real_tmux_env" ]] \
-  || { echo "expected managed agent session to record real tmux path, got ${real_tmux_env:-missing}" >&2; exit 1; }
+  || { echo "expected atmux agent session to record real tmux path, got ${real_tmux_env:-missing}" >&2; exit 1; }
 
 echo "ok: agent tmux command resolves to atmux shim while atmux internals keep real tmux"

@@ -1,0 +1,3 @@
+KIND=agent
+INTELLIGENCE=85
+ADAPTERS=(codex)

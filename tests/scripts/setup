@@ -58,27 +58,13 @@ main() {
   tmux set-environment -t "$agent2" ATMUX_AGENT_NAME "receiver"
   tmux set-environment -t "$agent2" ATMUX_SESSION_NAME "$agent2"
 
-  ATMUX_REPO="$repo_name" "$ATMUX_BIN" team create "$team_name" >/dev/null
-  deadline=$(( $(date +%s) + 5 ))
-  until tmux has-session -t "$team_session" 2>/dev/null; do
-    if (( $(date +%s) >= deadline )); then
-      echo "timeout waiting for team session: $team_session" >&2
-      exit 1
-    fi
-    sleep 0.05
-  done
-
-  tmux send-keys -t "${team_session}:0.0" C-c >/dev/null 2>&1 || true
-  tmux send-keys -t "${team_session}:0.0" C-u >/dev/null 2>&1 || true
-  tmux send-keys -t "${team_session}:0.0" "TMUX= tmux attach-session -r -t \"$agent1\"" C-m
-  pane1="$(tmux display-message -p -t "${team_session}:0.0" '#{pane_id}')"
-  tmux set-option -p -t "$pane1" @atmux_agent_session "$agent1" >/dev/null 2>&1 || true
-  tmux set-option -p -t "$pane1" @atmux_agent_name "sender" >/dev/null 2>&1 || true
-
-  pane2="$(tmux split-window -d -t "${team_session}:0" -c "$REPO_ROOT" -P -F '#{pane_id}' "TMUX= tmux attach-session -r -t \"$agent2\"")"
-  tmux set-option -p -t "$pane2" @atmux_agent_session "$agent2" >/dev/null 2>&1 || true
-  tmux set-option -p -t "$pane2" @atmux_agent_name "receiver" >/dev/null 2>&1 || true
-  tmux select-layout -t "${team_session}:0" tiled >/dev/null 2>&1 || true
+  ATMUX_REPO="$repo_name" "$ATMUX_BIN" team create "$team_name" --shared-worktree >/dev/null
+  members_dir="${ATMUX_HOME:-$HOME/.atmux}/teams/$repo_name/$team_name/members"
+  mkdir -p "$members_dir/$(normalize_name "$agent1")" "$members_dir/$(normalize_name "$agent2")"
+  printf '%s\n' "$agent1" > "$members_dir/$(normalize_name "$agent1")/session"
+  printf '%s\n' "sender" > "$members_dir/$(normalize_name "$agent1")/name"
+  printf '%s\n' "$agent2" > "$members_dir/$(normalize_name "$agent2")/session"
+  printf '%s\n' "receiver" > "$members_dir/$(normalize_name "$agent2")/name"
 
   printf 'REPO_ROOT=%q\n' "$REPO_ROOT"
   printf 'REPO_NAME=%q\n' "$repo_name"

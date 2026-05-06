@@ -7,7 +7,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/isolate-tmux.sh"
 
 # Regression test for adapter-agnostic roles. Verifies:
 #   - `atmux role list/resolve/show` find roles in the source tree.
-#   - render_managed_block appends role.md under the # Role section when
+#   - render_atmux_prompt_block appends role.md under the # Role section when
 #     ATMUX_ROLE_DIR is set.
 #   - Manifest sourcing exposes INTELLIGENCE/ADAPTERS without leaking other env.
 
@@ -122,8 +122,8 @@ echo "$manifest_out" | grep -q "^ADAPTERS=claude-code,codex$" || {
   exit 1
 }
 
-# render_managed_block injection: simulate the same block emitted by
-# bin/(atmux)/agent render_managed_block when ATMUX_ROLE_DIR is set. Verifies
+# render_atmux_prompt_block injection: simulate the same block emitted by
+# bin/(atmux)/agent render_atmux_prompt_block when ATMUX_ROLE_DIR is set. Verifies
 # role.md content lands inside the <atmux>...# Role...</atmux> wrapper.
 ATMUX_ROLE_DIR="$resolved"
 role_name="sample"
@@ -141,7 +141,7 @@ rendered=$(
   echo "</atmux>"
 )
 echo "$rendered" | grep -q "Hello from the sample role." || {
-  echo "fail: rendered managed block did not include role.md content" >&2
+  echo "fail: rendered prompt block did not include role.md content" >&2
   echo "got:" >&2
   echo "$rendered" >&2
   exit 1
@@ -177,7 +177,7 @@ echo "$created" | grep -q "$roles_dir/teams/made-team/roles/made-member" || {
 }
 
 # role.md with literal <atmux>/</atmux> lines must not leak content out of the
-# managed block on re-injection. Verify the strip phase consumes everything.
+# prompt block on re-injection. Verify the strip phase consumes everything.
 mkdir -p "$roles_dir/agents/nested"
 cat > "$roles_dir/agents/nested/role.md" <<'EOF'
 Body before fence.
@@ -212,7 +212,7 @@ fi
 # Multi-line --start values must be rejected (tmux env truncates at \n).
 AGENT_BIN="$REPO_ROOT/bin/(atmux)/agent"
 out=$(
-  ATMUX_AGENT_NAME=manager \
+  ATMUX_AGENT_NAME=sender \
   ATMUX_ALLOW_OUTSIDE_TMUX=1 \
   "$AGENT_BIN" _create --name newliner --role sample --intelligence 50 \
     --start $'echo a\necho b' 2>&1 || true
@@ -237,4 +237,4 @@ if [[ "$remaining" != "0" ]]; then
   exit 1
 fi
 
-echo "ok: roles resolve, render role.md into managed block, and source manifest defaults"
+echo "ok: roles resolve, render role.md into prompt block, and source manifest defaults"

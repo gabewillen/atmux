@@ -15,9 +15,6 @@ xml_escape() {
 }
 
 owner="agent"
-if [[ -n "${ATMUX_MANAGER:-}" ]]; then
-  owner="manager"
-fi
 
 selected="${ATMUX_ADAPTER_SELECTED:-}"
 if [[ -z "$selected" || "$selected" == "auto" ]]; then

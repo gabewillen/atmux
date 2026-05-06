@@ -90,6 +90,9 @@ if ! arg_present -y "${args[@]-}" \
   && ! arg_present --approval-mode "${args[@]-}"; then
   args=(-y "${args[@]-}")
 fi
+if ! arg_present --skip-trust "${args[@]-}"; then
+  args=(--skip-trust "${args[@]-}")
+fi
 
 _on_stop_script="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)/scripts/on-stop"
 

@@ -18,7 +18,7 @@ For project installs, `ATMUX_HOME` defaults to `<project>/.atmux`. For system in
 ## Commands
 
 ### `atmux agent list`
-- Lists agents owned by this agent (`ATMUX_AGENT_NAME`) via `ATMUX_MANAGER`.
+- Lists repo-scoped agent sessions.
 - Outputs XML:
   `<atmux><agents><agent ... /></agents></atmux>`
 
@@ -31,13 +31,13 @@ For project installs, `ATMUX_HOME` defaults to `<project>/.atmux`. For system in
 
 ### `atmux agent create [name] --role <role> --intelligence <0-100> [--team <team>]`
 - Creates a new agent session/worktree. If `name` is omitted, `atmux` auto-generates a name such as `agent-N`.
-- Works as a top-level command (no manager required) or as a sub-agent spawn from inside a manager. When run interactively without a manager, attaches to the new session; from a manager, prints an `<agent>...</agent>` XML record describing the new agent.
+- When run interactively, attaches to the new session.
 - Creates a git worktree at `<ATMUX_HOME>/agents/{{repo}}-{{name}}` on branch `atmux-{{repo}}-{{name}}` (skip with `--shared-worktree` to run in the caller's current worktree; `--no-worktree` is a deprecated alias), then initializes submodules recursively.
 - Starts the selected adapter in that session (`--adapter`, default `auto`; restrict candidates with `--adapters a,b,...`).
 - `--intelligence` is adapter-portable and maps to a model plus reasoning level via the adapter manifest.
 
 ### `atmux agent attach <name|session>`
-- Attaches (or read-only re-attaches under a manager) to an existing agent session. Must run outside tmux.
+- Attaches to an existing agent session. Must run outside tmux.
 
 Current built-in mapping:
 
@@ -61,7 +61,9 @@ Current built-in mapping:
 | `gemini` | 90-100 | `gemini-3.1-pro-preview` | `high` |
 
 ### `atmux team create <name>`
-- Creates a team session `atmux-{{repo}}-team-{{name}}`.
+- Creates filesystem-backed team state under `<ATMUX_HOME>/teams/{{repo}}/{{name}}/`.
+- Team members are still tmux-backed agent sessions, but membership is not inferred from an optional tmux view.
+- Use `atmux team view <name>` to create an optional multiagent tmux view.
 
 ### `atmux issue create --title <title> [--description "..."] [--todo "..."]`
 - Creates a filesystem issue in `<ATMUX_HOME>/issues/{{repo}}/`.
@@ -74,7 +76,7 @@ Current built-in mapping:
 - Team messages are stored in `<ATMUX_HOME>/team-messages/{{repo}}/{{team}}/{{id}}/`.
 - Team-message notifications include `atmux message read <id> --team <team> --repo <repo>`.
 - Resolution order for `--to`:
-  1) Team session/name
+  1) Team name
   2) Agent session/name
 
 ### `atmux message read <id> [--repo <repo>] [--team <team>]`
@@ -156,7 +158,6 @@ When `atmux agent create` creates a session, it sets:
 - `ATMUX_SESSION_ID`
 - `ATMUX_WORKTREE`
 - `ATMUX_AGENT_NAME`
-- If `ATMUX_MANAGER` is set, the agent is treated as manager-owned.
 
 ## Adapter Contract
 - Adapter entrypoint:
@@ -171,7 +172,7 @@ When `atmux agent create` creates a session, it sets:
   - Adapter script payload: `<status ... />` (attributes)
   - `atmux` command wraps payload in `<atmux>...</atmux>`
   - Required attributes:
-    - `owner` (`agent|manager`)
+    - `owner` (`agent`)
     - `model`
     - `reasoning_level`
     - `state` (`idle|busy|errored|usage-limit`)

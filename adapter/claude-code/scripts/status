@@ -84,9 +84,6 @@ infer_state() {
 }
 
 owner="agent"
-if [[ -n "${ATMUX_MANAGER:-}" || -f "$roles_dir/agent.manager" ]]; then
-  owner="manager"
-fi
 
 snapshot=""
 target="$(resolve_target)"

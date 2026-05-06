@@ -143,10 +143,9 @@ discover_candidates() {
 state_for_session() {
   local adapter_cmd="$1"
   local session="$2"
-  local pane manager status_out state
+  local pane status_out state
 
   pane="$(tmux list-panes -t "$session" -F '#{pane_id}' 2>/dev/null | head -n 1)"
-  manager="$(tmux show-environment -t "$session" ATMUX_MANAGER 2>/dev/null | sed -n 's/^ATMUX_MANAGER=//p' || true)"
 
   if [[ -z "$pane" ]]; then
     printf '%s\n' "errored"
@@ -155,7 +154,6 @@ state_for_session() {
 
   status_out="$({
     ATMUX_TARGET_PANE="$pane" \
-    ATMUX_MANAGER="$manager" \
     ATMUX_STATUS_PASSIVE=1 \
     "$adapter_cmd" status 2>/dev/null || true
   })"

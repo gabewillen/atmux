@@ -144,7 +144,7 @@ send_message() {
   local body="$3"
   local send_out message_id
   send_out="$(ATMUX_ALLOW_OUTSIDE_TMUX=1 ATMUX_HOME="$atmux_home" ATMUX_SOURCE_ROOT="$REPO_ROOT" ATMUX_REPO="$repo" \
-    ATMUX_AGENT_NAME="manager" ATMUX_SESSION_NAME="atmux-${repo}-manager" \
+    ATMUX_AGENT_NAME="sender" ATMUX_SESSION_NAME="atmux-${repo}-sender" \
     "$ATMUX_BIN" send --to worker "$body")"
   message_id="$(printf '%s\n' "$send_out" | sed -n 's/.*message_id="\([^"]*\)".*/\1/p' | head -n1)"
   [[ -n "$message_id" ]] || {
@@ -170,7 +170,7 @@ run_adapter_case() {
   TMP_DIRS+=("$atmux_home")
 
   worker_session="$(ATMUX_ALLOW_OUTSIDE_TMUX=1 ATMUX_HOME="$atmux_home" ATMUX_SOURCE_ROOT="$REPO_ROOT" ATMUX_REPO="$repo" \
-    ATMUX_ROLE="implementer" ATMUX_INTELLIGENCE="50" ATMUX_MANAGER="manager" \
+    ATMUX_ROLE="implementer" ATMUX_INTELLIGENCE="50" \
     "$ATMUX_BIN" agent create --name worker --role worker --intelligence 50 --adapter auto --adapters "$adapter" --shared-worktree)"
   [[ -n "$worker_session" ]] || { echo "failed to create worker session for $adapter" >&2; exit 1; }
   SESSIONS+=("$worker_session")

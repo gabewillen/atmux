@@ -122,7 +122,7 @@ run_adapter_case() {
   SESSIONS+=("$team_session")
 
   member_session="$(ATMUX_ALLOW_OUTSIDE_TMUX=1 ATMUX_HOME="$atmux_home" ATMUX_SOURCE_ROOT="$REPO_ROOT" ATMUX_REPO="$repo" \
-    ATMUX_AGENT_NAME="manager" ATMUX_SESSION_NAME="atmux-${repo}-manager" \
+    ATMUX_AGENT_NAME="sender" ATMUX_SESSION_NAME="atmux-${repo}-sender" \
     "$ATMUX_BIN" agent create member --team "$team" --role implementer --adapter "$adapter" --intelligence 50 --shared-worktree)"
   member_session="$(printf '%s\n' "$member_session" | extract_xml_attr session)"
   [[ -n "$member_session" ]] || { echo "failed to parse member session for $adapter" >&2; exit 1; }
@@ -137,7 +137,7 @@ run_adapter_case() {
   fi
 
   send_out="$(ATMUX_ALLOW_OUTSIDE_TMUX=1 ATMUX_HOME="$atmux_home" ATMUX_SOURCE_ROOT="$REPO_ROOT" ATMUX_REPO="$repo" \
-    ATMUX_AGENT_NAME="manager" ATMUX_SESSION_NAME="atmux-${repo}-manager" \
+    ATMUX_AGENT_NAME="sender" ATMUX_SESSION_NAME="atmux-${repo}-sender" \
     "$ATMUX_BIN" send --to "$team" "live team message ${adapter} ${RANDOM}")"
   message_id="$(printf '%s\n' "$send_out" | extract_xml_attr message_id)"
   [[ -n "$message_id" ]] || {

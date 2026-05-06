@@ -72,20 +72,22 @@ chmod +x "$roles_dir/start"
 cd "$USER_REPO"
 agent_name="sharedfail$$"
 
+set +e
 out="$(
   ATMUX_ALLOW_OUTSIDE_TMUX=1 \
-  ATMUX_AGENT_NAME=test-manager \
+  ATMUX_AGENT_NAME=test-caller \
   "$ATMUX_BIN" agent create "$agent_name" \
     --role failing \
     --intelligence 20 \
     --adapter mock \
-    --shared-worktree 2>&1 || true
+    --shared-worktree 2>&1
 )"
+rc=$?
+set -e
 
 # Agent create must surface a non-zero exit (role start failed).
-ec="$(printf '%s\n' "$out" | sed -n 's/.*exit_code="\([0-9]*\)".*/\1/p' | head -1)"
-if [[ "$ec" != "1" ]]; then
-  echo "fail: expected wrapper exit_code=1, got '$ec'" >&2
+if [[ "$rc" != "1" ]]; then
+  echo "fail: expected rc=1, got '$rc'" >&2
   echo "$out" >&2
   exit 1
 fi

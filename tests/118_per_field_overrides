@@ -77,9 +77,36 @@ cd "$REPO_ROOT"
 # pure latency. On CI shard 10 (1-min budget) this dropped 118 from
 # ~33s to a few seconds.
 
+# --- Case 0: agent create --team must not create phantom team state ---
+missing_team="missing-team$$"
+out="$(
+  ATMUX_ALLOW_OUTSIDE_TMUX=1 ATMUX_AGENT_NAME=sender \
+    "$AGENT_BIN" _create --name "missing-team-agent$$" --team "$missing_team" \
+      --role probe-agent --intelligence 20 --adapter mock --shared-worktree 2>&1 || true
+)"
+printf '%s\n' "$out" | grep -q "team not found: $missing_team" \
+  || { echo "fail: missing team was not rejected clearly; output: $out" >&2; exit 1; }
+if [[ -d "$ATMUX_HOME/teams/$REPO_NORM/$missing_team" ]]; then
+  echo "fail: missing team create left phantom team state" >&2
+  find "$ATMUX_HOME/teams/$REPO_NORM/$missing_team" -maxdepth 3 -type f -print >&2
+  exit 1
+fi
+
+# --- Case 0b: sub-second team time limits round up to a usable deadline ---
+ms_team="ms-team$$"
+ATMUX_ALLOW_OUTSIDE_TMUX=1 "$ATMUX_BIN" team create "$ms_team" \
+  --shared-worktree --time-limit 500ms >/dev/null
+ms_state="$ATMUX_HOME/teams/$REPO_NORM/$ms_team"
+ms_started="$(cat "$ms_state/started_epoch" 2>/dev/null || true)"
+ms_deadline="$(cat "$ms_state/deadline_epoch" 2>/dev/null || true)"
+[[ "$ms_started" =~ ^[0-9]+$ && "$ms_deadline" =~ ^[0-9]+$ ]] \
+  || { echo "fail: 500ms time limit did not write numeric deadline metadata" >&2; exit 1; }
+(( ms_deadline - ms_started == 1 )) \
+  || { echo "fail: 500ms time limit produced delta $(( ms_deadline - ms_started )) (expected 1 second)" >&2; exit 1; }
+
 # --- Case 1: --model and --reasoning land on the new session env ---
 agent_a="probe-a$$"
-ATMUX_ALLOW_OUTSIDE_TMUX=1 ATMUX_AGENT_NAME=manager \
+ATMUX_ALLOW_OUTSIDE_TMUX=1 ATMUX_AGENT_NAME=sender \
   "$AGENT_BIN" _create --name "$agent_a" --role probe-agent \
     --intelligence 20 --adapter mock --shared-worktree \
     --model probe-model-a --reasoning high >/dev/null 2>&1
@@ -101,7 +128,7 @@ got_reasoning="$(tmux show-environment -t "$session_a" ATMUX_REASONING_LEVEL 2>/
 
 # --- Case 2: --set model=… and --set reasoning=… do the same job ---
 agent_b="probe-b$$"
-ATMUX_ALLOW_OUTSIDE_TMUX=1 ATMUX_AGENT_NAME=manager \
+ATMUX_ALLOW_OUTSIDE_TMUX=1 ATMUX_AGENT_NAME=sender \
   "$AGENT_BIN" _create --name "$agent_b" --role probe-agent \
     --intelligence 20 --adapter mock --shared-worktree \
     --set model=probe-model-b --set reasoning=medium >/dev/null 2>&1
@@ -123,7 +150,7 @@ got_reasoning="$(tmux show-environment -t "$session_b" ATMUX_REASONING_LEVEL 2>/
 
 # --- Case 3: --set wins over --model / --reasoning (precedence rule) ---
 agent_c="probe-c$$"
-ATMUX_ALLOW_OUTSIDE_TMUX=1 ATMUX_AGENT_NAME=manager \
+ATMUX_ALLOW_OUTSIDE_TMUX=1 ATMUX_AGENT_NAME=sender \
   "$AGENT_BIN" _create --name "$agent_c" --role probe-agent \
     --intelligence 20 --adapter mock --shared-worktree \
     --model losing-model --reasoning low \
@@ -144,7 +171,7 @@ got_reasoning="$(tmux show-environment -t "$session_c" ATMUX_REASONING_LEVEL 2>/
 # --- Case 4: --set unknown=foo warns but proceeds ---
 agent_d="probe-d$$"
 out="$(
-  ATMUX_ALLOW_OUTSIDE_TMUX=1 ATMUX_AGENT_NAME=manager \
+  ATMUX_ALLOW_OUTSIDE_TMUX=1 ATMUX_AGENT_NAME=sender \
     "$AGENT_BIN" _create --name "$agent_d" --role probe-agent \
       --intelligence 20 --adapter mock --shared-worktree \
       --set probe_unknown_field=foo 2>&1
@@ -164,7 +191,7 @@ printf '%s\n' "$out" | grep -q "probe_unknown_field" \
 # the loop runs *after* the literal-flag check, so --set was previously
 # uncaught). Use printf %b to inject a real newline into the value.
 out="$(
-  ATMUX_ALLOW_OUTSIDE_TMUX=1 ATMUX_AGENT_NAME=manager \
+  ATMUX_ALLOW_OUTSIDE_TMUX=1 ATMUX_AGENT_NAME=sender \
     "$AGENT_BIN" _create --name "should-not-exist-newline$$" --role probe-agent \
       --intelligence 20 --adapter mock --shared-worktree \
       --set "$(printf 'start=line1\nline2')" 2>&1 || true
@@ -174,7 +201,7 @@ printf '%s\n' "$out" | grep -q "must be a single line" \
 
 # --- Case 5: dotted --set on agent create is rejected with a clear msg ---
 out="$(
-  ATMUX_ALLOW_OUTSIDE_TMUX=1 ATMUX_AGENT_NAME=manager \
+  ATMUX_ALLOW_OUTSIDE_TMUX=1 ATMUX_AGENT_NAME=sender \
     "$AGENT_BIN" _create --name "should-not-exist$$" --role probe-agent \
       --intelligence 20 --adapter mock \
       --set driver.model=foo 2>&1 || true
@@ -229,5 +256,73 @@ beta_model="$(tmux show-environment -t "$beta_session" ATMUX_MODEL 2>/dev/null |
   || { echo "fail: alpha ATMUX_MODEL='$alpha_model' (expected alpha-only)" >&2; exit 1; }
 [[ "$beta_model" == "beta-only" ]] \
   || { echo "fail: beta ATMUX_MODEL='$beta_model' (expected beta-only)" >&2; exit 1; }
+
+# --- Case 7: unknown undotted team --set becomes role config, not member config ---
+dynamic_role_dir="$ATMUX_HOME/roles/teams/dynamic-collaborators"
+mkdir -p "$dynamic_role_dir"
+cat > "$dynamic_role_dir/role.md" <<EOF
+# Dynamic collaborators
+EOF
+cat > "$dynamic_role_dir/manifest" <<'EOF'
+KIND=team
+MEMBERS=(
+  "${ATMUX_TEAM}-core --role probe-agent --intelligence 20 --adapter mock --shared-worktree"
+)
+while IFS= read -r collaborator; do
+  [[ -n "$collaborator" ]] || continue
+  collaborator="${collaborator//\$\{ATMUX_TEAM\}/$ATMUX_TEAM}"
+  MEMBERS+=("$collaborator")
+done <<< "${ATMUX_TEAM_SET_COLLABORATORS:-}"
+EOF
+
+dynamic_team="dyn$$"
+out="$(
+  ATMUX_ALLOW_OUTSIDE_TMUX=1 "$ATMUX_BIN" team create "$dynamic_team" \
+    --role dynamic-collaborators --shared-worktree --time-limit 10m \
+    --set model=team-wide-model \
+    --set "collaborators=\${ATMUX_TEAM}-extra-a --role probe-agent --intelligence 20 --adapter mock --shared-worktree" \
+    --set "collaborators=\${ATMUX_TEAM}-extra-b --role probe-agent --intelligence 20 --adapter mock --shared-worktree" 2>&1 || true
+)"
+
+for member in core extra-a extra-b; do
+  dyn_session="${SESSION_PREFIX}${dynamic_team}-${member}"
+  for _ in $(seq 1 80); do
+    tmux has-session -t "$dyn_session" 2>/dev/null && break
+    sleep 0.1
+  done
+  tmux has-session -t "$dyn_session" 2>/dev/null \
+    || { echo "fail: dynamic member session missing: $dyn_session; out: $out" >&2; exit 1; }
+  dyn_model="$(tmux show-environment -t "$dyn_session" ATMUX_MODEL 2>/dev/null | sed -n 's/^ATMUX_MODEL=//p')"
+  [[ "$dyn_model" == "team-wide-model" ]] \
+    || { echo "fail: dynamic member $member ATMUX_MODEL='$dyn_model' (expected team-wide-model)" >&2; exit 1; }
+  dyn_time_limit="$(tmux show-environment -t "$dyn_session" ATMUX_TEAM_TIME_LIMIT 2>/dev/null | sed -n 's/^ATMUX_TEAM_TIME_LIMIT=//p')"
+  dyn_deadline_at="$(tmux show-environment -t "$dyn_session" ATMUX_TEAM_DEADLINE_AT 2>/dev/null | sed -n 's/^ATMUX_TEAM_DEADLINE_AT=//p')"
+  dyn_deadline_epoch="$(tmux show-environment -t "$dyn_session" ATMUX_TEAM_DEADLINE_EPOCH 2>/dev/null | sed -n 's/^ATMUX_TEAM_DEADLINE_EPOCH=//p')"
+  dyn_doc_dir="$(tmux show-environment -t "$dyn_session" ATMUX_TEAM_DOC_DIR 2>/dev/null | sed -n 's/^ATMUX_TEAM_DOC_DIR=//p')"
+  [[ "$dyn_time_limit" == "10m" ]] \
+    || { echo "fail: dynamic member $member ATMUX_TEAM_TIME_LIMIT='$dyn_time_limit' (expected 10m)" >&2; exit 1; }
+  [[ -n "$dyn_deadline_at" ]] \
+    || { echo "fail: dynamic member $member ATMUX_TEAM_DEADLINE_AT missing" >&2; exit 1; }
+  [[ "$dyn_deadline_epoch" =~ ^[0-9]+$ ]] \
+    || { echo "fail: dynamic member $member ATMUX_TEAM_DEADLINE_EPOCH='$dyn_deadline_epoch' (expected epoch)" >&2; exit 1; }
+  [[ "$dyn_doc_dir" == "$REPO_ROOT/docs/atmux/$dynamic_team" ]] \
+    || { echo "fail: dynamic member $member ATMUX_TEAM_DOC_DIR='$dyn_doc_dir' (expected $REPO_ROOT/docs/atmux/$dynamic_team)" >&2; exit 1; }
+done
+
+dynamic_manifest="$ATMUX_HOME/teams/$REPO_NORM/$dynamic_team/manifest"
+[[ -f "$dynamic_manifest" ]] \
+  || { echo "fail: dynamic team manifest missing: $dynamic_manifest" >&2; exit 1; }
+grep -Fxq "VERSION=1" "$dynamic_manifest" \
+  || { echo "fail: dynamic team manifest missing VERSION=1" >&2; exit 1; }
+grep -Fxq "KIND=team-session" "$dynamic_manifest" \
+  || { echo "fail: dynamic team manifest missing KIND=team-session" >&2; exit 1; }
+grep -Fq "ROLE_SETS=(" "$dynamic_manifest" \
+  || { echo "fail: dynamic team manifest missing ROLE_SETS" >&2; exit 1; }
+grep -Fq "collaborators=" "$dynamic_manifest" \
+  || { echo "fail: dynamic team manifest missing collaborators role set" >&2; exit 1; }
+grep -Fq "${dynamic_team}-extra-a" "$dynamic_manifest" \
+  || { echo "fail: dynamic team manifest missing expanded extra-a member" >&2; exit 1; }
+grep -Fq "${dynamic_team}-extra-b" "$dynamic_manifest" \
+  || { echo "fail: dynamic team manifest missing expanded extra-b member" >&2; exit 1; }
 
 echo "ok: per-field overrides apply to agents and per-member to teams"

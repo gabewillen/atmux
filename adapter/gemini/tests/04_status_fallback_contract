@@ -12,7 +12,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-start_cmd="ATMUX_HOME='$atmux_home' ATMUX_MANAGER=manager '$ADAPTER_DIR/scripts/start'"
+start_cmd="ATMUX_HOME='$atmux_home' '$ADAPTER_DIR/scripts/start'"
 setup_out="$("$SCRIPTS_DIR/setup" --command "$start_cmd" --wait-text 'Type your message')"
 session_name="$(printf '%s\n' "$setup_out" | sed -n 's/^SESSION_NAME=//p' | tail -n 1)"
 pane_id="$(printf '%s\n' "$setup_out" | sed -n 's/^PANE_ID=//p' | tail -n 1)"
@@ -21,7 +21,7 @@ if [[ -z "$session_name" || -z "$pane_id" ]]; then
   exit 1
 fi
 
-status_out="$(ATMUX_HOME="$atmux_home" ATMUX_MANAGER=manager ATMUX_TARGET_PANE="$pane_id" "$ADAPTER_DIR/scripts/status")"
+status_out="$(ATMUX_HOME="$atmux_home" ATMUX_TARGET_PANE="$pane_id" "$ADAPTER_DIR/scripts/status")"
 
 extract_attr() {
   local attr="$1"
@@ -30,7 +30,7 @@ extract_attr() {
 
 echo "$status_out" | grep -F '<status ' >/dev/null
 echo "$status_out" | grep -F 'adapter="gemini"' >/dev/null
-echo "$status_out" | grep -F 'owner="manager"' >/dev/null
+echo "$status_out" | grep -F 'owner="agent"' >/dev/null
 echo "$status_out" | grep -F 'control_file="GEMINI.md"' >/dev/null
 
 state="$(extract_attr state)"

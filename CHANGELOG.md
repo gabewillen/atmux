@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.22.0 — Role-defined collaboration teams
+
+- Removed the legacy global manager prompt/control-file behavior; team coordination now belongs in team/member roles.
+- Added the `collab` team role with leader, arbiter, recorder, and collaborator member roles for message-driven collaboration sessions.
+- Let teams define dynamic collaborators through role config, and moved team deadline/doc metadata into member environments.
+- Hardened team lifecycle behavior around shared-worktree teams, member teardown order, and team time-limit metadata.
+
 ## 0.21.1 — Project update target
 
 - Added `atmux update --project` and `--project-root <dir>` so a system

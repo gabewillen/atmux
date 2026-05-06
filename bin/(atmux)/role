@@ -22,7 +22,8 @@ Description:
     role.md           prompt body, appended under "# Role" in the control file
     manifest          optional, sourced bash: KIND, INTELLIGENCE, ADAPTERS=(name ...)
     start             runs before the adapter starts (agent_create time) or
-                      after the team session opens (team_create time)
+                      after team state/worktree setup and member spawn
+                      (team_create time)
     stop              runs after the adapter exits (agent kill time) or after
                       a team is killed (team kill time)
 
@@ -316,11 +317,11 @@ write_role_start_hook() {
   if [[ "$kind" == "team" ]]; then
     cat > "$dest/start" <<EOF
 #!/usr/bin/env bash
-# Team role start hook for $name. Runs after the team tmux session is opened,
-# before any members are spawned. Env provided by atmux:
+# Team role start hook for $name. Runs after team state/worktree setup and
+# member spawn. Env provided by atmux:
 #   ATMUX_TEAM            - this team's short name
 #   ATMUX_REPO            - normalized repo name
-#   ATMUX_WORKTREE        - the team session's cwd (typically the repo root)
+#   ATMUX_WORKTREE        - the team worktree path
 #   ATMUX_ROLE_DIR        - this role's directory
 #   ATMUX_ROLE_STATE_DIR  - private state dir for this (team, role) pair
 set -euo pipefail

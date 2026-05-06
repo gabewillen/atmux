@@ -1,0 +1,39 @@
+# collab: a leader-facilitated deliberation team.
+
+KIND=team
+
+leader_adapter="${ATMUX_TEAM_SET_LEADER_ADAPTER:-codex}"
+leader_intelligence="${ATMUX_TEAM_SET_LEADER_INTELLIGENCE:-85}"
+
+arbitrator_adapter="${ATMUX_TEAM_SET_ARBITRATOR_ADAPTER:-codex}"
+arbitrator_intelligence="${ATMUX_TEAM_SET_ARBITRATOR_INTELLIGENCE:-85}"
+
+recorder_adapter="${ATMUX_TEAM_SET_RECORDER_ADAPTER:-cursor-agent}"
+recorder_intelligence="${ATMUX_TEAM_SET_RECORDER_INTELLIGENCE:-40}"
+recorder_model="${ATMUX_TEAM_SET_RECORDER_MODEL:-composer-2-fast}"
+recorder_reasoning="${ATMUX_TEAM_SET_RECORDER_REASONING:-low}"
+
+MEMBERS=(
+  "${ATMUX_TEAM}-leader       --role leader   --intelligence ${leader_intelligence} --adapter ${leader_adapter} --shared-worktree"
+  "${ATMUX_TEAM}-arbitrator   --role arbiter  --intelligence ${arbitrator_intelligence} --adapter ${arbitrator_adapter} --shared-worktree"
+  "${ATMUX_TEAM}-recorder     --role recorder --intelligence ${recorder_intelligence} --adapter ${recorder_adapter} --model ${recorder_model} --reasoning ${recorder_reasoning} --shared-worktree"
+)
+
+default_collaborators="$(
+  printf '%s\n' \
+    '${ATMUX_TEAM}-codex  --role collaborator --intelligence 85 --adapter codex       --shared-worktree' \
+    '${ATMUX_TEAM}-claude --role collaborator --intelligence 90 --adapter claude-code --shared-worktree' \
+    '${ATMUX_TEAM}-gemini --role collaborator --intelligence 90 --adapter gemini      --shared-worktree'
+)"
+
+# Repeatable role config:
+#   --set collaborators='<agent-create args>'
+#
+# Each value is a collaborator member entry exactly like a MEMBERS entry.
+# Use `${ATMUX_TEAM}` in the value to make member names unique per team.
+collaborators="${ATMUX_TEAM_SET_COLLABORATORS:-$default_collaborators}"
+while IFS= read -r collaborator; do
+  [[ -n "$collaborator" ]] || continue
+  collaborator="${collaborator//\$\{ATMUX_TEAM\}/$ATMUX_TEAM}"
+  MEMBERS+=("$collaborator")
+done <<< "$collaborators"

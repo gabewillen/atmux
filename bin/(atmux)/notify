@@ -5,6 +5,7 @@
 
 ATMUX_NOTIFY_SCRIPT_PATH="${BASH_SOURCE[0]}"
 ATMUX_NOTIFY_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+ATMUX_HOME="${ATMUX_HOME:-$HOME/.atmux}"
 # shellcheck source=bin/(atmux)/(lib)/tmux
 source "$ATMUX_NOTIFY_DIR/(lib)/tmux"
 # shellcheck source=bin/(atmux)/(lib)/manifest
@@ -105,6 +106,85 @@ notify_queue_dir() {
 team_message_root_for_team() {
   local repo="$1" team="$2"
   printf '%s/team-messages/%s/%s\n' "$ATMUX_HOME" "$repo" "$team"
+}
+
+team_state_dir() {
+  local repo="$1" team="$2"
+  printf '%s/teams/%s/%s\n' "$ATMUX_HOME" "$repo" "$team"
+}
+
+team_members_dir() {
+  local repo="$1" team="$2"
+  printf '%s/members\n' "$(team_state_dir "$repo" "$team")"
+}
+
+team_member_key() {
+  local session="$1"
+  normalize_name "$session"
+}
+
+team_member_dir() {
+  local repo="$1" team="$2" session="$3"
+  printf '%s/%s\n' "$(team_members_dir "$repo" "$team")" "$(team_member_key "$session")"
+}
+
+team_state_exists() {
+  local repo="$1" team="$2"
+  local dir
+  dir="$(team_state_dir "$repo" "$team")"
+  [[ -f "$dir/name" || -d "$dir/members" ]]
+}
+
+resolve_team_name() {
+  local target="$1" repo_name="$2" team_name
+  team_name="$(normalize_name "$target")"
+  if team_state_exists "$repo_name" "$team_name"; then
+    printf '%s\n' "$team_name"
+    return 0
+  fi
+  if [[ "$target" == "atmux-${repo_name}-team-"* ]]; then
+    team_name="${target#atmux-"${repo_name}"-team-}"
+    if team_state_exists "$repo_name" "$team_name"; then
+      printf '%s\n' "$team_name"
+      return 0
+    fi
+  fi
+  if [[ "$target" == "${repo_name}-team-"* ]]; then
+    team_name="${target#"${repo_name}"-team-}"
+    if team_state_exists "$repo_name" "$team_name"; then
+      printf '%s\n' "$team_name"
+      return 0
+    fi
+  fi
+  return 1
+}
+
+team_member_sessions_from_state() {
+  local repo="$1" team="$2" members_dir file session
+  members_dir="$(team_members_dir "$repo" "$team")"
+  [[ -d "$members_dir" ]] || return 0
+  while IFS= read -r file; do
+    [[ -e "$file" ]] || continue
+    if [[ -d "$file" ]]; then
+      session="$(cat "$file/session" 2>/dev/null || true)"
+    else
+      session="$(cat "$file" 2>/dev/null || true)"
+    fi
+    [[ -n "$session" ]] && printf '%s\n' "$session"
+  done < <(find "$members_dir" -mindepth 1 -maxdepth 1 \( -type f -o -type d \) 2>/dev/null | sort)
+}
+
+record_team_member_state() {
+  local repo="$1" team="$2" session="$3" name="${4:-}" role="${5:-}" adapter="${6:-}"
+  local dir
+  [[ -n "$repo" && -n "$team" && -n "$session" ]] || return 0
+  dir="$(team_member_dir "$repo" "$team" "$session")"
+  mkdir -p "$dir"
+  write_field "$dir/session" "$session"
+  write_field "$dir/name" "$name"
+  write_field "$dir/role" "$role"
+  write_field "$dir/adapter" "$adapter"
+  write_field "$dir/joined_at" "$(timestamp_utc)"
 }
 
 team_message_watch_key() {

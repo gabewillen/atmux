@@ -14,6 +14,7 @@ usage() {
 Usage:
   atmux team create <name> [--role <role>] [--start <cmd>] [--stop <cmd>]
                            [--worktree <path>] [--shared-worktree]
+                           [--time-limit <duration>]
                            [--adapter <adapter>] [--intelligence <0-100>]
                            [--model <id>] [--reasoning <level>]
                            [--set <key>=<value>]...
@@ -28,10 +29,14 @@ Usage:
 Description:
   Manage repo-scoped teams of agents.
 
+  Every team is recorded in filesystem state under ATMUX_HOME. Teams do
+  not create a tmux dashboard session by default, and membership is not
+  constrained by pane layout.
+
   Every team gets its own fresh git worktree by default — members spawned
-  with `--shared-worktree` inherit it via ATMUX_WORKTREE, so a pair of
-  agents can edit the same worktree without stomping the user's checkout.
-  `team kill` removes the worktree and branch.
+  with `--shared-worktree` inherit it via ATMUX_WORKTREE, so agents can
+  share that team worktree without stomping the user's checkout. `team
+  kill` removes the worktree and branch when atmux owns it.
 
   --role <name>       Apply a KIND=team role: creates the team, spawns
                       each MEMBERS entry from the role manifest, then
@@ -47,12 +52,23 @@ Description:
                       caller's pwd (or repo root) instead. Useful for
                       coordination teams that just talk and never edit.
 
+  --time-limit <dur>  Store session deadline metadata and expose it to
+                      member role prompts/hooks as ATMUX_TEAM_TIME_LIMIT,
+                      ATMUX_TEAM_DEADLINE_AT, and
+                      ATMUX_TEAM_DEADLINE_EPOCH.
+
   --adapter / --intelligence / --model / --reasoning
                       Apply to every member spawned from MEMBERS=(...).
                       Per-member overrides via `--set <member>.<field>=
                       <value>` take precedence (member name matches the
                       last `-`-segment of the member's first token, e.g.
                       `${ATMUX_TEAM}-driver` matches on `driver`).
+
+  --set <key>=<value> Known agent fields apply to every member. Unknown
+                      undotted keys are role-level configuration exposed to
+                      team manifests as ATMUX_TEAM_SET_<KEY>; repeated keys
+                      are newline-joined. Use dotted keys for per-member
+                      overrides, e.g. `--set recorder.model=composer-2-fast`.
 USAGE
 }
 
@@ -149,11 +165,49 @@ resolve_atmux_runner_for_team() {
   return 1
 }
 
+parse_duration_seconds() {
+  local raw="${1:-}"
+  local value unit multiplier
+
+  if [[ ! "$raw" =~ ^([0-9]+)(ms|s|m|h|d)?$ ]]; then
+    echo "invalid duration: $raw" >&2
+    exit 2
+  fi
+
+  value="${BASH_REMATCH[1]}"
+  unit="${BASH_REMATCH[2]:-s}"
+  case "$unit" in
+    ms) multiplier="0.001" ;;
+    s) multiplier="1" ;;
+    m) multiplier="60" ;;
+    h) multiplier="3600" ;;
+    d) multiplier="86400" ;;
+    *) echo "invalid duration unit: $unit" >&2; exit 2 ;;
+  esac
+
+  awk -v value="$value" -v multiplier="$multiplier" '
+    BEGIN {
+      seconds = value * multiplier
+      if (seconds > 0 && seconds != int(seconds)) {
+        seconds = int(seconds) + 1
+      }
+      printf "%d\n", seconds
+    }
+  '
+}
+
+epoch_to_utc() {
+  local epoch="$1"
+  date -u -r "$epoch" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
+    || date -u -d "@$epoch" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
+    || printf '%s\n' "$epoch"
+}
+
 teardown_team() {
   # Best-effort cleanup when team create fails partway through. Kills any
   # already-spawned members via `atmux agent kill` (so their worktrees and
-  # branches get cleaned up too), then the team session, then the role
-  # state dir, then the team's owned worktree (if create_team made one).
+  # branches get cleaned up too), then removes any optional team view,
+  # the role state dir, and the team's owned worktree (if create_team made one).
   # Args: <repo_name> <team_name> <session> <role_state_dir> [<owned_worktree>]
   local repo="$1" team="$2" session="$3" state_dir="${4:-}" owned_wt="${5:-}"
   local prefix="atmux-${repo}-"
@@ -200,6 +254,53 @@ member_short_name() {
   printf '%s\n' "${first_tok##*-}"
 }
 
+team_role_set_env_name() {
+  local key="$1" var
+  var="$(printf '%s' "$key" | tr '[:lower:]' '[:upper:]' | sed -E 's/[^A-Z0-9_]+/_/g; s/_+/_/g; s/^_+//; s/_+$//')"
+  printf 'ATMUX_TEAM_SET_%s\n' "$var"
+}
+
+team_set_is_agent_field() {
+  case "$1" in
+    model|reasoning|reasoning_level|adapter|adapters|intelligence|name|team|start|start_command|stop|stop_command)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+write_team_session_manifest() {
+  local out="$1" repo="$2" team="$3" session="$4" role_name="$5" role_path="$6" worktree="$7" doc_path="$8"
+  local time_limit_value="$9" deadline_at_value="${10}" deadline_epoch_value="${11}" member_text="${12:-}"
+  shift 12
+  local entry role_set
+  {
+    printf 'VERSION=1\n'
+    printf 'KIND=team-session\n'
+    printf 'REPO=%q\n' "$repo"
+    printf 'TEAM=%q\n' "$team"
+    printf 'SESSION=%q\n' "$session"
+    printf 'ROLE=%q\n' "$role_name"
+    printf 'ROLE_DIR=%q\n' "$role_path"
+    printf 'WORKTREE=%q\n' "$worktree"
+    printf 'DOC_DIR=%q\n' "$doc_path"
+    printf 'TIME_LIMIT=%q\n' "$time_limit_value"
+    printf 'DEADLINE_AT=%q\n' "$deadline_at_value"
+    printf 'DEADLINE_EPOCH=%q\n' "$deadline_epoch_value"
+    printf 'ROLE_SETS=(\n'
+    for role_set in "$@"; do
+      printf '  %q\n' "$role_set"
+    done
+    printf ')\n'
+    printf 'MEMBERS=(\n'
+    while IFS= read -r entry; do
+      [[ -n "$entry" ]] || continue
+      printf '  %q\n' "$entry"
+    done <<< "$member_text"
+    printf ')\n'
+  } > "$out"
+}
+
 spawn_team_members() {
   # Spawns each MEMBER from the manifest via `atmux agent create <args>
   # --team <team>`. Returns non-zero on the first spawn failure so the caller
@@ -209,7 +310,7 @@ spawn_team_members() {
   # Reads the following caller-scope variables (set by create_team) for
   # per-spawn overrides:
   #   team_adapter, team_intelligence, team_model, team_reasoning
-  #   team_sets[]         — undotted --set key=val (apply to every member)
+  #   team_sets[]         — known undotted agent --set key=val (apply to every member)
   #   team_dotted_sets[]  — `<member>.<key>=<val>` (apply only to that member)
   local _repo="$1" team="$2" lines="$3" team_work_dir="${4:-}"
   [[ -n "$lines" ]] || return 0
@@ -274,6 +375,15 @@ spawn_team_members() {
     if [[ -n "$team_work_dir" ]]; then
       env_prefix=(env "ATMUX_WORKTREE=$team_work_dir" "ATMUX_TEAM=$team")
     fi
+    if [[ -n "${team_time_limit:-}${team_deadline_at:-}${team_deadline_epoch:-}${team_doc_dir:-}" ]]; then
+      if [[ "${#env_prefix[@]}" -eq 0 ]]; then
+        env_prefix=(env)
+      fi
+      [[ -n "${team_time_limit:-}" ]] && env_prefix+=("ATMUX_TEAM_TIME_LIMIT=$team_time_limit")
+      [[ -n "${team_deadline_at:-}" ]] && env_prefix+=("ATMUX_TEAM_DEADLINE_AT=$team_deadline_at")
+      [[ -n "${team_deadline_epoch:-}" ]] && env_prefix+=("ATMUX_TEAM_DEADLINE_EPOCH=$team_deadline_epoch")
+      [[ -n "${team_doc_dir:-}" ]] && env_prefix+=("ATMUX_TEAM_DOC_DIR=$team_doc_dir")
+    fi
     if [[ -n "${ATMUX_ROLE_SEARCH_PREPEND:-}" ]]; then
       if [[ "${#env_prefix[@]}" -eq 0 ]]; then
         env_prefix=(env)
@@ -336,6 +446,8 @@ create_team() {
   # never touch files).
   local shared_worktree=0
   local worktree_path=""
+  local worktree_explicit=0
+  local time_limit=""
   # Team-wide member overrides: applied to every spawned MEMBER. Per-member
   # `--set <member>.<field>=<value>` overrides win, since spawn_team_members
   # appends per-member overrides after these.
@@ -343,8 +455,10 @@ create_team() {
   local team_intelligence=""
   local team_model=""
   local team_reasoning=""
+  local set_key=""
   local -a team_sets=()
   local -a team_dotted_sets=()
+  local -a team_role_sets=()
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -368,10 +482,15 @@ create_team() {
           echo "atmux team create: --set requires key=value: $set_kv" >&2
           exit 2
         fi
-        if [[ "${set_kv%%=*}" == *.* ]]; then
+        set_key="${set_kv%%=*}"
+        if [[ "$set_key" == team.* ]]; then
+          team_role_sets+=("${set_kv#team.}")
+        elif [[ "$set_key" == *.* ]]; then
           team_dotted_sets+=("$set_kv")
-        else
+        elif team_set_is_agent_field "$set_key"; then
           team_sets+=("$set_kv")
+        else
+          team_role_sets+=("$set_kv")
         fi
         shift 2
         ;;
@@ -381,14 +500,20 @@ create_team() {
           echo "atmux team create: --set requires key=value: $set_kv" >&2
           exit 2
         fi
-        if [[ "${set_kv%%=*}" == *.* ]]; then
+        set_key="${set_kv%%=*}"
+        if [[ "$set_key" == team.* ]]; then
+          team_role_sets+=("${set_kv#team.}")
+        elif [[ "$set_key" == *.* ]]; then
           team_dotted_sets+=("$set_kv")
-        else
+        elif team_set_is_agent_field "$set_key"; then
           team_sets+=("$set_kv")
+        else
+          team_role_sets+=("$set_kv")
         fi
         shift
         ;;
       --worktree)
+        worktree_explicit=1
         # Path-only override; presence with no path is a no-op (default
         # path is already used).
         if [[ $# -ge 2 && "${2:0:1}" != "-" ]]; then
@@ -398,10 +523,12 @@ create_team() {
           shift
         fi
         ;;
-      --worktree=*) worktree_path="${1#--worktree=}"; shift ;;
+      --worktree=*) worktree_path="${1#--worktree=}"; worktree_explicit=1; shift ;;
       --shared-worktree) shared_worktree=1; shift ;;
+      --time-limit) time_limit="${2:-}"; shift 2 ;;
+      --time-limit=*) time_limit="${1#--time-limit=}"; shift ;;
       -h|--help)
-        echo "usage: atmux team create <name> [--role <role>] [--start <cmd>] [--stop <cmd>] [--worktree <path>] [--shared-worktree] [--adapter ...] [--intelligence ...] [--model ...] [--reasoning ...] [--set <key>=<val>]..."
+        echo "usage: atmux team create <name> [--role <role>] [--time-limit <duration>] [--start <cmd>] [--stop <cmd>] [--worktree <path>] [--shared-worktree] [--adapter ...] [--intelligence ...] [--model ...] [--reasoning ...] [--set <key>=<val>]..."
         return 0
         ;;
       --) shift ;;
@@ -433,7 +560,7 @@ create_team() {
     *$'\n'*) echo "atmux team create: --stop must be a single line; use a script file for multi-line commands" >&2; exit 2 ;;
   esac
 
-  local repo_root repo_name team_name session
+  local repo_root repo_name team_name session state_dir doc_dir
   {
     IFS= read -r repo_root
     IFS= read -r repo_name
@@ -441,6 +568,12 @@ create_team() {
 
   team_name="$(normalize_name "$raw_name")"
   session="atmux-${repo_name}-team-${team_name}"
+  state_dir="$(team_state_dir "$repo_name" "$team_name")"
+  doc_dir="$repo_root/docs/atmux/$team_name"
+  local team_exists=0
+  if [[ -f "$state_dir/name" || -d "$state_dir/members" ]]; then
+    team_exists=1
+  fi
 
   # Resolve role first so we can fail before opening the session if the role
   # is missing or wrong-kind.
@@ -457,8 +590,22 @@ create_team() {
       echo "atmux team create: role not found: $role" >&2
       exit 1
     fi
-    manifest_out="$(ATMUX_TEAM="$team_name" ATMUX_REPO="$repo_name" \
-                       read_team_role_manifest "$role_dir/manifest" || true)"
+    manifest_out="$(
+      export ATMUX_TEAM="$team_name" ATMUX_REPO="$repo_name"
+      role_set_kv=""
+      for role_set_kv in "${team_role_sets[@]+"${team_role_sets[@]}"}"; do
+        [[ -n "$role_set_kv" ]] || continue
+        role_set_key="${role_set_kv%%=*}"
+        role_set_value="${role_set_kv#*=}"
+        role_set_env="$(team_role_set_env_name "$role_set_key")"
+        if [[ -n "${!role_set_env:-}" ]]; then
+          export "$role_set_env=${!role_set_env}"$'\n'"$role_set_value"
+        else
+          export "$role_set_env=$role_set_value"
+        fi
+      done
+      read_team_role_manifest "$role_dir/manifest" || true
+    )"
     member_lines="$(printf '%s\n' "$manifest_out" | sed -n 's/^MEMBER=//p')"
     if [[ -z "$start_cmd" && -x "$role_dir/start" ]]; then
       start_cmd="$role_dir/start"
@@ -468,15 +615,38 @@ create_team() {
     fi
   fi
 
+  if [[ "$team_exists" -eq 1 ]]; then
+    if [[ -n "$role" || -n "$start_cmd" || -n "$stop_cmd" \
+          || "$worktree_explicit" -eq 1 || "$shared_worktree" -eq 1 || -n "$time_limit" ]]; then
+      echo "atmux team create: team '$team_name' already exists; --role/--start/--stop/--worktree/--shared-worktree/--time-limit only apply to fresh teams" >&2
+      exit 1
+    fi
+    local existing_session existing_doc_dir existing_role existing_deadline
+    existing_session="$(cat "$state_dir/session_name" 2>/dev/null || printf 'atmux-%s-team-%s' "$repo_name" "$team_name")"
+    existing_doc_dir="$(cat "$state_dir/doc_dir" 2>/dev/null || true)"
+    existing_role="$(cat "$state_dir/role" 2>/dev/null || true)"
+    existing_deadline="$(cat "$state_dir/deadline_at" 2>/dev/null || true)"
+    printf '<team name="%s" repo="%s" session="%s" state_dir="%s" doc_dir="%s"%s%s />\n' \
+      "$(xml_escape "$team_name")" \
+      "$(xml_escape "$repo_name")" \
+      "$(xml_escape "$existing_session")" \
+      "$(xml_escape "$state_dir")" \
+      "$(xml_escape "$existing_doc_dir")" \
+      "$([[ -n "$existing_role" ]] && printf ' role="%s"' "$(xml_escape "$existing_role")")" \
+      "$([[ -n "$existing_deadline" ]] && printf ' deadline_at="%s"' "$(xml_escape "$existing_deadline")")"
+    return 0
+  fi
+
   # Worktree: by default every team gets its own fresh worktree so members
   # don't stomp the user's actual checkout. `--shared-worktree` opts out
   # (use the caller's pwd / repo root). `--worktree <path>` overrides
   # only the location. Spawned members with --shared-worktree inherit
   # whichever path the team ended up with via ATMUX_WORKTREE in the
-  # session's env. Tracked with a marker so `team kill` can remove the
+  # member environment. Tracked with a marker so `team kill` can remove the
   # worktree on teardown when atmux owns it.
   local team_work_dir="$repo_root"
   local team_worktree_owned=0
+  local team_worktree_branch=""
   if [[ "$shared_worktree" -eq 0 ]]; then
     local atmux_home="${ATMUX_HOME:-$HOME/.atmux}"
     if [[ -z "$worktree_path" ]]; then
@@ -503,65 +673,54 @@ create_team() {
           printf '%s\n' "$worktree_err" >&2
           exit 1
         fi
+      else
+        team_worktree_branch="$team_branch"
       fi
       team_worktree_owned=1
     fi
     team_work_dir="$worktree_path"
   fi
 
-  local fresh_session=0
-  if ! tmux has-session -t "$session" 2>/dev/null; then
-    tmux new-session -d -s "$session" -n "$session" -c "$team_work_dir"
-    # Pin the default pane to a stable holder so the session can't die
-    # mid-lifecycle. The bare default shell `tmux new-session` spawns
-    # exits unpredictably in non-interactive environments (CI runners,
-    # ssh -T), and once its only pane exits the session — and on a
-    # solo-session isolated tmux server, the server itself — disappears.
-    # `remain-on-exit on` keeps the pane around even if its process
-    # dies, so the session always survives until `team kill`.
-    tmux set-window-option -t "${session}:0" remain-on-exit on >/dev/null 2>&1 || true
-    fresh_session=1
-    atmux_configure_tmux_pane_defaults "$session"
-    tmux set-environment -t "$session" ATMUX_REPO "$repo_name"
-    tmux set-environment -t "$session" ATMUX_TEAM "$team_name"
-    tmux set-environment -t "$session" ATMUX_SESSION_NAME "$session"
-    tmux set-environment -t "$session" ATMUX_SESSION_KIND "team"
-    tmux set-environment -t "$session" ATMUX_WORKTREE "$team_work_dir"
-    if [[ "$team_worktree_owned" -eq 1 ]]; then
-      # Marker for `team kill` to know it should remove the worktree.
-      tmux set-environment -t "$session" ATMUX_TEAM_WORKTREE_OWNED 1
-      local owner_dir="${ATMUX_HOME:-$HOME/.atmux}/teams/$repo_name/$team_name"
-      mkdir -p "$owner_dir"
-      printf '%s\n' "$team_work_dir" > "$owner_dir/owned-worktree"
-    fi
-    if [[ -n "${ATMUX_SOURCE_ROOT:-}" ]]; then
-      tmux set-environment -t "$session" ATMUX_SOURCE_ROOT "$ATMUX_SOURCE_ROOT"
-    fi
-  else
-    if [[ -n "$role" || -n "$start_cmd" || -n "$stop_cmd" \
-          || -n "$worktree_path" || "$shared_worktree" -eq 1 ]]; then
-      echo "atmux team create: team '$team_name' already exists; --role/--start/--stop/--worktree/--shared-worktree only apply to fresh sessions" >&2
-      exit 1
-    fi
-  fi
+  mkdir -p "$state_dir/members"
 
-  if [[ "$fresh_session" -eq 1 && ( -n "$role" || -n "$start_cmd" || -n "$stop_cmd" ) ]]; then
+  local started_epoch duration_seconds deadline_epoch="" deadline_at=""
+  started_epoch="$(date +%s)"
+  if [[ -n "$time_limit" ]]; then
+    duration_seconds="$(parse_duration_seconds "$time_limit")"
+    deadline_epoch=$(( started_epoch + duration_seconds ))
+    deadline_at="$(epoch_to_utc "$deadline_epoch")"
+  fi
+  write_field "$state_dir/name" "$team_name"
+  write_field "$state_dir/repo" "$repo_name"
+  write_field "$state_dir/session_name" "$session"
+  write_field "$state_dir/worktree_path" "$team_work_dir"
+  write_field "$state_dir/doc_dir" "$doc_dir"
+  write_field "$state_dir/created_at" "$(timestamp_utc)"
+  write_field "$state_dir/started_epoch" "$started_epoch"
+  [[ -n "$role" ]] && write_field "$state_dir/role" "$role"
+  [[ -n "$role_dir" ]] && write_field "$state_dir/role_dir" "$role_dir"
+  [[ -n "$start_cmd" ]] && write_field "$state_dir/role_start" "$start_cmd"
+  [[ -n "$stop_cmd" ]] && write_field "$state_dir/role_stop" "$stop_cmd"
+  [[ -n "$time_limit" ]] && write_field "$state_dir/time_limit" "$time_limit"
+  [[ -n "$deadline_epoch" ]] && write_field "$state_dir/deadline_epoch" "$deadline_epoch"
+  [[ -n "$deadline_at" ]] && write_field "$state_dir/deadline_at" "$deadline_at"
+  if [[ "$team_worktree_owned" -eq 1 ]]; then
+    write_field "$state_dir/owned-worktree" "$team_work_dir"
+    [[ -n "$team_worktree_branch" ]] && write_field "$state_dir/owned-worktree-branch" "$team_worktree_branch"
+  fi
+  write_team_session_manifest "$state_dir/manifest" "$repo_name" "$team_name" "$session" \
+    "$role" "$role_dir" "$team_work_dir" "$doc_dir" \
+    "$time_limit" "$deadline_at" "$deadline_epoch" "${member_lines:-}" \
+    "${team_role_sets[@]+"${team_role_sets[@]}"}"
+  team_time_limit="$time_limit"
+  team_deadline_at="$deadline_at"
+  team_deadline_epoch="$deadline_epoch"
+  team_doc_dir="$doc_dir"
+
+  if [[ -n "$role" || -n "$start_cmd" || -n "$stop_cmd" ]]; then
     local atmux_home="${ATMUX_HOME:-$HOME/.atmux}"
-    local role_state_dir="$atmux_home/teams/$repo_name/$team_name/role"
+    local role_state_dir="$atmux_home/teams/$repo_name/$team_name/role-state"
     mkdir -p "$role_state_dir"
-    if [[ -n "$role" ]]; then
-      tmux set-environment -t "$session" ATMUX_ROLE "$role"
-    fi
-    if [[ -n "$role_dir" ]]; then
-      tmux set-environment -t "$session" ATMUX_ROLE_DIR "$role_dir"
-    fi
-    if [[ -n "$start_cmd" ]]; then
-      tmux set-environment -t "$session" ATMUX_ROLE_START "$start_cmd"
-    fi
-    if [[ -n "$stop_cmd" ]]; then
-      tmux set-environment -t "$session" ATMUX_ROLE_STOP "$stop_cmd"
-    fi
-    tmux set-environment -t "$session" ATMUX_ROLE_STATE_DIR "$role_state_dir"
 
     # 1) Spawn declared MEMBERS first. Atmux owns these — `team kill` will
     #    auto-kill any agent whose ATMUX_TEAM matches this team's name.
@@ -571,6 +730,7 @@ create_team() {
         echo "atmux team create: tearing down team after member spawn failure" >&2
         teardown_team "$repo_name" "$team_name" "$session" "$role_state_dir" \
           "$([[ "$team_worktree_owned" -eq 1 ]] && printf '%s' "$team_work_dir")"
+        rm -rf -- "$state_dir" 2>/dev/null || true
         exit 1
       fi
     fi
@@ -585,6 +745,10 @@ create_team() {
       ATMUX_TEAM="$team_name" \
       ATMUX_REPO="$repo_name" \
       ATMUX_WORKTREE="$team_work_dir" \
+      ATMUX_TEAM_TIME_LIMIT="$team_time_limit" \
+      ATMUX_TEAM_DEADLINE_AT="$team_deadline_at" \
+      ATMUX_TEAM_DEADLINE_EPOCH="$team_deadline_epoch" \
+      ATMUX_TEAM_DOC_DIR="$team_doc_dir" \
         run_team_role_hook_bounded "$start_cmd" "${ATMUX_ROLE_START_TIMEOUT:-60}" || role_start_rc=$?
       if [[ "$role_start_rc" -ne 0 ]]; then
         if [[ "$role_start_rc" -eq 124 ]]; then
@@ -594,6 +758,7 @@ create_team() {
         fi
         teardown_team "$repo_name" "$team_name" "$session" "$role_state_dir" \
           "$([[ "$team_worktree_owned" -eq 1 ]] && printf '%s' "$team_work_dir")"
+        rm -rf -- "$state_dir" 2>/dev/null || true
         exit 1
       fi
     fi
@@ -605,7 +770,7 @@ create_team() {
   # Stamp `ATMUX_DEFAULT_TEAM` rather than `ATMUX_TEAM`. The latter is
   # the kill predicate `atmux team kill` uses to enumerate members
   # (membership signal); if we stamp it on the caller too, team kill
-  # treats the manager as a member and kills it. `ATMUX_DEFAULT_TEAM`
+  # treats the caller as a member and kills it. `ATMUX_DEFAULT_TEAM`
   # is read by `agent create` purely as a fallback for `--team` when
   # the user doesn't pass one explicitly.
   if [[ -n "${TMUX:-}" ]]; then
@@ -619,11 +784,14 @@ create_team() {
     fi
   fi
 
-  printf '<team name="%s" repo="%s" session="%s"%s />\n' \
+  printf '<team name="%s" repo="%s" session="%s" state_dir="%s" doc_dir="%s"%s%s />\n' \
     "$(xml_escape "$team_name")" \
     "$(xml_escape "$repo_name")" \
     "$(xml_escape "$session")" \
-    "$([[ -n "$role" ]] && printf ' role="%s"' "$(xml_escape "$role")")"
+    "$(xml_escape "$state_dir")" \
+    "$(xml_escape "$doc_dir")" \
+    "$([[ -n "$role" ]] && printf ' role="%s"' "$(xml_escape "$role")")" \
+    "$([[ -n "${team_deadline_at:-}" ]] && printf ' deadline_at="%s"' "$(xml_escape "$team_deadline_at")")"
 }
 
 list_teams() {
@@ -634,32 +802,154 @@ list_teams() {
   } < <(repo_context)
 
   report_open teams repo="$repo_name"
-  while IFS= read -r session; do
-    [[ -z "$session" ]] && continue
-    if [[ "$session" == "atmux-${repo_name}-team-"* ]]; then
-      local name="${session#atmux-${repo_name}-team-}"
-      report_record team name="$name" repo="$repo_name" session="$session"
-    fi
-  done < <(tmux list-sessions -F '#{session_name}' 2>/dev/null || true)
+  local base dir name session doc_dir deadline_at role
+  base="${ATMUX_HOME:-$HOME/.atmux}/teams/$repo_name"
+  if [[ -d "$base" ]]; then
+    while IFS= read -r dir; do
+      [[ -d "$dir" ]] || continue
+      name="$(cat "$dir/name" 2>/dev/null || basename "$dir")"
+      session="$(cat "$dir/session_name" 2>/dev/null || printf 'atmux-%s-team-%s' "$repo_name" "$name")"
+      doc_dir="$(cat "$dir/doc_dir" 2>/dev/null || true)"
+      deadline_at="$(cat "$dir/deadline_at" 2>/dev/null || true)"
+      role="$(cat "$dir/role" 2>/dev/null || true)"
+      report_record team name="$name" repo="$repo_name" session="$session" state_dir="$dir" doc_dir="$doc_dir" role="$role" deadline_at="$deadline_at"
+    done < <(find "$base" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort)
+  fi
   report_close teams
 }
 
 is_team_session() {
   local session="$1"
   local repo_name="${2:-}"
-  local kind team_name
-
-  kind="$(get_session_env "$session" ATMUX_SESSION_KIND)"
-  [[ "$kind" == "team" ]] && return 0
-
-  team_name="$(get_session_env "$session" ATMUX_TEAM)"
-  [[ -n "$team_name" ]] && return 0
-
   if [[ -n "$repo_name" && "$session" == "atmux-${repo_name}-team-"* ]]; then
-    return 0
+    local team_name="${session#atmux-${repo_name}-team-}"
+    team_state_exists "$repo_name" "$team_name" && return 0
   fi
-
   return 1
+}
+
+run_team_stop_hook_from_state() {
+  local repo="$1" team="$2" state_dir="$3"
+  local stop_cmd role role_dir role_state_dir worktree doc_dir deadline_at deadline_epoch time_limit
+  stop_cmd="$(cat "$state_dir/role_stop" 2>/dev/null || true)"
+  [[ -n "$stop_cmd" ]] || return 0
+  role="$(cat "$state_dir/role" 2>/dev/null || true)"
+  role_dir="$(cat "$state_dir/role_dir" 2>/dev/null || true)"
+  role_state_dir="$state_dir/role-state"
+  worktree="$(cat "$state_dir/worktree_path" 2>/dev/null || true)"
+  doc_dir="$(cat "$state_dir/doc_dir" 2>/dev/null || true)"
+  deadline_at="$(cat "$state_dir/deadline_at" 2>/dev/null || true)"
+  deadline_epoch="$(cat "$state_dir/deadline_epoch" 2>/dev/null || true)"
+  time_limit="$(cat "$state_dir/time_limit" 2>/dev/null || true)"
+  ATMUX_ROLE="$role" \
+  ATMUX_ROLE_DIR="$role_dir" \
+  ATMUX_ROLE_STATE_DIR="$role_state_dir" \
+  ATMUX_TEAM="$team" \
+  ATMUX_REPO="$repo" \
+  ATMUX_WORKTREE="$worktree" \
+  ATMUX_TEAM_TIME_LIMIT="$time_limit" \
+  ATMUX_TEAM_DEADLINE_AT="$deadline_at" \
+  ATMUX_TEAM_DEADLINE_EPOCH="$deadline_epoch" \
+  ATMUX_TEAM_DOC_DIR="$doc_dir" \
+    run_team_role_hook_bounded "$stop_cmd" "${ATMUX_ROLE_STOP_TIMEOUT:-30}" || true
+}
+
+remove_team_owned_worktree() {
+  local repo_root="$1" state_dir="$2" owned_wt branch
+  owned_wt="$(cat "$state_dir/owned-worktree" 2>/dev/null || true)"
+  [[ -n "$owned_wt" ]] || return 0
+  branch="$(cat "$state_dir/owned-worktree-branch" 2>/dev/null || true)"
+  if [[ -z "$branch" && -d "$owned_wt" ]]; then
+    branch="$(git -C "$owned_wt" symbolic-ref --quiet --short HEAD 2>/dev/null || true)"
+  fi
+  if [[ -n "$owned_wt" && -d "$owned_wt" ]]; then
+    if git -C "$repo_root" worktree list --porcelain 2>/dev/null | grep -Fqx "worktree $owned_wt"; then
+      git -C "$repo_root" worktree remove -f "$owned_wt" >/dev/null 2>&1 || true
+    fi
+    rm -rf -- "$owned_wt" 2>/dev/null || true
+    git -C "$repo_root" worktree prune >/dev/null 2>&1 || true
+  fi
+  if [[ -n "$branch" ]]; then
+    git -C "$repo_root" branch -D "$branch" >/dev/null 2>&1 || true
+  fi
+}
+
+kill_teams() {
+  local repo_root repo_name atmux_bin target team_name state_dir view_session member member_short
+  {
+    IFS= read -r repo_root
+    IFS= read -r repo_name
+  } < <(repo_context)
+  atmux_bin="$(resolve_atmux_runner_for_team || true)"
+  [[ -n "$atmux_bin" ]] || { echo "atmux team kill: cannot locate atmux binary" >&2; exit 127; }
+
+  for target in "$@"; do
+    if ! team_name="$(resolve_team_name "$target" "$repo_name")"; then
+      echo "team not found: $target" >&2
+      exit 1
+    fi
+    state_dir="$(team_state_dir "$repo_name" "$team_name")"
+    view_session="$(cat "$state_dir/session_name" 2>/dev/null || printf 'atmux-%s-team-%s' "$repo_name" "$team_name")"
+    while IFS= read -r member; do
+      [[ -n "$member" ]] || continue
+      member_short="${member#atmux-${repo_name}-}"
+      "$atmux_bin" agent kill "$member_short" >/dev/null 2>&1 || true
+    done < <(team_member_sessions_from_state "$repo_name" "$team_name")
+    run_team_stop_hook_from_state "$repo_name" "$team_name" "$state_dir"
+    tmux kill-session -t "$view_session" >/dev/null 2>&1 || true
+    remove_team_owned_worktree "$repo_root" "$state_dir"
+    rm -rf -- "$state_dir"
+  done
+}
+
+view_team() {
+  local target="${1:-}" repo_root repo_name team_name member team_session attach_cmd pane pane_count
+  [[ -n "$target" ]] || { echo "usage: atmux team view <name>" >&2; exit 2; }
+  {
+    IFS= read -r repo_root
+    IFS= read -r repo_name
+  } < <(repo_context)
+  team_name="$(resolve_team_name "$target" "$repo_name")" || { echo "team not found: $target" >&2; exit 1; }
+  team_session="atmux-${repo_name}-team-${team_name}"
+  attach_cmd="$(atmux_tmux_attach_command)" || exit 1
+  if tmux has-session -t "$team_session" 2>/dev/null; then
+    tmux kill-session -t "$team_session" >/dev/null 2>&1 || true
+  fi
+  pane_count=0
+  while IFS= read -r member; do
+    [[ -n "$member" ]] || continue
+    if (( pane_count == 0 )); then
+      tmux new-session -d -s "$team_session" -n "$team_session" -c "$repo_root" "TMUX= $attach_cmd attach-session -r -t \"$member\""
+      atmux_configure_tmux_pane_defaults "$team_session"
+      tmux set-environment -t "$team_session" ATMUX_REPO "$repo_name" >/dev/null 2>&1 || true
+      tmux set-environment -t "$team_session" ATMUX_TEAM "$team_name" >/dev/null 2>&1 || true
+      tmux set-environment -t "$team_session" ATMUX_SESSION_NAME "$team_session" >/dev/null 2>&1 || true
+      tmux set-environment -t "$team_session" ATMUX_SESSION_KIND "team-view" >/dev/null 2>&1 || true
+      pane="$(tmux list-panes -t "${team_session}:0" -F '#{pane_id}' 2>/dev/null | head -n1 || true)"
+    else
+      pane="$(tmux split-window -d -t "${team_session}:0" -c "$repo_root" -P -F '#{pane_id}' "TMUX= $attach_cmd attach-session -r -t \"$member\"" 2>/dev/null || true)"
+    fi
+    if [[ -n "$pane" ]]; then
+      tmux select-pane -t "$pane" -T "${member#atmux-${repo_name}-}" >/dev/null 2>&1 || true
+      tmux set-option -p -t "$pane" @atmux_agent_session "$member" >/dev/null 2>&1 || true
+      tmux set-option -p -t "$pane" @atmux_agent_name "${member#atmux-${repo_name}-}" >/dev/null 2>&1 || true
+      pane_count=$((pane_count + 1))
+      tmux select-layout -t "${team_session}:0" tiled >/dev/null 2>&1 || true
+    fi
+  done < <(team_member_sessions_from_state "$repo_name" "$team_name")
+  if (( pane_count == 0 )); then
+    tmux new-session -d -s "$team_session" -n "$team_session" -c "$repo_root" "cat"
+    tmux set-window-option -t "${team_session}:0" remain-on-exit on >/dev/null 2>&1 || true
+    atmux_configure_tmux_pane_defaults "$team_session"
+    tmux set-environment -t "$team_session" ATMUX_REPO "$repo_name" >/dev/null 2>&1 || true
+    tmux set-environment -t "$team_session" ATMUX_TEAM "$team_name" >/dev/null 2>&1 || true
+    tmux set-environment -t "$team_session" ATMUX_SESSION_NAME "$team_session" >/dev/null 2>&1 || true
+    tmux set-environment -t "$team_session" ATMUX_SESSION_KIND "team-view" >/dev/null 2>&1 || true
+  fi
+  printf '<team-view name="%s" repo="%s" session="%s" />\n' \
+    "$(xml_escape "$team_name")" \
+    "$(xml_escape "$repo_name")" \
+    "$(xml_escape "atmux-${repo_name}-team-${team_name}")"
 }
 
 sub="${1:-}"
@@ -686,54 +976,14 @@ case "$sub" in
     exec "$here_team/(internal)/capture" --team "$target_name" "$@"
     ;;
   kill)
-    here_team="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
     if [[ $# -eq 0 || "${1:0:1}" == "-" ]]; then
       echo "usage: atmux team kill <name|pattern> [...]" >&2
       exit 2
     fi
-    # Team sessions are named atmux-<repo>-team-<name>; the underlying
-    # `kill --agent` accepts session names so we resolve and forward.
-    r_repo="$(repo_name_from_context)"
-    resolved=()
-    for tname in "$@"; do
-      if [[ "$tname" == atmux-* ]]; then
-        resolved+=("$tname")
-      elif [[ -n "$r_repo" ]]; then
-        resolved+=("atmux-${r_repo}-team-${tname}")
-      else
-        resolved+=("$tname")
-      fi
-    done
-
-    # Auto-kill team members before the team session itself. A member is any
-    # agent session in this repo whose ATMUX_TEAM matches the team's name.
-    # Killing members first means each member's own role stop hook runs while
-    # the team session still exists, so cross-member coordination (if any)
-    # has somewhere to log to.
-    expanded=()
-    if [[ -n "$r_repo" ]]; then
-      member_prefix="atmux-${r_repo}-"
-      for tsession in "${resolved[@]}"; do
-        team_short="$(get_session_env "$tsession" ATMUX_TEAM)"
-        if [[ -z "$team_short" && "$tsession" == "atmux-${r_repo}-team-"* ]]; then
-          team_short="${tsession#atmux-${r_repo}-team-}"
-        fi
-        if [[ -n "$team_short" ]]; then
-          while IFS= read -r maybe_member; do
-            [[ -z "$maybe_member" ]] && continue
-            [[ "$maybe_member" == "$tsession" ]] && continue
-            mteam="$(get_session_env "$maybe_member" ATMUX_TEAM)"
-            [[ "$mteam" == "$team_short" ]] || continue
-            mkind="$(get_session_env "$maybe_member" ATMUX_SESSION_KIND)"
-            [[ "$mkind" == "team" ]] && continue
-            expanded+=("$maybe_member")
-          done < <(tmux list-sessions -F '#{session_name}' 2>/dev/null \
-                    | awk -v p="$member_prefix" 'index($0,p)==1 { print }')
-        fi
-      done
-    fi
-    expanded+=("${resolved[@]}")
-    exec "$here_team/(internal)/kill" --agent "${expanded[@]}"
+    kill_teams "$@"
+    ;;
+  view)
+    view_team "$@"
     ;;
   resolve)
     target="${1:-}"
@@ -746,33 +996,9 @@ case "$sub" in
       r_repo="$(repo_name_from_context)"
     fi
 
-    if tmux has-session -t "$target" 2>/dev/null; then
-      if is_team_session "$target" "$r_repo"; then
-        printf '%s\n' "$target"
-        exit 0
-      fi
-      exit 1
-    fi
-    if [[ -n "$r_repo" ]]; then
-      candidate="atmux-${r_repo}-team-${target}"
-      if tmux has-session -t "$candidate" 2>/dev/null && is_team_session "$candidate" "$r_repo"; then
-        printf '%s\n' "$candidate"
-        exit 0
-      fi
-      if [[ "$target" == "team-"* ]]; then
-        candidate="atmux-${r_repo}-${target}"
-        if tmux has-session -t "$candidate" 2>/dev/null && is_team_session "$candidate" "$r_repo"; then
-          printf '%s\n' "$candidate"
-          exit 0
-        fi
-      fi
-      if [[ "$target" == "${r_repo}-team-"* ]]; then
-        candidate="atmux-${target}"
-        if tmux has-session -t "$candidate" 2>/dev/null && is_team_session "$candidate" "$r_repo"; then
-          printf '%s\n' "$candidate"
-          exit 0
-        fi
-      fi
+    if team_name="$(resolve_team_name "$target" "$r_repo")"; then
+      printf 'atmux-%s-team-%s\n' "$r_repo" "$team_name"
+      exit 0
     fi
     exit 1
     ;;

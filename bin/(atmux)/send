@@ -252,24 +252,18 @@ repo_name="$(repo_name_from_context)"
 from_session="$(sender_session)"
 debug_notify "send:start from=$(printf '%q' "$from_session") to=$(printf '%q' "$target_name") repo=$(printf '%q' "$repo_name") interrupt=$interrupt reply_required=$reply_required"
 
-team_name="$(normalize_name "$target_name")"
-team_session="$("$HERE/team" resolve "$target_name" "$repo_name" || true)"
-if [[ -z "$team_session" && "$team_name" != "$target_name" ]]; then
-  team_session="$("$HERE/team" resolve "$team_name" "$repo_name" || true)"
+team_session=""
+if team_name="$(resolve_team_name "$target_name" "$repo_name")"; then
+  team_session="atmux-${repo_name}-team-${team_name}"
 fi
 
 if [[ -n "$team_session" ]]; then
-  case "$team_session" in
-    "atmux-${repo_name}-team-"*)
-      team_name="${team_session#atmux-${repo_name}-team-}"
-      ;;
-  esac
   debug_notify "send:team_resolved target=$(printf '%q' "$target_name") team=$(printf '%q' "$team_name") session=$(printf '%q' "$team_session")"
   members=()
   while IFS= read -r s; do
     [[ -n "$s" ]] || continue
     members+=("$s")
-  done < <(tmux list-panes -t "${team_session}:0" -F '#{@atmux_agent_session}' 2>/dev/null | awk 'NF' | sort -u)
+  done < <(team_member_sessions_from_state "$repo_name" "$team_name" | sort -u)
 
   msg_id="$(store_team_message "$repo_name" "$from_session" "$team_name" "$message" "$reply_required_value")"
   printf -v read_cmd 'atmux message read %q --team %q --repo %q' "$msg_id" "$team_name" "$repo_name"

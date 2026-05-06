@@ -97,19 +97,17 @@ ATMUX_ALLOW_OUTSIDE_TMUX=1 "$ATMUX_BIN" team create "$TEAM_SHORT" \
 [[ -d "$EXPECTED_WT" ]] \
   || { echo "fail: worktree not created at $EXPECTED_WT" >&2; ls -R "$ATMUX_HOME/teams" >&2; exit 1; }
 
-# git should know about the worktree (compare against the realpath form
-# since git stores the canonical path).
-git -C "$REPO_ROOT" worktree list --porcelain | grep -Fqx "worktree $EXPECTED_WT_REAL" \
-  || { echo "fail: git worktree list missing $EXPECTED_WT_REAL" >&2; git -C "$REPO_ROOT" worktree list >&2; exit 1; }
-
-# Team session env should point at the new worktree and carry the
-# owner marker.
-team_env_wt="$(tmux show-environment -t "$TEAM_SESSION" ATMUX_WORKTREE 2>/dev/null | sed -n 's/^ATMUX_WORKTREE=//p' || true)"
+# Team state should point at the new worktree and carry the owner marker.
+team_state="$ATMUX_HOME/teams/$REPO_NORM/$TEAM_SHORT"
+team_env_wt="$(cat "$team_state/worktree_path" 2>/dev/null || true)"
 [[ "$team_env_wt" == "$EXPECTED_WT" ]] \
-  || { echo "fail: team ATMUX_WORKTREE=$team_env_wt expected $EXPECTED_WT" >&2; exit 1; }
-team_owned="$(tmux show-environment -t "$TEAM_SESSION" ATMUX_TEAM_WORKTREE_OWNED 2>/dev/null | sed -n 's/^ATMUX_TEAM_WORKTREE_OWNED=//p' || true)"
-[[ "$team_owned" == "1" ]] \
-  || { echo "fail: ATMUX_TEAM_WORKTREE_OWNED=$team_owned (expected 1)" >&2; exit 1; }
+  || { echo "fail: team worktree_path=$team_env_wt expected $EXPECTED_WT" >&2; exit 1; }
+team_owned="$(cat "$team_state/owned-worktree" 2>/dev/null || true)"
+[[ "$team_owned" == "$EXPECTED_WT" ]] \
+  || { echo "fail: owned-worktree=$team_owned (expected $EXPECTED_WT)" >&2; exit 1; }
+team_owned_branch="$(cat "$team_state/owned-worktree-branch" 2>/dev/null || true)"
+[[ "$team_owned_branch" == "$TEAM_BRANCH" ]] \
+  || { echo "fail: owned-worktree-branch=$team_owned_branch (expected $TEAM_BRANCH)" >&2; exit 1; }
 
 # Member spawned with --shared-worktree should have inherited the team's
 # worktree, NOT the repo root. This is the env-aware --shared-worktree
@@ -146,8 +144,8 @@ if git -C "$REPO_ROOT" show-ref --verify --quiet "refs/heads/$TEAM_BRANCH"; then
 fi
 
 # Sessions gone.
-if tmux has-session -t "$TEAM_SESSION" 2>/dev/null; then
-  echo "fail: team session $TEAM_SESSION survived kill" >&2
+if [[ -d "$team_state" ]]; then
+  echo "fail: team state $team_state survived kill" >&2
   exit 1
 fi
 if tmux has-session -t "$ALPHA_SESSION" 2>/dev/null; then
@@ -180,10 +178,12 @@ if git -C "$REPO_ROOT" show-ref --verify --quiet "refs/heads/$SHARED_BRANCH"; th
   exit 1
 fi
 
-# Owner marker must NOT be set on the session.
-shared_owned="$(tmux show-environment -t "$SHARED_SESSION" ATMUX_TEAM_WORKTREE_OWNED 2>/dev/null | sed -n 's/^ATMUX_TEAM_WORKTREE_OWNED=//p' || true)"
-[[ -z "$shared_owned" ]] \
-  || { echo "fail: --shared-worktree set ATMUX_TEAM_WORKTREE_OWNED=$shared_owned (expected empty)" >&2; exit 1; }
+# Owner marker must NOT be set in team state.
+shared_state="$ATMUX_HOME/teams/$REPO_NORM/$SHARED_TEAM"
+[[ ! -f "$shared_state/owned-worktree" ]] \
+  || { echo "fail: --shared-worktree wrote owned-worktree marker" >&2; exit 1; }
+[[ ! -f "$shared_state/owned-worktree-branch" ]] \
+  || { echo "fail: --shared-worktree wrote owned-worktree-branch marker" >&2; exit 1; }
 
 ATMUX_ALLOW_OUTSIDE_TMUX=1 "$ATMUX_BIN" team kill "$SHARED_TEAM" >/dev/null
 

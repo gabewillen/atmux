@@ -5,7 +5,7 @@ set -euo pipefail
 # default tmux server. Idempotent if the runner already isolated.
 source "$(dirname "${BASH_SOURCE[0]}")/lib/isolate-tmux.sh"
 
-# Test that notification to a root manager pane:
+# Test that notification to a root caller pane:
 # 1. Saves user input before delivering
 # 2. Delivers the notification
 # 3. Restores the user's input afterward
@@ -39,7 +39,7 @@ ATMUX_SOURCE_ROOT="$REPO_ROOT"
 source "$NOTIFY_SCRIPT"
 
 repo_name="qidle${RANDOM}"
-session="atmux-${repo_name}-mgr"
+session="atmux-${repo_name}-caller"
 
 cleanup() {
   tmux kill-session -t "$session" >/dev/null 2>&1 || true
@@ -50,7 +50,7 @@ tmux kill-session -t "$session" >/dev/null 2>&1 || true
 # Use cat — simulates adapter CLI (no shell prompt)
 tmux new-session -d -s "$session" -n "$session" -x 160 -y 40 "cat"
 
-# Root manager: no ATMUX_MANAGER, has ATMUX_ADAPTER
+# Root caller with adapter metadata.
 tmux set-environment -t "$session" ATMUX_ADAPTER "claude-code"
 
 pane="$(tmux list-panes -t "$session" -F '#{pane_id}' 2>/dev/null | head -n1)"
@@ -93,4 +93,4 @@ if ! wait_for_text "$pane" "$user_text" 10; then
   exit 1
 fi
 
-echo "ok: send_notification saves input, delivers, and restores on root manager"
+echo "ok: send_notification saves input, delivers, and restores on root caller"

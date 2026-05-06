@@ -7,9 +7,7 @@ set -euo pipefail
 # counts (members / alive / queue_total / errors).
 #
 # `team status <name>`: per-member breakdown, same columns as
-# `atmux agent status`. Members are resolved by reading
-# `@atmux_agent_session` from each pane in the team session — same path
-# the agent script uses for membership.
+# `atmux agent status`. Members are resolved from filesystem team state.
 
 HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=bin/(atmux)/notify
@@ -37,17 +35,14 @@ repo_context() {
 }
 
 team_member_sessions() {
-  local team_session="$1"
-  tmux list-panes -t "${team_session}:0" -F '#{@atmux_agent_session}' 2>/dev/null \
-    | awk 'NF { print }' \
-    | sort -u
+  local repo_name="$1" team_name="$2"
+  team_member_sessions_from_state "$repo_name" "$team_name" | sort -u
 }
 
 # agent_status_fields is duplicated here (kept in sync with agent-status)
 # so team-status doesn't fork a child process per member when collecting
 # the rollup. The cost would be N adapters × N members spawning bash and
-# re-sourcing notify+reporter; for a 4-member team that's already ~8
-# subshells before any tmux call.
+# re-sourcing notify+reporter.
 agent_status_fields() {
   local session="$1"
   local pane qdir worker_pid worker queue oldest_age last_error_short
@@ -119,20 +114,10 @@ format_age() {
   fi
 }
 
-team_local_name() {
-  local repo_name="$1" session="$2"
-  printf '%s\n' "${session#atmux-${repo_name}-team-}"
-}
-
-is_team_session() {
-  local repo_name="$1" session="$2"
-  [[ "$session" == "atmux-${repo_name}-team-"* ]]
-}
-
-# Per-team rollup. Members come from the team session's pane vars;
+# Per-team rollup. Members come from team state;
 # absent agent sessions count as "members but not alive".
 team_rollup_fields() {
-  local team_session="$1"
+  local repo_name="$1" team_name="$2"
   local members=0 alive=0 queue_total=0 errors=0
   local member pane_alive worker queue oldest_age last_error_short adapter team
 
@@ -148,7 +133,7 @@ team_rollup_fields() {
     if [[ -n "$last_error_short" || "$worker" == "dead" ]]; then
       errors=$((errors + 1))
     fi
-  done < <(team_member_sessions "$team_session")
+  done < <(team_member_sessions "$repo_name" "$team_name")
 
   printf '%s\x1f%s\x1f%s\x1f%s\n' "$members" "$alive" "$queue_total" "$errors"
 }
@@ -168,8 +153,8 @@ Usage: atmux team status [<name>]
   <name>:     drills into the named team and shows one row per
               member, with the same columns as `atmux agent status`.
 
-Membership is resolved from each pane in the team session, where
-`@atmux_agent_session` records the agent each pane is attached to.
+Membership is resolved from filesystem-backed team state under
+ATMUX_HOME/teams/<repo>/<team>/members.
 USAGE
         exit 0
         ;;
@@ -192,18 +177,11 @@ USAGE
   } < <(repo_context)
 
   if [[ -n "$target" ]]; then
-    # Drill-in mode: delegate to agent-status for each member.
-    local team_session
-    if [[ "$target" == atmux-*-team-* ]]; then
-      team_session="$target"
-    else
-      team_session="atmux-${repo_name}-team-${target}"
-    fi
-    if ! tmux has-session -t "$team_session" 2>/dev/null; then
+    local team_name
+    if ! team_name="$(resolve_team_name "$target" "$repo_name")"; then
       echo "no team named '$target' in repo '$repo_name'" >&2
       exit 1
     fi
-    local team_name; team_name="$(team_local_name "$repo_name" "$team_session")"
 
     report_open team-status repo="$repo_name" team="$team_name"
     local member aname pane_alive worker queue oldest_age last_error_short adapter team_attr
@@ -234,20 +212,21 @@ USAGE
           oldest_age_seconds="$oldest_age" \
           last_error="$last_error_short"
       fi
-    done < <(team_member_sessions "$team_session")
+    done < <(team_member_sessions "$repo_name" "$team_name")
     report_close team-status
     return
   fi
 
   # Rollup mode: one row per team in repo.
   report_open teams-status repo="$repo_name"
-  while IFS= read -r session; do
-    [[ -z "$session" ]] && continue
-    is_team_session "$repo_name" "$session" || continue
-    local tname members alive queue_total errors
-    tname="$(team_local_name "$repo_name" "$session")"
+  local teams_root="${ATMUX_HOME:-$HOME/.atmux}/teams/$repo_name"
+  while IFS= read -r team_dir; do
+    [[ -d "$team_dir" ]] || continue
+    local tname session members alive queue_total errors
+    tname="$(cat "$team_dir/name" 2>/dev/null || basename "$team_dir")"
+    session="$(cat "$team_dir/session_name" 2>/dev/null || printf 'atmux-%s-team-%s' "$repo_name" "$tname")"
     IFS=$'\x1f' read -r members alive queue_total errors \
-      < <(team_rollup_fields "$session")
+      < <(team_rollup_fields "$repo_name" "$tname")
     report_record team \
       name="$tname" \
       session="$session" \
@@ -255,7 +234,7 @@ USAGE
       alive="$alive" \
       queue_total="$queue_total" \
       errors="$errors"
-  done < <(tmux list-sessions -F '#{session_name}' 2>/dev/null | sort -u || true)
+  done < <(find "$teams_root" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort)
   report_close teams-status
 }
 

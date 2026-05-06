@@ -65,4 +65,4 @@ global_history_limit="$(tmux -S "$project_socket" show-options -gwqv history-lim
 [[ "$global_history_limit" == "200000" ]] \
   || { echo "expected project tmux server global history-limit=200000, got ${global_history_limit:-missing}" >&2; exit 1; }
 
-echo "ok: managed agent uses project tmux server with mouse off and high scrollback"
+echo "ok: atmux agent uses project tmux server with mouse off and high scrollback"

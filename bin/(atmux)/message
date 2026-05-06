@@ -110,7 +110,9 @@ message_is_for_current_agent() {
 
 team_session_for_name() {
   local team="$1" repo="$2"
-  "$HERE/team" resolve "$team" "$repo" 2>/dev/null || true
+  if team_state_exists "$repo" "$team"; then
+    printf 'atmux-%s-team-%s\n' "$repo" "$team"
+  fi
 }
 
 current_reader_key() {
@@ -156,13 +158,10 @@ current_context_is_empty() {
 
 current_agent_is_team_member() {
   local team="$1" repo="$2"
-  local team_session="" members_text="" member="" recipients_text="" candidate=""
-
-  team_session="$(team_session_for_name "$team" "$repo")"
-  [[ -n "$team_session" ]] || return 1
+  local members_text="" member="" recipients_text="" candidate=""
 
   recipients_text="$(current_message_recipients "$repo")"
-  members_text="$(tmux list-panes -t "${team_session}:0" -F '#{@atmux_agent_session}' 2>/dev/null | awk 'NF' | sort -u || true)"
+  members_text="$(team_member_sessions_from_state "$repo" "$team" | sort -u || true)"
   while IFS= read -r member; do
     [[ -n "$member" ]] || continue
     while IFS= read -r candidate; do

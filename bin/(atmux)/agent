@@ -7,6 +7,8 @@ HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 source "$HERE/notify"
 # shellcheck source=bin/(atmux)/(lib)/tmux
 source "$HERE/(lib)/tmux"
+# shellcheck source=bin/(atmux)/(lib)/resolver
+source "$HERE/(lib)/resolver"
 
 usage() {
   cat <<'USAGE'
@@ -48,53 +50,6 @@ Notes:
 USAGE
 }
 
-# === Repo / context helpers =================================================
-
-normalize_repo_name() {
-  local raw="${1:-}"
-  local normalized=""
-  normalized="$(printf '%s' "$raw" | sed -E 's/[^A-Za-z0-9_-]+/_/g; s/_+/_/g; s/^_+//; s/_+$//')"
-  if [[ -z "$normalized" ]]; then
-    normalized="repo"
-  fi
-  printf '%s\n' "$normalized"
-}
-
-repo_context() {
-  local repo_root repo_name
-  if ! repo_root="$(git rev-parse --show-toplevel 2>/dev/null)"; then
-    echo "must be run from a git repository" >&2
-    exit 1
-  fi
-  repo_name="${ATMUX_REPO:-}"
-  if [[ -z "$repo_name" && -n "${TMUX:-}" ]]; then
-    repo_name="$(tmux show-environment ATMUX_REPO 2>/dev/null | sed -n 's/^ATMUX_REPO=//p' || true)"
-  fi
-  if [[ -z "$repo_name" ]]; then
-    repo_name="$(basename "$repo_root")"
-  fi
-  repo_name="$(normalize_repo_name "$repo_name")"
-  printf '%s\n%s\n' "$repo_root" "$repo_name"
-}
-
-repo_name_from_context() {
-  local repo_name="${ATMUX_REPO:-}"
-  if [[ -z "$repo_name" && -n "${TMUX:-}" ]]; then
-    repo_name="$(tmux show-environment ATMUX_REPO 2>/dev/null | sed -n 's/^ATMUX_REPO=//p' || true)"
-  fi
-  if [[ -z "$repo_name" ]]; then
-    local repo_root=""
-    repo_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
-    if [[ -n "$repo_root" ]]; then
-      repo_name="$(basename "$repo_root")"
-    fi
-  fi
-  if [[ -n "$repo_name" ]]; then
-    repo_name="$(normalize_repo_name "$repo_name")"
-  fi
-  printf '%s\n' "$repo_name"
-}
-
 # === Team helpers ===========================================================
 
 team_session_name() {
@@ -119,64 +74,6 @@ ensure_team_has_capacity() {
   return 0
 }
 
-# === Session resolution =====================================================
-
-resolve_target_session() {
-  local target="$1"
-  local repo_name="${2:-}"
-  local candidate=""
-
-  if tmux has-session -t "$target" 2>/dev/null; then
-    printf '%s\n' "$target"
-    return 0
-  fi
-
-  if [[ "$target" == atmux-* ]]; then
-    printf '%s\n' "$target"
-    return 0
-  fi
-
-  if [[ -z "$repo_name" ]]; then
-    return 1
-  fi
-
-  candidate="atmux-${repo_name}-${target}"
-  if tmux has-session -t "$candidate" 2>/dev/null; then
-    printf '%s\n' "$candidate"
-    return 0
-  fi
-
-  if [[ "$target" == "${repo_name}-"* ]]; then
-    candidate="atmux-${target}"
-    if tmux has-session -t "$candidate" 2>/dev/null; then
-      printf '%s\n' "$candidate"
-      return 0
-    fi
-  fi
-
-  printf '%s\n' "atmux-${repo_name}-${target}"
-  return 0
-}
-
-has_wildcard() {
-  local value="$1"
-  case "$value" in
-    *'*'*|*'?'*|*'['*) return 0 ;;
-    *) return 1 ;;
-  esac
-}
-
-session_short_name() {
-  local session="$1"
-  local repo_name="$2"
-  local prefix="atmux-${repo_name}-"
-  if [[ -n "$repo_name" && "$session" == "$prefix"* ]]; then
-    printf '%s\n' "${session#"$prefix"}"
-  else
-    printf '%s\n' "$session"
-  fi
-}
-
 resolve_pattern_targets() {
   local pattern="$1"
   local repo_name="$2"
@@ -185,23 +82,23 @@ resolve_pattern_targets() {
 
   while IFS= read -r session; do
     [[ -n "$session" ]] || continue
-    session_repo="$(get_session_env "$session" ATMUX_REPO)"
+    session_repo="$(atmux_resolve_session_env "$session" ATMUX_REPO)"
     if [[ -n "$repo_name" && "$session_repo" != "$repo_name" ]]; then
       continue
     fi
-    session_kind="$(get_session_env "$session" ATMUX_SESSION_KIND)"
+    session_kind="$(atmux_resolve_session_env "$session" ATMUX_SESSION_KIND)"
     if [[ "$session_kind" == "team-view" ]]; then
       continue
     fi
-    agent_name="$(get_session_env "$session" ATMUX_AGENT_NAME)"
-    short_name="$(session_short_name "$session" "$repo_name")"
+    agent_name="$(atmux_resolve_session_env "$session" ATMUX_AGENT_NAME)"
+    short_name="$(atmux_resolve_session_short_name "$session" "$repo_name")"
     [[ -n "$agent_name" ]] || agent_name="$short_name"
 
-    if matches_any_pattern "$session" "$pattern" || matches_any_pattern "$short_name" "$pattern" || matches_any_pattern "$agent_name" "$pattern"; then
+    if atmux_match_any_pattern "$session" "$pattern" || atmux_match_any_pattern "$short_name" "$pattern" || atmux_match_any_pattern "$agent_name" "$pattern"; then
       printf '%s\n' "$session"
       candidate_match=1
     fi
-  done < <(tmux list-sessions -F '#{session_name}' 2>/dev/null | awk '/^atmux-/ { print }')
+  done < <(atmux_resolve_repo_sessions "$repo_name")
 
   [[ "$candidate_match" -eq 1 ]]
 }
@@ -218,12 +115,12 @@ resolve_send_targets() {
     pattern="*"
   fi
 
-  if has_wildcard "$pattern"; then
+  if atmux_has_wildcard "$pattern"; then
     resolve_pattern_targets "$pattern" "$repo_name"
     return $?
   fi
 
-  target_session="$(resolve_target_session "$pattern" "$repo_name" || true)"
+  target_session="$(atmux_resolve_target_session "$pattern" "$repo_name" || true)"
   [[ -n "$target_session" ]] || return 1
   printf '%s\n' "$target_session"
   return 0
@@ -331,8 +228,8 @@ resolve_adapter_cmd_path() {
 resolve_adapter_cmd_for_session() {
   local session="$1"
   local adapter source_root
-  adapter="$(get_session_env "$session" ATMUX_ADAPTER)"
-  source_root="$(get_session_env "$session" ATMUX_SOURCE_ROOT)"
+  adapter="$(atmux_resolve_session_env "$session" ATMUX_ADAPTER)"
+  source_root="$(atmux_resolve_session_env "$session" ATMUX_SOURCE_ROOT)"
   [[ -n "$adapter" ]] || adapter="codex"
 
   if [[ -n "$source_root" && -x "$source_root/adapter/$adapter/cmd" ]]; then
@@ -579,18 +476,6 @@ adapter_in_list() {
 }
 
 # === Misc utilities =========================================================
-
-matches_any_pattern() {
-  local value="$1"
-  shift || true
-  local pattern
-  for pattern in "$@"; do
-    case "$value" in
-      $pattern) return 0 ;;
-    esac
-  done
-  return 1
-}
 
 build_notification() {
   "${ATMUX_SOURCE_ROOT:-$ATMUX_HOME/src/atmux}/bin/(atmux)/notify" build "$@"
@@ -1150,13 +1035,13 @@ spawn_agent_session() {
   {
     IFS= read -r repo_root
     IFS= read -r repo_name
-  } < <(repo_context)
+  } < <(atmux_resolve_repo_context)
   local source_root="${ATMUX_SOURCE_ROOT:-${ATMUX_HOME}/src/atmux}"
 
   if [[ "$name_explicit" -eq 0 ]]; then
     local n
     n="$(
-      (tmux list-sessions -F '#{session_name}' 2>/dev/null || true) \
+      (atmux_resolve_repo_sessions "$repo_name" || true) \
         | awk -v p="^atmux-${repo_name}-agent-[0-9]+$" '$0 ~ p { c++ } END { print c+0 }'
     )"
     name="agent-$n"
@@ -1317,7 +1202,7 @@ spawn_agent_session() {
   local launch
   printf -v launch '%q ' "${cmd[@]}"
   local launch_pane
-  launch_pane="$(primary_pane_for_session "$session")"
+  launch_pane="$(atmux_resolve_primary_pane "$session")"
   if [[ -z "$launch_pane" ]]; then
     echo "cannot find pane for session: $session" >&2
     exit 1
@@ -1341,7 +1226,7 @@ attach_agent() {
   {
     IFS= read -r repo_root
     IFS= read -r repo_name
-  } < <(repo_context)
+  } < <(atmux_resolve_repo_context)
   local source_root="${ATMUX_SOURCE_ROOT:-${ATMUX_HOME}/src/atmux}"
 
   local session
@@ -1392,13 +1277,13 @@ status_node_for_session() {
   local passive_status="${2:-0}"
   local pane adapter adapter_cmd source_root status_out node
 
-  adapter="$(get_session_env "$session" ATMUX_ADAPTER)"
-  source_root="$(get_session_env "$session" ATMUX_SOURCE_ROOT)"
-  pane="$(primary_pane_for_session "$session")"
+  adapter="$(atmux_resolve_session_env "$session" ATMUX_ADAPTER)"
+  source_root="$(atmux_resolve_session_env "$session" ATMUX_SOURCE_ROOT)"
+  pane="$(atmux_resolve_primary_pane "$session")"
   [[ -n "$adapter" ]] || adapter="codex"
 
   if ! adapter_cmd="$(resolve_adapter_cmd_for_session "$session")"; then
-    printf '<status adapter="%s" owner="agent" state="errored" model="" reasoning_level="" control_file="" />\n' "$(xml_escape "$adapter")"
+    printf '<status adapter="%s" owner="agent" state="errored" model="" reasoning_level="" control_file="" />\n' "$(atmux_xml_escape "$adapter")"
     return 0
   fi
 
@@ -1413,7 +1298,7 @@ status_node_for_session() {
   if [[ -n "$node" ]]; then
     printf '%s\n' "$node"
   else
-    printf '<status adapter="%s" owner="agent" state="errored" model="" reasoning_level="" control_file="" />\n' "$(xml_escape "$adapter")"
+    printf '<status adapter="%s" owner="agent" state="errored" model="" reasoning_level="" control_file="" />\n' "$(atmux_xml_escape "$adapter")"
   fi
 }
 
@@ -1429,7 +1314,7 @@ send_task_to_agent() {
   fi
 
   local target_pane=""
-  target_pane="$(primary_pane_for_session "$target_session")"
+  target_pane="$(atmux_resolve_primary_pane "$target_session")"
   if [[ -z "$target_pane" ]]; then
     echo "agent pane not found: $target_session" >&2
     return 1
@@ -1439,7 +1324,7 @@ send_task_to_agent() {
   from_session="${ATMUX_SESSION_NAME:-}"
   if [[ -z "$from_session" ]]; then
     local from_repo
-    from_repo="$(repo_name_from_context)"
+    from_repo="$(atmux_resolve_repo_name)"
     if [[ -n "$from_repo" ]]; then
       from_session="atmux-${from_repo}-${ATMUX_AGENT_NAME:-unknown}"
     else
@@ -1470,7 +1355,7 @@ wait_for_role_start_if_needed() {
       echo "atmux: agent aborted during role start (session gone)" >&2
       return 1
     fi
-    role_state="$(get_session_env "$created_session" ATMUX_ROLE_START_STATE)"
+    role_state="$(atmux_resolve_session_env "$created_session" ATMUX_ROLE_START_STATE)"
     if [[ "$role_state" == "failed" ]]; then
       echo "atmux: agent aborted during role start (role start failed)" >&2
       tmux kill-session -t "$created_session" >/dev/null 2>&1 || true
@@ -1727,7 +1612,7 @@ do_create() {
   {
     IFS= read -r repo_root
     IFS= read -r repo_name
-  } < <(repo_context)
+  } < <(atmux_resolve_repo_context)
   if [[ -n "$team" ]]; then
     ensure_team_has_capacity "$repo_name" "$team"
   fi
@@ -1858,7 +1743,7 @@ case "$sub" in
     fi
     r_repo="${2:-}"
     if [[ -z "$r_repo" ]]; then
-      r_repo="$(repo_name_from_context)"
+      r_repo="$(atmux_resolve_repo_name)"
     fi
 
     if tmux has-session -t "$target" 2>/dev/null; then

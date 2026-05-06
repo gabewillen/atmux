@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# Shared filesystem helpers for small state files.
+
+if [[ -n "${__ATMUX_FS_SOURCED:-}" ]]; then
+  return 0 2>/dev/null || true
+fi
+__ATMUX_FS_SOURCED=1
+
+atmux_fs_write_field() {
+  local file="$1"
+  local value="${2:-}"
+  mkdir -p "$(dirname "$file")"
+  printf '%s\n' "$value" > "$file"
+}
+
+atmux_fs_read_trimmed() {
+  local file="$1"
+  [[ -f "$file" ]] || return 0
+  tr -d '\r\n' < "$file" 2>/dev/null || true
+}

@@ -64,23 +64,23 @@ record_exec_start() {
   local executor_pane="${5:-}"
   exec_dir="$(exec_dir_for_repo_pid "$repo_name" "$pid")"
   mkdir -p "$exec_dir"
-  write_field "$exec_dir/pid" "$pid"
-  write_field "$exec_dir/repo" "$repo_name"
-  write_field "$exec_dir/command" "$command_text"
-  write_field "$exec_dir/started_at" "$started_at"
-  write_field "$exec_dir/session_name" "${ATMUX_SESSION_NAME:-}"
-  write_field "$exec_dir/agent_name" "${ATMUX_AGENT_NAME:-}"
-  write_field "$exec_dir/executor_pane" "$executor_pane"
-  write_field "$exec_dir/state" "running"
+  atmux_fs_write_field "$exec_dir/pid" "$pid"
+  atmux_fs_write_field "$exec_dir/repo" "$repo_name"
+  atmux_fs_write_field "$exec_dir/command" "$command_text"
+  atmux_fs_write_field "$exec_dir/started_at" "$started_at"
+  atmux_fs_write_field "$exec_dir/session_name" "${ATMUX_SESSION_NAME:-}"
+  atmux_fs_write_field "$exec_dir/agent_name" "${ATMUX_AGENT_NAME:-}"
+  atmux_fs_write_field "$exec_dir/executor_pane" "$executor_pane"
+  atmux_fs_write_field "$exec_dir/state" "running"
 }
 
 record_exec_finish() {
   local finished_at="$1"
   local exit_code="$2"
   [[ -n "${exec_dir:-}" ]] || return 0
-  write_field "$exec_dir/finished_at" "$finished_at"
-  write_field "$exec_dir/exit_code" "$exit_code"
-  write_field "$exec_dir/state" "exited"
+  atmux_fs_write_field "$exec_dir/finished_at" "$finished_at"
+  atmux_fs_write_field "$exec_dir/exit_code" "$exit_code"
+  atmux_fs_write_field "$exec_dir/state" "exited"
 }
 
 notify_exec_completion() {
@@ -90,7 +90,7 @@ notify_exec_completion() {
 
   send_notification "$notify_pane" "$notification_xml" || true
   notify_exec_watchers "$exec_dir" "$notify_pane" "$notification_xml" || true
-  write_field "$exec_dir/notified" "$(timestamp_utc)"
+  atmux_fs_write_field "$exec_dir/notified" "$(timestamp_utc)"
 }
 
 notify_exec_completion_inline() {
@@ -100,7 +100,7 @@ notify_exec_completion_inline() {
 
   printf '%s\n' "$notification_xml"
   notify_exec_watchers "$exec_dir" "$notify_pane" "$notification_xml" || true
-  write_field "$exec_dir/notified" "$(timestamp_utc)"
+  atmux_fs_write_field "$exec_dir/notified" "$(timestamp_utc)"
 }
 
 terminate_child_with_signal() {
@@ -114,14 +114,14 @@ finish_foreground_exec() {
   local exit_code="$1"
 
   foreground_finished=1
-  write_field "$exec_dir/finished_at" "$(timestamp_utc)"
-  write_field "$exec_dir/exit_code" "$exit_code"
+  atmux_fs_write_field "$exec_dir/finished_at" "$(timestamp_utc)"
+  atmux_fs_write_field "$exec_dir/exit_code" "$exit_code"
   if ! exec_notifications_suppressed; then
     notification_xml="$(build_notification "exec" "$command_text" "atmux agent capture ${ATMUX_AGENT_NAME:-unknown}" "exit_code=$exit_code")"
     notify_exec_completion_inline "$exec_dir" "$notify_pane" "$notification_xml"
   fi
   signal_exec_watchers "$exec_dir" || true
-  write_field "$exec_dir/state" "exited"
+  atmux_fs_write_field "$exec_dir/state" "exited"
   signal_exec_watchers "$exec_dir" || true
 }
 
@@ -278,7 +278,7 @@ exec_detached() {
   local detach_id="detach-$$-$RANDOM"
   exec_dir=""
   record_exec_start "$detach_id" "$repo_name" "$command_text" "$(timestamp_utc)" "$notify_pane"
-  write_field "$exec_dir/detached" "1"
+  atmux_fs_write_field "$exec_dir/detached" "1"
 
   # Write a runner script to avoid quoting issues across tmux's default
   # shell. Forward every exported env var from the caller so the
@@ -316,7 +316,7 @@ exec_detached() {
   local process_pane
   process_pane="$(tmux new-window -a -d -t "$session:" -n "$window" -P -F '#{pane_id}' "$runner")"
 
-  write_field "$exec_dir/executor_pane" "$process_pane"
+  atmux_fs_write_field "$exec_dir/executor_pane" "$process_pane"
 
   # Wait for _run to write its real PID
   local real_pid="" deadline
@@ -351,7 +351,7 @@ _run_detached() {
   local pid_fifo="${5:-}"
 
   # Write our real PID (parent polls for this)
-  write_field "$exec_dir/pid" "$$"
+  atmux_fs_write_field "$exec_dir/pid" "$$"
   if [[ -n "$pid_fifo" && -p "$pid_fifo" ]]; then
     printf '%s\n' "$$" > "$pid_fifo" 2>/dev/null || true
   fi
@@ -368,8 +368,8 @@ _run_detached() {
   local exit_code=$?
   set -e
 
-  write_field "$exec_dir/finished_at" "$(timestamp_utc)"
-  write_field "$exec_dir/exit_code" "$exit_code"
+  atmux_fs_write_field "$exec_dir/finished_at" "$(timestamp_utc)"
+  atmux_fs_write_field "$exec_dir/exit_code" "$exit_code"
 
   local command_text
   command_text="$(read_state_field "$exec_dir/command")"
@@ -385,7 +385,7 @@ _run_detached() {
   fi
 
   signal_exec_watchers "$exec_dir" || true
-  write_field "$exec_dir/state" "exited"
+  atmux_fs_write_field "$exec_dir/state" "exited"
   signal_exec_watchers "$exec_dir" || true
 
   exit "$exit_code"
@@ -439,8 +439,8 @@ fi
 
 cmd=( "$@" )
 command_text="$(display_command_text "${cmd[@]}")"
-notify_pane="$(current_pane)"
-repo_name="$(repo_name_from_context)"
+notify_pane="$(atmux_resolve_current_pane)"
+repo_name="$(atmux_resolve_repo_name)"
 
 if [[ "$detach" -eq 1 ]]; then
   exec_detached

@@ -127,8 +127,8 @@ emit_idle_notification() {
   local agent="$1" idle_seconds="$2" exec_cmd="$3"
   local xml
   xml="$(printf '<notification type="agent-idle" from="%s" reason="idle" stable_seconds="%s"/>' \
-    "$(xml_escape "$agent")" \
-    "$(xml_escape "$idle_seconds")")"
+    "$(atmux_xml_escape "$agent")" \
+    "$(atmux_xml_escape "$idle_seconds")")"
   printf '%s\n' "$xml"
   if [[ -n "$exec_cmd" ]]; then
     printf '%s' "$xml" | bash -c "$exec_cmd" >/dev/null 2>&1 || true
@@ -226,14 +226,14 @@ main() {
   local repeat=$((1 - once))
 
   local repo_name session pane
-  repo_name="$(repo_name_from_context)"
+  repo_name="$(atmux_resolve_repo_name)"
   session="$(resolve_agent_session "$agent" "$repo_name")"
   if [[ -z "$session" ]]; then
     echo "agent session not found: $agent" >&2
     exit 1
   fi
 
-  pane="$(primary_pane_for_session "$session")"
+  pane="$(atmux_resolve_primary_pane "$session")"
   if [[ -z "$pane" ]]; then
     echo "no pane found for session: $session" >&2
     exit 1

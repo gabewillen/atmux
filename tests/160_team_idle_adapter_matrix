@@ -6,6 +6,8 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/isolate-tmux.sh"
 TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
 ATMUX_BIN="$REPO_ROOT/bin/atmux"
+# shellcheck source=bin/(atmux)/(lib)/resolver
+source "$REPO_ROOT/bin/(atmux)/(lib)/resolver"
 
 adapters=(codex gemini claude-code cursor-agent auto)
 
@@ -25,14 +27,6 @@ wait_for_text() {
     (( now < deadline )) || return 1
     sleep 0.1
   done
-}
-
-normalize_name() {
-  local raw="${1:-}"
-  local normalized
-  normalized="$(printf '%s' "$raw" | sed -E 's/[^A-Za-z0-9_-]+/_/g; s/_+/_/g; s/^_+//; s/_+$//')"
-  [[ -n "$normalized" ]] || normalized="repo"
-  printf '%s\n' "$normalized"
 }
 
 tmp_root="$(mktemp -d "${TMPDIR:-/tmp}/atmux-team-idle-matrix.XXXXXX")"
@@ -119,7 +113,7 @@ create_member() {
 record_member() {
   local team="$1" session="$2" name="$3" adapter="$4" members_dir member_dir
   members_dir="$atmux_home/teams/$repo_name/$team/members"
-  member_dir="$members_dir/$(normalize_name "$session")"
+  member_dir="$members_dir/$(atmux_resolve_normalized_name "$session")"
   mkdir -p "$member_dir"
   printf '%s\n' "$session" > "$member_dir/session"
   printf '%s\n' "$name" > "$member_dir/name"
@@ -131,8 +125,8 @@ create_team_and_watcher() {
   ATMUX_HOME="$atmux_home" ATMUX_REPO="$repo_name" ATMUX_SOURCE_ROOT="$REPO_ROOT" \
     "$ATMUX_BIN" team create "$team" --shared-worktree >/dev/null
 
-  watcher_name="$(normalize_name "matrix-$team")"
-  watcher_dir="$atmux_home/watch-team-idle/$(normalize_name "${repo_name}--team--${team}")/watchers/$watcher_name"
+  watcher_name="$(atmux_resolve_normalized_name "matrix-$team")"
+  watcher_dir="$atmux_home/watch-team-idle/$(atmux_resolve_normalized_name "${repo_name}--team--${team}")/watchers/$watcher_name"
   mkdir -p "$watcher_dir"
   printf '%s\n' "$creator_pane" > "$watcher_dir/pane"
   printf '%s\n' "$creator_session" > "$watcher_dir/session"

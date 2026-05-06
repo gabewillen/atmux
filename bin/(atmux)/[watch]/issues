@@ -66,7 +66,7 @@ parse_repo_spec() {
 
 issues_watch_key() {
   local owner="$1" repo="$2"
-  normalize_name "${owner}_${repo}_issues"
+  atmux_resolve_normalized_name "${owner}_${repo}_issues"
 }
 
 issues_watch_dir() {
@@ -109,12 +109,6 @@ issues_watch_event_file() {
   printf '%s/event\n' "$(issues_watch_dir "$key")"
 }
 
-read_trimmed_file() {
-  local file="$1"
-  [[ -f "$file" ]] || return 0
-  tr -d '\r\n' < "$file" 2>/dev/null || true
-}
-
 adaptive_poll_sleep() {
   local interval="$1" failures="${2:-0}" max="${ATMUX_GITHUB_WATCH_MAX_INTERVAL:-300}"
   awk -v base="$interval" -v failures="$failures" -v max="$max" 'BEGIN {
@@ -131,13 +125,13 @@ adaptive_poll_sleep() {
 
 watcher_deadline_from_file() {
   local file="$1" raw=""
-  raw="$(read_trimmed_file "$file")"
+  raw="$(atmux_fs_read_trimmed "$file")"
   printf '%s\n' "${raw##*|}"
 }
 
 watcher_pane_from_file() {
   local file="$1" raw=""
-  raw="$(read_trimmed_file "$file")"
+  raw="$(atmux_fs_read_trimmed "$file")"
   printf '%s\n' "${raw%%|*}"
 }
 
@@ -244,7 +238,7 @@ issues_watchers_present() {
 issues_worker_running() {
   local key="$1" pid=""
 
-  pid="$(read_trimmed_file "$(issues_watch_pid_file "$key")")"
+  pid="$(atmux_fs_read_trimmed "$(issues_watch_pid_file "$key")")"
   [[ -n "$pid" ]] || return 1
   kill -0 "$pid" 2>/dev/null
 }
@@ -260,7 +254,7 @@ acquire_issues_worker_lock() {
     return 0
   fi
 
-  pid="$(read_trimmed_file "$pid_file")"
+  pid="$(atmux_fs_read_trimmed "$pid_file")"
   if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
     return 1
   fi
@@ -365,7 +359,7 @@ serve_issues_watch() {
   mkdir -p "$watchers_dir"
 
   local snapshot="" baseline_snapshot="" baseline_initialized=0 poll_data="" latest_line="" failure_count=0
-  snapshot="$(read_trimmed_file "$snapshot_file")"
+  snapshot="$(atmux_fs_read_trimmed "$snapshot_file")"
 
   while true; do
     if ! issues_watchers_present "$key"; then
@@ -456,7 +450,7 @@ main() {
   fi
 
   local pane="" key="" watcher_file="" expires_at="0"
-  pane="$(current_pane)"
+  pane="$(atmux_resolve_current_pane)"
   [[ -n "$pane" ]] || { echo "atmux issue watch --feed: unable to resolve current pane" >&2; exit 2; }
 
   key="$(issues_watch_key "$owner" "$repo")"
@@ -465,7 +459,7 @@ main() {
   if [[ -n "$timeout_sec" && "$timeout_sec" != "0" ]]; then
     expires_at="$(( $(date +%s) + timeout_sec ))"
   fi
-  write_field "$watcher_file" "${pane}|${expires_at}"
+  atmux_fs_write_field "$watcher_file" "${pane}|${expires_at}"
   if [[ -n "$exec_cmd" ]]; then
     printf '%s' "$exec_cmd" > "${watcher_file}.exec"
   else
@@ -474,11 +468,11 @@ main() {
 
   ensure_issues_watch_worker "$key" "$owner" "$repo" "$interval"
   printf '<watch type="issues" repo="%s/%s" pane="%s" timeout="%s" watcher_id="%s" />\n' \
-    "$(xml_escape "$owner")" \
-    "$(xml_escape "$repo")" \
-    "$(xml_escape "$pane")" \
-    "$(xml_escape "$timeout_sec")" \
-    "$(xml_escape "$(issues_watch_watcher_id "$key" "$pane")")"
+    "$(atmux_xml_escape "$owner")" \
+    "$(atmux_xml_escape "$repo")" \
+    "$(atmux_xml_escape "$pane")" \
+    "$(atmux_xml_escape "$timeout_sec")" \
+    "$(atmux_xml_escape "$(issues_watch_watcher_id "$key" "$pane")")"
 }
 
 case "${1:-}" in

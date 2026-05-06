@@ -58,7 +58,7 @@ resolve_pr_repo() {
     exit 2
   fi
 
-  normalize_name "$repo"
+  atmux_resolve_normalized_name "$repo"
 }
 
 parse_local_pr_ref() {
@@ -86,9 +86,9 @@ parse_local_pr_ref() {
 
   if [[ -n "$uri_repo" ]]; then
     [[ -n "$uri_id" && "$uri_id" != */* ]] || { echo "atmux pr watch: invalid local PR URI: $ref" >&2; exit 2; }
-    uri_repo="$(normalize_name "$uri_repo")"
-    if [[ -n "$explicit_repo" && "$(normalize_name "$explicit_repo")" != "$uri_repo" ]]; then
-      echo "atmux pr watch: URI repo '$uri_repo' does not match --repo '$(normalize_name "$explicit_repo")'" >&2
+    uri_repo="$(atmux_resolve_normalized_name "$uri_repo")"
+    if [[ -n "$explicit_repo" && "$(atmux_resolve_normalized_name "$explicit_repo")" != "$uri_repo" ]]; then
+      echo "atmux pr watch: URI repo '$uri_repo' does not match --repo '$(atmux_resolve_normalized_name "$explicit_repo")'" >&2
       exit 2
     fi
     printf '%s\n%s\n' "$uri_repo" "$uri_id"
@@ -171,7 +171,7 @@ main() {
   event_fifo="${watcher_file}.fifo"
   mkfifo "$event_fifo"
   exec 9<>"$event_fifo"
-  write_field "$watcher_file" "$(current_pane)|${event_fifo}"
+  atmux_fs_write_field "$watcher_file" "$(atmux_resolve_current_pane)|${event_fifo}"
 
   cleanup_watcher() {
     exec 9>&- 9<&- || true

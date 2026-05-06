@@ -16,10 +16,10 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/isolate-tmux.sh"
 TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
 ATMUX_BIN="$REPO_ROOT/bin/atmux"
+# shellcheck source=bin/(atmux)/(lib)/resolver
+source "$REPO_ROOT/bin/(atmux)/(lib)/resolver"
 
-# Mirror atmux's normalize_name so session names line up regardless of
-# whether the local checkout is `amux.sh` or the CI checkout `atmux`.
-REPO_NORM="$(basename "$REPO_ROOT" | sed -E 's/[^A-Za-z0-9_-]+/_/g; s/_+/_/g; s/^_+//; s/_+$//')"
+REPO_NORM="$(atmux_resolve_normalized_name "$(basename "$REPO_ROOT")")"
 SESSION_PREFIX="atmux-${REPO_NORM}-"
 
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/atmux-team-wt.XXXXXX")"

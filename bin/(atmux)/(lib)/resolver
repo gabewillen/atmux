@@ -1,0 +1,158 @@
+#!/usr/bin/env bash
+# Shared name, repo, session, and pane resolution helpers.
+
+if [[ -n "${__ATMUX_RESOLVER_SOURCED:-}" ]]; then
+  return 0 2>/dev/null || true
+fi
+__ATMUX_RESOLVER_SOURCED=1
+
+_ATMUX_RESOLVER_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+if ! declare -F tmux >/dev/null; then
+  # shellcheck source=bin/(atmux)/(lib)/tmux
+  source "$_ATMUX_RESOLVER_DIR/tmux"
+fi
+unset _ATMUX_RESOLVER_DIR
+
+atmux_resolve_normalized_name() {
+  local raw="${1:-}"
+  local normalized=""
+  normalized="$(printf '%s' "$raw" | sed -E 's/[^A-Za-z0-9_-]+/_/g; s/_+/_/g; s/^_+//; s/_+$//')"
+  if [[ -z "$normalized" ]]; then
+    normalized="repo"
+  fi
+  printf '%s\n' "$normalized"
+}
+
+atmux_resolve_primary_pane() {
+  local session="$1"
+  tmux list-panes -a -F '#{session_name} #{pane_id}' 2>/dev/null | awk -v s="$session" '$1==s { print $2; exit }'
+}
+
+atmux_resolve_current_pane() {
+  # Prefer TMUX_PANE (set by tmux per-pane); display-message -p resolves
+  # wrong without an attached client.
+  if [[ -n "${TMUX_PANE:-}" ]]; then
+    printf '%s\n' "$TMUX_PANE"
+    return 0
+  fi
+  if [[ -n "${TMUX:-}" ]]; then
+    tmux display-message -p '#{pane_id}' 2>/dev/null || true
+    return 0
+  fi
+  if [[ -n "${ATMUX_SESSION_NAME:-}" ]]; then
+    atmux_resolve_primary_pane "$ATMUX_SESSION_NAME"
+    return 0
+  fi
+  return 0
+}
+
+atmux_resolve_session_env() {
+  local session="$1" key="$2"
+  tmux show-environment -t "$session" "$key" 2>/dev/null | sed -n "s/^${key}=//p" || true
+}
+
+atmux_resolve_session_short_name() {
+  local session="$1" repo="$2"
+  local prefix="atmux-${repo}-"
+  if [[ -n "$repo" && "$session" == "$prefix"* ]]; then
+    printf '%s\n' "${session#"$prefix"}"
+  else
+    printf '%s\n' "$session"
+  fi
+}
+
+atmux_resolve_repo_name() {
+  local repo_name="${ATMUX_REPO:-}"
+  if [[ -z "$repo_name" && -n "${TMUX:-}" ]]; then
+    repo_name="$(tmux show-environment ATMUX_REPO 2>/dev/null | sed -n 's/^ATMUX_REPO=//p' || true)"
+  fi
+  if [[ -z "$repo_name" ]]; then
+    local repo_root=""
+    repo_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+    if [[ -n "$repo_root" ]]; then
+      repo_name="$(basename "$repo_root")"
+    fi
+  fi
+  atmux_resolve_normalized_name "$repo_name"
+}
+
+atmux_resolve_repo_context() {
+  local repo_root repo_name
+  if ! repo_root="$(git rev-parse --show-toplevel 2>/dev/null)"; then
+    echo "must be run from a git repository" >&2
+    return 1
+  fi
+  repo_name="${ATMUX_REPO:-}"
+  if [[ -z "$repo_name" && -n "${TMUX:-}" ]]; then
+    repo_name="$(tmux show-environment ATMUX_REPO 2>/dev/null | sed -n 's/^ATMUX_REPO=//p' || true)"
+  fi
+  if [[ -z "$repo_name" ]]; then
+    repo_name="$(basename "$repo_root")"
+  fi
+  repo_name="$(atmux_resolve_normalized_name "$repo_name")"
+  printf '%s\n%s\n' "$repo_root" "$repo_name"
+}
+
+atmux_has_wildcard() {
+  local value="$1"
+  case "$value" in
+    *'*'*|*'?'*|*'['*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+atmux_match_any_pattern() {
+  local value="$1"
+  shift || true
+  local pattern
+  for pattern in "$@"; do
+    # shellcheck disable=SC2053
+    if [[ "$value" == $pattern ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+atmux_resolve_target_session() {
+  local target="$1"
+  local repo_name="${2:-}"
+  local candidate=""
+
+  if tmux has-session -t "$target" 2>/dev/null; then
+    printf '%s\n' "$target"
+    return 0
+  fi
+
+  if [[ "$target" == atmux-* ]]; then
+    printf '%s\n' "$target"
+    return 0
+  fi
+
+  if [[ -z "$repo_name" ]]; then
+    return 1
+  fi
+
+  candidate="atmux-${repo_name}-${target}"
+  if tmux has-session -t "$candidate" 2>/dev/null; then
+    printf '%s\n' "$candidate"
+    return 0
+  fi
+
+  if [[ "$target" == "${repo_name}-"* ]]; then
+    candidate="atmux-${target}"
+    if tmux has-session -t "$candidate" 2>/dev/null; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  fi
+
+  printf '%s\n' "atmux-${repo_name}-${target}"
+  return 0
+}
+
+atmux_resolve_repo_sessions() {
+  local repo_name="$1"
+  local prefix="atmux-${repo_name}-"
+  tmux list-sessions -F '#{session_name}' 2>/dev/null | awk -v p="$prefix" 'index($0,p)==1 { print }'
+}

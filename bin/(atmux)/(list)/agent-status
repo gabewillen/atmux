@@ -17,23 +17,6 @@ source "$HERE/../notify"
 # shellcheck source=bin/(atmux)/(internal)/reporter
 source "$HERE/../(internal)/reporter"
 
-repo_context() {
-  local repo_root repo_name
-  if ! repo_root="$(git rev-parse --show-toplevel 2>/dev/null)"; then
-    echo "atmux agent status must be run from a git repository" >&2
-    exit 1
-  fi
-  repo_name="${ATMUX_REPO:-}"
-  if [[ -z "$repo_name" && -n "${TMUX:-}" ]]; then
-    repo_name="$(tmux show-environment ATMUX_REPO 2>/dev/null | sed -n 's/^ATMUX_REPO=//p' || true)"
-  fi
-  if [[ -z "$repo_name" ]]; then
-    repo_name="$(basename "$repo_root")"
-  fi
-  repo_name="$(normalize_name "$repo_name")"
-  printf '%s\n%s\n' "$repo_root" "$repo_name"
-}
-
 now_seconds() { date +%s; }
 
 file_mtime() {
@@ -68,7 +51,7 @@ agent_status_fields() {
   local adapter team pane_alive
 
   if tmux has-session -t "$session" 2>/dev/null; then
-    pane="$(primary_pane_for_session "$session")"
+    pane="$(atmux_resolve_primary_pane "$session")"
   else
     pane=""
   fi
@@ -79,8 +62,8 @@ agent_status_fields() {
     pane_alive="no"
   fi
 
-  adapter="$(get_session_env "$session" ATMUX_ADAPTER)"
-  team="$(get_session_env "$session" ATMUX_TEAM)"
+  adapter="$(atmux_resolve_session_env "$session" ATMUX_ADAPTER)"
+  team="$(atmux_resolve_session_env "$session" ATMUX_TEAM)"
   [[ -n "$adapter" ]] || adapter=""
   [[ -n "$team" ]] || team=""
 
@@ -184,7 +167,7 @@ USAGE
   {
     IFS= read -r repo_root
     IFS= read -r repo_name
-  } < <(repo_context)
+  } < <(atmux_resolve_repo_context)
 
   local prefix="atmux-${repo_name}-"
   local matched=0
@@ -233,7 +216,7 @@ USAGE
         last_error="$last_error_short"
     fi
     matched=1
-  done < <(tmux list-sessions -F '#{session_name}' 2>/dev/null | sort -u || true)
+  done < <(atmux_resolve_repo_sessions "$repo_name" | sort -u || true)
 
   report_close agents-status
 

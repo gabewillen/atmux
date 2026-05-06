@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=bin/(atmux)/(lib)/xml
+source "$HERE/../(lib)/xml"
+
 usage() {
   cat <<'USAGE'
 Usage:
@@ -28,10 +32,6 @@ Examples:
   atmux path watch '/tmp/build/*.log' --timeout 60 --once
   atmux path watch 'docs/**/*.md' --exec ./on-docs-changed --coalesce 30
 USAGE
-}
-
-xml_escape() {
-  printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g' -e "s/'/\&apos;/g"
 }
 
 has_glob_chars() {
@@ -180,8 +180,8 @@ emit_change_once() {
   shift
   local xml
   xml="$(printf '<watch type="path" path="%s" changed="true" backend="%s" />' \
-    "$(xml_escape "$*")" \
-    "$(xml_escape "$backend")")"
+    "$(atmux_xml_escape "$*")" \
+    "$(atmux_xml_escape "$backend")")"
   emit_change_xml "$xml"
 }
 
@@ -193,11 +193,11 @@ emit_change_coalesced() {
   shift 4
   local xml
   xml="$(printf '<watch type="path" path="%s" changed="true" backend="%s" coalesced="true" events="%s" window="%ss" reason="%s" />' \
-    "$(xml_escape "$*")" \
-    "$(xml_escape "$backend")" \
-    "$(xml_escape "$events")" \
-    "$(xml_escape "$window")" \
-    "$(xml_escape "$reason")")"
+    "$(atmux_xml_escape "$*")" \
+    "$(atmux_xml_escape "$backend")" \
+    "$(atmux_xml_escape "$events")" \
+    "$(atmux_xml_escape "$window")" \
+    "$(atmux_xml_escape "$reason")")"
   emit_change_xml "$xml"
 }
 

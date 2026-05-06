@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Shared XML helpers.
+
+atmux_xml_escape() {
+  printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g' -e "s/'/\&apos;/g"
+}

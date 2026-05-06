@@ -11,6 +11,9 @@
 set -euo pipefail
 
 ATMUX_HOME="${ATMUX_HOME:-$HOME/.atmux}"
+HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=bin/(atmux)/(lib)/xml
+source "$HERE/../(lib)/xml"
 
 usage() {
   cat <<'USAGE'
@@ -35,10 +38,6 @@ Description:
                With `--once --interval N`: legacy poll-and-wait semantics
                — poll every N seconds and exit on the first non-empty diff.
 USAGE
-}
-
-xml_escape() {
-  printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g' -e "s/'/\&apos;/g"
 }
 
 derive_default_id() {
@@ -101,13 +100,13 @@ emit_diff() {
 
   local xml
   xml="$(printf '<watch type="git" id="%s" prev="%s" new="%s" events="%s" window="%ss" reason="%s"><diff>%s</diff></watch>' \
-    "$(xml_escape "$id")" \
-    "$(xml_escape "$baseline")" \
-    "$(xml_escape "$current")" \
-    "$(xml_escape "$events")" \
-    "$(xml_escape "$window")" \
-    "$(xml_escape "$reason")" \
-    "$(xml_escape "$diff_text")")"
+    "$(atmux_xml_escape "$id")" \
+    "$(atmux_xml_escape "$baseline")" \
+    "$(atmux_xml_escape "$current")" \
+    "$(atmux_xml_escape "$events")" \
+    "$(atmux_xml_escape "$window")" \
+    "$(atmux_xml_escape "$reason")" \
+    "$(atmux_xml_escape "$diff_text")")"
   printf '%s\n' "$xml"
   if [[ -n "$EXEC_CMD" ]]; then
     printf '%s' "$xml" | bash -c "$EXEC_CMD" >/dev/null 2>&1 || true

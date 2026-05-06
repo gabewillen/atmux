@@ -903,8 +903,13 @@ kill_teams() {
 }
 
 view_team() {
-  local target="${1:-}" repo_root repo_name team_name member team_session attach_cmd pane pane_count
+  local target="${1:-}" attach_view=1 repo_root repo_name team_name member team_session attach_cmd pane pane_count window_index pane_slot window_target current_window_id pane_window real_tmux socket
   [[ -n "$target" ]] || { echo "usage: atmux team view <name>" >&2; exit 2; }
+  if [[ "$target" == "--no-attach" ]]; then
+    attach_view=0
+    target="${2:-}"
+    [[ -n "$target" ]] || { echo "usage: atmux team view [--no-attach] <name>" >&2; exit 2; }
+  fi
   {
     IFS= read -r repo_root
     IFS= read -r repo_name
@@ -916,8 +921,11 @@ view_team() {
     tmux kill-session -t "$team_session" >/dev/null 2>&1 || true
   fi
   pane_count=0
+  current_window_id=""
   while IFS= read -r member; do
     [[ -n "$member" ]] || continue
+    window_index=$((pane_count / 2))
+    pane_slot=$((pane_count % 2))
     if (( pane_count == 0 )); then
       tmux new-session -d -s "$team_session" -n "$team_session" -c "$repo_root" "TMUX= $attach_cmd attach-session -r -t \"$member\""
       atmux_configure_tmux_pane_defaults "$team_session"
@@ -925,16 +933,21 @@ view_team() {
       tmux set-environment -t "$team_session" ATMUX_TEAM "$team_name" >/dev/null 2>&1 || true
       tmux set-environment -t "$team_session" ATMUX_SESSION_NAME "$team_session" >/dev/null 2>&1 || true
       tmux set-environment -t "$team_session" ATMUX_SESSION_KIND "team-view" >/dev/null 2>&1 || true
-      pane="$(tmux list-panes -t "${team_session}:0" -F '#{pane_id}' 2>/dev/null | head -n1 || true)"
+      pane="$(tmux list-panes -t "$team_session" -F '#{pane_id}' 2>/dev/null | head -n1 || true)"
+    elif (( pane_slot == 0 )); then
+      pane="$(tmux new-window -d -t "$team_session:" -n "${team_name}-$((window_index + 1))" -c "$repo_root" -P -F '#{pane_id}' "TMUX= $attach_cmd attach-session -r -t \"$member\"" 2>/dev/null || true)"
     else
-      pane="$(tmux split-window -d -t "${team_session}:0" -c "$repo_root" -P -F '#{pane_id}' "TMUX= $attach_cmd attach-session -r -t \"$member\"" 2>/dev/null || true)"
+      window_target="${current_window_id:-$team_session}"
+      pane="$(tmux split-window -h -d -t "$window_target" -c "$repo_root" -P -F '#{pane_id}' "TMUX= $attach_cmd attach-session -r -t \"$member\"" 2>/dev/null || true)"
     fi
     if [[ -n "$pane" ]]; then
+      pane_window="$(tmux display-message -p -t "$pane" '#{window_id}' 2>/dev/null || true)"
+      [[ -n "$pane_window" ]] && current_window_id="$pane_window"
       tmux select-pane -t "$pane" -T "${member#atmux-${repo_name}-}" >/dev/null 2>&1 || true
       tmux set-option -p -t "$pane" @atmux_agent_session "$member" >/dev/null 2>&1 || true
       tmux set-option -p -t "$pane" @atmux_agent_name "${member#atmux-${repo_name}-}" >/dev/null 2>&1 || true
       pane_count=$((pane_count + 1))
-      tmux select-layout -t "${team_session}:0" tiled >/dev/null 2>&1 || true
+      [[ -n "$pane_window" ]] && tmux select-layout -t "$pane_window" even-horizontal >/dev/null 2>&1 || true
     fi
   done < <(team_member_sessions_from_state "$repo_name" "$team_name")
   if (( pane_count == 0 )); then
@@ -945,6 +958,15 @@ view_team() {
     tmux set-environment -t "$team_session" ATMUX_TEAM "$team_name" >/dev/null 2>&1 || true
     tmux set-environment -t "$team_session" ATMUX_SESSION_NAME "$team_session" >/dev/null 2>&1 || true
     tmux set-environment -t "$team_session" ATMUX_SESSION_KIND "team-view" >/dev/null 2>&1 || true
+  fi
+  if [[ "$attach_view" -eq 1 ]]; then
+    if atmux_tmux_current_client_is_project_server; then
+      tmux switch-client -t "$team_session"
+      return 0
+    fi
+    real_tmux="$(atmux_real_tmux_bin)" || exit 1
+    socket="$(atmux_tmux_socket)"
+    exec "$real_tmux" -S "$socket" attach-session -t "$team_session"
   fi
   printf '<team-view name="%s" repo="%s" session="%s" />\n' \
     "$(xml_escape "$team_name")" \

@@ -1,0 +1,93 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+source "$(dirname "${BASH_SOURCE[0]}")/lib/isolate-tmux.sh"
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPTS_DIR="$TESTS_DIR/scripts"
+
+eval "$("$SCRIPTS_DIR/setup")"
+
+normalize_name() {
+  local raw="${1:-}"
+  local normalized
+  normalized="$(printf '%s' "$raw" | sed -E 's/[^A-Za-z0-9_-]+/_/g; s/_+/_/g; s/^_+//; s/_+$//')"
+  if [[ -z "$normalized" ]]; then
+    normalized="repo"
+  fi
+  printf '%s\n' "$normalized"
+}
+
+extra_sessions=()
+cleanup() {
+  local session
+  for session in "${extra_sessions[@]:-}"; do
+    tmux kill-session -t "$session" >/dev/null 2>&1 || true
+  done
+  "$SCRIPTS_DIR/teardown" \
+    --team-session "$TEAM_SESSION" \
+    --agent1-session "$AGENT1_SESSION" \
+    --agent2-session "$AGENT2_SESSION"
+}
+trap cleanup EXIT
+
+members_dir="${ATMUX_HOME:-$HOME/.atmux}/teams/$REPO_NAME/$TEAM_NAME/members"
+
+for name in reviewer planner reporter; do
+  session="atmux-${REPO_NAME}-${name}"
+  extra_sessions+=("$session")
+  tmux new-session -d -s "$session" -n "$session" -c "$REPO_ROOT" "cat"
+  tmux set-environment -t "$session" ATMUX_REPO "$REPO_NAME"
+  tmux set-environment -t "$session" ATMUX_AGENT_NAME "$name"
+  tmux set-environment -t "$session" ATMUX_SESSION_NAME "$session"
+  mkdir -p "$members_dir/$(normalize_name "$session")"
+  printf '%s\n' "$session" > "$members_dir/$(normalize_name "$session")/session"
+  printf '%s\n' "$name" > "$members_dir/$(normalize_name "$session")/name"
+done
+
+marker1="tva$RANDOM"
+marker2="tvb$RANDOM"
+marker3="tvc$RANDOM"
+marker4="tvd$RANDOM"
+marker5="tve$RANDOM"
+
+tmux send-keys -t "${AGENT1_SESSION}:0.0" "$marker1" C-m
+tmux send-keys -t "${AGENT2_SESSION}:0.0" "$marker2" C-m
+tmux send-keys -t "${extra_sessions[0]}:0.0" "$marker3" C-m
+tmux send-keys -t "${extra_sessions[1]}:0.0" "$marker4" C-m
+tmux send-keys -t "${extra_sessions[2]}:0.0" "$marker5" C-m
+sleep 0.2
+
+ATMUX_REPO="$REPO_NAME" "$ATMUX_BIN" team view --no-attach "$TEAM_NAME" >/dev/null
+
+window_count="$(tmux list-windows -t "$TEAM_SESSION" -F '#{window_id}' | wc -l | tr -d '[:space:]')"
+if [[ "$window_count" != "3" ]]; then
+  echo "expected 3 team view windows for 5 members, got: $window_count" >&2
+  tmux list-windows -t "$TEAM_SESSION" -F '#{window_index}:#{window_name}' >&2 || true
+  exit 1
+fi
+
+pane_counts="$(
+  while IFS= read -r window_id; do
+    tmux list-panes -t "$window_id" -F '#{pane_id}' | wc -l | tr -d '[:space:]'
+    printf '\n'
+  done < <(tmux list-windows -t "$TEAM_SESSION" -F '#{window_id}')
+)"
+expected_counts=$'2\n2\n1'
+if [[ "$pane_counts" != "$expected_counts" ]]; then
+  echo "expected team view pane counts 2,2,1; got:" >&2
+  printf '%s\n' "$pane_counts" >&2
+  exit 1
+fi
+
+tiled="$(ATMUX_REPO="$REPO_NAME" "$ATMUX_BIN" team capture "$TEAM_NAME" --tiled --lines 120)"
+printf '%s\n' "$tiled" | grep -Fq "$marker1"
+printf '%s\n' "$tiled" | grep -Fq "$marker2"
+printf '%s\n' "$tiled" | grep -Fq "$marker3"
+printf '%s\n' "$tiled" | grep -Fq "$marker4"
+printf '%s\n' "$tiled" | grep -Fq "$marker5"
+printf '%s\n' "$tiled" | grep -Fq "[window 0:"
+printf '%s\n' "$tiled" | grep -Fq "[window 1:"
+printf '%s\n' "$tiled" | grep -Fq "[window 2:"
+
+echo "ok: team view uses two panes per window and capture includes every window"

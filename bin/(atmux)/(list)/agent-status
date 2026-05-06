@@ -37,13 +37,13 @@ repo_context() {
 now_seconds() { date +%s; }
 
 file_mtime() {
-  # Portable mtime in seconds: GNU stat, BSD stat, then perl as last resort.
+  # Portable mtime in seconds: GNU stat, then BSD stat.
   if stat -c '%Y' "$1" >/dev/null 2>&1; then
     stat -c '%Y' "$1"
   elif stat -f '%m' "$1" >/dev/null 2>&1; then
     stat -f '%m' "$1"
   else
-    perl -e 'print((stat($ARGV[0]))[9] || 0)' "$1" 2>/dev/null || printf '0\n'
+    printf '0\n'
   fi
 }
 

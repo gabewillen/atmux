@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.23.4 — PR merge conflict notifications
+
+- GitHub PR watchers now include merge-conflict state in their polling
+  snapshot and emit a `kind="merge_conflict"` notification when a watched PR
+  becomes conflicted with its base branch.
+
 ## 0.23.3 — Pair-program navigator startup fix
 
 - Fixed the `tmux` shim pass-through path so role hooks running inside agent

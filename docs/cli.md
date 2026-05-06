@@ -80,7 +80,7 @@ atmux pane watch %1 --text "ready" --timeout 30
 
 `atmux path watch` exits when a filesystem glob's matched set or file metadata changes. It uses `fswatch` or `inotifywait` when available, otherwise it falls back to polling.
 
-`atmux pr watch <url>` accepts both local PR ids/URIs and GitHub PR URLs. For GitHub URLs it is long-lived: it keeps notifying on new discussion until stopped or the PR closes/merges. Its registration output includes `watcher_id="..."` for use with `atmux watcher kill <id>`.
+`atmux pr watch <url>` accepts both local PR ids/URIs and GitHub PR URLs. For GitHub URLs it is long-lived: it keeps notifying on new discussion, failing checks, and merge conflicts until stopped or the PR closes/merges. Its registration output includes `watcher_id="..."` for use with `atmux watcher kill <id>`.
 
 ### `atmux process kill <pid> [--timeout <seconds>] [--signal <NAME>]`
 

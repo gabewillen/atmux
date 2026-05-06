@@ -15,8 +15,9 @@ Usage:
 Description:
   Register the current pane to watch a GitHub pull request discussion stream.
   A shared background worker polls for new comments, reviews, and failing CI
-  check runs on the PR's head commit, and queues ATMUX notifications into the
-  pane until you stop the watch, or the PR closes/merges.
+  check runs on the PR's head commit, as well as merge conflicts with the base
+  branch, and queues ATMUX notifications into the pane until you stop the
+  watch, or the PR closes/merges.
 
   Multiple local watchers for the same PR share a single polling worker so only
   one process polls GitHub at a time.
@@ -160,6 +161,8 @@ fetch_pr_poll_data() {
         pullRequest(number: $number) {
           state
           mergedAt
+          mergeable
+          mergeStateStatus
           comments(last: 50) {
             nodes {
               id
@@ -220,6 +223,15 @@ fetch_pr_poll_data() {
       | [
           "STATE|\(if $pr.mergedAt != null or $pr.state == "MERGED" then "merged" elif $pr.state == "CLOSED" then "closed" else "open" end)",
           ([
+            (select(($pr.mergeable // "") == "CONFLICTING" or ($pr.mergeStateStatus // "") == "DIRTY") |
+              {
+                updatedAt: "0000-01-01T00:00:00Z",
+                kind: "merge_conflict",
+                id: ("merge_conflict:\((if ($pr.mergeStateStatus // "") == "DIRTY" then "DIRTY" elif ($pr.mergeable // "") == "CONFLICTING" then "CONFLICTING" else "CONFLICTING" end) | ascii_downcase)"),
+                author: "github",
+                state: (if ($pr.mergeStateStatus // "") == "DIRTY" then "DIRTY" elif ($pr.mergeable // "") == "CONFLICTING" then "CONFLICTING" else "CONFLICTING" end),
+                body: "merge conflict with base branch"
+              }),
             ($pr.comments.nodes[]? |
               {
                 updatedAt,
@@ -276,6 +288,7 @@ notification_payload_for_line() {
   IFS='|' read -r updated_at kind event_id author state text <<< "$line"
   case "$kind" in
     check_run) hint="gh pr checks $number --repo $owner/$repo" ;;
+    merge_conflict) hint="gh pr view $number --repo $owner/$repo --json mergeStateStatus,mergeable" ;;
     *)         hint="gh pr view $pr_url --comments" ;;
   esac
   build_notification "pr" "github" "$hint" \
@@ -312,6 +325,18 @@ notify_pr_watchers() {
       fi
     fi
   done < <(find "$watchers_dir" -mindepth 1 -maxdepth 1 -type f ! -name '*.exec' 2>/dev/null | sort)
+}
+
+new_snapshot_lines() {
+  local snapshot="$1" baseline_snapshot="$2"
+  local line
+
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
+    if ! printf '%s\n' "$baseline_snapshot" | grep -Fxq -- "$line"; then
+      printf '%s\n' "$line"
+    fi
+  done <<< "$snapshot"
 }
 
 pr_watchers_present() {
@@ -502,7 +527,7 @@ serve_pr_watch() {
   watchers_dir="$(pr_watch_watchers_dir "$key")"
   mkdir -p "$watchers_dir"
 
-  local snapshot="" baseline_snapshot="" baseline_initialized=0 watch_state="open" poll_data="" latest_line="" payload="" failure_count=0
+  local snapshot="" baseline_snapshot="" baseline_initialized=0 watch_state="open" poll_data="" new_line="" payload="" failure_count=0
   snapshot="$(read_trimmed_file "$snapshot_file")"
   printf '%s\n' "$watch_state" > "$state_file"
 
@@ -525,12 +550,12 @@ serve_pr_watch() {
       baseline_snapshot="$snapshot"
       baseline_initialized=1
     elif [[ "$snapshot" != "$baseline_snapshot" ]]; then
-      latest_line="$(printf '%s\n' "$snapshot" | tail -n 1)"
-      if [[ -n "$latest_line" ]]; then
-        payload="$(notification_payload_for_line "$pr_url" "$owner" "$repo" "$number" "$latest_line")"
+      while IFS= read -r new_line; do
+        [[ -n "$new_line" ]] || continue
+        payload="$(notification_payload_for_line "$pr_url" "$owner" "$repo" "$number" "$new_line")"
         notify_pr_watchers "$key" "$payload"
-      fi
-      printf '%s\n' "$latest_line" > "$event_file"
+        printf '%s\n' "$new_line" > "$event_file"
+      done < <(new_snapshot_lines "$snapshot" "$baseline_snapshot")
       baseline_snapshot="$snapshot"
     fi
 

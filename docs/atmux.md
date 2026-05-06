@@ -110,7 +110,7 @@ Current built-in mapping:
 - `atmux pr watch <id|atmux-uri|github-url>` watches either a filesystem pull request or a GitHub pull request based on the URI. Local PRs accept an id with `--repo`, or `atmux://pull-request/<repo>/<id>`.
 - `atmux issue watch --feed <repo|url>` polls a GitHub repository for newly created issues and queues notifications to the current pane until the watcher is stopped. Registration output includes a `watcher_id`, removable via `atmux watcher kill <id>`.
 - `atmux pr watch --feed <repo|url>` polls a GitHub repository for newly created pull requests and queues notifications to the current pane until the watcher is stopped. Registration output includes a `watcher_id`, removable via `atmux watcher kill <id>`.
-- For GitHub PR URLs, `atmux pr watch <url>` polls comments/reviews and queues notifications until the PR closes/merges or the watcher is stopped. Remote watcher registration output includes a `watcher_id`, removable via `atmux watcher kill <id>`.
+- For GitHub PR URLs, `atmux pr watch <url>` polls comments/reviews, failing checks, and merge conflicts, then queues notifications until the PR closes/merges or the watcher is stopped. Remote watcher registration output includes a `watcher_id`, removable via `atmux watcher kill <id>`.
 
 ### `atmux process kill <pid> [--timeout <seconds>] [--signal <NAME>]`
 - Stops the tracked child for this repo (same `exec` metadata as `atmux process watch <pid>`).

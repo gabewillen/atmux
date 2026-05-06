@@ -6,7 +6,7 @@ set -euo pipefail
 # GEMINI_SYSTEM_MD env directive pointing at it. Gemini's GEMINI_SYSTEM_MD is
 # replace-only: the built-in prompt is dropped. We accept that tradeoff -
 # atmux content is what the agent needs and the user can re-add their own
-# preamble in $ATMUX_HOME/agents/<repo>/<agent>/gemini-system.md if desired.
+# preamble in $ATMUX_HOME/state/agents/<repo>/<agent>/gemini-system.md if desired.
 
 args_file="${ATMUX_PREP_ARGS_FILE:-}"
 env_file="${ATMUX_PREP_ENV_FILE:-}"
@@ -19,7 +19,7 @@ content="$(cat)"
 ATMUX_HOME="${ATMUX_HOME:-$HOME/.atmux}"
 repo="${ATMUX_REPO:-repo}"
 agent="${ATMUX_AGENT_NAME:-agent}"
-prep_dir="$ATMUX_HOME/agents/$repo/$agent"
+prep_dir="$ATMUX_HOME/state/agents/$repo/$agent"
 mkdir -p "$prep_dir"
 
 system_md="$prep_dir/gemini-system.md"

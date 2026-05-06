@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.23.2 — PR merge sync and clean agent state
+
+- PR merge handling now broadcasts a `pr-merged-sync` notification to every
+  standalone repo agent and every team member, instructing them to sync `main`.
+  The broadcast is shared by the GitHub CLI shim (`gh pr merge`) and the PR
+  watcher merge detector, with a dedupe marker so both paths do not double-send.
+- Agent runtime files now live under `$ATMUX_HOME/state/agents/<repo>/<agent>`
+  instead of `$ATMUX_HOME/agents/<repo>/<agent>`, avoiding collisions with
+  atmux-owned worktrees whose repo names include an agent suffix.
+
 ## 0.23.0 — Team idle notifications
 
 - Automatically subscribe an agent that creates a team to a team-idle
@@ -276,7 +286,7 @@ Per-adapter mechanism:
 |---|---|---|
 | `claude-code` | `--append-system-prompt "<text>"` | No — pure CLI flag |
 | `codex` | `--config developer_instructions=<TOML-quoted-text>` (appends after defaults) | No — pure CLI flag |
-| `gemini` | sidecar at `$ATMUX_HOME/agents/<repo>/<agent>/gemini-system.md`, `GEMINI_SYSTEM_MD=<path>` env | Sidecar in `$ATMUX_HOME`, **not** `GEMINI.md` |
+| `gemini` | sidecar at `$ATMUX_HOME/state/agents/<repo>/<agent>/gemini-system.md`, `GEMINI_SYSTEM_MD=<path>` env | Sidecar in `$ATMUX_HOME`, **not** `GEMINI.md` |
 | `cursor-agent` | sidecar at `<worktree>/.cursor/rules/atmux.mdc` (cursor auto-discovers it) | Sidecar in `.cursor/rules/`, **not** `AGENTS.md` |
 
 The new contract: each adapter's `cmd prepare-prompt` is invoked with the

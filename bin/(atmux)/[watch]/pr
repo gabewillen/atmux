@@ -363,6 +363,18 @@ closed_notification_payload() {
     "text=$text"
 }
 
+notify_repo_on_pr_merged() {
+  local pr_url="$1" owner="$2" repo="$3" number="$4"
+  local sync_script="$HERE/../(internal)/pr-merge-sync"
+  [[ -x "$sync_script" ]] || return 0
+  "$sync_script" \
+    --url "$pr_url" \
+    --repo "$owner/$repo" \
+    --number "$number" \
+    --source github \
+    >/dev/null 2>&1 || true
+}
+
 pr_worker_running() {
   local key="$1" pid=""
 
@@ -526,6 +538,9 @@ serve_pr_watch() {
       closed|merged)
         payload="$(closed_notification_payload "$pr_url" "$owner" "$repo" "$number" "$watch_state")"
         notify_pr_watchers "$key" "$payload"
+        if [[ "$watch_state" == "merged" ]]; then
+          notify_repo_on_pr_merged "$pr_url" "$owner" "$repo" "$number"
+        fi
         printf '%s\n' "$watch_state" > "$state_file"
         break
         ;;

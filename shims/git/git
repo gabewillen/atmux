@@ -113,7 +113,7 @@ hook_worktree_add() {
   local repo="${ATMUX_REPO:-}"
   [[ -n "$agent" && -n "$repo" ]] || return 0
 
-  local hook_dir="$ATMUX_HOME/agents/$repo/$agent/git-hooks"
+  local hook_dir="$ATMUX_HOME/state/agents/$repo/$agent/git-hooks"
   mkdir -p "$hook_dir" 2>/dev/null || return 0
   printf '%s\n' "$abs" > "$hook_dir/last-worktree-add" 2>/dev/null || return 0
 }

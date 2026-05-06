@@ -155,7 +155,7 @@ state_dir="$(grep '^ATMUX_ROLE_STATE_DIR=' "$MARKERS/start.env" | cut -d= -f2-)"
 # the legacy AGENTS.md mutation has been removed.
 repo_norm="$(basename "$REPO_ROOT" | sed -E 's/[^A-Za-z0-9_-]+/_/g; s/_+/_/g; s/^_+//; s/_+$//')"
 worktree="$ATMUX_HOME/agents/${repo_norm}-$agent_name"
-prompt_md="$ATMUX_HOME/agents/$repo_norm/$agent_name/prep/prompt.md"
+prompt_md="$ATMUX_HOME/state/agents/$repo_norm/$agent_name/prep/prompt.md"
 for i in $(seq 1 80); do
   [[ -f "$prompt_md" ]] && grep -q "Probe Role" "$prompt_md" && break
   sleep 0.1

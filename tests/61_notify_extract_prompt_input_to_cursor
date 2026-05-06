@@ -16,9 +16,24 @@ source "$NOTIFY_SCRIPT"
 mock_snapshot=""
 mock_cursor_x=""
 mock_cursor_y=""
+mock_adapter=""
 
 copied_char_count() {
   printf '%s' "${1:-}" | wc -m | tr -d ' '
+}
+
+truncated="$(truncate_line_to_cursor "❯ typed" 1)"
+[[ "$truncated" == "❯" ]] || {
+  echo "expected character-aware cursor truncation for multibyte prompt" >&2
+  echo "got: $truncated" >&2
+  exit 1
+}
+
+truncated_c_locale="$(LC_ALL=C truncate_line_to_cursor "❯ typed" 1)"
+[[ "$truncated_c_locale" == "❯" ]] || {
+  echo "expected UTF-8 truncation under LC_ALL=C" >&2
+  echo "got: $truncated_c_locale" >&2
+  exit 1
 }
 
 tmux() {
@@ -40,6 +55,19 @@ tmux() {
   command tmux "$@"
 }
 
+mock_snapshot=$'╭────────────────────────────╮\n│ >_ OpenAI Codex            │\n╰────────────────────────────╯\n› unsaved draft\n'
+mock_cursor_x="$(copied_char_count "› unsaved")"
+mock_cursor_y="3"
+saved_input="$(PATH="/no-python-here" extract_prompt_input "%mock" "›")" || {
+  echo "missing python3 should not block notification delivery" >&2
+  exit 1
+}
+[[ -z "$saved_input" ]] || {
+  echo "expected empty saved input when character-safe truncation is unavailable" >&2
+  echo "got: $saved_input" >&2
+  exit 1
+}
+
 for adapter_prompt in "›" "❯" "*" "→"; do
   mock_snapshot=$'╭────────────────────────────╮\n│ adapter startup banner     │\n╰────────────────────────────╯\n'"${adapter_prompt}"$' \n  footer text below prompt\n'
   mock_cursor_x="2"
@@ -54,9 +82,58 @@ for adapter_prompt in "›" "❯" "*" "→"; do
   }
 done
 
-mock_snapshot=$'╭────────────────────────────╮\n│ >_ OpenAI Codex            │\n╰────────────────────────────╯\n› partial typed text\n  gpt-5.4 xhigh · ~/repo\n'
-mock_cursor_x="20"
+mock_snapshot=$'starting agent\n\n  Cursor Agent\n \033[48;5;233m \033[2m→ \033[0;7m\033[48;5;233mP\033[0;2m\033[48;5;233mlan, search, build anything\033[0m\033[48;5;233m     \033[49m\n\n  \033[2mComposer 2 Fast\033[0m        \033[35mAuto-run\033[39m\n'
+mock_cursor_x="0"
 mock_cursor_y="3"
+mock_adapter="cursor-agent"
+tmux() {
+  if [[ "$1" == "capture-pane" ]]; then
+    printf '%s\n' "$mock_snapshot"
+    return 0
+  fi
+
+  if [[ "$1" == "display-message" ]]; then
+    local fmt="${@: -1}"
+    case "$fmt" in
+      "#{cursor_x}") printf '%s\n' "$mock_cursor_x" ;;
+      "#{cursor_y}") printf '%s\n' "$mock_cursor_y" ;;
+      "#{session_name}") printf '%s\n' "cursor-session" ;;
+      *) return 1 ;;
+    esac
+    return 0
+  fi
+
+  if [[ "$1" == "show-environment" ]]; then
+    if [[ -n "$mock_adapter" ]]; then
+      printf '%s\n' "ATMUX_ADAPTER=$mock_adapter"
+      return 0
+    fi
+    return 1
+  fi
+
+  command tmux "$@"
+}
+
+saved_input="$(extract_prompt_input "%mock" "→")"
+copied_chars="$(copied_char_count "$saved_input")"
+[[ "$copied_chars" == "0" ]] || {
+  echo "expected 0 copied characters for styled cursor-agent placeholder, got $copied_chars" >&2
+  echo "saved_input=$saved_input" >&2
+  exit 1
+}
+
+mock_snapshot=$'starting agent\n  \033[2m→ \033[0mtyped value\033[49mplaceholder\n'
+saved_input="$(extract_prompt_input_with_end_marker "%mock" "(?:→)" "\\[49m")"
+[[ "$saved_input" == "typed value" ]] || {
+  echo "expected styled prompt extraction to normalize non-capturing prompt regex groups" >&2
+  echo "got: $saved_input" >&2
+  exit 1
+}
+
+mock_snapshot=$'╭────────────────────────────╮\n│ >_ OpenAI Codex            │\n╰────────────────────────────╯\n› partial typed text\n  gpt-5.4 xhigh · ~/repo\n'
+mock_cursor_x="$(copied_char_count "› partial typed text")"
+mock_cursor_y="3"
+mock_adapter=""
 
 saved_input="$(extract_prompt_input "%mock" "›")"
 [[ "$saved_input" == "partial typed text" ]] || {

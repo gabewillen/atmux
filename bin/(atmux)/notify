@@ -391,21 +391,13 @@ truncate_line_to_cursor() {
     return 0
   fi
 
-  # tmux's cursor_x is the visual column (character index), but bash's
-  # substring expansion and `cut -c` are byte-based unless the shell
-  # was started under a UTF-8 LC_CTYPE — and bash evaluates locale at
-  # startup, so re-setting LC_CTYPE here is a no-op. When the captured
-  # line contains a multi-byte char (e.g. the "❯" prompt prefix),
-  # byte-based truncation clips the tail of saved input, which the
-  # worker then types back missing characters. perl with -CS forces
-  # UTF-8 on stdin/stdout regardless of the parent shell's locale, so
-  # substr operates on characters and matches tmux's column count.
-  printf '%s' "$line" | perl -CS -e '
-    my $n = shift;
-    local $/;
-    my $s = <STDIN>;
-    print substr($s, 0, $n);
-  ' "$cursor_x"
+  if ! command -v python3 >/dev/null 2>&1; then
+    debug_notify "prompt_truncate:python3_missing"
+    return 127
+  fi
+
+  PYTHONUTF8=1 PYTHONIOENCODING=UTF-8 LINE="$line" CURSOR_X="$cursor_x" \
+    python3 -c 'import os; print(os.environ.get("LINE", "")[:int(os.environ.get("CURSOR_X", "0"))], end="")'
 }
 
 split_prompt_line() {
@@ -499,20 +491,13 @@ extract_prompt_input() {
   local input_end_marker=""
   input_end_marker="$(resolve_input_end_for_pane "$pane" "${ATMUX_SOURCE_ROOT:-${ATMUX_HOME}/src/atmux}" 2>/dev/null || true)"
   if [[ -n "$input_end_marker" ]]; then
-    # Only honor the end-marker path when perl is callable AND the
-    # extractor exits 0. If perl is missing or the script blows up,
-    # fall through to the legacy capture-to-cursor path below — empty
-    # stdout from a crashed perl is indistinguishable from "input was
-    # genuinely empty," so we can't trust it as the final answer.
-    if command -v perl >/dev/null 2>&1; then
-      local marker_out marker_rc=0
-      marker_out="$(extract_prompt_input_with_end_marker "$pane" "$prompt_prefix" "$input_end_marker")" || marker_rc=$?
-      if (( marker_rc == 0 )); then
-        printf '%s' "$marker_out"
-        return 0
-      fi
+    local marker_out marker_rc=0
+    marker_out="$(extract_prompt_input_with_end_marker "$pane" "$prompt_prefix" "$input_end_marker")" || marker_rc=$?
+    if (( marker_rc == 0 )); then
+      printf '%s' "$marker_out"
+      return 0
     fi
-    # else: drop into the legacy path
+    # Unexpected styled render; drop into the legacy path.
   fi
 
   snap="$(tmux capture-pane -p -t "$pane" 2>/dev/null || true)"
@@ -529,7 +514,18 @@ extract_prompt_input() {
     if (( cursor_y >= ${#lines[@]} )); then
       cursor_y=$((${#lines[@]} - 1))
     fi
-    lines[cursor_y]="$(truncate_line_to_cursor "${lines[cursor_y]}" "$cursor_x")"
+    local truncated_line truncate_rc=0
+    truncated_line="$(truncate_line_to_cursor "${lines[cursor_y]}" "$cursor_x")" || truncate_rc=$?
+    if (( truncate_rc != 0 )); then
+      if (( truncate_rc == 127 )); then
+        debug_notify "prompt_extract:truncate_unavailable"
+        printf ''
+        return 0
+      fi
+      debug_notify "prompt_extract:truncate_failed rc=$truncate_rc"
+      return "$truncate_rc"
+    fi
+    lines[cursor_y]="$truncated_line"
     end_idx=$cursor_y
   else
     end_idx=$((${#lines[@]} - 1))
@@ -568,78 +564,57 @@ extract_prompt_input_with_end_marker() {
   snap="$(tmux capture-pane -p -e -t "$pane" 2>/dev/null || true)"
   [[ -n "$snap" ]] || return 0
 
-  # Both `input.start` and `input.end` are regex patterns (so a single
-  # manifest entry can match all forms an adapter renders, e.g.
-  # cursor-agent's cursor cell is `\e[0;7m` in placeholder mode and
-  # `\e[7m` once typed → `\[(?:0;)?7m` matches both). The end-marker
-  # regex is anchored after the escape: manifest writes the body that
-  # comes after `\e`.
+  # Both `input.start` and `input.end` are regex patterns. The manifest
+  # writes the end-marker body that comes after ESC; normalize the small
+  # PCRE subset used by manifests (`(?:...)`) to POSIX ERE for awk.
   ATMUX_PROMPT_PREFIX="$prompt_prefix" \
   ATMUX_INPUT_END="$end_marker" \
-  perl -e '
-    use strict; use warnings;
-    my $prompt_re = qr/$ENV{ATMUX_PROMPT_PREFIX}/;
-    my $end_re    = qr/\e$ENV{ATMUX_INPUT_END}/;
-    my $snap      = do { local $/; <STDIN> };
-    my @lines     = split /\r?\n/, $snap, -1;
-
-    # Walk lines bottom-up; first line whose ANSI-stripped form
-    # contains the prompt prefix is the input prompt line.
-    my $idx = -1;
-    my $bare_match;
-    for (my $i = $#lines; $i >= 0; $i--) {
-      my $bare = $lines[$i];
-      $bare =~ s/\e\[[0-9;]*[a-zA-Z]//g;
-      if ($bare =~ $prompt_re) {
-        $idx = $i;
-        last;
-      }
+  awk '
+    BEGIN {
+      esc = sprintf("%c", 27)
+      prompt_re = ENVIRON["ATMUX_PROMPT_PREFIX"]
+      end_re = ENVIRON["ATMUX_INPUT_END"]
+      gsub(/\(\?:/, "(", prompt_re)
+      gsub(/\(\?:/, "(", end_re)
+      end_re = esc end_re
     }
-    exit 0 if $idx < 0;
-
-    my $line = $lines[$idx];
-    # Locate the prompt prefix in the styled bytes by skipping ANSI
-    # escapes (and leading whitespace) byte-by-byte until the prompt
-    # regex matches at the start of what remains.
-    my $scan = $line;
-    while ($scan ne "") {
-      # Skip ANSI CSI sequences so the prompt regex sees plain bytes.
-      if ($scan =~ /^\e\[[0-9;]*[a-zA-Z]/) {
-        $scan = substr($scan, length($&));
-        next;
-      }
-      # Skip leading whitespace (the rendered input box always has a
-      # left margin before the prompt prefix glyph).
-      if ($scan =~ /^\s+/) {
-        $scan = substr($scan, length($&));
-        next;
-      }
-      # Try the prompt regex.
-      if ($scan =~ /^$prompt_re/) {
-        $scan = substr($scan, length($&));
-        last;
-      }
-      # Some other byte before the prompt — drop it and retry.
-      $scan = substr($scan, 1);
+    {
+      lines[++line_count] = $0
     }
-    # $scan now starts immediately after the prompt prefix.
-    my $rest = $scan;
+    END {
+      for (idx = line_count; idx >= 1; idx--) {
+        bare = lines[idx]
+        gsub(esc "\\[[0-9;]*[[:alpha:]]", "", bare)
+        if (bare ~ prompt_re) {
+          break
+        }
+      }
+      if (idx < 1) exit 0
 
-    # Stop at the first end-marker match. Everything before is the
-    # user input.
-    my $captured;
-    if ($rest =~ /^(.*?)(?:$end_re)/s) {
-      $captured = $1;
-    } else {
-      # No end marker on the prompt line — adapter promised one but
-      # render is in an unexpected state. Be conservative and return
-      # empty so we never re-paste chrome.
-      exit 0;
+      scan = lines[idx]
+      while (length(scan) > 0) {
+        if (match(scan, "^" esc "\\[[0-9;]*[[:alpha:]]")) {
+          scan = substr(scan, RLENGTH + 1)
+          continue
+        }
+        if (match(scan, "^[[:space:]]+")) {
+          scan = substr(scan, RLENGTH + 1)
+          continue
+        }
+        if (match(scan, "^" prompt_re)) {
+          scan = substr(scan, RLENGTH + 1)
+          break
+        }
+        scan = substr(scan, 2)
+      }
+
+      if (!match(scan, end_re)) exit 0
+      captured = substr(scan, 1, RSTART - 1)
+      gsub(esc "\\[[0-9;]*[[:alpha:]]", "", captured)
+      sub(/^[[:space:]]+/, "", captured)
+      sub(/[[:space:]]+$/, "", captured)
+      printf "%s", captured
     }
-    $captured =~ s/\e\[[0-9;]*[a-zA-Z]//g;
-    $captured =~ s/^\s+//;
-    $captured =~ s/\s+$//;
-    print $captured;
   ' <<< "$snap"
 }
 
@@ -1269,7 +1244,7 @@ wait_for_notification_wake_fd() {
 serve_notification_queue() {
   local pane="$1"
   local source_root="$2"
-  local qdir payload_dir item_dir payload submit_keys
+  local qdir payload_dir item_dir payload submit_keys extract_rc
   local prompt_prefix="" saved_input=""
   local batch_active=0
   local poll_interval="${ATMUX_NOTIFY_WORKER_POLL_SECONDS:-1}"
@@ -1403,7 +1378,13 @@ serve_notification_queue() {
 
     if (( batch_active == 0 )); then
       if [[ -n "$prompt_prefix" ]]; then
-        saved_input="$(extract_prompt_input "$pane" "$prompt_prefix")"
+        extract_rc=0
+        saved_input="$(extract_prompt_input "$pane" "$prompt_prefix")" || extract_rc=$?
+        if (( extract_rc != 0 )); then
+          debug_notify "worker:prompt_extract_failed pane=$(printf '%q' "$pane") rc=$extract_rc"
+          sleep "$mode_poll_interval"
+          continue
+        fi
       else
         saved_input=""
       fi

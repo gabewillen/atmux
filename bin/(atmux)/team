@@ -22,7 +22,7 @@ Usage:
   atmux team list
   atmux team ls
   atmux team status [<name>]
-  atmux team capture <name> [--lines <n>]
+  atmux team capture <name> [--tiled] [--lines <n>]
   atmux team kill <name|pattern> [...]
   atmux team resolve <name> [<repo_name>]
 
@@ -969,7 +969,7 @@ case "$sub" in
   capture)
     here_team="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
     if [[ $# -eq 0 || "${1:0:1}" == "-" ]]; then
-      echo "usage: atmux team capture <name> [--lines N]" >&2
+      echo "usage: atmux team capture <name> [--tiled] [--lines N]" >&2
       exit 2
     fi
     target_name="$1"; shift

@@ -11,7 +11,7 @@ Internal capture backend. Invoked by the noun-first front-ends:
 
   atmux agent capture <name|session> [--lines <n>]
   atmux agent capture --all [--lines <n>]
-  atmux team capture <name|session> [--lines <n>]
+  atmux team capture <name|session> [--tiled] [--lines <n>]
 
 Direct invocation (--agent, --team, --all) is for internal callers only and
 is not part of the user-facing CLI surface.
@@ -35,9 +35,120 @@ capture_session_panes() {
   done < <(tmux list-panes -t "$session" -F '#{pane_id}' 2>/dev/null || true)
 }
 
+capture_team_view_render() {
+  local session="$1"
+  local pane left top width height agent_session agent_name format
+  format=$'#{pane_id}\t#{pane_left}\t#{pane_top}\t#{pane_width}\t#{pane_height}\t#{@atmux_agent_session}\t#{@atmux_agent_name}'
+  {
+    while IFS=$'\t' read -r pane left top width height agent_session agent_name; do
+      [[ -z "$pane" ]] && continue
+      printf '\034%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$pane" "$left" "$top" "$width" "$height" "$agent_session" "$agent_name"
+      tmux capture-pane -p -t "$pane" 2>/dev/null | tr -d '\r' || true
+    done < <(tmux list-panes -t "${session}:0" -F "$format" 2>/dev/null || true)
+  } | awk -v sep="$(printf '\034')" '
+    function blank(n, out) {
+      out = ""
+      while (length(out) < n) out = out " "
+      return out
+    }
+    function fit(s, n) {
+      s = substr(s, 1, n)
+      return s blank(n - length(s))
+    }
+    function flush_pane(    r, y, src, row, line) {
+      if (!active) return
+      if (left + width > canvas_width) canvas_width = left + width
+      if (top + height > canvas_height) canvas_height = top + height
+      pane_count++
+      pane_left[pane_count] = left
+      pane_top[pane_count] = top
+      pane_width[pane_count] = width
+      pane_height[pane_count] = height
+      pane_lines[pane_count] = line_count
+      for (r = 1; r <= line_count; r++) {
+        pane_text[pane_count, r] = line_buf[r]
+      }
+      line_count = 0
+    }
+    substr($0, 1, 1) == sep {
+      flush_pane()
+      split(substr($0, 2), f, "\t")
+      left = f[2] + 0
+      top = f[3] + 0
+      width = f[4] + 0
+      height = f[5] + 0
+      active = 1
+      next
+    }
+    {
+      if (active) {
+        line_count++
+        line_buf[line_count] = $0
+      }
+    }
+    END {
+      flush_pane()
+      for (y = 1; y <= canvas_height; y++) {
+        canvas[y] = blank(canvas_width)
+      }
+      for (p = 1; p <= pane_count; p++) {
+        left = pane_left[p]
+        top = pane_top[p]
+        width = pane_width[p]
+        height = pane_height[p]
+        line_count = pane_lines[p]
+        for (r = 1; r <= height; r++) {
+          src = line_count - height + r
+          line = (src >= 1 ? pane_text[p, src] : "")
+          line = fit(line, width)
+          y = top + r
+          row = canvas[y]
+          canvas[y] = substr(row, 1, left) line substr(row, left + width + 1)
+        }
+      }
+      for (y = 1; y <= canvas_height; y++) print canvas[y]
+    }
+  '
+}
+
+wait_team_view_render_ready() {
+  local session="$1"
+  local repo_name="$2"
+  local team_name="$3"
+  local expected_count pane_count attempts ready pane agent_session source_nonblank view_nonblank
+  expected_count="$(team_member_sessions_from_state "$repo_name" "$team_name" | sed '/^$/d' | wc -l | tr -d '[:space:]')"
+  [[ "$expected_count" =~ ^[0-9]+$ ]] || expected_count=0
+  (( expected_count > 0 )) || return 0
+
+  attempts=0
+  while (( attempts < 40 )); do
+    ready=1
+    pane_count=0
+    while IFS=$'\t' read -r pane agent_session; do
+      [[ -n "$pane" ]] || continue
+      if [[ -z "$agent_session" ]]; then
+        ready=0
+        continue
+      fi
+      pane_count=$((pane_count + 1))
+      source_nonblank="$(tmux capture-pane -p -t "$agent_session" 2>/dev/null | tr -d '\r' | sed '/^[[:space:]]*$/d' | head -n1 || true)"
+      if [[ -n "$source_nonblank" ]]; then
+        view_nonblank="$(tmux capture-pane -p -t "$pane" 2>/dev/null | tr -d '\r' | sed '/^[[:space:]]*$/d' | head -n1 || true)"
+        [[ -n "$view_nonblank" ]] || ready=0
+      fi
+    done < <(tmux list-panes -t "${session}:0" -F $'#{pane_id}\t#{@atmux_agent_session}' 2>/dev/null || true)
+    if (( pane_count >= expected_count && ready == 1 )); then
+      return 0
+    fi
+    sleep 0.05
+    attempts=$((attempts + 1))
+  done
+}
+
 agent_target=""
 team_target=""
 capture_all=0
+team_tiled=0
 lines="200"
 
 while [[ $# -gt 0 ]]; do
@@ -49,6 +160,10 @@ while [[ $# -gt 0 ]]; do
     --team)
       team_target="${2:-}"
       shift 2
+      ;;
+    --tiled)
+      team_tiled=1
+      shift
       ;;
     --all)
       capture_all=1
@@ -80,6 +195,10 @@ selectors=0
 [[ "$capture_all" -eq 1 ]] && selectors=$((selectors + 1))
 if (( selectors != 1 )); then
   echo "exactly one selector is required: --agent, --team, or --all" >&2
+  exit 2
+fi
+if [[ "$team_tiled" -eq 1 && -z "$team_target" ]]; then
+  echo "--tiled is only valid with --team" >&2
   exit 2
 fi
 
@@ -149,6 +268,23 @@ if ! team_name="$(resolve_team_name "$team_target" "$repo_name")"; then
 fi
 
 session="atmux-${repo_name}-team-${team_name}"
+
+if [[ "$team_tiled" -eq 1 ]]; then
+  "$HERE/../team" view "$team_name" >/dev/null
+  wait_team_view_render_ready "$session" "$repo_name" "$team_name"
+  visible_lines="$(tmux display-message -p -t "${session}:0" '#{window_height}' 2>/dev/null || printf '%s' "$lines")"
+  printf '<captures scope="team-view" team="%s" session="%s" layout="tiled">\n' \
+    "$(xml_escape "$team_name")" \
+    "$(xml_escape "$session")"
+  snapshot="$(capture_team_view_render "$session")"
+  printf '  <capture session="%s" lines="%s" team="%s" layout="tiled">%s</capture>\n' \
+    "$(xml_escape "$session")" \
+    "$(xml_escape "$visible_lines")" \
+    "$(xml_escape "$team_name")" \
+    "$snapshot"
+  printf '</captures>\n'
+  exit 0
+fi
 
 printf '<captures scope="team" team="%s" session="%s">\n' \
   "$(xml_escape "$team_name")" \

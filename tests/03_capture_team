@@ -31,5 +31,28 @@ if ! [[ "$capture_count" =~ ^[0-9]+$ ]] || (( capture_count < 2 )); then
   exit 1
 fi
 
-echo "ok: team capture includes both team member panes"
+tiled="$(ATMUX_REPO="$REPO_NAME" "$ATMUX_BIN" team capture "$TEAM_NAME" --tiled --lines 120)"
 
+printf '%s\n' "$tiled" | grep -Fq "<captures scope=\"team-view\" team=\"$TEAM_NAME\" session=\"$TEAM_SESSION\" layout=\"tiled\">"
+printf '%s\n' "$tiled" | grep -Fq "$marker1"
+printf '%s\n' "$tiled" | grep -Fq "$marker2"
+
+tiled_capture_count="$(printf '%s\n' "$tiled" | grep -c "<capture ")"
+if [[ "$tiled_capture_count" != "1" ]]; then
+  echo "expected one tiled capture node, got: ${tiled_capture_count:-0}" >&2
+  printf '%s\n' "$tiled" >&2
+  exit 1
+fi
+if printf '%s\n' "$tiled" | grep -Fq 'lines="120"'; then
+  echo "expected tiled capture lines to describe visible view height, not requested scrollback" >&2
+  printf '%s\n' "$tiled" >&2
+  exit 1
+fi
+
+if ! tmux has-session -t "$TEAM_SESSION" 2>/dev/null; then
+  echo "expected tiled capture to create team view session: $TEAM_SESSION" >&2
+  printf '%s\n' "$tiled" >&2
+  exit 1
+fi
+
+echo "ok: team capture includes both members; tiled capture composes both markers"

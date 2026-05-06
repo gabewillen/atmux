@@ -5,7 +5,7 @@ REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 bad_word="pe""rl"
 pattern="\\b${bad_word}\\b"
 
-if rg -n --hidden --glob '!/.git/**' "$pattern" "$REPO_ROOT"; then
+if grep -RInE --exclude-dir=.git "$pattern" "$REPO_ROOT"; then
   echo "fail: $bad_word usage is forbidden" >&2
   exit 1
 fi

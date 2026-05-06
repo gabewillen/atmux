@@ -1,0 +1,146 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+source "$(dirname "${BASH_SOURCE[0]}")/lib/isolate-tmux.sh"
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+ATMUX_BIN="$REPO_ROOT/bin/atmux"
+
+wait_for_text() {
+  local target="$1"
+  local needle="$2"
+  local timeout="${3:-10}"
+  local deadline now snap compact
+  deadline=$(( $(date +%s) + timeout ))
+  while true; do
+    snap="$(tmux capture-pane -p -t "$target" -S -300 2>/dev/null || true)"
+    compact="$(printf '%s' "$snap" | tr -d '\r\n')"
+    if printf '%s' "$compact" | grep -Fq "$needle"; then
+      return 0
+    fi
+    now="$(date +%s)"
+    (( now < deadline )) || return 1
+    sleep 0.1
+  done
+}
+
+normalize_name() {
+  local raw="${1:-}"
+  local normalized
+  normalized="$(printf '%s' "$raw" | sed -E 's/[^A-Za-z0-9_-]+/_/g; s/_+/_/g; s/^_+//; s/_+$//')"
+  [[ -n "$normalized" ]] || normalized="repo"
+  printf '%s\n' "$normalized"
+}
+
+tmp_root="$(mktemp -d "${TMPDIR:-/tmp}/atmux-team-idle.XXXXXX")"
+atmux_home="$tmp_root/.atmux"
+repo_name="teamidle${RANDOM}"
+team_name="idleteam${RANDOM}"
+creator_session="atmux-${repo_name}-creator"
+member1_session="atmux-${repo_name}-worker-a"
+member2_session="atmux-${repo_name}-worker-b"
+
+cleanup() {
+  tmux kill-session -t "$creator_session" >/dev/null 2>&1 || true
+  tmux kill-session -t "$member1_session" >/dev/null 2>&1 || true
+  tmux kill-session -t "$member2_session" >/dev/null 2>&1 || true
+  rm -rf "$tmp_root"
+}
+trap cleanup EXIT
+
+mkdir -p "$atmux_home/adapters/mockidle/scripts"
+cat > "$atmux_home/adapters/mockidle/scripts/status" <<'STATUS'
+#!/usr/bin/env bash
+set -euo pipefail
+pane="${ATMUX_TARGET_PANE:-}"
+session="$(tmux display-message -t "$pane" -p '#{session_name}' 2>/dev/null || true)"
+state="$(tmux show-environment -t "$session" ATMUX_STATE 2>/dev/null | sed -n 's/^ATMUX_STATE=//p' || true)"
+printf '<status adapter="mockidle" state="%s" />\n' "${state:-busy}"
+STATUS
+chmod +x "$atmux_home/adapters/mockidle/scripts/status"
+
+tmux new-session -d -s "$creator_session" -n "$creator_session" -c "$REPO_ROOT" "/bin/bash" -l
+tmux set-environment -t "$creator_session" ATMUX_HOME "$atmux_home"
+tmux set-environment -t "$creator_session" ATMUX_REPO "$repo_name"
+tmux set-environment -t "$creator_session" ATMUX_SOURCE_ROOT "$REPO_ROOT"
+tmux set-environment -t "$creator_session" ATMUX_AGENT_NAME "creator"
+tmux set-environment -t "$creator_session" ATMUX_SESSION_NAME "$creator_session"
+tmux set-environment -t "$creator_session" ATMUX_SESSION_KIND "agent"
+creator_pane="$(tmux list-panes -t "$creator_session" -F '#{pane_id}' 2>/dev/null | head -n1)"
+[[ -n "$creator_pane" ]] || { echo "creator pane missing" >&2; exit 1; }
+
+cmd="$(printf 'ATMUX_HOME=%q ATMUX_REPO=%q ATMUX_SOURCE_ROOT=%q ATMUX_TEAM_IDLE_SECONDS=1 ATMUX_TEAM_IDLE_INTERVAL=1 %q team create %q --shared-worktree >/tmp/atmux-team-idle-create.out 2>/tmp/atmux-team-idle-create.err' \
+  "$atmux_home" "$repo_name" "$REPO_ROOT" "$ATMUX_BIN" "$team_name")"
+tmux send-keys -t "$creator_pane" "$cmd" C-m
+sleep 2
+
+state_dir="$atmux_home/teams/$repo_name/$team_name"
+[[ -d "$state_dir" ]] || {
+  echo "team state not created" >&2
+  cat /tmp/atmux-team-idle-create.err >&2 2>/dev/null || true
+  exit 1
+}
+create_out="$(cat /tmp/atmux-team-idle-create.out 2>/dev/null || true)"
+printf '%s\n' "$create_out" | grep -Fq 'idle_subscription="team-idle"' || {
+  echo "team create response did not mention team-idle subscription" >&2
+  printf '%s\n' "$create_out" >&2
+  exit 1
+}
+printf '%s\n' "$create_out" | grep -Fq "idle_watcher_id=\"team-idle:${repo_name}--team--${team_name}:" || {
+  echo "team create response did not include team-idle watcher id" >&2
+  printf '%s\n' "$create_out" >&2
+  exit 1
+}
+
+tmux new-session -d -s "$member1_session" -n "$member1_session" -c "$REPO_ROOT" "cat"
+tmux new-session -d -s "$member2_session" -n "$member2_session" -c "$REPO_ROOT" "cat"
+for session in "$member1_session" "$member2_session"; do
+  tmux set-environment -t "$session" ATMUX_HOME "$atmux_home"
+  tmux set-environment -t "$session" ATMUX_REPO "$repo_name"
+  tmux set-environment -t "$session" ATMUX_SOURCE_ROOT "$REPO_ROOT"
+  tmux set-environment -t "$session" ATMUX_ADAPTER "mockidle"
+  tmux set-environment -t "$session" ATMUX_TEAM "$team_name"
+  tmux set-environment -t "$session" ATMUX_STATE "busy"
+done
+
+members_dir="$state_dir/members"
+mkdir -p "$members_dir/$(normalize_name "$member1_session")" "$members_dir/$(normalize_name "$member2_session")"
+printf '%s\n' "$member1_session" > "$members_dir/$(normalize_name "$member1_session")/session"
+printf '%s\n' "worker-a" > "$members_dir/$(normalize_name "$member1_session")/name"
+printf '%s\n' "$member2_session" > "$members_dir/$(normalize_name "$member2_session")/session"
+printf '%s\n' "worker-b" > "$members_dir/$(normalize_name "$member2_session")/name"
+
+watchers="$(ATMUX_HOME="$atmux_home" ATMUX_REPO="$repo_name" "$ATMUX_BIN" watcher list)"
+printf '%s\n' "$watchers" | grep -Fq "team-idle:${repo_name}--team--${team_name}:"
+watcher_id="$(printf '%s\n' "$watchers" | grep -F "team-idle:${repo_name}--team--${team_name}:" | head -n1)"
+[[ -n "$watcher_id" ]] || { echo "failed to parse team-idle watcher id" >&2; exit 1; }
+
+sleep 2
+if wait_for_text "$creator_pane" '<notification type="team-idle"' 1; then
+  echo "team-idle fired while a member was still busy" >&2
+  exit 1
+fi
+
+tmux set-environment -t "$member1_session" ATMUX_STATE "idle"
+sleep 2
+if wait_for_text "$creator_pane" '<notification type="team-idle"' 1; then
+  echo "team-idle fired before all members were idle" >&2
+  exit 1
+fi
+
+tmux set-environment -t "$member2_session" ATMUX_STATE "idle"
+if ! wait_for_text "$creator_pane" '<notification type="team-idle"' 10; then
+  echo "creator did not receive team-idle notification" >&2
+  tmux capture-pane -p -t "$creator_pane" -S -160 >&2 || true
+  exit 1
+fi
+
+ATMUX_HOME="$atmux_home" ATMUX_REPO="$repo_name" "$ATMUX_BIN" watcher kill "$watcher_id"
+watchers_after="$(ATMUX_HOME="$atmux_home" ATMUX_REPO="$repo_name" "$ATMUX_BIN" watcher list)"
+if printf '%s\n' "$watchers_after" | grep -Fq "$watcher_id"; then
+  echo "team-idle watcher survived watcher kill" >&2
+  exit 1
+fi
+
+echo "ok: team create subscribes creator to all-members-idle notification"

@@ -128,6 +128,11 @@ team_message_watch_dir_for_key() {
   printf '%s/watch-team-message/%s\n' "$ATMUX_HOME" "$key"
 }
 
+team_idle_watch_dir_for_key() {
+  local key="$1"
+  printf '%s/watch-team-idle/%s\n' "$ATMUX_HOME" "$key"
+}
+
 pr_watch_watchers_dir() {
   local key="$1"
   printf '%s/watchers\n' "$(pr_watch_dir "$key")"
@@ -146,6 +151,11 @@ prs_watch_watchers_dir() {
 team_message_watch_watchers_dir() {
   local key="$1"
   printf '%s/watchers\n' "$(team_message_watch_dir_for_key "$key")"
+}
+
+team_idle_watch_watchers_dir() {
+  local key="$1"
+  printf '%s/watchers\n' "$(team_idle_watch_dir_for_key "$key")"
 }
 
 pr_watch_pid_file() {
@@ -323,6 +333,19 @@ kill_watcher() {
       fi
 
       rm -rf "$watcher_file"
+      ;;
+    team-idle)
+      local watcher_file worker_pid
+      watcher_file="$(team_idle_watch_watchers_dir "$key")/$watcher_name"
+      if [[ ! -e "$watcher_file" ]]; then
+        echo "atmux watcher kill: watcher not found: $watcher_id" >&2
+        exit 2
+      fi
+      worker_pid="$(read_trimmed_file "$watcher_file/worker.pid")"
+      rm -rf "$watcher_file"
+      if [[ -n "$worker_pid" ]] && kill -0 "$worker_pid" 2>/dev/null; then
+        kill -TERM "$worker_pid" 2>/dev/null || true
+      fi
       ;;
     *)
       echo "atmux watcher kill: unsupported watcher type: $kind" >&2

@@ -165,6 +165,20 @@ resolve_atmux_runner_for_team() {
   return 1
 }
 
+resolve_source_root_for_team() {
+  if [[ -n "${ATMUX_SOURCE_ROOT:-}" && -d "$ATMUX_SOURCE_ROOT" ]]; then
+    printf '%s\n' "$ATMUX_SOURCE_ROOT"
+    return 0
+  fi
+  local source_root
+  source_root="$(cd -- "$HERE/../.." 2>/dev/null && pwd || true)"
+  if [[ -n "$source_root" && -x "$source_root/bin/atmux" ]]; then
+    printf '%s\n' "$source_root"
+    return 0
+  fi
+  printf '%s/src/atmux\n' "${ATMUX_HOME:-$HOME/.atmux}"
+}
+
 parse_duration_seconds() {
   local raw="${1:-}"
   local value unit multiplier
@@ -432,6 +446,179 @@ run_team_role_hook_bounded() {
     sleep 0.2
   done
   wait "$pid"
+}
+
+team_idle_status_script_for_session() {
+  local session="$1" adapter candidate
+  adapter="$(get_session_env "$session" ATMUX_ADAPTER)"
+  [[ -n "$adapter" ]] || return 1
+  for candidate in \
+    "${ATMUX_SOURCE_ROOT:-$ATMUX_HOME/src/atmux}/adapter/$adapter/scripts/status" \
+    "$ATMUX_HOME/adapters/$adapter/scripts/status"; do
+    if [[ -x "$candidate" ]]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
+team_idle_member_state() {
+  local session="$1" pane status_script status_xml state agent_name session_name selected_adapter status_source_root
+  tmux has-session -t "$session" 2>/dev/null || { printf 'missing\n'; return 0; }
+  pane="$(primary_pane_for_session "$session")"
+  [[ -n "$pane" ]] || { printf 'missing\n'; return 0; }
+  status_script="$(team_idle_status_script_for_session "$session" || true)"
+  if [[ -n "$status_script" ]]; then
+    agent_name="$(get_session_env "$session" ATMUX_AGENT_NAME)"
+    session_name="$(get_session_env "$session" ATMUX_SESSION_NAME)"
+    selected_adapter="$(get_session_env "$session" ATMUX_ADAPTER_SELECTED)"
+    status_source_root="${ATMUX_SOURCE_ROOT:-$ATMUX_HOME/src/atmux}"
+    status_xml="$(ATMUX_HOME="$ATMUX_HOME" \
+      ATMUX_SOURCE_ROOT="$status_source_root" \
+      ATMUX_STATUS_PASSIVE=1 \
+      ATMUX_TARGET_PANE="$pane" \
+      ATMUX_AGENT_NAME="$agent_name" \
+      ATMUX_SESSION_NAME="${session_name:-$session}" \
+      ATMUX_ADAPTER_SELECTED="$selected_adapter" \
+      "$status_script" 2>/dev/null || true)"
+    state="$(printf '%s' "$status_xml" | sed -n 's/.*state="\([^"]*\)".*/\1/p' | head -n1)"
+    case "$state" in
+      idle|errored|usage-limit) printf 'idle\n' ;;
+      *) printf 'busy\n' ;;
+    esac
+    return 0
+  fi
+  # Without an adapter status hook, a live pane is conservatively treated as
+  # busy. Team-idle notifications are only meaningful when every member can
+  # report its own runtime state.
+  printf 'busy\n'
+}
+
+team_idle_all_members_idle() {
+  local repo="$1" team="$2"
+  local member state count=0
+  while IFS= read -r member; do
+    [[ -n "$member" ]] || continue
+    count=$((count + 1))
+    state="$(team_idle_member_state "$member")"
+    [[ "$state" == "idle" ]] || return 1
+  done < <(team_member_sessions_from_state "$repo" "$team" | sort -u)
+  (( count > 0 ))
+}
+
+team_idle_any_member_active() {
+  local repo="$1" team="$2"
+  local member state
+  while IFS= read -r member; do
+    [[ -n "$member" ]] || continue
+    state="$(team_idle_member_state "$member")"
+    [[ "$state" != "idle" ]] && return 0
+  done < <(team_member_sessions_from_state "$repo" "$team" | sort -u)
+  return 1
+}
+
+team_idle_notification_xml() {
+  local repo="$1" team="$2" stable_seconds="$3"
+  local member count=0 member_names=""
+  while IFS= read -r member; do
+    [[ -n "$member" ]] || continue
+    count=$((count + 1))
+    if [[ -n "$member_names" ]]; then
+      member_names+=","
+    fi
+    member_names+="${member#atmux-"${repo}"-}"
+  done < <(team_member_sessions_from_state "$repo" "$team" | sort -u)
+  printf '<notification type="team-idle" team="%s" reason="all_idle" members="%s" stable_seconds="%s" member_names="%s"/>' \
+    "$(xml_escape "$team")" \
+    "$(xml_escape "$count")" \
+    "$(xml_escape "$stable_seconds")" \
+    "$(xml_escape "$member_names")"
+}
+
+run_team_idle_watch() {
+  local explicit_repo="" team_name="" watcher_name="" idle_seconds="${ATMUX_TEAM_IDLE_SECONDS:-30}" interval="${ATMUX_TEAM_IDLE_INTERVAL:-2}"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --repo) explicit_repo="$(normalize_name "${2:-}")"; shift 2 ;;
+      --team) team_name="$(normalize_name "${2:-}")"; shift 2 ;;
+      --watcher) watcher_name="${2:-}"; shift 2 ;;
+      --idle) idle_seconds="${2:-}"; shift 2 ;;
+      --interval) interval="${2:-}"; shift 2 ;;
+      *) echo "atmux team _idle-watch: unknown flag: $1" >&2; exit 2 ;;
+    esac
+  done
+  [[ -n "$explicit_repo" && -n "$team_name" && -n "$watcher_name" ]] || {
+    echo "atmux team _idle-watch requires --repo, --team, and --watcher" >&2
+    exit 2
+  }
+
+  local watcher_dir first_idle_ts=0 fired=0 now pane xml
+  watcher_dir="$(team_idle_watcher_dir "$explicit_repo" "$team_name" "$watcher_name")"
+  while [[ -d "$watcher_dir" ]] && team_state_exists "$explicit_repo" "$team_name"; do
+    now="$(date +%s)"
+    if team_idle_all_members_idle "$explicit_repo" "$team_name"; then
+      if (( first_idle_ts == 0 )); then
+        first_idle_ts="$now"
+      fi
+      if (( fired == 0 && now - first_idle_ts >= idle_seconds )); then
+        pane="$(cat "$watcher_dir/pane" 2>/dev/null || true)"
+        if [[ -n "$pane" ]]; then
+          xml="$(team_idle_notification_xml "$explicit_repo" "$team_name" "$idle_seconds")"
+          send_notification "$pane" "$xml" || true
+        fi
+        fired=1
+      fi
+    else
+      first_idle_ts=0
+      if team_idle_any_member_active "$explicit_repo" "$team_name"; then
+        fired=0
+      fi
+    fi
+    sleep "$interval"
+  done
+}
+
+subscribe_caller_to_team_idle() {
+  local repo="$1" team="$2"
+  local pane="" session="" agent="" watcher_name="" watcher_dir="" atmux_bin="" source_root="" log_file=""
+  pane="$(current_pane)"
+  [[ -n "$pane" ]] || return 0
+  if ! tmux display-message -t "$pane" -p '#{pane_id}' >/dev/null 2>&1; then
+    return 0
+  fi
+  session="$(tmux display-message -t "$pane" -p '#{session_name}' 2>/dev/null || true)"
+  agent="${ATMUX_AGENT_NAME:-}"
+  if [[ -z "$agent" && -n "$session" ]]; then
+    agent="$(get_session_env "$session" ATMUX_AGENT_NAME)"
+  fi
+  [[ -n "$agent" || "$(get_session_env "$session" ATMUX_SESSION_KIND)" == "agent" ]] || return 0
+
+  watcher_name="$(pane_queue_key "$pane")"
+  watcher_dir="$(team_idle_watcher_dir "$repo" "$team" "$watcher_name")"
+  mkdir -p "$watcher_dir"
+  write_field "$watcher_dir/pane" "$pane"
+  write_field "$watcher_dir/session" "$session"
+  write_field "$watcher_dir/agent" "$agent"
+  write_field "$watcher_dir/repo" "$repo"
+  write_field "$watcher_dir/team" "$team"
+  write_field "$watcher_dir/subscribed_at" "$(timestamp_utc)"
+
+  atmux_bin="$(resolve_atmux_runner_for_team || true)"
+  [[ -n "$atmux_bin" ]] || return 0
+  source_root="$(resolve_source_root_for_team)"
+  log_file="$watcher_dir/worker.log"
+  (
+    ATMUX_HOME="$ATMUX_HOME" \
+    ATMUX_SOURCE_ROOT="$source_root" \
+    ATMUX_REPO="$repo" \
+      "$atmux_bin" team _idle-watch \
+        --repo "$repo" --team "$team" --watcher "$watcher_name" \
+        --idle "${ATMUX_TEAM_IDLE_SECONDS:-30}" \
+        --interval "${ATMUX_TEAM_IDLE_INTERVAL:-2}"
+  ) >>"$log_file" 2>&1 &
+  write_field "$watcher_dir/worker.pid" "$!"
+  team_idle_watcher_id "$repo" "$team" "$watcher_name"
 }
 
 create_team() {
@@ -773,6 +960,7 @@ create_team() {
   # treats the caller as a member and kills it. `ATMUX_DEFAULT_TEAM`
   # is read by `agent create` purely as a fallback for `--team` when
   # the user doesn't pass one explicitly.
+  local idle_subscription_attr=""
   if [[ -n "${TMUX:-}" ]]; then
     local caller_session caller_repo
     caller_session="$(tmux display-message -p '#S' 2>/dev/null || true)"
@@ -780,18 +968,23 @@ create_team() {
       caller_repo="$(tmux show-environment -t "$caller_session" ATMUX_REPO 2>/dev/null | sed -n 's/^ATMUX_REPO=//p' || true)"
       if [[ -z "$caller_repo" || "$caller_repo" == "$repo_name" ]]; then
         tmux set-environment -t "$caller_session" ATMUX_DEFAULT_TEAM "$team_name" >/dev/null 2>&1 || true
+        idle_watcher_id="$(subscribe_caller_to_team_idle "$repo_name" "$team_name" || true)"
+        if [[ -n "$idle_watcher_id" ]]; then
+          idle_subscription_attr=" idle_subscription=\"team-idle\" idle_watcher_id=\"$(xml_escape "$idle_watcher_id")\""
+        fi
       fi
     fi
   fi
 
-  printf '<team name="%s" repo="%s" session="%s" state_dir="%s" doc_dir="%s"%s%s />\n' \
+  printf '<team name="%s" repo="%s" session="%s" state_dir="%s" doc_dir="%s"%s%s%s />\n' \
     "$(xml_escape "$team_name")" \
     "$(xml_escape "$repo_name")" \
     "$(xml_escape "$session")" \
     "$(xml_escape "$state_dir")" \
     "$(xml_escape "$doc_dir")" \
     "$([[ -n "$role" ]] && printf ' role="%s"' "$(xml_escape "$role")")" \
-    "$([[ -n "${team_deadline_at:-}" ]] && printf ' deadline_at="%s"' "$(xml_escape "$team_deadline_at")")"
+    "$([[ -n "${team_deadline_at:-}" ]] && printf ' deadline_at="%s"' "$(xml_escape "$team_deadline_at")")" \
+    "$idle_subscription_attr"
 }
 
 list_teams() {
@@ -874,6 +1067,20 @@ remove_team_owned_worktree() {
   fi
 }
 
+remove_team_idle_watchers() {
+  local repo="$1" team="$2" root watcher_dir worker_pid
+  root="$(team_idle_watchers_dir "$repo" "$team")"
+  [[ -d "$root" ]] || return 0
+  while IFS= read -r watcher_dir; do
+    [[ -d "$watcher_dir" ]] || continue
+    worker_pid="$(cat "$watcher_dir/worker.pid" 2>/dev/null | tr -d '\r\n' || true)"
+    if [[ -n "$worker_pid" ]] && kill -0 "$worker_pid" 2>/dev/null; then
+      kill -TERM "$worker_pid" 2>/dev/null || true
+    fi
+  done < <(find "$root" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort)
+  rm -rf -- "$(team_idle_watch_dir "$repo" "$team")" 2>/dev/null || true
+}
+
 kill_teams() {
   local repo_root repo_name atmux_bin target team_name state_dir view_session member member_short
   {
@@ -897,6 +1104,7 @@ kill_teams() {
     done < <(team_member_sessions_from_state "$repo_name" "$team_name")
     run_team_stop_hook_from_state "$repo_name" "$team_name" "$state_dir"
     tmux kill-session -t "$view_session" >/dev/null 2>&1 || true
+    remove_team_idle_watchers "$repo_name" "$team_name"
     remove_team_owned_worktree "$repo_root" "$state_dir"
     rm -rf -- "$state_dir"
   done
@@ -980,6 +1188,9 @@ shift || true
 case "$sub" in
   create|_create)
     create_team "$@"
+    ;;
+  _idle-watch)
+    run_team_idle_watch "$@"
     ;;
   list|ls)
     list_teams

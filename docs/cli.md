@@ -88,7 +88,7 @@ Stops an `atmux exec` tracked process, waits for completion notifications and wa
 
 ### `atmux watcher kill <id> [--timeout <seconds>]`
 
-Removes a watcher registration by id. Supports watcher ids emitted by `atmux pr watch <url>`, `atmux issue watch --feed`, `atmux pr watch --feed`, and `atmux message subscribe --team`.
+Removes a watcher registration by id. Supports watcher ids emitted by `atmux pr watch <url>`, `atmux issue watch --feed`, `atmux pr watch --feed`, `atmux message subscribe --team`, and automatic team-idle subscriptions from `atmux team create`.
 
 ### `atmux install [--project|--system] [--project-root <dir>] [--no-slash-commands]`
 

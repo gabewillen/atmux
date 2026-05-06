@@ -13,19 +13,21 @@ Usage:
 Description:
   List or remove background watcher registrations.
   Watchers are created by `atmux pr watch --feed`, `atmux issue watch --feed`,
-  `atmux pr watch <id|url>`, and `atmux message subscribe --team`.
+  `atmux pr watch <id|url>`, `atmux message subscribe --team`, and
+  automatic team-idle subscriptions created by `atmux team create`.
 
   Watcher ids have the form <kind>:<key>:<watcher_name>, e.g.:
     pr:owner_repo_pr_123:atmux-myrepo-worker-_12
     issues:owner_repo_issues:atmux-myrepo-worker-_12
     prs:owner_repo_prs:atmux-myrepo-worker-_12
     team-message:myrepo_platform:atmux-myrepo-observer-_12
+    team-idle:myrepo_platform:atmux-myrepo-leader-_12
 USAGE
 }
 
 list_watchers() {
   local kind dir watchers_dir watcher_file id
-  for kind in pr issues prs team-message; do
+  for kind in pr issues prs team-message team-idle; do
     dir="$ATMUX_HOME/watch-$kind"
     [[ -d "$dir" ]] || continue
     while IFS= read -r watchers_dir; do

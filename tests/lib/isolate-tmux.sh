@@ -33,6 +33,7 @@ __atmux_isolate_real_tmux() {
     [[ -n "$resolved" ]] || continue
     resolved="$resolved/$(basename -- "$candidate")"
     [[ -n "$shim_path" && "$resolved" == "$shim_path" ]] && continue
+    [[ -x "$(dirname -- "$resolved")/atmux" && -d "$(dirname -- "$resolved")/(atmux)" ]] && continue
     printf '%s\n' "$resolved"
     return 0
   done < <(

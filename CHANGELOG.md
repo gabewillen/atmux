@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.23.3 — Pair-program navigator startup fix
+
+- Fixed the `tmux` shim pass-through path so role hooks running inside agent
+  panes keep targeting the active atmux tmux server even when
+  `ATMUX_TMUX_SOCKET` is not exported. This restores `pair-program`
+  navigator startup, including its pane lookup and watcher registration.
+
 ## 0.23.2 — PR merge sync and clean agent state
 
 - PR merge handling now broadcasts a `pr-merged-sync` notification to every

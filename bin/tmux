@@ -15,6 +15,7 @@ resolve_real_tmux() {
     [[ -n "$candidate_dir" ]] || continue
     candidate_path="$candidate_dir/$(basename -- "$candidate")"
     [[ "$candidate_path" != "$self_path" ]] || continue
+    [[ -x "$candidate_dir/atmux" && -d "$candidate_dir/(atmux)" ]] && continue
     printf '%s\n' "$candidate_path"
     return 0
   done
@@ -27,7 +28,11 @@ if [[ "${ATMUX_ALLOW_REAL_TMUX:-}" == "1" ]]; then
     real_tmux="$(resolve_real_tmux || true)"
   fi
   if [[ -n "$real_tmux" && -x "$real_tmux" ]]; then
-    if [[ -n "${ATMUX_TMUX_SOCKET:-}" ]]; then
+    socket="${ATMUX_TMUX_SOCKET:-}"
+    if [[ -z "$socket" && -n "${TMUX:-}" ]]; then
+      socket="${TMUX%%,*}"
+    fi
+    if [[ -n "$socket" ]]; then
       has_socket_flag=0
       for arg in "$@"; do
         case "$arg" in
@@ -35,7 +40,7 @@ if [[ "${ATMUX_ALLOW_REAL_TMUX:-}" == "1" ]]; then
         esac
       done
       if [[ "$has_socket_flag" -eq 0 ]]; then
-        exec env TMUX= "$real_tmux" -S "$ATMUX_TMUX_SOCKET" "$@"
+        exec env TMUX= "$real_tmux" -S "$socket" "$@"
       fi
     fi
     exec env TMUX= "$real_tmux" "$@"

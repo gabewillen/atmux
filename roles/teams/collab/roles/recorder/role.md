@@ -18,4 +18,4 @@ ${ATMUX_TEAM_DOC_DIR}/notes.md
 
 Do not repost redundant summaries into the team message stream. Team messages are for live deliberation. The final artifact belongs in the docs path.
 
-Do not treat routine `<stopped ... />` lifecycle notifications or scheduled deadline ticks as deliberation. Record them only when they explain why a session could not proceed.
+Do not treat scheduled deadline ticks as deliberation. Record operational signals only when they explain why a session could not proceed.

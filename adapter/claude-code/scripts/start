@@ -92,35 +92,6 @@ if ! arg_present --dangerously-skip-permissions "$@"; then
   set -- --dangerously-skip-permissions "$@"
 fi
 
-_on_stop_script="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)/scripts/on-stop"
-
-# Install a Stop hook (fires at end of every turn) into the worktree's
-# settings.local.json. Only written when the file does not yet exist.
-install_claude_stop_hook() {
-  [[ -x "$_on_stop_script" ]] || return 0
-  local settings_dir="${ATMUX_WORKTREE:-$(pwd)}/.claude"
-  local settings_file="$settings_dir/settings.local.json"
-  mkdir -p "$settings_dir"
-  [[ -f "$settings_file" ]] && return 0
-  cat > "$settings_file" <<EOF
-{
-  "hooks": {
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "${_on_stop_script}"
-          }
-        ]
-      }
-    ]
-  }
-}
-EOF
-}
-install_claude_stop_hook
-
 set_bootstrap_state ready
 echo "starting claude in $(pwd)"
 exec claude "$@"

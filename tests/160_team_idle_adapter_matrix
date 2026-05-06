@@ -93,7 +93,11 @@ write_member_pane() {
   tmux clear-history -t "$pane" >/dev/null 2>&1 || true
   printf -v cmd "printf '%%s\\n' %q; sleep 100000" "$text"
   tmux respawn-pane -k -t "$pane" "$cmd"
-  sleep 0.2
+  if ! wait_for_text "$pane" "$text" 5; then
+    echo "member pane did not show expected state text: $session -> $text" >&2
+    tmux capture-pane -p -t "$pane" -S -50 >&2 || true
+    exit 1
+  fi
 }
 
 create_member() {

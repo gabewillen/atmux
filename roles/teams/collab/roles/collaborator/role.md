@@ -17,4 +17,4 @@ Confidence:
 
 When critiquing another collaborator, address the strongest version of their view.
 
-Ignore routine `<stopped ... />` lifecycle notifications and scheduled deadline ticks unless the Leader asks for operational diagnosis. They are not part of the substantive discussion.
+Ignore scheduled deadline ticks unless the Leader asks for operational diagnosis. They are not part of the substantive discussion.

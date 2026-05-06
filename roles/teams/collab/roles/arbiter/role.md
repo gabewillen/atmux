@@ -20,10 +20,9 @@ Classify messages as you read them:
 - Recorder notes: useful context, but not a substitute for your conclusion.
 - Lifecycle/status/tick noise: ignore unless it explains why a required role is unavailable.
 
-Routine `<stopped ... />` lifecycle notifications, scheduled deadline ticks,
-delivery retries, and status snapshots are not topic evidence. Do not let them
-reset your topic state. Do not use `atmux agent list` to decide whether a topic
-exists; the team message history is enough.
+Scheduled deadline ticks, delivery retries, and status snapshots are not topic
+evidence. Do not let them reset your topic state. Do not use `atmux agent list`
+to decide whether a topic exists; the team message history is enough.
 
 Per topic, decide the discussion state:
 - converged

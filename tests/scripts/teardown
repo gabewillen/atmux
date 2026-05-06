@@ -3,6 +3,14 @@ set -euo pipefail
 
 source "$(dirname "${BASH_SOURCE[0]}")/../lib/isolate-tmux.sh"
 
+if [[ -z "${ATMUX_TESTS_TMUX_TMPDIR:-}" \
+   || -z "${ATMUX_TMUX_SOCKET:-}" \
+   || "$ATMUX_TMUX_SOCKET" != "$ATMUX_TESTS_TMUX_TMPDIR"/* \
+   || -n "${TMUX:-}" ]]; then
+  echo "teardown: tmux isolation is not active; refusing to kill sessions" >&2
+  exit 99
+fi
+
 team_session="${TEAM_SESSION:-}"
 agent1_session="${AGENT1_SESSION:-}"
 agent2_session="${AGENT2_SESSION:-}"

@@ -61,7 +61,7 @@ Member name match is the last `-`-segment of the member's first token, so role-t
 `agent create` stamps `ATMUX_MODEL` / `ATMUX_REASONING_LEVEL` on the new tmux session, and each adapter's start script honors them after the intelligence_map lookup:
 
 - **claude-code**: `--model <id> --effort <level>` argv flags. Generic override beats both `ATMUX_INTELLIGENCE` and the legacy `ATMUX_CLAUDE_MODEL` / `ATMUX_CLAUDE_EFFORT` envvars.
-- **codex**: drives the same `/model` TUI menu used by intelligence_map, so explicit overrides take effect post-boot the same way.
+- **codex**: `--model <id>` argv plus `-c model_reasoning_effort=<level>`. Explicit overrides are applied before the TUI starts.
 - **cursor-agent**: `--model <id>` argv. Reasoning level is encoded in the cursor-agent model id itself (`composer-2-fast` vs `gpt-5.3-codex-xhigh`), so `--reasoning` updates state.env for status output but `--model` is the knob that moves runtime behavior.
 - **gemini**: `--model <id>` argv. The current Gemini CLI exposes no reasoning/effort flag; `--reasoning` is preserved on the session for parity.
 

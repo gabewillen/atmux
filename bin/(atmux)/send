@@ -64,10 +64,20 @@ sender_pane() {
 notify_sender_failed_send() {
   local target="$1"
   local reason="$2"
-  local pane="" payload=""
+  local pane="" payload="" key="" marker_dir="" marker=""
 
   pane="$(sender_pane 2>/dev/null || true)"
   [[ -n "$pane" ]] || return 0
+
+  key="$(printf '%s\037%s\037%s\n' "$from_session" "$target" "$reason" | cksum | awk '{print $1}')"
+  marker_dir="$ATMUX_HOME/send-failed-notifications"
+  marker="$marker_dir/$key"
+  mkdir -p "$marker_dir"
+  if [[ -e "$marker" ]]; then
+    debug_notify "send:failed_notification_suppressed target=$(printf '%q' "$target") reason=$(printf '%q' "$reason")"
+    return 0
+  fi
+  printf 'from=%s\ntarget=%s\nreason=%s\n' "$from_session" "$target" "$reason" > "$marker"
 
   payload="$(build_notification "send_failed" "send" "" \
     "target=$target" \

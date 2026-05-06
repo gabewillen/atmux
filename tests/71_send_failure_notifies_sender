@@ -4,9 +4,13 @@ set -euo pipefail
 # Isolate the tmux socket so this test can never touch the developer's
 # default tmux server. Idempotent if the runner already isolated.
 source "$(dirname "${BASH_SOURCE[0]}")/lib/isolate-tmux.sh"
+export ATMUX_ALLOW_REAL_TMUX=1
 
 TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-SCRIPTS_DIR="$TESTS_DIR/scripts"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+ATMUX_BIN="${ATMUX_TEST_ATMUX_BIN:-$REPO_ROOT/bin/atmux}"
+atmux_home_tmp="$(mktemp -d "${TMPDIR:-/tmp}/atmux-send-failure.XXXXXX")"
+export ATMUX_HOME="$atmux_home_tmp"
 
 wait_for_text() {
   local target="$1"
@@ -28,13 +32,23 @@ wait_for_text() {
   done
 }
 
-eval "$("$SCRIPTS_DIR/setup")"
-trap "$SCRIPTS_DIR/teardown --team-session \"$TEAM_SESSION\" --agent1-session \"$AGENT1_SESSION\" --agent2-session \"$AGENT2_SESSION\"" EXIT
+repo_suffix="$(printf '%s-%s' "$$" "$RANDOM" | sed -E 's/[^A-Za-z0-9_-]+/_/g')"
+REPO_NAME="send_failure_${repo_suffix}"
+AGENT1_SESSION="atmux-${REPO_NAME}-sender"
+
+cleanup() {
+  tmux kill-session -t "$AGENT1_SESSION" >/dev/null 2>&1 || true
+  rm -rf "$atmux_home_tmp"
+}
+trap cleanup EXIT
+
+tmux new-session -d -s "$AGENT1_SESSION" -n "$AGENT1_SESSION" -c "$REPO_ROOT" "cat"
+tmux set-environment -t "$AGENT1_SESSION" ATMUX_REPO "$REPO_NAME"
+tmux set-environment -t "$AGENT1_SESSION" ATMUX_AGENT_NAME "sender"
+tmux set-environment -t "$AGENT1_SESSION" ATMUX_SESSION_NAME "$AGENT1_SESSION"
 
 sender_pane="$(tmux list-panes -t "$AGENT1_SESSION" -F '#{pane_id}' 2>/dev/null | head -n1)"
 [[ -n "$sender_pane" ]] || { echo "sender pane missing" >&2; exit 1; }
-
-tmux kill-session -t "$AGENT2_SESSION" >/dev/null 2>&1 || true
 
 if send_out="$(
   ATMUX_REPO="$REPO_NAME" ATMUX_AGENT_NAME="sender" ATMUX_SESSION_NAME="$AGENT1_SESSION" \
@@ -59,4 +73,21 @@ fi
 
 printf '%s\n' "$send_out" | grep -Fq 'target not found as team or agent: receiver'
 
-echo "ok: send failure notifies sender when target cannot be reached"
+if send_out_2="$(
+  ATMUX_REPO="$REPO_NAME" ATMUX_AGENT_NAME="sender" ATMUX_SESSION_NAME="$AGENT1_SESSION" \
+    "$ATMUX_BIN" send --to receiver "hello again" 2>&1
+)"; then
+  echo "second send unexpectedly succeeded to missing receiver" >&2
+  printf '%s\n' "$send_out_2" >&2
+  exit 1
+fi
+
+sleep 0.5
+marker_count="$(find "$ATMUX_HOME/send-failed-notifications" -type f 2>/dev/null | wc -l | tr -d '[:space:]')"
+if [[ "$marker_count" != "1" ]]; then
+  echo "expected exactly one send_failed dedupe marker after repeated failure, got $marker_count" >&2
+  find "$ATMUX_HOME/send-failed-notifications" -type f -maxdepth 1 -print >&2 2>/dev/null || true
+  exit 1
+fi
+
+echo "ok: send failure notifies sender once when target cannot be reached"

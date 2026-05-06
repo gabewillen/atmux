@@ -2,49 +2,27 @@
 set -euo pipefail
 
 TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-SCRIPTS_DIR="$TESTS_DIR/scripts"
 ADAPTER_DIR="$(cd -- "$TESTS_DIR/.." && pwd)"
-REPO_ROOT="$(cd -- "$ADAPTER_DIR/../.." && pwd)"
-
-setup_out="$("$SCRIPTS_DIR/setup")"
-session_name="$(printf '%s\n' "$setup_out" | sed -n 's/^SESSION_NAME=//p' | tail -n 1)"
-pane_id="$(printf '%s\n' "$setup_out" | sed -n 's/^PANE_ID=//p' | tail -n 1)"
-if [[ -z "$session_name" || -z "$pane_id" ]]; then
-  echo "missing setup output (SESSION_NAME or PANE_ID)" >&2
-  exit 1
-fi
 
 atmux_home="$(mktemp -d "${TMPDIR:-/tmp}/atmux-codex-test-home.XXXXXX")"
-cleanup() {
-  "$SCRIPTS_DIR/teardown" --session "$session_name" >/dev/null 2>&1 || true
-  rm -rf "$atmux_home"
-}
-trap cleanup EXIT
+trap 'rm -rf "$atmux_home"' EXIT
 
-ATMUX_HOME="$atmux_home" \
-ATMUX_TARGET_PANE="$pane_id" \
-"$ADAPTER_DIR/scripts/reasoning-level" set high >/dev/null
-
+ATMUX_HOME="$atmux_home" "$ADAPTER_DIR/scripts/reasoning-level" set high >/dev/null
 current_reasoning="$(ATMUX_HOME="$atmux_home" "$ADAPTER_DIR/scripts/reasoning-level" get)"
-if [[ "$current_reasoning" != "high" ]]; then
-  tmux capture-pane -p -t "$pane_id" -S -220 >&2 || true
+[[ "$current_reasoning" == "high" ]] || {
   echo "unexpected reasoning-level get value after set high: $current_reasoning" >&2
   exit 1
-fi
+}
 
-ATMUX_HOME="$atmux_home" \
-ATMUX_TARGET_PANE="$pane_id" \
-"$ADAPTER_DIR/scripts/reasoning-level" set medium >/dev/null
-
-if ! "$REPO_ROOT/bin/atmux" pane watch "$pane_id" --scope pane --text "Model changed to gpt-5.5 medium" --timeout 40 --interval 0.2 --lines 700; then
-  tmux capture-pane -p -t "$pane_id" -S -220 >&2 || true
-  echo "expected medium reasoning change message not found" >&2
-  exit 1
-fi
-
+ATMUX_HOME="$atmux_home" "$ADAPTER_DIR/scripts/reasoning-level" set xhigh >/dev/null
 current_reasoning="$(ATMUX_HOME="$atmux_home" "$ADAPTER_DIR/scripts/reasoning-level" get)"
-if [[ "$current_reasoning" != "medium" ]]; then
-  echo "unexpected reasoning-level get value: $current_reasoning" >&2
+[[ "$current_reasoning" == "extra-high" ]] || {
+  echo "unexpected reasoning-level get value after set xhigh: $current_reasoning" >&2
+  exit 1
+}
+
+if ATMUX_HOME="$atmux_home" "$ADAPTER_DIR/scripts/reasoning-level" set invalid >/dev/null 2>&1; then
+  echo "invalid reasoning-level unexpectedly succeeded" >&2
   exit 1
 fi
 

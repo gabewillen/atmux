@@ -24,7 +24,17 @@ set_bootstrap_state() {
   tmux set-environment -t "$session" ATMUX_BOOTSTRAP_STATE "$state" >/dev/null 2>&1 || true
 }
 
-schedule_intelligence_profile() {
+arg_present() {
+  local needle="$1"
+  shift || true
+  local arg
+  for arg in "$@"; do
+    [[ "$arg" == "$needle" ]] && return 0
+  done
+  return 1
+}
+
+resolve_intelligence_profile() {
   local intelligence="${ATMUX_INTELLIGENCE:-}"
   local manifest_path profile model reasoning
   manifest_path="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)/manifest"
@@ -42,38 +52,22 @@ schedule_intelligence_profile() {
   [[ -n "${ATMUX_MODEL:-}" ]] && model="$ATMUX_MODEL"
   [[ -n "${ATMUX_REASONING_LEVEL:-}" ]] && reasoning="$ATMUX_REASONING_LEVEL"
 
-  if [[ -z "$model" || -z "$reasoning" ]]; then
-    set_bootstrap_state ready
-    return 0
-  fi
+  [[ -n "$model" ]] && CODEX_MODEL="$model"
+  [[ -n "$reasoning" ]] && CODEX_REASONING_LEVEL="$reasoning"
+}
 
-  local pane_id adapter_cmd atmux_bin
-  pane_id="$(tmux display-message -p '#{pane_id}' 2>/dev/null || true)"
-  if [[ -z "$pane_id" ]]; then
-    set_bootstrap_state ready
-    return 0
-  fi
+codex_reasoning_config_value() {
+  case "${1:-}" in
+    extra-high|extra_high|extrahigh) printf '%s\n' 'xhigh' ;;
+    low|medium|high|xhigh) printf '%s\n' "$1" ;;
+    *) printf '%s\n' "$1" ;;
+  esac
+}
 
-  adapter_cmd="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)/cmd"
-  atmux_bin="${ATMUX_SOURCE_ROOT:-${ATMUX_HOME:-$HOME/.atmux}/src/atmux}/bin/atmux"
-  set_bootstrap_state pending
-
-  (
-    success=0
-    if [[ -x "$atmux_bin" ]]; then
-      "$atmux_bin" pane watch "$pane_id" --scope pane --text "OpenAI Codex" --timeout 30 --interval 0.2 --lines 300 || true
-    else
-      sleep 2
-    fi
-    if ATMUX_TARGET_PANE="$pane_id" "$adapter_cmd" model set "$model" "$reasoning" >/dev/null 2>&1; then
-      success=1
-    fi
-    if [[ "$success" -eq 1 ]]; then
-      set_bootstrap_state ready
-    else
-      set_bootstrap_state failed
-    fi
-  ) >/dev/null 2>&1 &
+write_state() {
+  local state_dir="${ATMUX_HOME:-$HOME/.atmux}/adapters/codex"
+  mkdir -p "$state_dir"
+  printf 'MODEL=%s\nREASONING_LEVEL=%s\n' "$CODEX_MODEL" "$CODEX_REASONING_LEVEL" > "$state_dir/state.env"
 }
 
 _on_stop_script="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)/scripts/on-stop"
@@ -118,7 +112,11 @@ EOF
 }
 install_codex_stop_hook
 
-schedule_intelligence_profile
+CODEX_MODEL='gpt-5.5'
+CODEX_REASONING_LEVEL='medium'
+resolve_intelligence_profile
+write_state
+set_bootstrap_state ready
 
 echo "starting codex in $(pwd)"
 # Pre-trust the worktree so codex doesn't stop at its first-time
@@ -127,6 +125,12 @@ echo "starting codex in $(pwd)"
 # agents, fresh team worktrees, CI). The override goes to codex via -c
 # and is equivalent to a `[projects."<path>"]` block in config.toml.
 codex_trust_pwd="$(pwd -P 2>/dev/null || pwd)"
+args=("$@")
+if ! arg_present --model "${args[@]-}"; then
+  args=(--model "$CODEX_MODEL" "${args[@]-}")
+fi
+
 exec codex --dangerously-bypass-approvals-and-sandbox --search \
+  -c "model_reasoning_effort=\"$(codex_reasoning_config_value "$CODEX_REASONING_LEVEL")\"" \
   -c "projects.\"${codex_trust_pwd}\".trust_level=\"trusted\"" \
-  "$@"
+  "${args[@]-}"

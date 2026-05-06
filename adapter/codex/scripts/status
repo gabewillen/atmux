@@ -9,7 +9,7 @@ sanitize_reasoning() {
   local raw="$1"
   raw="$(printf '%s' "$raw" | tr '[:upper:]' '[:lower:]')"
   case "$raw" in
-    "extra high"|"extra-high"|"extra_high"|"extrahigh") printf '%s\n' 'extra-high' ;;
+    "extra high"|"extra-high"|"extra_high"|"extrahigh"|xhigh) printf '%s\n' 'extra-high' ;;
     low|medium|high) printf '%s\n' "$raw" ;;
     *) printf '%s\n' "$raw" ;;
   esac

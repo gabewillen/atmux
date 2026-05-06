@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+
+tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/atmux-tmux-shim.XXXXXX")"
+cleanup() {
+  rm -rf "$tmp_dir"
+}
+trap cleanup EXIT
+
+fake_tmux="$tmp_dir/real-tmux"
+record="$tmp_dir/record"
+cat > "$fake_tmux" <<'SH'
+#!/usr/bin/env bash
+{
+  printf 'TMUX=%s\n' "${TMUX-unset}"
+  printf 'ARGS='
+  printf '<%s>' "$@"
+  printf '\n'
+} > "$ATMUX_FAKE_TMUX_RECORD"
+SH
+chmod +x "$fake_tmux"
+
+ATMUX_ALLOW_REAL_TMUX=1 \
+ATMUX_REAL_TMUX="$fake_tmux" \
+ATMUX_TMUX_SOCKET="$tmp_dir/private.sock" \
+ATMUX_FAKE_TMUX_RECORD="$record" \
+TMUX="/tmp/live-server,123,0" \
+  "$REPO_ROOT/bin/tmux" display-message -p '#S'
+
+grep -Fxq 'TMUX=' "$record" || {
+  echo "tmux shim did not clear inherited TMUX" >&2
+  cat "$record" >&2
+  exit 1
+}
+
+grep -Fxq "ARGS=<-S><$tmp_dir/private.sock><display-message><-p><#S>" "$record" || {
+  echo "tmux shim did not force ATMUX_TMUX_SOCKET via -S" >&2
+  cat "$record" >&2
+  exit 1
+}
+
+echo "ok: tmux shim forces isolated socket when passing through to real tmux"

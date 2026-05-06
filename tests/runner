@@ -8,24 +8,9 @@ TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 CLEANUP_ORPHANS="$TESTS_DIR/scripts/cleanup-orphans"
 
 # Isolate the tmux socket so tests never touch the developer's real tmux server.
-# Setting TMUX_TMPDIR redirects where tmux looks for/creates its socket; any
-# child `tmux ...` invocation in this process tree spawns/uses a private server
-# at $TMUX_TMPDIR/tmux-$UID/default instead of the user's default socket.
-if [[ -z "${ATMUX_TESTS_TMUX_TMPDIR:-}" ]]; then
-  ATMUX_TESTS_TMUX_TMPDIR="$(mktemp -d "${TMPDIR:-/tmp}/atmux-tests-tmux.XXXXXX")"
-  export ATMUX_TESTS_TMUX_TMPDIR
-  cleanup_isolated_tmux() {
-    if [[ -n "${ATMUX_TESTS_TMUX_TMPDIR:-}" && -d "$ATMUX_TESTS_TMUX_TMPDIR" ]]; then
-      TMUX_TMPDIR="$ATMUX_TESTS_TMUX_TMPDIR" tmux kill-server >/dev/null 2>&1 || true
-      rm -rf "$ATMUX_TESTS_TMUX_TMPDIR"
-    fi
-  }
-  trap cleanup_isolated_tmux EXIT INT TERM
-fi
-export TMUX_TMPDIR="$ATMUX_TESTS_TMUX_TMPDIR"
-export ATMUX_TMUX_SOCKET="$ATMUX_TESTS_TMUX_TMPDIR/tmux-$(id -u)/default"
-mkdir -p "$(dirname -- "$ATMUX_TMUX_SOCKET")"
-chmod 700 "$(dirname -- "$ATMUX_TMUX_SOCKET")"
+# tests/lib/isolate-tmux.sh also clears inherited TMUX and forces the repo
+# tmux shim through to the real tmux binary on the private socket.
+source "$TESTS_DIR/lib/isolate-tmux.sh"
 
 # Notify-queue state in the developer's ~/.atmux/notify-queue/ is keyed on
 # (session_name, pane_id). With an isolated tmux server, pane ids reset to

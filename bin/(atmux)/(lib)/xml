@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 # Shared XML helpers.
 
+if [[ -n "${__ATMUX_XML_SOURCED:-}" ]]; then
+  return 0 2>/dev/null || true
+fi
+__ATMUX_XML_SOURCED=1
+
 atmux_xml_escape() {
   printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g' -e "s/'/\&apos;/g"
 }

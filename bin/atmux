@@ -206,7 +206,7 @@ should_wrap_command() {
   fi
 
   case "$cmd" in
-    exec|watch|watcher|notify|kill|install)
+    exec|watch|watcher|notify|kill|install|role)
       return 1
       ;;
     agent)

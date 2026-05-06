@@ -62,6 +62,10 @@ atmux_resolve_session_short_name() {
 }
 
 atmux_resolve_repo_name() {
+  local allow_empty=0
+  if [[ "${1:-}" == "--allow-empty" ]]; then
+    allow_empty=1
+  fi
   local repo_name="${ATMUX_REPO:-}"
   if [[ -z "$repo_name" && -n "${TMUX:-}" ]]; then
     repo_name="$(tmux show-environment ATMUX_REPO 2>/dev/null | sed -n 's/^ATMUX_REPO=//p' || true)"
@@ -72,6 +76,10 @@ atmux_resolve_repo_name() {
     if [[ -n "$repo_root" ]]; then
       repo_name="$(basename "$repo_root")"
     fi
+  fi
+  if [[ -z "$repo_name" && "$allow_empty" -eq 1 ]]; then
+    printf '\n'
+    return 0
   fi
   atmux_resolve_normalized_name "$repo_name"
 }

@@ -1324,7 +1324,7 @@ send_task_to_agent() {
   from_session="${ATMUX_SESSION_NAME:-}"
   if [[ -z "$from_session" ]]; then
     local from_repo
-    from_repo="$(atmux_resolve_repo_name)"
+    from_repo="$(atmux_resolve_repo_name --allow-empty)"
     if [[ -n "$from_repo" ]]; then
       from_session="atmux-${from_repo}-${ATMUX_AGENT_NAME:-unknown}"
     else
@@ -1743,7 +1743,7 @@ case "$sub" in
     fi
     r_repo="${2:-}"
     if [[ -z "$r_repo" ]]; then
-      r_repo="$(atmux_resolve_repo_name)"
+      r_repo="$(atmux_resolve_repo_name --allow-empty)"
     fi
 
     if tmux has-session -t "$target" 2>/dev/null; then

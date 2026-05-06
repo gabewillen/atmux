@@ -20,9 +20,18 @@ if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
   exit 2
 fi
 
+__atmux_isolate_repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." 2>/dev/null && pwd -P || true)"
+if [[ -n "$__atmux_isolate_repo_root" ]]; then
+  export ATMUX_SOURCE_ROOT="$__atmux_isolate_repo_root"
+fi
+
+# Tests must not inherit the invoking agent's identity. Individual tests set
+# these explicitly when they need agent-mode behavior.
+unset ATMUX_AGENT_NAME ATMUX_SESSION_NAME ATMUX_TEAM ATMUX_ROLE
+
 __atmux_isolate_real_tmux() {
   local repo_root="" shim_path="" candidate resolved
-  repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." 2>/dev/null && pwd -P || true)"
+  repo_root="$__atmux_isolate_repo_root"
   if [[ -n "$repo_root" && -x "$repo_root/bin/tmux" ]]; then
     shim_path="$repo_root/bin/tmux"
   fi

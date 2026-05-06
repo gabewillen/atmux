@@ -164,3 +164,7 @@ atmux_resolve_repo_sessions() {
   local prefix="atmux-${repo_name}-"
   tmux list-sessions -F '#{session_name}' 2>/dev/null | awk -v p="$prefix" 'index($0,p)==1 { print }'
 }
+
+atmux_resolve_all_atmux_sessions() {
+  tmux list-sessions -F '#{session_name}' 2>/dev/null | awk '/^atmux-/ { print }'
+}

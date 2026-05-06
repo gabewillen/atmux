@@ -75,6 +75,7 @@ export ATMUX_TMUX_SOCKET="$ATMUX_TESTS_TMUX_TMPDIR/tmux-$(id -u)/default"
 # Never let an inherited live tmux client socket override the private test
 # socket. This is the critical guard for running atmux tests from inside atmux.
 export TMUX=""
+unset TMUX_PANE
 mkdir -p "$(dirname -- "$ATMUX_TMUX_SOCKET")"
 chmod 700 "$(dirname -- "$ATMUX_TMUX_SOCKET")"
 

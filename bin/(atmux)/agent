@@ -98,7 +98,7 @@ resolve_pattern_targets() {
       printf '%s\n' "$session"
       candidate_match=1
     fi
-  done < <(atmux_resolve_repo_sessions "$repo_name")
+  done < <(atmux_resolve_all_atmux_sessions)
 
   [[ "$candidate_match" -eq 1 ]]
 }

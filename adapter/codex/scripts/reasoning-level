@@ -3,162 +3,25 @@ set -euo pipefail
 state_dir="${ATMUX_HOME:-$HOME/.atmux}/adapters/codex"
 state_file="$state_dir/state.env"
 mkdir -p "$state_dir"
-MODEL='gpt-5.5'
-REASONING_LEVEL='medium'
-
-load_state() {
-  [[ -f "$state_file" ]] || return 0
-  local line
-  while IFS= read -r line || [[ -n "$line" ]]; do
-    case "$line" in
-      MODEL=*)
-        MODEL="${line#MODEL=}"
-        ;;
-      REASONING_LEVEL=*)
-        REASONING_LEVEL="${line#REASONING_LEVEL=}"
-        ;;
-    esac
-  done < "$state_file"
-}
-
-write_state() {
-  printf 'MODEL=%s\nREASONING_LEVEL=%s\n' "$MODEL" "$REASONING_LEVEL" > "$state_file"
-}
-
-load_state
-
-resolve_target() {
-  if [[ -n "${ATMUX_TARGET_PANE:-}" ]]; then
-    printf '%s\n' "$ATMUX_TARGET_PANE"
-    return
-  fi
-  if [[ -n "${TMUX:-}" ]]; then
-    tmux display-message -p '#{pane_id}' 2>/dev/null || true
-    return
-  fi
-  if [[ -n "${ATMUX_SESSION_NAME:-}" ]]; then
-    tmux list-panes -t "$ATMUX_SESSION_NAME" -F '#{pane_id}' 2>/dev/null | head -n 1
-    return
-  fi
-  if [[ -n "${ATMUX_REPO:-}" && -n "${ATMUX_AGENT_NAME:-}" ]]; then
-    sess="atmux-${ATMUX_REPO}-${ATMUX_AGENT_NAME}"
-    tmux list-panes -t "$sess" -F '#{pane_id}' 2>/dev/null | head -n 1
-    return
-  fi
-}
-
-wait_for_reasoning_menu() {
-  local target="$1"
-  local poll_limit="${ATMUX_CODEX_REASONING_MENU_POLLS:-50}"
-  local poll snapshot
-
-  for ((poll=1; poll<=poll_limit; poll++)); do
-    snapshot="$(tmux capture-pane -p -t "$target" -S -320 2>/dev/null || true)"
-    if printf '%s\n' "$snapshot" | grep -Fq "Select Reasoning Level"; then
-      printf '%s\n' "$snapshot"
-      return 0
-    fi
-    sleep 0.2
-  done
-
-  return 1
-}
+[[ -f "$state_file" ]] || printf 'MODEL=%s\nREASONING_LEVEL=%s\n' 'gpt-5.5' 'medium' > "$state_file"
+# shellcheck disable=SC1090
+source "$state_file"
 
 normalize_reasoning() {
-  local raw="${1:-}"
-  raw="$(printf '%s' "$raw" | tr '[:upper:]' '[:lower:]')"
-  case "$raw" in
-    extra_high|extra-high|extra\ high|extrahigh) printf '%s\n' 'extra-high' ;;
-    low|medium|high) printf '%s\n' "$raw" ;;
+  case "${1:-}" in
+    extra_high|extra-high|extra\ high|extrahigh|xhigh) printf '%s\n' 'extra-high' ;;
+    low|medium|high) printf '%s\n' "$1" ;;
     *) return 1 ;;
   esac
-}
-
-extract_reasoning_num() {
-  local snapshot="$1"
-  local desired="$2"
-  local line parsed num label normalized
-
-  while IFS= read -r line; do
-    parsed="$(printf '%s\n' "$line" | sed -nE 's/^[^0-9]*([0-9]+)\.[[:space:]]*(.*)$/\1|\2/p')"
-    [[ -n "$parsed" ]] || continue
-    num="${parsed%%|*}"
-    label="$(printf '%s' "${parsed#*|}" | tr '[:upper:]' '[:lower:]')"
-
-    normalized=""
-    if printf '%s\n' "$label" | grep -Eq 'extra[[:space:]-]*high'; then
-      normalized='extra-high'
-    elif printf '%s\n' "$label" | grep -Eq 'medium'; then
-      normalized='medium'
-    elif printf '%s\n' "$label" | grep -Eq 'low'; then
-      normalized='low'
-    elif printf '%s\n' "$label" | grep -Eq 'high'; then
-      normalized='high'
-    fi
-
-    if [[ -n "$normalized" && "$normalized" == "$desired" ]]; then
-      printf '%s\n' "$num"
-      return 0
-    fi
-  done <<< "$snapshot"
-
-  return 1
-}
-
-send_reasoning_selection() {
-  local desired_reasoning="$1"
-  local target
-  local menu_snapshot
-  local reasoning_num
-  target="$(resolve_target)"
-  [[ -n "$target" ]] || { echo "unable to resolve tmux target pane" >&2; exit 1; }
-
-  if ! menu_snapshot="$(wait_for_reasoning_menu "$target")"; then
-    echo "timed out waiting for 'Select Reasoning Level'" >&2
-    exit 1
-  fi
-
-  if ! reasoning_num="$(extract_reasoning_num "$menu_snapshot" "$desired_reasoning")"; then
-    echo "reasoning level not found in menu: $desired_reasoning" >&2
-    exit 1
-  fi
-
-  tmux send-keys -t "$target" -l "$reasoning_num"
-
-  # Some Codex builds require explicit confirmation after selecting a reasoning level.
-  local poll snapshot
-  for ((poll=1; poll<=20; poll++)); do
-    snapshot="$(tmux capture-pane -p -t "$target" -S -200 2>/dev/null || true)"
-    if printf '%s\n' "$snapshot" | grep -Fq "Press enter to confirm"; then
-      tmux send-keys -t "$target" ENTER
-      return 0
-    fi
-    if printf '%s\n' "$snapshot" | grep -Fq "Model changed to"; then
-      return 0
-    fi
-    if ! printf '%s\n' "$snapshot" | grep -Fq "Select Reasoning Level"; then
-      return 0
-    fi
-    sleep 0.1
-  done
 }
 
 case "${1:-}" in
   list) printf '%s\n' low medium high extra-high ;;
   get) printf '%s\n' "$REASONING_LEVEL" ;;
   set)
-    requested_reasoning="$(normalize_reasoning "${2:-}" || true)"
-    [[ -n "$requested_reasoning" ]] || { echo "missing/invalid reasoning level value" >&2; exit 2; }
-
-    if [[ "${ATMUX_CODEX_CALLED_BY_MODEL:-}" != "1" ]]; then
-      model_script="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/model"
-      ATMUX_CODEX_CALLED_BY_REASONING=1 "$model_script" set "$MODEL"
-      load_state
-    fi
-
-    REASONING_LEVEL="$requested_reasoning"
-    send_reasoning_selection "$requested_reasoning"
-    write_state
+    REASONING_LEVEL="$(normalize_reasoning "${2:-}" || true)"
+    [[ -n "$REASONING_LEVEL" ]] || { echo "missing/invalid reasoning level value" >&2; exit 2; }
+    printf 'MODEL=%s\nREASONING_LEVEL=%s\n' "$MODEL" "$REASONING_LEVEL" > "$state_file"
     printf '%s\n' "$REASONING_LEVEL"
     ;;
   *) echo "usage: reasoning-level list|get|set <value>" >&2; exit 2 ;;

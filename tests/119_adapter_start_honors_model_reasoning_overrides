@@ -34,6 +34,7 @@ SH
 chmod +x "$tmp_dir/bin/_record"
 ln -sf _record "$tmp_dir/bin/gemini"
 ln -sf _record "$tmp_dir/bin/claude"
+ln -sf _record "$tmp_dir/bin/codex"
 ln -sf _record "$tmp_dir/bin/cursor-agent"
 ln -sf _record "$tmp_dir/bin/agent"
 # Same stub at the paths cursor-agent injects.
@@ -92,6 +93,16 @@ assert_arg_eq() {
   fi
 }
 
+assert_arg_present() {
+  local file="$1" expected="$2" tag="$3"
+  if ! grep -Fx "$expected" "$file" >/dev/null 2>&1; then
+    echo "fail [$tag]: expected argv line '$expected'" >&2
+    echo "  captured argv:" >&2
+    sed 's/^/    /' "$file" >&2
+    exit 1
+  fi
+}
+
 # === gemini ============================================================
 # Sanity: ATMUX_INTELLIGENCE alone picks the right model.
 af="$(run_start gemini int-only ATMUX_INTELLIGENCE=50)"
@@ -126,6 +137,18 @@ af="$(run_start claude-code precedence \
         ATMUX_MODEL=opus)"
 assert_arg_eq "$af" --model opus claude-precedence
 
+# === codex ============================================================
+af="$(run_start codex int-only ATMUX_INTELLIGENCE=80)"
+assert_arg_eq "$af" --model gpt-5.5 codex-int-only
+assert_arg_present "$af" 'model_reasoning_effort="high"' codex-int-only
+
+af="$(run_start codex overrides \
+        ATMUX_INTELLIGENCE=50 \
+        ATMUX_MODEL=gpt-5.4 \
+        ATMUX_REASONING_LEVEL=extra-high)"
+assert_arg_eq "$af" --model gpt-5.4 codex-overrides
+assert_arg_present "$af" 'model_reasoning_effort="xhigh"' codex-overrides
+
 # === cursor-agent =====================================================
 af="$(run_start cursor-agent int-only ATMUX_INTELLIGENCE=80)"
 assert_arg_eq "$af" --model gpt-5.3-codex-high cursor-int-only
@@ -135,4 +158,4 @@ af="$(run_start cursor-agent override \
         ATMUX_MODEL=probe-cursor-model)"
 assert_arg_eq "$af" --model probe-cursor-model cursor-override
 
-echo "ok: gemini/claude-code/cursor-agent start scripts honor ATMUX_MODEL/ATMUX_REASONING_LEVEL overrides"
+echo "ok: gemini/claude-code/codex/cursor-agent start scripts honor ATMUX_MODEL/ATMUX_REASONING_LEVEL overrides"

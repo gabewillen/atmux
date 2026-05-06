@@ -2,70 +2,41 @@
 set -euo pipefail
 
 TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-SCRIPTS_DIR="$TESTS_DIR/scripts"
 ADAPTER_DIR="$(cd -- "$TESTS_DIR/.." && pwd)"
 REPO_ROOT="$(cd -- "$ADAPTER_DIR/../.." && pwd)"
 
-setup_out="$("$SCRIPTS_DIR/setup")"
-session_name="$(printf '%s\n' "$setup_out" | sed -n 's/^SESSION_NAME=//p' | tail -n 1)"
-pane_id="$(printf '%s\n' "$setup_out" | sed -n 's/^PANE_ID=//p' | tail -n 1)"
-if [[ -z "$session_name" || -z "$pane_id" ]]; then
-  echo "missing setup output (SESSION_NAME or PANE_ID)" >&2
-  exit 1
-fi
+source "$REPO_ROOT/tests/lib/isolate-tmux.sh"
+export ATMUX_ALLOW_REAL_TMUX=1
 
-atmux_home="$(mktemp -d "${TMPDIR:-/tmp}/atmux-codex-test-home.XXXXXX")"
-
+session_name="atmux-codex-status-parse-$(date +%s)-$$"
 cleanup() {
-  "$SCRIPTS_DIR/teardown" --session "$session_name" >/dev/null 2>&1 || true
-  rm -rf "$atmux_home"
+  tmux kill-session -t "$session_name" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 
-ATMUX_HOME="$atmux_home" \
-ATMUX_TARGET_PANE="$pane_id" \
-"$ADAPTER_DIR/scripts/model" set gpt-5.4 high >/dev/null
+tmux new-session -d -s "$session_name" "cat"
+pane_id="$(tmux list-panes -t "$session_name" -F '#{pane_id}' 2>/dev/null | head -n 1)"
+[[ -n "$pane_id" ]] || { echo "unable to resolve pane id" >&2; exit 1; }
 
-status_high=""
-for _ in $(seq 1 15); do
-  status_high="$(
-    ATMUX_HOME="$atmux_home" \
-    ATMUX_TARGET_PANE="$pane_id" \
-    ATMUX_SOURCE_ROOT="$REPO_ROOT" \
-    "$ADAPTER_DIR/scripts/status"
-  )"
-  if printf '%s\n' "$status_high" | grep -Eq 'reasoning_level="(high|xhigh|extra-high)"' >/dev/null 2>&1; then
-    break
-  fi
-  sleep 0.3
-done
+tmux send-keys -t "$pane_id" -l "OpenAI Codex"
+tmux send-keys -t "$pane_id" ENTER
+tmux send-keys -t "$pane_id" -l "Model: gpt-5.4 (reasoning high)"
+tmux send-keys -t "$pane_id" ENTER
+tmux send-keys -t "$pane_id" -l "OpenAI Codex"
+tmux send-keys -t "$pane_id" ENTER
+tmux send-keys -t "$pane_id" -l "Model: gpt-5.5 (reasoning xhigh)"
+tmux send-keys -t "$pane_id" ENTER
+sleep 0.2
 
-echo "$status_high" | grep -F '<status ' >/dev/null
-echo "$status_high" | grep -F 'adapter="codex"' >/dev/null
-echo "$status_high" | grep -F 'model="gpt-5.4"' >/dev/null
-echo "$status_high" | grep -Eq 'reasoning_level="(high|xhigh|extra-high)"' >/dev/null
+status_out="$(
+  ATMUX_TARGET_PANE="$pane_id" \
+  ATMUX_STATUS_PASSIVE=1 \
+  "$ADAPTER_DIR/scripts/status"
+)"
 
-ATMUX_HOME="$atmux_home" \
-ATMUX_TARGET_PANE="$pane_id" \
-"$ADAPTER_DIR/scripts/model" set gpt-5.4 medium >/dev/null
-
-status_medium=""
-for _ in $(seq 1 15); do
-  status_medium="$(
-    ATMUX_HOME="$atmux_home" \
-    ATMUX_TARGET_PANE="$pane_id" \
-    ATMUX_SOURCE_ROOT="$REPO_ROOT" \
-    "$ADAPTER_DIR/scripts/status"
-  )"
-  if printf '%s\n' "$status_medium" | grep -F 'reasoning_level="medium"' >/dev/null 2>&1; then
-    break
-  fi
-  sleep 0.3
-done
-
-echo "$status_medium" | grep -F '<status ' >/dev/null
-echo "$status_medium" | grep -F 'adapter="codex"' >/dev/null
-echo "$status_medium" | grep -F 'model="gpt-5.4"' >/dev/null
-echo "$status_medium" | grep -F 'reasoning_level="medium"' >/dev/null
+echo "$status_out" | grep -F '<status ' >/dev/null
+echo "$status_out" | grep -F 'adapter="codex"' >/dev/null
+echo "$status_out" | grep -F 'model="gpt-5.5"' >/dev/null
+echo "$status_out" | grep -F 'reasoning_level="extra-high"' >/dev/null
 
 echo "PASS 09_status_prefers_latest_block"

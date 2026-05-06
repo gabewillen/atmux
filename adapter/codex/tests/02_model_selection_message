@@ -2,32 +2,27 @@
 set -euo pipefail
 
 TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-SCRIPTS_DIR="$TESTS_DIR/scripts"
 ADAPTER_DIR="$(cd -- "$TESTS_DIR/.." && pwd)"
-REPO_ROOT="$(cd -- "$ADAPTER_DIR/../.." && pwd)"
-
-setup_out="$("$SCRIPTS_DIR/setup")"
-session_name="$(printf '%s\n' "$setup_out" | sed -n 's/^SESSION_NAME=//p' | tail -n 1)"
-pane_id="$(printf '%s\n' "$setup_out" | sed -n 's/^PANE_ID=//p' | tail -n 1)"
-if [[ -z "$session_name" || -z "$pane_id" ]]; then
-  echo "missing setup output (SESSION_NAME or PANE_ID)" >&2
-  exit 1
-fi
 
 atmux_home="$(mktemp -d "${TMPDIR:-/tmp}/atmux-codex-test-home.XXXXXX")"
-cleanup() {
-  "$SCRIPTS_DIR/teardown" --session "$session_name" >/dev/null 2>&1 || true
-  rm -rf "$atmux_home"
+trap 'rm -rf "$atmux_home"' EXIT
+
+ATMUX_HOME="$atmux_home" "$ADAPTER_DIR/scripts/model" set gpt-5.4 high >/dev/null
+
+current_model="$(ATMUX_HOME="$atmux_home" "$ADAPTER_DIR/scripts/model" get)"
+current_reasoning="$(ATMUX_HOME="$atmux_home" "$ADAPTER_DIR/scripts/reasoning-level" get)"
+
+[[ "$current_model" == "gpt-5.4" ]] || {
+  echo "unexpected model get value after set: $current_model" >&2
+  exit 1
 }
-trap cleanup EXIT
+[[ "$current_reasoning" == "high" ]] || {
+  echo "unexpected reasoning get value after model set: $current_reasoning" >&2
+  exit 1
+}
 
-ATMUX_HOME="$atmux_home" \
-ATMUX_TARGET_PANE="$pane_id" \
-"$ADAPTER_DIR/scripts/model" set gpt-5.4 high >/dev/null
-
-if ! "$REPO_ROOT/bin/atmux" pane watch "$pane_id" --scope pane --text "Model changed to gpt-5.4 high" --timeout 40 --interval 0.2 --lines 600; then
-  tmux capture-pane -p -t "$pane_id" -S -200 >&2 || true
-  echo "expected model change message not found" >&2
+if ATMUX_HOME="$atmux_home" "$ADAPTER_DIR/scripts/model" set invalid >/dev/null 2>&1; then
+  echo "invalid model unexpectedly succeeded" >&2
   exit 1
 fi
 

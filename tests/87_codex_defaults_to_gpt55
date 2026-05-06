@@ -26,11 +26,10 @@ first_listed_model="$(ATMUX_HOME="$tmp_home" "$MODEL_SCRIPT" list | head -n1)"
   exit 1
 }
 
-reasoning_default_model="$(
-  grep -E "^MODEL='[^']+'" "$REASONING_SCRIPT" | sed -n "s/^MODEL='\([^']*\)'/\\1/p" | head -n1
-)"
-[[ "$reasoning_default_model" == "gpt-5.5" ]] || {
-  echo "expected reasoning-level default model gpt-5.5, got $reasoning_default_model" >&2
+ATMUX_HOME="$tmp_home" "$REASONING_SCRIPT" set high >/dev/null
+reasoning_model="$(ATMUX_HOME="$tmp_home" "$MODEL_SCRIPT" get)"
+[[ "$reasoning_model" == "gpt-5.5" ]] || {
+  echo "expected reasoning-level default model gpt-5.5, got $reasoning_model" >&2
   exit 1
 }
 

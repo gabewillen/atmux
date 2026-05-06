@@ -3,141 +3,37 @@ set -euo pipefail
 state_dir="${ATMUX_HOME:-$HOME/.atmux}/adapters/codex"
 state_file="$state_dir/state.env"
 mkdir -p "$state_dir"
-MODEL='gpt-5.5'
-REASONING_LEVEL='medium'
+[[ -f "$state_file" ]] || printf 'MODEL=%s\nREASONING_LEVEL=%s\n' 'gpt-5.5' 'medium' > "$state_file"
+# shellcheck disable=SC1090
+source "$state_file"
 
-load_state() {
-  [[ -f "$state_file" ]] || return 0
-  local line
-  while IFS= read -r line || [[ -n "$line" ]]; do
-    case "$line" in
-      MODEL=*)
-        MODEL="${line#MODEL=}"
-        ;;
-      REASONING_LEVEL=*)
-        REASONING_LEVEL="${line#REASONING_LEVEL=}"
-        ;;
-    esac
-  done < "$state_file"
+normalize_model() {
+  case "${1:-}" in
+    gpt-5.5|gpt-5.4|gpt-5.3-codex|gpt-5.2-codex|gpt-5.1-codex-max|gpt-5.2|gpt-5.1-codex-mini) printf '%s\n' "$1" ;;
+    *) return 1 ;;
+  esac
 }
 
-write_state() {
-  printf 'MODEL=%s\nREASONING_LEVEL=%s\n' "$MODEL" "$REASONING_LEVEL" > "$state_file"
-}
-
-load_state
-
-resolve_target() {
-  if [[ -n "${ATMUX_TARGET_PANE:-}" ]]; then
-    printf '%s\n' "$ATMUX_TARGET_PANE"
-    return
-  fi
-  if [[ -n "${TMUX:-}" ]]; then
-    tmux display-message -p '#{pane_id}' 2>/dev/null || true
-    return
-  fi
-  if [[ -n "${ATMUX_SESSION_NAME:-}" ]]; then
-    tmux list-panes -t "$ATMUX_SESSION_NAME" -F '#{pane_id}' 2>/dev/null | head -n 1
-    return
-  fi
-  if [[ -n "${ATMUX_REPO:-}" && -n "${ATMUX_AGENT_NAME:-}" ]]; then
-    sess="atmux-${ATMUX_REPO}-${ATMUX_AGENT_NAME}"
-    tmux list-panes -t "$sess" -F '#{pane_id}' 2>/dev/null | head -n 1
-    return
-  fi
-}
-
-wait_for_model_menu() {
-  local target="$1"
-  local attempts="${ATMUX_CODEX_MODEL_MENU_RETRIES:-20}"
-  local poll_limit="${ATMUX_CODEX_MODEL_MENU_POLLS:-30}"
-  local attempt poll snapshot
-
-  for ((attempt=1; attempt<=attempts; attempt++)); do
-    tmux send-keys -t "$target" C-u
-    sleep 0.2
-    tmux send-keys -t "$target" -l "/model"
-    sleep 0.25
-    tmux send-keys -t "$target" ENTER
-
-    for ((poll=1; poll<=poll_limit; poll++)); do
-      snapshot="$(tmux capture-pane -p -t "$target" -S -320 2>/dev/null || true)"
-      if printf '%s\n' "$snapshot" | grep -Fq "Select Model and Effort"; then
-        printf '%s\n' "$snapshot"
-        return 0
-      fi
-      if printf '%s\n' "$snapshot" | grep -Fq "disabled while a task is in progress"; then
-        break
-      fi
-      sleep 0.2
-    done
-
-    sleep 1
-  done
-
-  return 1
-}
-
-extract_model_num() {
-  local snapshot="$1"
-  local model="$2"
-  local line parsed num name
-
-  while IFS= read -r line; do
-    parsed="$(printf '%s\n' "$line" | sed -nE 's/^[^0-9]*([0-9]+)\.[[:space:]]*([^[:space:]]+).*/\1|\2/p')"
-    [[ -n "$parsed" ]] || continue
-    num="${parsed%%|*}"
-    name="${parsed#*|}"
-    if [[ "$name" == "$model" ]]; then
-      printf '%s\n' "$num"
-      return 0
-    fi
-  done <<< "$snapshot"
-
-  return 1
-}
-
-send_model_selection() {
-  local desired_model="$1"
-  local target
-  local menu_snapshot
-  local model_num
-  target="$(resolve_target)"
-  [[ -n "$target" ]] || { echo "unable to resolve tmux target pane" >&2; exit 1; }
-
-  if ! menu_snapshot="$(wait_for_model_menu "$target")"; then
-    echo "timed out waiting for 'Select Model and Effort'" >&2
-    exit 1
-  fi
-
-  if ! model_num="$(extract_model_num "$menu_snapshot" "$desired_model")"; then
-    echo "model not found in menu: $desired_model" >&2
-    exit 1
-  fi
-
-  tmux send-keys -t "$target" -l "$model_num"
+normalize_reasoning() {
+  case "${1:-}" in
+    extra_high|extra-high|extra\ high|extrahigh|xhigh) printf '%s\n' 'extra-high' ;;
+    low|medium|high) printf '%s\n' "$1" ;;
+    *) return 1 ;;
+  esac
 }
 
 case "${1:-}" in
   list) printf '%s\n' gpt-5.5 gpt-5.4 gpt-5.3-codex gpt-5.2-codex gpt-5.1-codex-max gpt-5.2 gpt-5.1-codex-mini ;;
   get) printf '%s\n' "$MODEL" ;;
   set)
-    MODEL="${2:-}"; [[ -n "$MODEL" ]] || { echo "missing model value" >&2; exit 2; }
-    reasoning="${3:-$REASONING_LEVEL}"
-    case "$reasoning" in
-      extra_high|extrahigh) reasoning="extra-high" ;;
-    esac
-
-    send_model_selection "$MODEL"
-    write_state
-
-    if [[ "${ATMUX_CODEX_CALLED_BY_REASONING:-}" != "1" ]]; then
-      reasoning_script="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/reasoning-level"
-      ATMUX_CODEX_CALLED_BY_MODEL=1 "$reasoning_script" set "$reasoning"
-      load_state
+    MODEL="$(normalize_model "${2:-}" || true)"
+    [[ -n "$MODEL" ]] || { echo "missing/invalid model value" >&2; exit 2; }
+    if [[ -n "${3:-}" ]]; then
+      REASONING_LEVEL="$(normalize_reasoning "$3" || true)"
+      [[ -n "$REASONING_LEVEL" ]] || { echo "invalid reasoning level value: $3" >&2; exit 2; }
     fi
-
+    printf 'MODEL=%s\nREASONING_LEVEL=%s\n' "$MODEL" "$REASONING_LEVEL" > "$state_file"
     printf '%s\n' "$MODEL"
     ;;
-  *) echo "usage: model list|get|set <value>" >&2; exit 2 ;;
+  *) echo "usage: model list|get|set <value> [reasoning-level]" >&2; exit 2 ;;
 esac

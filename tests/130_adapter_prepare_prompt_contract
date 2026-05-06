@@ -106,7 +106,7 @@ printf '%s' "$SAMPLE" \
 
 [[ ! -s "$args" ]] \
   || { echo "fail: gemini should not emit args; got: $(xxd "$args")" >&2; exit 1; }
-expected_path="$gm_home/agents/demo/worker/gemini-system.md"
+expected_path="$gm_home/state/agents/demo/worker/gemini-system.md"
 grep -Fxq "GEMINI_SYSTEM_MD=$expected_path" "$envf" \
   || { echo "fail: gemini env missing GEMINI_SYSTEM_MD=$expected_path; got: $(cat "$envf")" >&2; exit 1; }
 [[ -f "$expected_path" ]] \

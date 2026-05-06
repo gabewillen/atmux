@@ -1,0 +1,151 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+SYNC_SCRIPT="$REPO_ROOT/bin/(atmux)/(internal)/pr-merge-sync"
+
+tmp="$(mktemp -d "${TMPDIR:-/tmp}/atmux-pr-merge-sync.XXXXXX")"
+cleanup() { rm -rf "$tmp"; }
+trap cleanup EXIT
+
+fakebin="$tmp/bin"
+atmux_home="$tmp/home"
+log_file="$tmp/sync.log"
+mkdir -p "$fakebin" "$atmux_home/teams/demo/alpha/members/a" "$atmux_home/teams/demo/alpha/members/b"
+
+printf '%s\n' alpha > "$atmux_home/teams/demo/alpha/name"
+printf '%s\n' atmux-demo-team-alpha > "$atmux_home/teams/demo/alpha/session_name"
+printf '%s\n' atmux-demo-alpha-a > "$atmux_home/teams/demo/alpha/members/a/session"
+printf '%s\n' atmux-demo-alpha-b > "$atmux_home/teams/demo/alpha/members/b/session"
+
+cat > "$fakebin/tmux" <<'SH'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "-S" ]]; then
+  shift 2
+fi
+case "${1:-}" in
+  list-sessions)
+    printf '%s\n' \
+      atmux-demo-standalone \
+      atmux-demo-alpha-a \
+      atmux-demo-alpha-b \
+      atmux-demo-team-alpha
+    ;;
+  list-panes)
+    printf '%s\n' \
+      'atmux-demo-standalone %1' \
+      'atmux-demo-alpha-a %2' \
+      'atmux-demo-alpha-b %3' \
+      'atmux-demo-team-alpha %4'
+    ;;
+  show-environment)
+    session=""
+    key=""
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        -t) session="${2:-}"; shift 2 ;;
+        ATMUX_TEAM) key=ATMUX_TEAM; shift ;;
+        *) shift ;;
+      esac
+    done
+    if [[ "$key" == "ATMUX_TEAM" ]]; then
+      case "$session" in
+        atmux-demo-alpha-a|atmux-demo-alpha-b|atmux-demo-team-alpha)
+          printf 'ATMUX_TEAM=alpha\n'
+          ;;
+      esac
+    fi
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+SH
+chmod +x "$fakebin/tmux"
+
+PATH="$fakebin:$PATH" \
+ATMUX_HOME="$atmux_home" \
+ATMUX_REPO=demo \
+ATMUX_REAL_TMUX="$fakebin/tmux" \
+ATMUX_TMUX_SOCKET="$tmp/private.sock" \
+ATMUX_PR_MERGE_SYNC_DRY_RUN=1 \
+ATMUX_PR_MERGE_SYNC_LOG="$log_file" \
+  "$SYNC_SCRIPT" \
+    --url https://github.com/octo/example/pull/42 \
+    --repo octo/example \
+    --number 42 >/tmp/pr-merge-sync.out
+
+sort "$log_file" > "$tmp/sorted.log"
+cat > "$tmp/expected.log" <<'EOF'
+agent|standalone|atmux-demo-standalone|%1
+team|alpha|atmux-demo-alpha-a|%2
+team|alpha|atmux-demo-alpha-b|%3
+EOF
+
+diff -u "$tmp/expected.log" "$tmp/sorted.log"
+grep -Fq 'duplicate="false"' /tmp/pr-merge-sync.out
+grep -Fq 'notified="3"' /tmp/pr-merge-sync.out
+
+PATH="$fakebin:$PATH" \
+ATMUX_HOME="$atmux_home" \
+ATMUX_REPO=demo \
+ATMUX_REAL_TMUX="$fakebin/tmux" \
+ATMUX_TMUX_SOCKET="$tmp/private.sock" \
+ATMUX_PR_MERGE_SYNC_DRY_RUN=1 \
+ATMUX_PR_MERGE_SYNC_LOG="$log_file" \
+  "$SYNC_SCRIPT" \
+    --url https://github.com/octo/example/pull/42 \
+    --repo octo/example \
+    --number 42 > /tmp/pr-merge-sync-duplicate.out
+
+grep -Fq 'duplicate="true"' /tmp/pr-merge-sync-duplicate.out
+
+race_log="$tmp/race.log"
+race_out_a="$tmp/race-a.out"
+race_out_b="$tmp/race-b.out"
+PATH="$fakebin:$PATH" \
+ATMUX_HOME="$atmux_home" \
+ATMUX_REPO=demo \
+ATMUX_REAL_TMUX="$fakebin/tmux" \
+ATMUX_TMUX_SOCKET="$tmp/private.sock" \
+ATMUX_PR_MERGE_SYNC_DRY_RUN=1 \
+ATMUX_PR_MERGE_SYNC_LOG="$race_log" \
+  "$SYNC_SCRIPT" \
+    --url https://github.com/octo/example/pull/43 \
+    --repo octo/example \
+    --number 43 > "$race_out_a" &
+pid_a=$!
+PATH="$fakebin:$PATH" \
+ATMUX_HOME="$atmux_home" \
+ATMUX_REPO=demo \
+ATMUX_REAL_TMUX="$fakebin/tmux" \
+ATMUX_TMUX_SOCKET="$tmp/private.sock" \
+ATMUX_PR_MERGE_SYNC_DRY_RUN=1 \
+ATMUX_PR_MERGE_SYNC_LOG="$race_log" \
+  "$SYNC_SCRIPT" \
+    --url https://github.com/octo/example/pull/43 \
+    --repo octo/example \
+    --number 43 > "$race_out_b" &
+pid_b=$!
+wait "$pid_a"
+wait "$pid_b"
+
+combined_race="$(cat "$race_out_a" "$race_out_b")"
+[[ "$(grep -Fc 'duplicate="false"' <<< "$combined_race")" == "1" ]] || {
+  echo "expected exactly one non-duplicate concurrent merge sync" >&2
+  printf '%s\n' "$combined_race" >&2
+  exit 1
+}
+[[ "$(grep -Fc 'duplicate="true"' <<< "$combined_race")" == "1" ]] || {
+  echo "expected exactly one duplicate concurrent merge sync" >&2
+  printf '%s\n' "$combined_race" >&2
+  exit 1
+}
+[[ "$(wc -l < "$race_log" | tr -d ' ')" == "3" ]] || {
+  echo "expected one concurrent merge sync to notify exactly 3 targets" >&2
+  cat "$race_log" >&2
+  exit 1
+}
+
+echo "ok: PR merge sync targets standalone agents and teams once"

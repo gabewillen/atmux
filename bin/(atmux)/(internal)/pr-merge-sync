@@ -1,0 +1,162 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ATMUX_HOME="${ATMUX_HOME:-$HOME/.atmux}"
+
+HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=bin/(atmux)/notify
+source "$HERE/../notify"
+
+usage() {
+  cat <<'USAGE'
+Usage:
+  pr-merge-sync --url <url> --repo <owner/repo> --number <n> [--source <name>]
+
+Description:
+  Broadcast a PR-merged sync-main notification to every standalone agent in
+  the current repo and to every member of every team in the repo.
+USAGE
+}
+
+owner_repo=""
+number=""
+url=""
+source_name="github"
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --repo)
+      owner_repo="${2:-}"
+      shift 2
+      ;;
+    --number)
+      number="${2:-}"
+      shift 2
+      ;;
+    --url)
+      url="${2:-}"
+      shift 2
+      ;;
+    --source)
+      source_name="${2:-github}"
+      shift 2
+      ;;
+    -h|--help|help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "pr-merge-sync: unknown flag: $1" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+done
+
+[[ -n "$owner_repo" && -n "$number" && "$number" =~ ^[0-9]+$ ]] || {
+  echo "pr-merge-sync: --repo <owner/repo> and --number <n> are required" >&2
+  exit 2
+}
+[[ -n "$url" ]] || url="https://github.com/$owner_repo/pull/$number"
+
+repo_name="$(repo_name_from_context)"
+dedupe_dir="$ATMUX_HOME/pr-merge-sync/$repo_name"
+dedupe_key="$(printf '%s\037%s\037%s\n' "$owner_repo" "$number" "$url" | cksum | awk '{print $1}')"
+dedupe_file="$dedupe_dir/$dedupe_key"
+mkdir -p "$dedupe_dir"
+if ! (
+  set -o noclobber
+  printf 'repo=%s\nnumber=%s\nurl=%s\nsource=%s\n' "$owner_repo" "$number" "$url" "$source_name" > "$dedupe_file"
+) 2>/dev/null; then
+  printf '<pr-merge-sync repo="%s" number="%s" duplicate="true" notified="0" />\n' \
+    "$(xml_escape "$owner_repo")" \
+    "$(xml_escape "$number")"
+  exit 0
+fi
+
+message="PR #$number in $owner_repo was merged. Sync main before continuing: git fetch origin main && git checkout main && git pull --ff-only"
+
+payload_for_target() {
+  local target_kind="$1" target_name="$2"
+  build_notification "pr-merged-sync" "$source_name" "gh pr view $number --repo $owner_repo --comments" \
+    "url=$url" \
+    "repo=$owner_repo" \
+    "number=$number" \
+    "target_kind=$target_kind" \
+    "target=$target_name" \
+    "action=sync-main" \
+    "text=$message"
+}
+
+notify_session() {
+  local session="$1" target_kind="$2" target_name="$3"
+  local pane payload
+  pane="$(primary_pane_for_session "$session" 2>/dev/null || true)"
+  [[ -n "$pane" ]] || return 1
+  if [[ "${ATMUX_PR_MERGE_SYNC_DRY_RUN:-0}" == "1" ]]; then
+    if [[ -n "${ATMUX_PR_MERGE_SYNC_LOG:-}" ]]; then
+      printf '%s|%s|%s|%s\n' "$target_kind" "$target_name" "$session" "$pane" >> "$ATMUX_PR_MERGE_SYNC_LOG"
+    fi
+    return 0
+  fi
+  payload="$(payload_for_target "$target_kind" "$target_name")"
+  send_payload_to_pane "$pane" "$payload"
+}
+
+notified_sessions=""
+notified_count=0
+
+text_has_line() {
+  local text="$1" needle="$2"
+  [[ -n "$needle" ]] || return 1
+  grep -Fxq "$needle" <<< "$text"
+}
+
+mark_notified() {
+  local session="$1"
+  notified_sessions+="$session"$'\n'
+}
+
+already_notified() {
+  local session="$1"
+  text_has_line "$notified_sessions" "$session"
+}
+
+if tmux list-sessions -F '#{session_name}' >/dev/null 2>&1; then
+  while IFS= read -r session; do
+    [[ -n "$session" ]] || continue
+    case "$session" in
+      atmux-"$repo_name"-team-*) continue ;;
+      atmux-"$repo_name"-*) ;;
+      *) continue ;;
+    esac
+    team="$(get_session_env "$session" ATMUX_TEAM)"
+    [[ -z "$team" ]] || continue
+    if notify_session "$session" "agent" "$(session_short_name "$session" "$repo_name")"; then
+      notified_count=$((notified_count + 1))
+      mark_notified "$session"
+    fi
+  done < <(tmux list-sessions -F '#{session_name}' 2>/dev/null | sort -u)
+fi
+
+teams_base="$ATMUX_HOME/teams/$repo_name"
+if [[ -d "$teams_base" ]]; then
+  while IFS= read -r team_dir; do
+    [[ -d "$team_dir" ]] || continue
+    team_name="$(cat "$team_dir/name" 2>/dev/null || basename "$team_dir")"
+    [[ -n "$team_name" ]] || continue
+    while IFS= read -r session; do
+      [[ -n "$session" ]] || continue
+      already_notified "$session" && continue
+      if notify_session "$session" "team" "$team_name"; then
+        notified_count=$((notified_count + 1))
+        mark_notified "$session"
+      fi
+    done < <(team_member_sessions_from_state "$repo_name" "$team_name" | sort -u)
+  done < <(find "$teams_base" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort)
+fi
+
+printf '<pr-merge-sync repo="%s" number="%s" duplicate="false" notified="%s" />\n' \
+  "$(xml_escape "$owner_repo")" \
+  "$(xml_escape "$number")" \
+  "$(xml_escape "$notified_count")"

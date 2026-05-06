@@ -33,6 +33,7 @@ Description:
 
   Successful `gh pr create` and `gh issue create` commands automatically
   register the creating agent's pane for atmux watch notifications.
+  Successful `gh pr merge` commands notify repo agents and teams to sync main.
 USAGE
 }
 
@@ -117,11 +118,50 @@ number_arg_after_verb() {
   return 1
 }
 
+pr_url_for_number() {
+  local real_gh="$1" repo="$2" number="$3"
+  [[ -n "$repo" && "$number" =~ ^[0-9]+$ ]] || return 0
+  "$real_gh" pr view "$number" --repo "$repo" --json url --jq .url 2>/dev/null \
+    || printf 'https://github.com/%s/pull/%s\n' "$repo" "$number"
+}
+
+parse_pr_url_parts() {
+  local raw="${1:-}" stripped path owner repo number
+  case "$raw" in
+    https://github.com/*|http://github.com/*) ;;
+    *) return 1 ;;
+  esac
+  stripped="${raw#http://}"
+  stripped="${stripped#https://}"
+  stripped="${stripped#github.com/}"
+  stripped="${stripped%%\?*}"
+  stripped="${stripped%%#*}"
+  path="${stripped#/}"
+  owner="$(printf '%s\n' "$path" | cut -d/ -f1)"
+  repo="$(printf '%s\n' "$path" | cut -d/ -f2)"
+  [[ "$(printf '%s\n' "$path" | cut -d/ -f3)" == "pull" ]] || return 1
+  number="$(printf '%s\n' "$path" | cut -d/ -f4)"
+  [[ -n "$owner" && -n "$repo" && "$number" =~ ^[0-9]+$ ]] || return 1
+  printf '%s/%s\n%s\n' "$owner" "$repo" "$number"
+}
+
 current_repo() {
   local real_gh="$1"
   shift || true
   repo_from_args "$@" && return 0
   "$real_gh" repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null || true
+}
+
+notify_repo_on_pr_merged() {
+  local repo="$1" number="$2" url="$3"
+  local sync_script="$CMD_DIR/(internal)/pr-merge-sync"
+  [[ -x "$sync_script" && -n "$repo" && "$number" =~ ^[0-9]+$ ]] || return 0
+  "$sync_script" \
+    --url "$url" \
+    --repo "$repo" \
+    --number "$number" \
+    --source github \
+    >/dev/null 2>&1 || true
 }
 
 notify_existing_watchers() {
@@ -176,7 +216,7 @@ record_checkout_worktree() {
   [[ -n "${ATMUX_REPO:-}" && -n "${ATMUX_AGENT_NAME:-}" ]] || return 0
   local dir path
   path="$(pwd -P)"
-  dir="$ATMUX_HOME/agents/$ATMUX_REPO/$ATMUX_AGENT_NAME/gh-hooks"
+  dir="$ATMUX_HOME/state/agents/$ATMUX_REPO/$ATMUX_AGENT_NAME/gh-hooks"
   mkdir -p "$dir"
   printf '%s\n' "$path" > "$dir/last-pr-checkout-worktree"
   printf '%s\n' "$repo" > "$dir/last-pr-checkout-repo"
@@ -208,6 +248,17 @@ run_hook() {
       number="$(number_arg_after_verb "${@:3}" || true)"
       commenter="$("$real_gh" api user --jq .login 2>/dev/null || printf github)"
       notify_existing_watchers pr "$repo" "$number" "$commenter"
+      ;;
+    "pr merge")
+      number="$(number_arg_after_verb "${@:3}" || true)"
+      if parsed="$(parse_pr_url_parts "$number" || true)" && [[ -n "$parsed" ]]; then
+        repo="$(printf '%s\n' "$parsed" | sed -n '1p')"
+        number="$(printf '%s\n' "$parsed" | sed -n '2p')"
+      else
+        repo="$(current_repo "$real_gh" "$@" || true)"
+      fi
+      url="$(pr_url_for_number "$real_gh" "$repo" "$number" || true)"
+      notify_repo_on_pr_merged "$repo" "$number" "$url"
       ;;
     "issue comment")
       repo="$(current_repo "$real_gh" "$@" || true)"

@@ -361,6 +361,12 @@ resolve_adapter_cmd_for_session() {
   return 1
 }
 
+agent_state_dir() {
+  local repo="${ATMUX_REPO:-repo}"
+  local agent="${ATMUX_AGENT_NAME:-agent}"
+  printf '%s/state/agents/%s/%s\n' "${ATMUX_HOME:-$HOME/.atmux}" "$repo" "$agent"
+}
+
 resolve_shim_runner() {
   local here
   here="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -414,6 +420,28 @@ adapter_shims_enabled() {
     0|false|FALSE|False|no|NO|No|off|OFF|Off|disabled|DISABLED|Disabled) return 1 ;;
     *) return 0 ;;
   esac
+}
+
+clear_agent_shims() {
+  local old_proxy="${ATMUX_SHIM_PROXY_DIR:-}"
+  local old_active="${ATMUX_ACTIVE_SHIM_DIRS:-}"
+  local out="" part skip active
+  local IFS=:
+
+  for part in $PATH; do
+    [[ -n "$part" ]] || continue
+    skip=0
+    [[ -n "$old_proxy" && "$part" == "$old_proxy" ]] && skip=1
+    for active in $old_active; do
+      [[ -n "$active" && "$part" == "$active" ]] && skip=1
+    done
+    [[ "$skip" -eq 0 ]] || continue
+    case ":$out:" in *":$part:"*) continue ;; esac
+    if [[ -z "$out" ]]; then out="$part"; else out="$out:$part"; fi
+  done
+
+  export PATH="$out"
+  unset ATMUX_ACTIVE_SHIM_DIRS ATMUX_SHIM_PROXY_DIR
 }
 
 write_shim_proxy() {
@@ -479,7 +507,8 @@ activate_agent_shims() {
 
   ((${#shim_names[@]})) || return 0
 
-  local state_base="${ATMUX_HOME}/agents/${ATMUX_REPO:-repo}/${ATMUX_AGENT_NAME:-agent}/shims"
+  local state_base
+  state_base="$(agent_state_dir)/shims"
   proxy_dir="$state_base/bin"
   rm -rf "$state_base"
   mkdir -p "$proxy_dir"
@@ -719,7 +748,8 @@ prepare_atmux_prompt() {
   adapter_cmd="$(resolve_adapter_cmd_path "$adapter" || true)"
   [[ -x "$adapter_cmd" ]] || return 0
 
-  local prep_dir="${ATMUX_HOME:-$HOME/.atmux}/agents/${ATMUX_REPO:-repo}/${ATMUX_AGENT_NAME:-agent}/prep"
+  local prep_dir
+  prep_dir="$(agent_state_dir)/prep"
   mkdir -p "$prep_dir"
   : > "$prep_dir/args"
   : > "$prep_dir/env"
@@ -906,12 +936,13 @@ run_adapter() {
       fi
     fi
 
+    clear_agent_shims
     if adapter_shims_enabled "$adapter_cmd"; then
       activate_agent_shims
     fi
 
     if [[ -n "${ATMUX_ROLE_START:-}" ]]; then
-      ATMUX_ROLE_STATE_DIR="${ATMUX_HOME}/agents/${ATMUX_REPO:-repo}/${ATMUX_AGENT_NAME:-agent}/role"
+      ATMUX_ROLE_STATE_DIR="$(agent_state_dir)/role"
       mkdir -p "$ATMUX_ROLE_STATE_DIR"
       export ATMUX_ROLE_STATE_DIR
       if [[ -n "$current_session" ]]; then

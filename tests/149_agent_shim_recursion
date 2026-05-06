@@ -61,6 +61,31 @@ got="$(cat "$result")"
   exit 1
 }
 
+collision_result="$tmp/collision-result"
+collision_home="$tmp/collision-home"
+mkdir -p "$collision_home/agents/repo-agent"
+PATH="$realbin:$PATH" \
+ATMUX_HOME="$collision_home" \
+ATMUX_SOURCE_ROOT="$fake_root" \
+ATMUX_REPO=repo-agent \
+ATMUX_AGENT_NAME=agent \
+ATMUX_TEST_RESULT="$collision_result" \
+  "$AGENT" _run-adapter --adapter recursor
+
+[[ -f "$collision_home/state/agents/repo-agent/agent/prep/prompt.md" ]] || {
+  echo "expected prep prompt under state/agents" >&2
+  exit 1
+}
+[[ -d "$collision_home/state/agents/repo-agent/agent/shims/bin" ]] || {
+  echo "expected shim proxy dir under state/agents" >&2
+  exit 1
+}
+[[ ! -e "$collision_home/agents/repo-agent/agent" ]] || {
+  echo "runtime state polluted the worktree namespace" >&2
+  find "$collision_home/agents/repo-agent" -maxdepth 3 -print >&2
+  exit 1
+}
+
 cursor_home="$tmp/cursor-home"
 cursor_realbin="$tmp/cursor-realbin"
 mkdir -p "$cursor_home/.local/bin" "$cursor_home/.cursor/bin" "$cursor_realbin"
@@ -88,7 +113,7 @@ SH
 chmod +x "$cursor_home/.local/bin/agent"
 
 cursor_result="$tmp/cursor-result"
-cursor_proxy_extra="$tmp/cursor-atmux-home/agents/repo/cursor/shims/bin-extra"
+cursor_proxy_extra="$tmp/cursor-atmux-home/state/agents/repo/cursor/shims/bin-extra"
 HOME="$cursor_home" \
 PATH="$cursor_realbin:$cursor_proxy_extra:$PATH" \
 ATMUX_HOME="$tmp/cursor-atmux-home" \

@@ -124,14 +124,7 @@ identity_matches() {
 }
 
 ensure_can_assign() {
-  local manager="${ATMUX_MANAGER:-}"
-  if [[ -z "$manager" && -n "${TMUX:-}" ]]; then
-    manager="$(tmux show-environment ATMUX_MANAGER 2>/dev/null | sed -n 's/^ATMUX_MANAGER=//p' || true)"
-  fi
-  if [[ -n "$manager" ]]; then
-    echo "managed agents cannot assign issues; use 'atmux issue claim' instead" >&2
-    exit 1
-  fi
+  return 0
 }
 
 create_issue() {

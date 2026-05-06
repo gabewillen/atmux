@@ -61,10 +61,9 @@ resolve_adapter_cmd_for_session() {
 status_node_for_session() {
   local session="$1"
   local passive_status="${2:-0}"
-  local pane adapter adapter_cmd manager source_root status_out node
+  local pane adapter adapter_cmd source_root status_out node
 
   adapter="$(get_session_env "$session" ATMUX_ADAPTER)"
-  manager="$(get_session_env "$session" ATMUX_MANAGER)"
   source_root="$(get_session_env "$session" ATMUX_SOURCE_ROOT)"
   pane="$(primary_pane_for_session "$session")"
   [[ -n "$adapter" ]] || adapter="codex"
@@ -77,7 +76,6 @@ status_node_for_session() {
   status_out="$(
     ATMUX_SOURCE_ROOT="$source_root" \
     ATMUX_TARGET_PANE="$pane" \
-    ATMUX_MANAGER="$manager" \
     ATMUX_STATUS_PASSIVE="$passive_status" \
     "$adapter_cmd" status 2>/dev/null || true
   )"
@@ -133,13 +131,6 @@ main() {
   } < <(repo_context)
 
   prefix="atmux-${repo_name}-"
-  local current_agent="${ATMUX_AGENT_NAME:-}"
-  local current_session="${ATMUX_SESSION_NAME:-}"
-  local scoped=0
-  if [[ -n "$current_agent" ]]; then
-    scoped=1
-  fi
-
   local mode
   mode="$(reporter_mode)"
 
@@ -151,14 +142,6 @@ main() {
       [[ "$session" == "$prefix"* ]] || continue
       if is_team_session "$repo_name" "$session"; then
         continue
-      fi
-      if [[ "$scoped" -eq 1 ]]; then
-        local mgr=""
-        mgr="$(get_session_env "$session" ATMUX_MANAGER)"
-        [[ "$mgr" == "$current_agent" ]] || continue
-        if [[ -n "$current_session" && "$session" == "$current_session" ]]; then
-          continue
-        fi
       fi
       local aname
       aname="$(agent_local_name "$repo_name" "$session")"
@@ -182,14 +165,6 @@ main() {
     [[ "$session" == "$prefix"* ]] || continue
     if is_team_session "$repo_name" "$session"; then
       continue
-    fi
-    if [[ "$scoped" -eq 1 ]]; then
-      local mgr=""
-      mgr="$(get_session_env "$session" ATMUX_MANAGER)"
-      [[ "$mgr" == "$current_agent" ]] || continue
-      if [[ -n "$current_session" && "$session" == "$current_session" ]]; then
-        continue
-      fi
     fi
     local aname
     aname="$(agent_local_name "$repo_name" "$session")"

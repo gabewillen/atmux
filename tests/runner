@@ -42,7 +42,7 @@ purge_test_notify_queues() {
     [[ -d "$d" ]] || continue
     base="$(basename "$d")"
     case "$base" in
-      atmux-*-sender-_*|atmux-*-receiver-_*|atmux-*-team-*-_*|atmux-*-par-_*|atmux-*-worker-_*|atmux-*-manager-_*)
+      atmux-*-sender-_*|atmux-*-receiver-_*|atmux-*-team-*-_*|atmux-*-par-_*|atmux-*-worker-_*|atmux-*-sender-_*)
         rm -rf "$d"
         ;;
     esac

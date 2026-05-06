@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+state="${ATMUX_ROLE_STATE_DIR:-}"
+[[ -n "$state" && -d "$state" ]] || exit 0
+
+if [[ -f "$state/tick-pid" ]]; then
+  pid="$(tr -d '\r\n' < "$state/tick-pid" 2>/dev/null || true)"
+  if [[ -n "$pid" ]]; then
+    atmux process kill "$pid" >/dev/null 2>&1 || kill -TERM "$pid" >/dev/null 2>&1 || true
+  fi
+fi
+
+rm -rf "$state"

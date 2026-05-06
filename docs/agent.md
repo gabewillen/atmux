@@ -5,8 +5,8 @@ An agent is a tmux session running an AI CLI under `atmux`'s control.
 The agent CLI lives at `bin/(atmux)/agent` and owns the full agent
 lifecycle:
 - `agent create` — provision worktree, set tmux session env, launch the
-  adapter via the in-pane `_run-adapter` bootstrap, and (when interactive
-  with no manager) attach to the new session.
+  adapter via the in-pane `_run-adapter` bootstrap, and attach when
+  interactive.
 - `agent attach` — re-attach to an existing agent session from outside
   tmux.
 - `agent list|kill|capture|watch|resolve` — manage running agents.

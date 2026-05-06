@@ -109,7 +109,7 @@ agent_name="lifecycleprobe$$"
 
 out="$(
   ATMUX_ALLOW_OUTSIDE_TMUX=1 \
-  ATMUX_AGENT_NAME=test-manager \
+  ATMUX_AGENT_NAME=test-caller \
   "$ATMUX_BIN" agent create "$agent_name" \
     --role probe \
     --intelligence 20 \

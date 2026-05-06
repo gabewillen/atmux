@@ -513,9 +513,9 @@ kill_agents() {
     fi
 
     # Team-owned worktree teardown. Mirrors the per-agent worktree removal
-    # below but targets the explicit path captured from the team session
-    # (team worktrees live under ~/.atmux/teams/<repo>/<team>/worktree, not
-    # under ~/.atmux/agents/<suffix>). Pruning is required afterward so the
+    # below but targets the explicit team worktree path (team worktrees live
+    # under ~/.atmux/teams/<repo>/<team>/worktree, not under
+    # ~/.atmux/agents/<suffix>). Pruning is required afterward so the
     # subsequent `git branch -D` doesn't think the branch is still checked
     # out in a stale `.git/worktrees/<name>` entry.
     if [[ -n "$team_owned_worktree" && -d "$team_owned_worktree" ]]; then
@@ -594,7 +594,7 @@ kill_agents() {
 # --- Main ---
 
 inside_atmux_session() {
-  if [[ -n "${ATMUX_SESSION_NAME:-}" || -n "${ATMUX_MANAGER:-}" ]]; then
+  if [[ -n "${ATMUX_SESSION_NAME:-}" ]]; then
     return 0
   fi
   if [[ -n "${TMUX:-}" ]]; then

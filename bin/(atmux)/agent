@@ -41,9 +41,7 @@ Usage:
 
 Description:
   Manage repo-scoped AI agents running under tmux.
-  `create` works both as a top-level command (no manager required) and from
-  inside a manager agent. When run interactively without a manager, atmux
-  attaches to the new agent.
+  `create` provisions the agent and attaches when run interactively.
 
 Notes:
   agent attach must be run outside tmux.
@@ -105,37 +103,10 @@ team_session_name() {
   printf 'atmux-%s-team-%s\n' "$repo_name" "$team_name"
 }
 
-team_member_count() {
-  local team_session="$1"
-  if ! tmux has-session -t "$team_session" 2>/dev/null; then
-    printf '0\n'
-    return 0
-  fi
-  tmux list-panes -t "${team_session}:0" -F '#{@atmux_agent_session}' 2>/dev/null | awk 'NF { c++ } END { print c+0 }'
-}
-
-team_contains_agent_session() {
-  local team_session="$1"
-  local agent_session="$2"
-  tmux list-panes -t "${team_session}:0" -F '#{@atmux_agent_session}' 2>/dev/null | awk -v s="$agent_session" '$0==s { found=1 } END { exit(found?0:1) }'
-}
-
 ensure_team_has_capacity() {
-  local repo_name="$1"
-  local team_name="$2"
-  local team_cap=4
-  local team_session current_count
-
-  [[ -n "$team_name" ]] || return 0
-  team_session="$(team_session_name "$repo_name" "$team_name")"
-  current_count="$(team_member_count "$team_session")"
-  if ! [[ "$current_count" =~ ^[0-9]+$ ]]; then
-    current_count=0
-  fi
-  if (( current_count >= team_cap )); then
-    echo "team '${team_name}' is full (${current_count}/${team_cap}); max team size is 4" >&2
-    return 1
-  fi
+  # Team membership is state-backed and intentionally unbounded. The old
+  # tmux-dashboard pane cap no longer constrains who can join a team.
+  return 0
 }
 
 # === Session resolution =====================================================
@@ -177,52 +148,12 @@ resolve_target_session() {
   return 0
 }
 
-array_contains() {
-  local needle="$1"
-  shift || true
-  local item
-  for item in "$@"; do
-    if [[ "$item" == "$needle" ]]; then
-      return 0
-    fi
-  done
-  return 1
-}
-
 has_wildcard() {
   local value="$1"
   case "$value" in
     *'*'*|*'?'*|*'['*) return 0 ;;
     *) return 1 ;;
   esac
-}
-
-manager_matches_parent() {
-  local manager="$1"
-  local parent_agent="$2"
-  local parent_session="$3"
-  local repo_name="$4"
-  local parent_short=""
-
-  [[ -n "$manager" ]] || return 1
-  [[ -n "$parent_agent" || -n "$parent_session" ]] || return 1
-
-  if [[ "$manager" == "$parent_agent" || "$manager" == "$parent_session" ]]; then
-    return 0
-  fi
-
-  if [[ -n "$repo_name" && -n "$parent_agent" && "$manager" == "atmux-${repo_name}-${parent_agent}" ]]; then
-    return 0
-  fi
-
-  if [[ -n "$repo_name" && -n "$parent_session" && "$parent_session" == atmux-* ]]; then
-    parent_short="${parent_session#atmux-${repo_name}-}"
-    if [[ "$manager" == "$parent_short" ]]; then
-      return 0
-    fi
-  fi
-
-  return 1
 }
 
 session_short_name() {
@@ -236,63 +167,18 @@ session_short_name() {
   fi
 }
 
-resolve_hierarchy_targets() {
+resolve_pattern_targets() {
   local pattern="$1"
   local repo_name="$2"
-  local root_agent="$3"
-  local root_session="$4"
-  local -a frontier_agents=()
-  local -a frontier_sessions=()
-  local -a scanned_parents=()
-  local -a hierarchy_sessions=()
-  local parent_agent parent_session idx session manager child_agent short_name agent_name session_repo
+  local session session_repo short_name agent_name
   local candidate_match=0
 
-  [[ -n "$root_agent" ]] || return 1
-
-  frontier_agents+=("$root_agent")
-  frontier_sessions+=("$root_session")
-
-  idx=0
-  while (( idx < ${#frontier_agents[@]} )); do
-    parent_agent="${frontier_agents[$idx]}"
-    parent_session="${frontier_sessions[$idx]}"
-
-    if [[ -n "$parent_session" ]] && array_contains "$parent_session" "${scanned_parents[@]-}"; then
-      idx=$((idx + 1))
+  while IFS= read -r session; do
+    [[ -n "$session" ]] || continue
+    session_repo="$(get_session_env "$session" ATMUX_REPO)"
+    if [[ -n "$repo_name" && "$session_repo" != "$repo_name" ]]; then
       continue
     fi
-    scanned_parents+=("$parent_session")
-
-    while IFS= read -r session; do
-      [[ -n "$session" ]] || continue
-      session_repo="$(get_session_env "$session" ATMUX_REPO)"
-      if [[ -n "$repo_name" && "$session_repo" != "$repo_name" ]]; then
-        continue
-      fi
-
-      manager="$(get_session_env "$session" ATMUX_MANAGER)"
-      if ! manager_matches_parent "$manager" "$parent_agent" "$parent_session" "$repo_name"; then
-        continue
-      fi
-
-      if array_contains "$session" "${hierarchy_sessions[@]-}"; then
-        continue
-      fi
-
-      hierarchy_sessions+=("$session")
-      child_agent="$(get_session_env "$session" ATMUX_AGENT_NAME)"
-      if [[ -z "$child_agent" ]]; then
-        child_agent="$(session_short_name "$session" "$repo_name")"
-      fi
-      frontier_agents+=("$child_agent")
-      frontier_sessions+=("$session")
-    done < <(tmux list-sessions -F '#{session_name}' 2>/dev/null | awk '/^atmux-/ { print }')
-
-    idx=$((idx + 1))
-  done
-
-  for session in "${hierarchy_sessions[@]}"; do
     agent_name="$(get_session_env "$session" ATMUX_AGENT_NAME)"
     short_name="$(session_short_name "$session" "$repo_name")"
     [[ -n "$agent_name" ]] || agent_name="$short_name"
@@ -301,7 +187,7 @@ resolve_hierarchy_targets() {
       printf '%s\n' "$session"
       candidate_match=1
     fi
-  done
+  done < <(tmux list-sessions -F '#{session_name}' 2>/dev/null | awk '/^atmux-/ { print }')
 
   [[ "$candidate_match" -eq 1 ]]
 }
@@ -309,8 +195,8 @@ resolve_hierarchy_targets() {
 resolve_send_targets() {
   local to="$1"
   local repo_name="$2"
-  local current_agent="$3"
-  local current_session="$4"
+  local _current_agent="$3"
+  local _current_session="$4"
   local target_session=""
   local pattern="$to"
 
@@ -319,7 +205,7 @@ resolve_send_targets() {
   fi
 
   if has_wildcard "$pattern"; then
-    resolve_hierarchy_targets "$pattern" "$repo_name" "$current_agent" "$current_session"
+    resolve_pattern_targets "$pattern" "$repo_name"
     return $?
   fi
 
@@ -711,10 +597,16 @@ collect_agent_help() {
   local cmd
   for cmd in create list send message schedule assign comment capture kill exec watch env; do
     local cmd_out=""
-    if [[ -n "$runner_cwd" ]]; then
-      cmd_out="$(cd "$runner_cwd" && ATMUX_NO_WRAP=1 ATMUX_ALLOW_OUTSIDE_TMUX=1 "$runner" "$cmd" --help 2>/dev/null || true)"
+    local -a help_cmd=()
+    if command -v timeout >/dev/null 2>&1; then
+      help_cmd=(timeout "${ATMUX_HELP_TIMEOUT:-1s}" "$runner" "$cmd" --help)
     else
-      cmd_out="$(ATMUX_NO_WRAP=1 ATMUX_ALLOW_OUTSIDE_TMUX=1 "$runner" "$cmd" --help 2>/dev/null || true)"
+      help_cmd=("$runner" "$cmd" --help)
+    fi
+    if [[ -n "$runner_cwd" ]]; then
+      cmd_out="$(cd "$runner_cwd" && ATMUX_NO_WRAP=1 ATMUX_ALLOW_OUTSIDE_TMUX=1 "${help_cmd[@]}" 2>/dev/null || true)"
+    else
+      cmd_out="$(ATMUX_NO_WRAP=1 ATMUX_ALLOW_OUTSIDE_TMUX=1 "${help_cmd[@]}" 2>/dev/null || true)"
     fi
     if [[ -n "$cmd_out" ]] && printf '%s\n' "$cmd_out" | grep -Eq "^  atmux ${cmd}( |$)"; then
       out+=$'## '"$cmd"$'\n'
@@ -724,10 +616,9 @@ collect_agent_help() {
   printf '%s' "$out"
 }
 
-render_managed_block() {
+render_atmux_prompt_block() {
   local repo_root="$1"
   local role_name="${ATMUX_ROLE:-}"
-  local manager_value="${ATMUX_MANAGER:-}"
   local atmux_runner=""
   local atmux_help=""
   local source_root="${ATMUX_SOURCE_ROOT:-}"
@@ -771,51 +662,33 @@ render_managed_block() {
           # the replacement side of `s|pat|repl|`.
           printf '%s' "$1" | sed -e 's/[\\&|]/\\&/g'
         }
-        local _t _r _a _w _ro
+        local _t _r _a _w _ro _tl _td _dl _nd
         _t="$(sed_escape_replacement "${ATMUX_TEAM:-}")"
         _r="$(sed_escape_replacement "${ATMUX_REPO:-}")"
         _a="$(sed_escape_replacement "${ATMUX_AGENT_NAME:-}")"
         _w="$(sed_escape_replacement "${ATMUX_WORKTREE:-}")"
         _ro="$(sed_escape_replacement "${ATMUX_ROLE:-}")"
+        _tl="$(sed_escape_replacement "${ATMUX_TEAM_TIME_LIMIT:-}")"
+        _td="$(sed_escape_replacement "${ATMUX_TEAM_DEADLINE_AT:-}")"
+        _dl="$(sed_escape_replacement "${ATMUX_TEAM_DEADLINE_EPOCH:-}")"
+        _nd="$(sed_escape_replacement "${ATMUX_TEAM_DOC_DIR:-}")"
         sed -E 's@^</?atmux>$@@' "$ATMUX_ROLE_DIR/role.md" \
           | sed \
               -e "s|\${ATMUX_TEAM}|${_t}|g" \
               -e "s|\${ATMUX_REPO}|${_r}|g" \
               -e "s|\${ATMUX_AGENT_NAME}|${_a}|g" \
               -e "s|\${ATMUX_WORKTREE}|${_w}|g" \
-              -e "s|\${ATMUX_ROLE}|${_ro}|g"
+              -e "s|\${ATMUX_ROLE}|${_ro}|g" \
+              -e "s|\${ATMUX_TEAM_TIME_LIMIT}|${_tl}|g" \
+              -e "s|\${ATMUX_TEAM_DEADLINE_AT}|${_td}|g" \
+              -e "s|\${ATMUX_TEAM_DEADLINE_EPOCH}|${_dl}|g" \
+              -e "s|\${ATMUX_TEAM_DOC_DIR}|${_nd}|g"
       fi
       echo
     fi
     echo "# atmux Rules"
     echo "- Use plain \`atmux ...\` commands; do not prefix them with inherited session environment."
     echo
-    if [[ -z "$manager_value" ]]; then
-      echo "# Delegation Rules"
-      echo "- ALWAYS check \`atmux agent list --all --status\` first."
-      echo "- ALWAYS assign to an existing idle capable agent before creating a new one."
-      echo "- ONLY create a new agent when no idle agent matches the required capability/intelligence."
-      echo "- ALWAYS include clear task scope via \`--description\` and \`--todos\`."
-      echo "- ALWAYS use \`--reply-required\` for decisions/blockers."
-      echo "- NEVER poll agent panes unless absolutely necessary."
-      echo "- NEVER do tasks yourself unless explicitly instructed."
-      echo
-    else
-      echo "# Managed Agent Rules"
-      echo "- ALWAYS acknowledge manager messages quickly with a short plan."
-      echo "- ALWAYS send a message to your manager when stuck or after completing any task."
-      echo "- ALWAYS message your manager with \`atmux send --to ${manager_value} \"...\"\`."
-      echo "- ALWAYS coordinate with peer agents using \`atmux send --to <agent> \"...\"\`."
-      echo "- ALWAYS check \`atmux agent list --all --status\` before creating new agents."
-      echo "- ALWAYS reuse idle capable agents before creating new ones."
-      echo "- ALWAYS spawn agents to decompose your todos if necessary."
-      echo "- ALWAYS use \`--reply-required\` when a manager decision is needed."
-      echo "- NEVER poll agent panes unless absolutely necessary."
-      echo "- NEVER silently change scope; ask your manager first."
-      echo "- NEVER report task completion without validation evidence."
-      echo "- NEVER leave blockers unreported; escalate immediately."
-      echo
-    fi
     echo "# atmux help"
     if [[ -n "$atmux_help" ]]; then
       printf '%s\n' "$atmux_help"
@@ -836,7 +709,7 @@ prepare_atmux_prompt() {
   mkdir -p "$prep_dir"
   : > "$prep_dir/args"
   : > "$prep_dir/env"
-  render_managed_block "$repo_root" > "$prep_dir/prompt.md"
+  render_atmux_prompt_block "$repo_root" > "$prep_dir/prompt.md"
 
   ATMUX_PREP_ARGS_FILE="$prep_dir/args" \
   ATMUX_PREP_ENV_FILE="$prep_dir/env" \
@@ -1019,7 +892,6 @@ run_adapter() {
       fi
     fi
 
-    prepare_atmux_prompt "$(pwd)"
     if adapter_shims_enabled "$adapter_cmd"; then
       activate_agent_shims
     fi
@@ -1090,6 +962,8 @@ run_adapter() {
       fi
     fi
 
+    prepare_atmux_prompt "$(pwd)"
+
     rc=0
     (
       unset ATMUX_ALLOW_REAL_TMUX
@@ -1153,7 +1027,7 @@ run_adapter() {
 
 # Build the new tmux session, set its environment, queue _run-adapter into
 # its primary pane, and (when interactive) attach. Returns the session name
-# on stdout. Used by both top-level and sub-agent `agent create`.
+# on stdout when not attached to a TTY.
 spawn_agent_session() {
   local name=""
   local adapter="codex"
@@ -1252,10 +1126,9 @@ spawn_agent_session() {
   local branch="atmux-${repo_name}-${name}"
 
   if tmux has-session -t "$session" 2>/dev/null; then
-    local existing_adapter existing_source_root existing_manager existing_role existing_team existing_intelligence
+    local existing_adapter existing_source_root existing_role existing_team existing_intelligence
     existing_adapter="$(tmux show-environment -t "$session" ATMUX_ADAPTER 2>/dev/null | sed -n 's/^ATMUX_ADAPTER=//p' || true)"
     existing_source_root="$(tmux show-environment -t "$session" ATMUX_SOURCE_ROOT 2>/dev/null | sed -n 's/^ATMUX_SOURCE_ROOT=//p' || true)"
-    existing_manager="$(tmux show-environment -t "$session" ATMUX_MANAGER 2>/dev/null | sed -n 's/^ATMUX_MANAGER=//p' || true)"
     existing_role="$(tmux show-environment -t "$session" ATMUX_ROLE 2>/dev/null | sed -n 's/^ATMUX_ROLE=//p' || true)"
     existing_team="$(tmux show-environment -t "$session" ATMUX_TEAM 2>/dev/null | sed -n 's/^ATMUX_TEAM=//p' || true)"
     existing_intelligence="$(tmux show-environment -t "$session" ATMUX_INTELLIGENCE 2>/dev/null | sed -n 's/^ATMUX_INTELLIGENCE=//p' || true)"
@@ -1265,7 +1138,6 @@ spawn_agent_session() {
       export ATMUX_ADAPTER="$adapter"
     fi
     export ATMUX_REPO="$repo_name"
-    export ATMUX_MANAGER="$existing_manager"
     export ATMUX_ROLE="$existing_role"
     if [[ -n "$existing_team" ]]; then
       export ATMUX_TEAM="$existing_team"
@@ -1292,7 +1164,7 @@ spawn_agent_session() {
 
   if [[ "$shared_worktree" -eq 1 ]]; then
     # `--shared-worktree` shares the *caller's* worktree. When invoked from
-    # a team session (or another agent's pane) the caller's tmux env carries
+    # team/member context, the caller's tmux env carries
     # ATMUX_WORKTREE, which is the right path to inherit. Falling back to
     # $repo_root preserves the original outside-tmux behavior.
     if [[ -n "${ATMUX_WORKTREE:-}" && -d "$ATMUX_WORKTREE" ]]; then
@@ -1369,11 +1241,24 @@ spawn_agent_session() {
   if [[ -n "${ATMUX_ROLE_STOP:-}" ]]; then
     tmux set-environment -t "$session" ATMUX_ROLE_STOP "$ATMUX_ROLE_STOP"
   fi
-  if [[ -n "${ATMUX_MANAGER:-}" ]]; then
-    tmux set-environment -t "$session" ATMUX_MANAGER "$ATMUX_MANAGER"
-  fi
   if [[ -n "${ATMUX_TEAM:-}" ]]; then
     tmux set-environment -t "$session" ATMUX_TEAM "$ATMUX_TEAM"
+  fi
+  if [[ -n "${ATMUX_TEAM_TIME_LIMIT:-}" ]]; then
+    tmux set-environment -t "$session" ATMUX_TEAM_TIME_LIMIT "$ATMUX_TEAM_TIME_LIMIT"
+  fi
+  if [[ -n "${ATMUX_TEAM_DEADLINE_AT:-}" ]]; then
+    tmux set-environment -t "$session" ATMUX_TEAM_DEADLINE_AT "$ATMUX_TEAM_DEADLINE_AT"
+  fi
+  if [[ -n "${ATMUX_TEAM_DEADLINE_EPOCH:-}" ]]; then
+    tmux set-environment -t "$session" ATMUX_TEAM_DEADLINE_EPOCH "$ATMUX_TEAM_DEADLINE_EPOCH"
+  fi
+  if [[ -n "${ATMUX_TEAM_DOC_DIR:-}" ]]; then
+    tmux set-environment -t "$session" ATMUX_TEAM_DOC_DIR "$ATMUX_TEAM_DOC_DIR"
+  fi
+
+  if [[ -n "${ATMUX_TEAM:-}" ]]; then
+    record_team_member_state "$repo_name" "$ATMUX_TEAM" "$session" "$name" "${ATMUX_ROLE:-}" "$adapter"
   fi
 
   local -a cmd=("$source_root/bin/(atmux)/agent" "_run-adapter" "--adapter" "$adapter")
@@ -1430,11 +1315,10 @@ attach_agent() {
     exit 1
   fi
 
-  local existing_adapter existing_source_root existing_repo existing_manager existing_role existing_team
+  local existing_adapter existing_source_root existing_repo existing_role existing_team
   existing_adapter="$(tmux show-environment -t "$session" ATMUX_ADAPTER 2>/dev/null | sed -n 's/^ATMUX_ADAPTER=//p' || true)"
   existing_source_root="$(tmux show-environment -t "$session" ATMUX_SOURCE_ROOT 2>/dev/null | sed -n 's/^ATMUX_SOURCE_ROOT=//p' || true)"
   existing_repo="$(tmux show-environment -t "$session" ATMUX_REPO 2>/dev/null | sed -n 's/^ATMUX_REPO=//p' || true)"
-  existing_manager="$(tmux show-environment -t "$session" ATMUX_MANAGER 2>/dev/null | sed -n 's/^ATMUX_MANAGER=//p' || true)"
   existing_role="$(tmux show-environment -t "$session" ATMUX_ROLE 2>/dev/null | sed -n 's/^ATMUX_ROLE=//p' || true)"
   existing_team="$(tmux show-environment -t "$session" ATMUX_TEAM 2>/dev/null | sed -n 's/^ATMUX_TEAM=//p' || true)"
   if [[ -n "$existing_adapter" ]]; then
@@ -1445,7 +1329,6 @@ attach_agent() {
   else
     export ATMUX_REPO="$repo_name"
   fi
-  export ATMUX_MANAGER="$existing_manager"
   export ATMUX_ROLE="$existing_role"
   export ATMUX_TEAM="$existing_team"
   if [[ -n "$existing_source_root" && -d "$existing_source_root" ]]; then
@@ -1468,7 +1351,6 @@ ensure_team_dashboard_for_agent() {
   local team_session pane_id reusable_pane current_cmd pane_agent
   local team_width team_height pane_count width height
   local hard_min_w hard_min_h
-  local team_cap current_count
   local team_history_limit team_alternate_screen
   local attach_cmd
 
@@ -1561,7 +1443,6 @@ ensure_team_dashboard_for_agent() {
   fi
 
   team_session="$(team_session_name "$repo_name" "$team_name")"
-  team_cap=4
   hard_min_w=100
   hard_min_h=20
   team_width="$(int_or_default "${ATMUX_TEAM_WIDTH:-240}" 240)"
@@ -1571,17 +1452,6 @@ ensure_team_dashboard_for_agent() {
   team_history_limit="$(int_or_default "${ATMUX_TEAM_HISTORY_LIMIT:-300000}" 300000)"
   team_alternate_screen="${ATMUX_TEAM_ALTERNATE_SCREEN:-off}"
   attach_cmd="$(atmux_tmux_attach_command)" || return 1
-
-  if tmux has-session -t "$team_session" 2>/dev/null; then
-    current_count="$(team_member_count "$team_session")"
-    if ! [[ "$current_count" =~ ^[0-9]+$ ]]; then
-      current_count=0
-    fi
-    if ! team_contains_agent_session "$team_session" "$agent_session" && (( current_count >= team_cap )); then
-      echo "team '${team_name}' is full (${current_count}/${team_cap}); max team size is 4" >&2
-      return 1
-    fi
-  fi
 
   if ! tmux has-session -t "$team_session" 2>/dev/null; then
     tmux new-session -d -x "$team_width" -y "$team_height" -s "$team_session" -n "$team_session" -c "$repo_root" "TMUX= $attach_cmd attach-session -r -t \"$agent_session\""
@@ -1642,10 +1512,9 @@ ensure_team_dashboard_for_agent() {
 status_node_for_session() {
   local session="$1"
   local passive_status="${2:-0}"
-  local pane adapter adapter_cmd manager source_root status_out node
+  local pane adapter adapter_cmd source_root status_out node
 
   adapter="$(get_session_env "$session" ATMUX_ADAPTER)"
-  manager="$(get_session_env "$session" ATMUX_MANAGER)"
   source_root="$(get_session_env "$session" ATMUX_SOURCE_ROOT)"
   pane="$(primary_pane_for_session "$session")"
   [[ -n "$adapter" ]] || adapter="codex"
@@ -1658,7 +1527,6 @@ status_node_for_session() {
   status_out="$(
     ATMUX_SOURCE_ROOT="$source_root" \
     ATMUX_TARGET_PANE="$pane" \
-    ATMUX_MANAGER="$manager" \
     ATMUX_STATUS_PASSIVE="$passive_status" \
     "$adapter_cmd" status 2>/dev/null || true
   )"
@@ -1710,23 +1578,44 @@ send_task_to_agent() {
   ATMUX_NO_WRAP=1 "${assign_cmd[@]}" >/dev/null 2>&1 || true
 }
 
+wait_for_role_start_if_needed() {
+  local created_session="$1"
+  local start_cmd="$2"
+
+  [[ -n "$start_cmd" ]] || return 0
+  [[ -n "$created_session" ]] || return 0
+
+  local deadline role_state
+  deadline=$(( $(date +%s) + ${ATMUX_ROLE_START_TIMEOUT:-60} + 2 ))
+  while (( $(date +%s) < deadline )); do
+    if ! tmux has-session -t "$created_session" 2>/dev/null; then
+      echo "atmux: agent aborted during role start (session gone)" >&2
+      return 1
+    fi
+    role_state="$(get_session_env "$created_session" ATMUX_ROLE_START_STATE)"
+    if [[ "$role_state" == "failed" ]]; then
+      echo "atmux: agent aborted during role start (role start failed)" >&2
+      tmux kill-session -t "$created_session" >/dev/null 2>&1 || true
+      return 1
+    fi
+    if [[ "$role_state" == "ready" ]]; then
+      return 0
+    fi
+    sleep 0.1
+  done
+
+  return 0
+}
+
 # === do_create: top-level entry that spawns a new agent =====================
 
 do_create() {
-  local manager="${ATMUX_AGENT_NAME:-}"
-  local top_level=0
-  if [[ -z "$manager" ]]; then
-    top_level=1
-  fi
-
   local name=""
   local role=""
   # ATMUX_TEAM signals "this session IS a member of <team>" — only set
-  # by team-spawned members. ATMUX_DEFAULT_TEAM is the soft hint a
-  # manager session picks up after running `atmux team create <team>`,
-  # so subsequent `atmux agent create` calls in that manager default
-  # to joining the same team. Both are fallbacks for the explicit
-  # `--team` flag.
+  # by team-spawned members. ATMUX_DEFAULT_TEAM is a soft hint for
+  # subsequent `atmux agent create` calls from a session that just created
+  # a team. Both are fallbacks for the explicit `--team` flag.
   local team="${ATMUX_TEAM:-${ATMUX_DEFAULT_TEAM:-}}"
   if [[ -z "$team" && -n "${TMUX:-}" ]]; then
     current_session_name="$(tmux display-message -p '#S' 2>/dev/null || true)"
@@ -1987,134 +1876,40 @@ do_create() {
     spawn_args+=(-- "${forward[@]}")
   fi
 
-  # Top-level interactive create attaches; sub-agent create captures stdout
-  # for the XML envelope. spawn_agent_session prints the session name when
-  # not attached to a TTY (via attach_or_switch's TTY check) — that's what
-  # we need for the sub-agent path.
-  local create_out=""
-  if [[ "$top_level" -eq 1 ]]; then
-    # Top-level: run inline so attach_or_switch can take over the TTY.
-    ATMUX_MANAGER="" \
-    ATMUX_ROLE="$role" \
-    ATMUX_ROLE_DIR="$role_dir" \
-    ATMUX_ROLE_START="$start_cmd" \
-    ATMUX_ROLE_STOP="$stop_cmd" \
-    ATMUX_TEAM="$team" \
-    ATMUX_INTELLIGENCE="$intelligence" \
-    ATMUX_MODEL="$model" \
-    ATMUX_REASONING_LEVEL="$reasoning" \
-      spawn_agent_session "${spawn_args[@]}"
+  if [[ -n "$start_cmd" && ( ! -t 0 || ! -t 1 ) ]]; then
+    local create_out create_rc created_session
+    set +e
+    create_out="$(
+      ATMUX_ROLE="$role" \
+      ATMUX_ROLE_DIR="$role_dir" \
+      ATMUX_ROLE_START="$start_cmd" \
+      ATMUX_ROLE_STOP="$stop_cmd" \
+      ATMUX_TEAM="$team" \
+      ATMUX_INTELLIGENCE="$intelligence" \
+      ATMUX_MODEL="$model" \
+      ATMUX_REASONING_LEVEL="$reasoning" \
+        spawn_agent_session "${spawn_args[@]}"
+    )"
+    create_rc=$?
+    set -e
+    printf '%s\n' "$create_out"
+    if [[ "$create_rc" -ne 0 ]]; then
+      exit "$create_rc"
+    fi
+    created_session="$(printf '%s\n' "$create_out" | awk 'NF { last=$0 } END { print last }')"
+    wait_for_role_start_if_needed "$created_session" "$start_cmd" || exit 1
     return 0
   fi
 
-  # Sub-agent: capture stdout; spawn_agent_session attaches read-only when
-  # interactive and prints the session name otherwise.
-  create_out="$(
-    ATMUX_MANAGER="$manager" \
-    ATMUX_ROLE="$role" \
-    ATMUX_ROLE_DIR="$role_dir" \
-    ATMUX_ROLE_START="$start_cmd" \
-    ATMUX_ROLE_STOP="$stop_cmd" \
-    ATMUX_TEAM="$team" \
-    ATMUX_INTELLIGENCE="$intelligence" \
-    ATMUX_MODEL="$model" \
-    ATMUX_REASONING_LEVEL="$reasoning" \
-      spawn_agent_session "${spawn_args[@]}"
-  )"
-
-  local created_session
-  created_session="$(printf '%s\n' "$create_out" | awk 'NF { last=$0 } END { print last }')"
-  if [[ -z "$created_session" ]]; then
-    exit 0
-  fi
-
-  if [[ -n "$start_cmd" ]]; then
-    role_start_check_deadline=$(( $(date +%s) + ${ATMUX_ROLE_START_TIMEOUT:-60} + 2 ))
-    while (( $(date +%s) < role_start_check_deadline )); do
-      if ! tmux has-session -t "$created_session" 2>/dev/null; then
-        echo "atmux: agent aborted during role start (session gone)" >&2
-        exit 1
-      fi
-      role_state="$(get_session_env "$created_session" ATMUX_ROLE_START_STATE)"
-      if [[ "$role_state" == "failed" ]]; then
-        echo "atmux: agent aborted during role start (role start failed)" >&2
-        tmux kill-session -t "$created_session" >/dev/null 2>&1 || true
-        exit 1
-      fi
-      if [[ "$role_state" == "ready" ]]; then
-        break
-      fi
-      sleep 0.1
-    done
-  fi
-
-  local created_name
-  created_name="$(get_session_env "$created_session" ATMUX_AGENT_NAME)"
-  if [[ -z "$created_name" ]]; then
-    created_name="$name"
-  fi
-  if [[ -z "$created_name" ]]; then
-    session_prefix="atmux-${repo_name}-"
-    if [[ "$created_session" == "$session_prefix"* ]]; then
-      created_name="${created_session#"$session_prefix"}"
-    else
-      created_name="$created_session"
-    fi
-  fi
-
-  local created_repo
-  created_repo="$(get_session_env "$created_session" ATMUX_REPO)"
-  [[ -n "$created_repo" ]] || created_repo="$repo_name"
-
-  local created_manager
-  created_manager="$(get_session_env "$created_session" ATMUX_MANAGER)"
-  [[ -n "$created_manager" ]] || created_manager="$manager"
-  local created_team
-  created_team="$(get_session_env "$created_session" ATMUX_TEAM)"
-  [[ -n "$created_team" ]] || created_team="$team"
-
-  local created_adapter
-  created_adapter="$(get_session_env "$created_session" ATMUX_ADAPTER)"
-  if [[ "$created_adapter" == "auto" || -z "$created_adapter" ]]; then
-    for _ in $(seq 1 30); do
-      sleep 0.1
-      probe_adapter="$(get_session_env "$created_session" ATMUX_ADAPTER)"
-      if [[ -n "$probe_adapter" && "$probe_adapter" != "auto" ]]; then
-        created_adapter="$probe_adapter"
-        break
-      fi
-    done
-  fi
-  if [[ -z "$created_adapter" ]]; then
-    created_adapter="$adapter"
-  fi
-  if [[ -z "$created_adapter" ]]; then
-    created_adapter="auto"
-  fi
-
-  local created_adapter_requested
-  created_adapter_requested="$(get_session_env "$created_session" ATMUX_ADAPTER_REQUESTED)"
-  if [[ -z "$created_adapter_requested" ]]; then
-    created_adapter_requested="$adapter"
-  fi
-
-  local status_node
-  status_node="$(status_node_for_session "$created_session")"
-  if ! ensure_team_dashboard_for_agent "$repo_root" "$created_repo" "$created_team" "$created_session" "$created_name"; then
-    exit 1
-  fi
-  printf '<agent name="%s" session="%s" repo="%s" manager="%s" team="%s" adapter="%s" adapter_requested="%s" role="%s" intelligence="%s">\n' \
-    "$(xml_escape "$created_name")" \
-    "$(xml_escape "$created_session")" \
-    "$(xml_escape "$created_repo")" \
-    "$(xml_escape "$created_manager")" \
-    "$(xml_escape "$created_team")" \
-    "$(xml_escape "$created_adapter")" \
-    "$(xml_escape "$created_adapter_requested")" \
-    "$(xml_escape "$role")" \
-    "$(xml_escape "$intelligence")"
-  printf '  %s\n' "$status_node"
-  printf '</agent>\n'
+  ATMUX_ROLE="$role" \
+  ATMUX_ROLE_DIR="$role_dir" \
+  ATMUX_ROLE_START="$start_cmd" \
+  ATMUX_ROLE_STOP="$stop_cmd" \
+  ATMUX_TEAM="$team" \
+  ATMUX_INTELLIGENCE="$intelligence" \
+  ATMUX_MODEL="$model" \
+  ATMUX_REASONING_LEVEL="$reasoning" \
+    spawn_agent_session "${spawn_args[@]}"
 }
 
 # === Dispatch ===============================================================
@@ -2133,9 +1928,9 @@ case "$sub" in
     run_adapter "$@"
     ;;
   _render-prompt)
-    # Internal diagnostic: print the rendered atmux managed block to stdout.
-    # Honors ATMUX_ROLE / ATMUX_MANAGER / ATMUX_ROLE_DIR like the real flow.
-    render_managed_block "${1:-$(pwd)}"
+    # Internal diagnostic: print the rendered atmux prompt block to stdout.
+    # Honors ATMUX_ROLE / ATMUX_ROLE_DIR like the real flow.
+    render_atmux_prompt_block "${1:-$(pwd)}"
     ;;
   list)
     here_agent="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"

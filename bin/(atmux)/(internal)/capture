@@ -122,11 +122,11 @@ if [[ -n "$agent_target" ]]; then
     exit 1
   fi
   if [[ "$session" == "atmux-${repo_name}-team-"* ]]; then
-    echo "target is a team session; use --team instead" >&2
+    echo "target is a team/view name; use --team instead" >&2
     exit 2
   fi
   if [[ "$(get_session_env "$session" ATMUX_SESSION_KIND)" == "team" ]]; then
-    echo "target is a team session; use --team instead" >&2
+    echo "target is a team/view name; use --team instead" >&2
     exit 2
   fi
 
@@ -142,25 +142,25 @@ if [[ -n "$agent_target" ]]; then
   exit 0
 fi
 
-session="$("$HERE/../team" resolve "$team_target" "$repo_name" || true)"
-if [[ -z "$session" ]]; then
-  echo "team session not found: $team_target" >&2
+team_name="$(normalize_name "$team_target")"
+if [[ "$team_target" == "atmux-${repo_name}-team-"* ]]; then
+  team_name="${team_target#atmux-${repo_name}-team-}"
+elif [[ "$team_target" == "${repo_name}-team-"* ]]; then
+  team_name="${team_target#${repo_name}-team-}"
+fi
+if ! team_state_exists "$repo_name" "$team_name"; then
+  echo "team not found: $team_target" >&2
   echo "pass absolute (atmux-<repo>-team-<name>) or shorthand (<name>)" >&2
   exit 1
 fi
 
-team_name="$(get_session_env "$session" ATMUX_TEAM)"
-if [[ -z "$team_name" && "$session" == "atmux-${repo_name}-team-"* ]]; then
-  team_name="${session#atmux-${repo_name}-team-}"
-fi
-if [[ -z "$team_name" ]]; then
-  echo "session is not marked as a team: $session" >&2
-  exit 2
-fi
+session="atmux-${repo_name}-team-${team_name}"
 
 printf '<captures scope="team" team="%s" session="%s">\n' \
   "$(xml_escape "$team_name")" \
   "$(xml_escape "$session")"
-capture_session_panes "$session" "$lines" " team=\"$(xml_escape "$team_name")\""
+while IFS= read -r member_session; do
+  [[ -n "$member_session" ]] || continue
+  capture_session_panes "$member_session" "$lines" " team=\"$(xml_escape "$team_name")\""
+done < <(team_member_sessions_from_state "$repo_name" "$team_name")
 printf '</captures>\n'
-

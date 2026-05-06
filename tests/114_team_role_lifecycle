@@ -145,7 +145,7 @@ echo "$err" | grep -q "private to a team" \
 # path is exercised by 117_team_worktree_lifecycle instead.
 out="$( ATMUX_ALLOW_OUTSIDE_TMUX=1 "$ATMUX_BIN" team create "$team_short" --role probe-pair --shared-worktree 2>&1 || true )"
 team_session="$(printf '%s\n' "$out" | sed -n 's/.*session="\([^"]*\)".*/\1/p' | head -1)"
-[[ -n "$team_session" ]] || { echo "fail: no team session created" >&2; echo "$out" >&2; exit 1; }
+[[ -n "$team_session" ]] || { echo "fail: no team state session id returned" >&2; echo "$out" >&2; exit 1; }
 
 # Wait for start hook to fire
 for _ in $(seq 1 80); do
@@ -179,7 +179,7 @@ if [[ "$seen_alpha" != "1" || "$seen_beta" != "1" ]]; then
     echo "fail: members not visible — alpha=$seen_alpha beta=$seen_beta team=$team_short"
     echo "  team create stdout/stderr:"
     printf '%s\n' "$out" | sed 's/^/    /'
-    echo "  team session ($team_session):"
+    echo "  optional team view ($team_session):"
     if tmux has-session -t "$team_session" 2>/dev/null; then
       echo "    EXISTS"
       tmux show-environment -t "$team_session" 2>/dev/null | grep '^ATMUX_' | sed 's/^/      /'
@@ -232,8 +232,8 @@ for member in "$alpha_name" "$beta_name"; do
     || { echo "fail: member $member stop hook didn't run" >&2; cat "$MARKERS/member-stops" 2>/dev/null >&2; exit 1; }
 done
 
-# Team session and member sessions all gone
-tmux has-session -t "$team_session" 2>/dev/null && { echo "fail: team session still alive" >&2; exit 1; }
+# Optional team view and member sessions all gone
+tmux has-session -t "$team_session" 2>/dev/null && { echo "fail: optional team view still alive" >&2; exit 1; }
 remaining="$(tmux list-sessions -F '#{session_name}' 2>/dev/null | grep "^${SESSION_PREFIX}" || true)"
 if [[ -n "$remaining" ]]; then
   while IFS= read -r s; do

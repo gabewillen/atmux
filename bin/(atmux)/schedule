@@ -194,7 +194,7 @@ scheduled_send_target() {
 }
 
 target_resolves_to_self_only() {
-  local target="$1" from_session="" repo_name="" team_session="" target_session=""
+  local target="$1" from_session="" repo_name="" team_name="" target_session=""
   local member="" nonself_count=0
 
   from_session="$(current_session_name)"
@@ -203,13 +203,18 @@ target_resolves_to_self_only() {
 
   repo_name="$(repo_name_from_context)"
 
-  team_session="$("$HERE/team" resolve "$target" "$repo_name" 2>/dev/null || true)"
-  if [[ -n "$team_session" ]]; then
+  team_name="$(normalize_name "$target")"
+  if [[ "$target" == "atmux-${repo_name}-team-"* ]]; then
+    team_name="${target#atmux-${repo_name}-team-}"
+  elif [[ "$target" == "${repo_name}-team-"* ]]; then
+    team_name="${target#${repo_name}-team-}"
+  fi
+  if team_state_exists "$repo_name" "$team_name"; then
     while IFS= read -r member; do
       [[ -n "$member" ]] || continue
       [[ "$member" == "$from_session" ]] && continue
       nonself_count=$((nonself_count + 1))
-    done < <(tmux list-panes -t "${team_session}:0" -F '#{@atmux_agent_session}' 2>/dev/null | awk 'NF' | sort -u)
+    done < <(team_member_sessions_from_state "$repo_name" "$team_name")
     [[ "$nonself_count" -eq 0 ]] && return 0
     return 1
   fi

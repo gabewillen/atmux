@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+state="${ATMUX_ROLE_STATE_DIR:-}"
+mkdir -p "$state"
+
+interval="${ATMUX_COLLAB_TICK_INTERVAL:-5m}"
+deadline="${ATMUX_TEAM_DEADLINE_AT:-}"
+deadline_epoch="${ATMUX_TEAM_DEADLINE_EPOCH:-}"
+[[ -n "$deadline" || -n "$deadline_epoch" ]] || exit 0
+
+tick_text="collab deadline tick: team=${ATMUX_TEAM:-} deadline=${deadline:-unknown} deadline_epoch=${deadline_epoch:-unknown}"
+
+schedule_out="$(atmux schedule --interval "$interval" --notification "$tick_text" 2>>"$state/tick.log" || true)"
+pid="$(printf '%s\n' "$schedule_out" | sed -n 's/.*pid="\([^"]*\)".*/\1/p' | head -n1)"
+if [[ -n "$pid" ]]; then
+  printf '%s\n' "$pid" > "$state/tick-pid"
+  printf '%s\n' "$schedule_out" >> "$state/tick.log"
+  exit 0
+fi
+
+leader_session="${ATMUX_SESSION_NAME:-}"
+leader_pane=""
+if [[ -n "$leader_session" ]]; then
+  leader_pane="$(tmux list-panes -t "$leader_session" -F '#{pane_id}' 2>/dev/null | head -n1 || true)"
+fi
+[[ -n "$leader_pane" ]] || exit 0
+
+seconds="$(
+  case "$interval" in
+    *ms) printf '1\n' ;;
+    *s) printf '%s\n' "${interval%s}" ;;
+    *m) printf '%s\n' "$(( ${interval%m} * 60 ))" ;;
+    *h) printf '%s\n' "$(( ${interval%h} * 3600 ))" ;;
+    *d) printf '%s\n' "$(( ${interval%d} * 86400 ))" ;;
+    *) printf '%s\n' "$interval" ;;
+  esac
+)"
+[[ "$seconds" =~ ^[0-9]+$ && "$seconds" -gt 0 ]] || seconds=300
+
+tmux new-window -a -d -t "$leader_session" -n collab-ticks \
+  "while true; do sleep $seconds; printf '<notification type=\"scheduled\" from=\"collab\" text=\"%s\">%s</notification>\\n' '$tick_text' '$tick_text' | atmux notify --pane '$leader_pane' --xml - >/dev/null 2>&1 || true; done" \
+  2>>"$state/tick.log" || true

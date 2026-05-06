@@ -5,7 +5,7 @@
 #
 # How the signal arrives:
 #
-#   The agent's PATH has an atmux-managed `git` shim ahead of the real
+#   The agent's PATH has an atmux `git` shim ahead of the real
 #   git. Any `git worktree add <path>` call routes through the git shim,
 #   which forwards to real git AND, on success, writes the new
 #   worktree's absolute path to

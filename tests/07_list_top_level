@@ -20,7 +20,7 @@ printf '%s\n' "$agents_out" | grep -Fq "<agents repo=\"$REPO_NAME\">"
 printf '%s\n' "$agents_out" | grep -Fq "session=\"$AGENT1_SESSION\""
 printf '%s\n' "$agents_out" | grep -Fq "session=\"$AGENT2_SESSION\""
 if printf '%s\n' "$agents_out" | grep -Fq "session=\"$TEAM_SESSION\""; then
-  echo "team session should not appear in agent list output" >&2
+  echo "team view/session id should not appear in agent list output" >&2
   printf '%s\n' "$agents_out" >&2
   exit 1
 fi

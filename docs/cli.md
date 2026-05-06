@@ -16,7 +16,7 @@ atmux agent create planner --role planner --intelligence 80
 
 ### `atmux team create <name>`
 
-Creates a team session. Agents created while `ATMUX_TEAM` is set join that team.
+Creates filesystem-backed team state. Agents created with `--team <name>` join that team as tmux-backed members. Use `atmux team view <name>` when you want an optional multiagent tmux view.
 
 ### `atmux pr create --title <title> [--description <description>] [--source <branch>] [--target <branch>]`
 

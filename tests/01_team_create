@@ -11,22 +11,22 @@ SCRIPTS_DIR="$TESTS_DIR/scripts"
 eval "$("$SCRIPTS_DIR/setup")"
 trap "$SCRIPTS_DIR/teardown --team-session \"$TEAM_SESSION\" --agent1-session \"$AGENT1_SESSION\" --agent2-session \"$AGENT2_SESSION\"" EXIT
 
-if ! tmux has-session -t "$TEAM_SESSION" 2>/dev/null; then
-  echo "team session missing: $TEAM_SESSION" >&2
+team_state="${ATMUX_HOME:-$HOME/.atmux}/teams/$REPO_NAME/$TEAM_NAME"
+if [[ ! -d "$team_state" ]]; then
+  echo "team state missing: $team_state" >&2
   exit 1
 fi
 
-kind="$(tmux show-environment -t "$TEAM_SESSION" ATMUX_SESSION_KIND 2>/dev/null | sed -n 's/^ATMUX_SESSION_KIND=//p')"
-repo="$(tmux show-environment -t "$TEAM_SESSION" ATMUX_REPO 2>/dev/null | sed -n 's/^ATMUX_REPO=//p')"
-team="$(tmux show-environment -t "$TEAM_SESSION" ATMUX_TEAM 2>/dev/null | sed -n 's/^ATMUX_TEAM=//p')"
-mouse="$(tmux display-message -t "$TEAM_SESSION" -p '#{mouse}' 2>/dev/null | tr -d '\r\n' || true)"
+repo="$(cat "$team_state/repo" 2>/dev/null || true)"
+team="$(cat "$team_state/name" 2>/dev/null || true)"
+session="$(cat "$team_state/session_name" 2>/dev/null || true)"
 
-[[ "$kind" == "team" ]] || { echo "expected ATMUX_SESSION_KIND=team, got: ${kind:-<empty>}" >&2; exit 1; }
 [[ "$repo" == "$REPO_NAME" ]] || { echo "expected ATMUX_REPO=$REPO_NAME, got: ${repo:-<empty>}" >&2; exit 1; }
 [[ "$team" == "$TEAM_NAME" ]] || { echo "expected ATMUX_TEAM=$TEAM_NAME, got: ${team:-<empty>}" >&2; exit 1; }
-case "$mouse" in
-  0|off) ;;
-  *) echo "expected team session mouse=off so observers scroll via keyboard copy-mode, got: ${mouse:-<empty>}" >&2; exit 1 ;;
-esac
+[[ "$session" == "$TEAM_SESSION" ]] || { echo "expected session marker $TEAM_SESSION, got: ${session:-<empty>}" >&2; exit 1; }
+if tmux has-session -t "$TEAM_SESSION" 2>/dev/null; then
+  echo "team create should not create default tmux view session" >&2
+  exit 1
+fi
 
-echo "ok: team created and tagged ($TEAM_SESSION)"
+echo "ok: team created in state without default dashboard ($TEAM_SESSION)"

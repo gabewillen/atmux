@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # Regression: `atmux team kill <team>` must NOT kill a session that
 # carries `ATMUX_DEFAULT_TEAM=<team>` — that env var is the soft
-# "default-team-for-future-agent-create" hint a manager session picks
-# up after running `team create`. Killing it would nuke the manager.
+# "default-team-for-future-agent-create" hint a caller session picks
+# up after running `team create`. Killing it would nuke the caller.
 #
 # Bug history: team create used to stamp ATMUX_TEAM (the membership
 # signal) on the caller, so team kill's enumeration matched the
-# manager and killed it. Fixed by switching the manager-side stamp to
+# caller and killed it. Fixed by switching the caller-side stamp to
 # ATMUX_DEFAULT_TEAM and having agent create read either as a fallback
 # for --team.
 set -euo pipefail
@@ -17,7 +17,7 @@ TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
 ATMUX_BIN="$REPO_ROOT/bin/atmux"
 
-WORK_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/amux-team-kill-mgr.XXXXXX")"
+WORK_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/amux-team-kill-caller.XXXXXX")"
 ATMUX_HOME="$WORK_ROOT/atmux-home"
 mkdir -p "$ATMUX_HOME"
 export ATMUX_HOME
@@ -66,35 +66,35 @@ repo_norm="$(basename "$REPO_ROOT" | sed -E 's/[^A-Za-z0-9_-]+/_/g; s/_+/_/g; s/
 team_session="atmux-${repo_norm}-team-${team_name}"
 member_session="atmux-${repo_norm}-alpha"
 
-# Stand up a "manager" session: a real bash so we can drive `team create`
+# Stand up a "caller" session: a real bash so we can drive `team create`
 # from inside it and exercise the caller-stamping path.
-manager_session="atmux-${repo_norm}-manager$$"
-tmux new-session -d -s "$manager_session" "exec bash --noprofile --norc -i"
-tmux set-environment -t "$manager_session" ATMUX_REPO "$repo_norm"
+caller_session="atmux-${repo_norm}-caller$$"
+tmux new-session -d -s "$caller_session" "exec bash --noprofile --norc -i"
+tmux set-environment -t "$caller_session" ATMUX_REPO "$repo_norm"
 sleep 0.3  # let bash come up
 
-# Run team create FROM INSIDE the manager session — this is what
-# triggers the caller-stamping that historically killed the manager.
+# Run team create FROM INSIDE the caller session — this is what
+# triggers the caller-stamping that historically killed the caller.
 sentinel="$WORK_ROOT/team-created"
-tmux send-keys -t "$manager_session" \
+tmux send-keys -t "$caller_session" \
   "ATMUX_HOME=$ATMUX_HOME ATMUX_ALLOW_OUTSIDE_TMUX=1 \"$ATMUX_BIN\" team create $team_name --role duo >/dev/null 2>&1; touch $sentinel" Enter
-for i in $(seq 1 100); do
+for i in $(seq 1 300); do
   [[ -f "$sentinel" ]] && break
   sleep 0.1
 done
-[[ -f "$sentinel" ]] || { echo "fail: team create never completed inside manager session" >&2; exit 1; }
+[[ -f "$sentinel" ]] || { echo "fail: team create never completed inside caller session" >&2; exit 1; }
 
 # Audit what team create stamped on the caller. The fix puts the
 # default-team hint in ATMUX_DEFAULT_TEAM; ATMUX_TEAM (the membership
-# signal team kill enumerates by) must NOT be set on the manager.
-mgr_team="$(tmux show-environment -t "$manager_session" ATMUX_TEAM 2>/dev/null | sed -n 's/^ATMUX_TEAM=//p' || true)"
-mgr_default="$(tmux show-environment -t "$manager_session" ATMUX_DEFAULT_TEAM 2>/dev/null | sed -n 's/^ATMUX_DEFAULT_TEAM=//p' || true)"
-if [[ "$mgr_team" == "$team_name" ]]; then
-  echo "fail: team create stamped ATMUX_TEAM=$mgr_team on caller — that's the bug; team kill will treat the manager as a member" >&2
+# signal team kill enumerates by) must NOT be set on the caller.
+caller_team="$(tmux show-environment -t "$caller_session" ATMUX_TEAM 2>/dev/null | sed -n 's/^ATMUX_TEAM=//p' || true)"
+caller_default="$(tmux show-environment -t "$caller_session" ATMUX_DEFAULT_TEAM 2>/dev/null | sed -n 's/^ATMUX_DEFAULT_TEAM=//p' || true)"
+if [[ "$caller_team" == "$team_name" ]]; then
+  echo "fail: team create stamped ATMUX_TEAM=$caller_team on caller — that's the bug; team kill will treat the caller as a member" >&2
   exit 1
 fi
-if [[ "$mgr_default" != "$team_name" ]]; then
-  echo "fail: expected ATMUX_DEFAULT_TEAM=$team_name on caller, got: '$mgr_default'" >&2
+if [[ "$caller_default" != "$team_name" ]]; then
+  echo "fail: expected ATMUX_DEFAULT_TEAM=$team_name on caller, got: '$caller_default'" >&2
   exit 1
 fi
 
@@ -105,8 +105,8 @@ for i in $(seq 1 50); do
 done
 tmux has-session -t "$member_session" 2>/dev/null \
   || { echo "fail: member session $member_session never came up" >&2; exit 1; }
-tmux has-session -t "$manager_session" 2>/dev/null \
-  || { echo "fail: manager session disappeared during team create" >&2; exit 1; }
+tmux has-session -t "$caller_session" 2>/dev/null \
+  || { echo "fail: caller session disappeared during team create" >&2; exit 1; }
 
 # Kill the team from outside (no TMUX env to mimic the user's flow).
 ATMUX_ALLOW_OUTSIDE_TMUX=1 "$ATMUX_BIN" team kill "$team_name" >/dev/null 2>&1 || true
@@ -120,20 +120,20 @@ for i in $(seq 1 50); do
   sleep 0.1
 done
 
-# Critical assertion: manager session must still be alive.
-if ! tmux has-session -t "$manager_session" 2>/dev/null; then
-  echo "fail: manager session $manager_session was killed by 'team kill'" >&2
+# Critical assertion: caller session must still be alive.
+if ! tmux has-session -t "$caller_session" 2>/dev/null; then
+  echo "fail: caller session $caller_session was killed by 'team kill'" >&2
   exit 1
 fi
 
-# Members and team session should be gone.
+# Members and optional team view should be gone.
 if tmux has-session -t "$member_session" 2>/dev/null; then
   echo "fail: member session $member_session leaked" >&2
   exit 1
 fi
 if tmux has-session -t "$team_session" 2>/dev/null; then
-  echo "fail: team session $team_session leaked" >&2
+  echo "fail: optional team view $team_session leaked" >&2
   exit 1
 fi
 
-echo "ok: 'team kill' removed team + member; manager (with ATMUX_DEFAULT_TEAM) survived"
+echo "ok: 'team kill' removed team + member; caller (with ATMUX_DEFAULT_TEAM) survived"

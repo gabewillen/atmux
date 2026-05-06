@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Verifies that the rendered atmux managed block (the content prepare-prompt
-# hands to each adapter) never echoes inherited tmux/session env vars and
-# always includes the canonical "use plain atmux" rule and the manager-
-# specific delegation rules when ATMUX_MANAGER is set.
+# Verifies that the rendered atmux prompt block (the content prepare-prompt
+# hands to each adapter) never echoes inherited tmux/session env vars and no
+# longer injects global delegation behavior. Coordination policy belongs in
+# explicit roles, not the atmux-wide prompt.
 
 TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
@@ -21,8 +21,7 @@ trap cleanup EXIT
 
 control_text="$(
   ATMUX_ADAPTER="codex" \
-  ATMUX_REPO="managed-envless-${RANDOM}" \
-  ATMUX_MANAGER="boss" \
+  ATMUX_REPO="prompt-envless-${RANDOM}" \
   ATMUX_WORKTREE="$tmp_repo" \
   ATMUX_SOURCE_ROOT="$REPO_ROOT" \
   ATMUX_ALLOW_OUTSIDE_TMUX=1 \
@@ -31,26 +30,21 @@ control_text="$(
 
 printf '%s\n' "$control_text" | grep -Fq '# atmux Rules'
 printf '%s\n' "$control_text" | grep -Fq 'Use plain `atmux ...` commands; do not prefix them with inherited session environment.'
-printf '%s\n' "$control_text" | grep -Fq 'atmux send --to boss "..."'
+if printf '%s\n' "$control_text" | grep -Fq '# Delegation Rules'; then
+  echo "prompt block still injects delegation rules" >&2
+  exit 1
+fi
 
 if printf '%s\n' "$control_text" | grep -Fq '# Agent TMUX env'; then
-  echo "managed block still prints inherited env heading" >&2
+  echo "prompt block still prints inherited env heading" >&2
   exit 1
 fi
 if printf '%s\n' "$control_text" | grep -Fq 'ATMUX_REPO='; then
-  echo "managed block still prints ATMUX_REPO" >&2
-  exit 1
-fi
-if printf '%s\n' "$control_text" | grep -Fq 'ATMUX_MANAGER='; then
-  echo "managed block still prints ATMUX_MANAGER" >&2
-  exit 1
-fi
-if printf '%s\n' "$control_text" | grep -Fq '$ATMUX_MANAGER'; then
-  echo "managed block still teaches manager env expansion" >&2
+  echo "prompt block still prints ATMUX_REPO" >&2
   exit 1
 fi
 
-# After 0.11.0: the managed block must NOT be written to the project's
+# After 0.11.0: the prompt block must NOT be written to the project's
 # AGENTS.md/CLAUDE.md/GEMINI.md anywhere along the prompt-prep path.
 for f in AGENTS.md CLAUDE.md GEMINI.md; do
   if [[ -e "$tmp_repo/$f" ]]; then
@@ -59,4 +53,4 @@ for f in AGENTS.md CLAUDE.md GEMINI.md; do
   fi
 done
 
-echo "ok: managed control block omits inherited env vars and is never written to project memory files"
+echo "ok: prompt block omits inherited env vars and global delegation policy"

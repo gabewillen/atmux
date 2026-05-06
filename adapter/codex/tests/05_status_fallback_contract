@@ -24,7 +24,6 @@ trap cleanup EXIT
 status_out="$(
   ATMUX_HOME="$atmux_home" \
   ATMUX_TARGET_PANE="$pane_id" \
-  ATMUX_MANAGER=atmux-demo-manager \
   ATMUX_SOURCE_ROOT="$REPO_ROOT" \
   "$ADAPTER_DIR/scripts/status"
 )"
@@ -36,7 +35,7 @@ extract_attr() {
 
 echo "$status_out" | grep -F '<status ' >/dev/null
 echo "$status_out" | grep -F 'adapter="codex"' >/dev/null
-echo "$status_out" | grep -F 'owner="manager"' >/dev/null
+echo "$status_out" | grep -F 'owner="agent"' >/dev/null
 echo "$status_out" | grep -F 'control_file="AGENTS.md"' >/dev/null
 
 state="$(extract_attr state)"

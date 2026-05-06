@@ -94,62 +94,6 @@ if ! arg_present --skip-trust "${args[@]-}"; then
   args=(--skip-trust "${args[@]-}")
 fi
 
-_on_stop_script="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)/scripts/on-stop"
-
-write_atmux_gemini_settings() {
-  local settings_file="$1"
-  cat > "$settings_file" <<EOF
-{
-  "hooksConfig": {
-    "enabled": true
-  },
-  "hooks": {
-    "AfterAgent": [
-      {
-        "hooks": [
-          {
-            "name": "atmux-stop-notify",
-            "type": "command",
-            "command": "${_on_stop_script}",
-            "timeout": 5000
-          }
-        ]
-      }
-    ]
-  }
-}
-EOF
-}
-
-is_legacy_atmux_gemini_settings() {
-  local settings_file="$1"
-  [[ -f "$settings_file" ]] || return 1
-  grep -Fq '"atmux-stop-notify"' "$settings_file" || return 1
-  grep -Fq '"hooks"' "$settings_file" || return 1
-  grep -Fq '"enabled": true' "$settings_file" || return 1
-  grep -Fq '"hooksConfig"' "$settings_file" && return 1
-  return 0
-}
-
-# Install an AfterAgent hook (fires at end of every turn) into the worktree's
-# .gemini/settings.json using Gemini CLI's current hooks schema.
-install_gemini_after_agent_hook() {
-  [[ -x "$_on_stop_script" ]] || return 0
-  local settings_dir="${ATMUX_WORKTREE:-$(pwd)}/.gemini"
-  local settings_file="$settings_dir/settings.json"
-  mkdir -p "$settings_dir"
-
-  if [[ -f "$settings_file" ]]; then
-    if is_legacy_atmux_gemini_settings "$settings_file"; then
-      write_atmux_gemini_settings "$settings_file"
-    fi
-    return 0
-  fi
-
-  write_atmux_gemini_settings "$settings_file"
-}
-install_gemini_after_agent_hook
-
 set_bootstrap_state ready
 echo "starting gemini in $(pwd)"
 exec gemini "${args[@]-}"

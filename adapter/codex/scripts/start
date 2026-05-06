@@ -36,7 +36,7 @@ arg_present() {
 
 resolve_intelligence_profile() {
   local intelligence="${ATMUX_INTELLIGENCE:-}"
-  local manifest_path profile model reasoning
+  local manifest_path profile model="" reasoning=""
   manifest_path="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)/manifest"
 
   if [[ -n "$intelligence" && "$intelligence" =~ ^[0-9]+$ ]] \
@@ -69,48 +69,6 @@ write_state() {
   mkdir -p "$state_dir"
   printf 'MODEL=%s\nREASONING_LEVEL=%s\n' "$CODEX_MODEL" "$CODEX_REASONING_LEVEL" > "$state_dir/state.env"
 }
-
-_on_stop_script="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)/scripts/on-stop"
-
-# Install a Stop hook (fires at end of every turn) for Codex.
-# Requires the codex_hooks feature flag and a hooks.json file.
-# Both are written into the worktree's .codex/ directory.
-# Only written when the files do not yet exist.
-install_codex_stop_hook() {
-  [[ -x "$_on_stop_script" ]] || return 0
-  local codex_dir="${ATMUX_WORKTREE:-$(pwd)}/.codex"
-  mkdir -p "$codex_dir"
-
-  local config_file="$codex_dir/config.toml"
-  if [[ ! -f "$config_file" ]]; then
-    cat > "$config_file" <<'EOF'
-[features]
-codex_hooks = true
-EOF
-  fi
-
-  local hooks_file="$codex_dir/hooks.json"
-  if [[ ! -f "$hooks_file" ]]; then
-    cat > "$hooks_file" <<EOF
-{
-  "hooks": {
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "${_on_stop_script}",
-            "timeout": 60
-          }
-        ]
-      }
-    ]
-  }
-}
-EOF
-  fi
-}
-install_codex_stop_hook
 
 CODEX_MODEL='gpt-5.5'
 CODEX_REASONING_LEVEL='medium'

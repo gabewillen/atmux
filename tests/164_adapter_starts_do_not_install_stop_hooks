@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$REPO_ROOT"
+
+if git ls-files --error-unmatch .codex/config.toml .codex/hooks.json >/dev/null 2>&1; then
+  echo "repo still tracks Codex stop-hook configuration" >&2
+  git ls-files .codex/config.toml .codex/hooks.json >&2
+  exit 1
+fi
+
+if git grep -n -E 'adapter/scripts/on-stop|atmux-stop-notify|codex_hooks|AfterAgent|"Stop"|Stop hook' \
+  -- adapter roles . ':!tests/164_adapter_starts_do_not_install_stop_hooks' >/tmp/atmux-stop-hook-grep.$$ 2>/dev/null; then
+  echo "repo still contains stop-hook installer/config references" >&2
+  cat /tmp/atmux-stop-hook-grep.$$ >&2
+  rm -f /tmp/atmux-stop-hook-grep.$$
+  exit 1
+fi
+rm -f /tmp/atmux-stop-hook-grep.$$
+
+echo "ok: adapter stop hooks are not installed or tracked"

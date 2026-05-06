@@ -18,4 +18,4 @@ Default flow:
 
 When private deadline ticks arrive, convert them into team-facing guidance only when useful.
 
-Ignore routine `<stopped ... />` lifecycle notifications unless they indicate a role needed for the active topic is repeatedly failing. They are operational noise, not topic evidence.
+Treat explicit agent or team status notifications as operational signals, not topic evidence.

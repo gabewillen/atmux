@@ -14,8 +14,9 @@ Usage:
 
 Description:
   Register the current pane to watch a GitHub pull request discussion stream.
-  A shared background worker polls for new comments/reviews and queues ATMUX
-  notifications into the pane until you stop the watch, or the PR closes/merges.
+  A shared background worker polls for new comments, reviews, and failing CI
+  check runs on the PR's head commit, and queues ATMUX notifications into the
+  pane until you stop the watch, or the PR closes/merges.
 
   Multiple local watchers for the same PR share a single polling worker so only
   one process polls GitHub at a time.
@@ -184,6 +185,25 @@ fetch_pr_poll_data() {
               }
             }
           }
+          commits(last: 1) {
+            nodes {
+              commit {
+                checkSuites(first: 20) {
+                  nodes {
+                    app { slug }
+                    checkRuns(first: 50) {
+                      nodes {
+                        databaseId
+                        name
+                        conclusion
+                        completedAt
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
         }
       }
     }
@@ -226,7 +246,20 @@ fetch_pr_poll_data() {
                 author: (.author.login // "unknown"),
                 state: "",
                 body: (.body // "")
-              })
+              }),
+            ($pr.commits.nodes[]?.commit.checkSuites.nodes[]? as $suite
+              | $suite.checkRuns.nodes[]?
+              | select(.conclusion as $c
+                  | ["FAILURE","TIMED_OUT","CANCELLED","STARTUP_FAILURE","ACTION_REQUIRED"]
+                  | index($c))
+              | {
+                  updatedAt: (.completedAt // ""),
+                  kind: "check_run",
+                  id: ((.databaseId // 0) | tostring),
+                  author: ($suite.app.slug // "ci"),
+                  state: (.conclusion // "FAILURE"),
+                  body: ("\(.name // "check") \((.conclusion // "FAILURE") | ascii_downcase)")
+                })
           ]
           | sort_by([.updatedAt, .id])
           | .[]
@@ -238,10 +271,14 @@ fetch_pr_poll_data() {
 
 notification_payload_for_line() {
   local pr_url="$1" owner="$2" repo="$3" number="$4" line="$5"
-  local updated_at kind event_id author state text
+  local updated_at kind event_id author state text hint
 
   IFS='|' read -r updated_at kind event_id author state text <<< "$line"
-  build_notification "pr" "github" "gh pr view $pr_url --comments" \
+  case "$kind" in
+    check_run) hint="gh pr checks $number --repo $owner/$repo" ;;
+    *)         hint="gh pr view $pr_url --comments" ;;
+  esac
+  build_notification "pr" "github" "$hint" \
     "url=$pr_url" \
     "repo=$owner/$repo" \
     "number=$number" \

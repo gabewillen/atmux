@@ -31,6 +31,40 @@ Before creating a team role, inspect the relevant role manifest or help output i
 
 If you receive a duplicate notification for a message or event you already read and are actively handling, do not restart the task or re-read the same message unless the content changed. Acknowledge it as a duplicate in your own notes and continue the current delegation plan.
 
+## Monitoring delegated work (event-driven)
+
+Do **not** burn your foreground session on naive polling loops. Avoid patterns such as indefinitely repeating `sleep` with `atmux message list --unread`, `ps`/process greps, or other status commands just to watch for progress. Likewise avoid **long blocking sleeps** as your primary coordination mechanism—you should not occupy the adapter's prompt in a trivial wait/retry spinner.
+
+Treat **notifications and scheduled reminders** as the cues to pull state; run lightweight one-shot checks *after* something wakes you, not on an unprompted timer loop inside the CLI.
+
+Prefer **process** exits (`atmux process watch` on exec-tracked children), **agent** idle boundaries (`atmux agent watch`), **team** readiness via automatic **`team-idle` notifications** plus **`atmux team status`** for one-shot rollups—rather than hand-rolled sleep/`ps`/`message list` loops.
+
+Prefer:
+
+- **`atmux schedule --notification "<text>"`** with **`--once <duration>`** or **`--interval <duration>`** for self ticks and follow-ups (“recheck QA agent”, “read inbox”, “summarize blocker”). Scheduled notifications arrive at **your** session—do not misuse `atmux schedule` to ping yourself via `send` to the same agent.
+- **`atmux exec --detach`** / **`--shared`** when you kick off repo commands (`make`, tests, scripted batch work) so completion surfaces as an ATMUX exec notification instead of trapping you in foreground output until the shell returns.
+- **`atmux process watch <pid>`** for **exec-tracked** children when you specifically need exit/reason fidelity beyond the notifier (per `atmux exec` bookkeeping under `ATMUX_HOME/exec/...`).
+- **`atmux agent watch <name>`** when you need to block until **that agent** sits idle or a **`--timeout`** fires—use as an intentional single wait with sensible **`--idle`** / **`--timeout`**, not stitched into tight repeated loops. Prefer **automatic team-idle notifications** (`team-idle`) for whole-team waits instead of multiplexing watches yourself.
+- **Existing watcher notifications** (`atmux pr watch …`, `atmux issue watch …`, feed watchers) and delegate replies—react when they arrive rather than probing the same sinks on a periodic sleep cadence.
+
+Examples:
+
+```sh
+atmux schedule --interval 45m --notification "triage unanswered delegate messages once"
+```
+
+```sh
+atmux exec --detach -- make test-all
+```
+
+```sh
+ATMUX_ALLOW_OUTSIDE_TMUX=1 atmux process watch 12345 --timeout 7200
+```
+
+```sh
+atmux agent watch implementer --idle 180 --timeout 7200 --lines 200
+```
+
 ## Adapter Selection
 
 Before creating any agent or team, choose the adapter deliberately. Consider both adapter capabilities and current utilization within the team:

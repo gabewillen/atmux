@@ -17,6 +17,23 @@ xml_escape() {
   printf '%s\n' "$s"
 }
 
+# Map OpenCode --variant / JSON "variant" labels to atmux REASONING_LEVEL
+# (inverse of scripts/start reasoning_to_variant).
+variant_to_reasoning_level() {
+  local raw v
+  raw="${1:-}"
+  [[ -n "$raw" ]] || return 1
+  v="$(printf '%s' "$raw" | tr '[:upper:]' '[:lower:]')"
+  case "$v" in
+    low) printf '%s\n' low ;;
+    medium) printf '%s\n' medium ;;
+    high) printf '%s\n' high ;;
+    xhigh|extra-high|extra_high|extrahigh|extra\ high)
+      printf '%s\n' 'extra-high' ;;
+    *) return 1 ;;
+  esac
+}
+
 resolve_target() {
   if [[ -n "${ATMUX_TARGET_PANE:-}" ]]; then
     printf '%s\n' "$ATMUX_TARGET_PANE"
@@ -39,7 +56,7 @@ resolve_target() {
 
 parse_model_and_reasoning() {
   local snapshot="$1"
-  local line parsed_model compact
+  local line parsed_model parsed_variant compact lvl
 
   compact="$(printf '%s' "$snapshot" | tr -d '\n')"
 
@@ -51,11 +68,44 @@ parse_model_and_reasoning() {
     MODEL="$parsed_model"
   fi
 
+  parsed_variant="$(printf '%s\n' "$compact" | sed -n 's/.*"type":"init".*"variant":"\([^"]*\)".*/\1/p')"
+  if [[ -z "$parsed_variant" ]]; then
+    parsed_variant="$(printf '%s\n' "$compact" | sed -n 's/.*"variant":"\([^"]*\)".*/\1/p' | tail -n 1)"
+  fi
+  if [[ -n "$parsed_variant" ]]; then
+    lvl="$(variant_to_reasoning_level "$parsed_variant" || true)"
+    if [[ -n "$lvl" ]]; then
+      REASONING_LEVEL="$lvl"
+    fi
+  fi
+
   line="$(printf '%s\n' "$snapshot" | awk '/[Mm]odel:/ { l=$0 } END { print l }')"
   if [[ -n "$line" ]]; then
     parsed_model="$(printf '%s\n' "$line" | sed -nE 's/.*[Mm]odel:[[:space:]]*([^[:space:]]+).*/\1/p')"
     if [[ -n "$parsed_model" ]] && [[ "$parsed_model" =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]*/[a-zA-Z0-9][a-zA-Z0-9._-]*$ ]]; then
       MODEL="$parsed_model"
+    fi
+  fi
+
+  line="$(printf '%s\n' "$snapshot" | awk '/[Vv]ariant:/ { l=$0 } END { print l }')"
+  if [[ -n "$line" ]]; then
+    parsed_variant="$(printf '%s\n' "$line" | sed -nE 's/.*[Vv]ariant:[[:space:]]*([^[:space:]]+).*/\1/p')"
+    if [[ -n "$parsed_variant" ]]; then
+      lvl="$(variant_to_reasoning_level "$parsed_variant" || true)"
+      if [[ -n "$lvl" ]]; then
+        REASONING_LEVEL="$lvl"
+      fi
+    fi
+  fi
+
+  line="$(printf '%s\n' "$snapshot" | awk '/--variant[[:space:]]/ { l=$0 } END { print l }')"
+  if [[ -n "$line" ]]; then
+    parsed_variant="$(printf '%s\n' "$line" | sed -nE 's/.*--variant[[:space:]]+([^[:space:]]+).*/\1/p')"
+    if [[ -n "$parsed_variant" ]]; then
+      lvl="$(variant_to_reasoning_level "$parsed_variant" || true)"
+      if [[ -n "$lvl" ]]; then
+        REASONING_LEVEL="$lvl"
+      fi
     fi
   fi
 

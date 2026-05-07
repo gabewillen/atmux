@@ -329,14 +329,18 @@ kill_watcher() {
       rm -rf "$watcher_file"
       ;;
     team-idle)
-      local watcher_file worker_pid
+      local watcher_file worker_pid window_id
       watcher_file="$(team_idle_watch_watchers_dir "$key")/$watcher_name"
       if [[ ! -e "$watcher_file" ]]; then
         echo "atmux watcher kill: watcher not found: $watcher_id" >&2
         exit 2
       fi
       worker_pid="$(atmux_fs_read_trimmed "$watcher_file/worker.pid")"
+      window_id="$(atmux_fs_read_trimmed "$watcher_file/window_id")"
       rm -rf "$watcher_file"
+      if [[ -n "$window_id" ]]; then
+        tmux kill-window -t "$window_id" >/dev/null 2>&1 || true
+      fi
       if [[ -n "$worker_pid" ]] && kill -0 "$worker_pid" 2>/dev/null; then
         kill -TERM "$worker_pid" 2>/dev/null || true
       fi

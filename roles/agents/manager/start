@@ -10,6 +10,14 @@ state="${ATMUX_ROLE_STATE_DIR:-}"
 [[ -n "$state" ]] || exit 0
 mkdir -p "$state"
 
+if [[ -f "$state/watcher-ids" ]]; then
+  while IFS= read -r watcher_id; do
+    [[ -n "$watcher_id" ]] || continue
+    atmux watcher kill "$watcher_id" >/dev/null 2>&1 || true
+  done < "$state/watcher-ids"
+fi
+: > "$state/watcher-ids"
+
 if ! command -v gh >/dev/null 2>&1; then
   echo "manager: gh not installed; skipping issue/PR feed subscriptions" >&2
   exit 0

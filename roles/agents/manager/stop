@@ -5,6 +5,21 @@ set -euo pipefail
 state="${ATMUX_ROLE_STATE_DIR:-}"
 [[ -n "$state" && -d "$state" ]] || exit 0
 
+case "$state" in
+  /|/tmp|/var|/var/tmp|"$HOME"|"$HOME"/.atmux|"$PWD")
+    echo "manager stop: refusing to remove suspicious state path: $state" >&2
+    exit 1
+    ;;
+esac
+
+case "$state" in
+  "$ATMUX_HOME"/state/agents/*|"$ATMUX_HOME"/roles/state/*|/tmp/atmux-manager-role-test.*) ;;
+  *)
+    echo "manager stop: refusing to remove unexpected state path: $state" >&2
+    exit 1
+    ;;
+esac
+
 if [[ -f "$state/watcher-ids" ]]; then
   while IFS= read -r watcher_id; do
     [[ -n "$watcher_id" ]] || continue

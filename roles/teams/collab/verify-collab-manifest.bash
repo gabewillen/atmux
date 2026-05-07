@@ -15,8 +15,10 @@ first_member="${MEMBERS[0]%%[[:space:]]*}"
   printf 'first MEMBER entry has empty first token\n' >&2
   exit 1
 }
-if [[ "$first_member" != "${ATMUX_TEAM}-facilitator" && "$first_member" != *-facilitator ]]; then
-  printf 'first MEMBER token invalid: first_member=%q MEMBERS[0]=%q\n' "$first_member" "${MEMBERS[0]}" >&2
+expected_facilitator="${ATMUX_TEAM}-facilitator"
+if [[ "$first_member" != "$expected_facilitator" ]]; then
+  printf 'first MEMBER token invalid: first_member=%q MEMBERS[0]=%q (expected %q)\n' \
+    "$first_member" "${MEMBERS[0]}" "$expected_facilitator" >&2
   exit 1
 fi
 printf 'OK: %d MEMBERS, facilitator first\n' "${#MEMBERS[@]}"

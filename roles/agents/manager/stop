@@ -9,8 +9,6 @@ atmux_home="${ATMUX_HOME:-${HOME:-}/.atmux}"
   echo "manager stop: unable to resolve ATMUX_HOME" >&2
   exit 1
 }
-tmpdir="${TMPDIR:-/tmp}"
-tmpdir="${tmpdir%/}"
 
 case "$state" in
   /|/tmp|/var|/var/tmp|"${HOME:-}"|"${HOME:-}"/.atmux|"$PWD")
@@ -20,7 +18,7 @@ case "$state" in
 esac
 
 case "$state" in
-  "$atmux_home"/state/agents/*|"$atmux_home"/roles/state/*|/tmp/atmux-manager-role-test.*|"$tmpdir"/atmux-manager-role-test.*) ;;
+  "$atmux_home"/state/agents/*|"$atmux_home"/roles/state/*) ;;
   *)
     echo "manager stop: refusing to remove unexpected state path: $state" >&2
     exit 1

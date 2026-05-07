@@ -55,12 +55,13 @@ if [[ "$(cat "$WORK/killed")" != $'old-issue\nold-pr' ]]; then
   exit 1
 fi
 
-tmpdir="${TMPDIR:-/tmp}"
-tmpdir="${tmpdir%/}"
-stop_state="$(mktemp -d "$tmpdir/atmux-manager-role-test.XXXXXX")"
+test_home="$WORK/home"
+stop_state="$test_home/.atmux/state/agents/octo-example/manager/role"
+mkdir -p "$stop_state"
 printf 'old-stop\n' > "$stop_state/watcher-ids"
 
 env -u ATMUX_HOME \
+  HOME="$test_home" \
   ATMUX_TEST_KILLED="$WORK/stop-killed" \
   ATMUX_ROLE_STATE_DIR="$stop_state" \
   PATH="$stub_bin:$PATH" \

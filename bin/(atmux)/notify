@@ -193,6 +193,31 @@ team_idle_watcher_id() {
   printf 'team-idle:%s:%s\n' "$(team_idle_watch_key "$repo" "$team")" "$watcher_name"
 }
 
+agent_idle_watch_key() {
+  local repo="$1" agent="$2"
+  atmux_resolve_normalized_name "${repo}--agent--${agent}"
+}
+
+agent_idle_watch_dir() {
+  local repo="$1" agent="$2"
+  printf '%s/watch-agent-idle/%s\n' "$ATMUX_HOME" "$(agent_idle_watch_key "$repo" "$agent")"
+}
+
+agent_idle_watchers_dir() {
+  local repo="$1" agent="$2"
+  printf '%s/watchers\n' "$(agent_idle_watch_dir "$repo" "$agent")"
+}
+
+agent_idle_watcher_dir() {
+  local repo="$1" agent="$2" watcher_name="$3"
+  printf '%s/%s\n' "$(agent_idle_watchers_dir "$repo" "$agent")" "$watcher_name"
+}
+
+agent_idle_watcher_id() {
+  local repo="$1" agent="$2" watcher_name="$3"
+  printf 'agent-idle:%s:%s\n' "$(agent_idle_watch_key "$repo" "$agent")" "$watcher_name"
+}
+
 resolve_notify_script_path() {
   local source_root="$1"
   local notify_script="$source_root/bin/(atmux)/notify"

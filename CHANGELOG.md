@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.24.1 — Collab facilitator cutover
+## 0.25.0 — Collab facilitator cutover
 
 - Removed collab member roles `leader`, `arbiter`, and `recorder` (sessions and
   role directories). Default

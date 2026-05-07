@@ -10,8 +10,13 @@ source "$here/manifest"
   printf 'expected >=2 MEMBERS entries, got %d\n' "${#MEMBERS[@]}" >&2
   exit 1
 }
-[[ "${MEMBERS[0]}" == *facilitator* ]] || {
-  printf 'first MEMBER must be facilitator, got %q\n' "${MEMBERS[0]}" >&2
+first_member="${MEMBERS[0]%%[[:space:]]*}"
+[[ -n "$first_member" ]] || {
+  printf 'first MEMBER entry has empty first token\n' >&2
   exit 1
 }
+if [[ "$first_member" != "${ATMUX_TEAM}-facilitator" && "$first_member" != *-facilitator ]]; then
+  printf 'first MEMBER token invalid: first_member=%q MEMBERS[0]=%q\n' "$first_member" "${MEMBERS[0]}" >&2
+  exit 1
+fi
 printf 'OK: %d MEMBERS, facilitator first\n' "${#MEMBERS[@]}"

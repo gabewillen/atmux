@@ -110,6 +110,17 @@ watchers="$(ATMUX_HOME="$atmux_home" ATMUX_REPO="$repo_name" "$ATMUX_BIN" watche
 printf '%s\n' "$watchers" | grep -Fq "team-idle:${repo_name}--team--${team_name}:"
 watcher_id="$(printf '%s\n' "$watchers" | grep -F "team-idle:${repo_name}--team--${team_name}:" | head -n1)"
 [[ -n "$watcher_id" ]] || { echo "failed to parse team-idle watcher id" >&2; exit 1; }
+watcher_name="${watcher_id##*:}"
+watcher_dir="$atmux_home/watch-team-idle/${repo_name}--team--${team_name}/watchers/$watcher_name"
+worker_pid="$(cat "$watcher_dir/worker.pid" 2>/dev/null || true)"
+window_id="$(cat "$watcher_dir/window_id" 2>/dev/null || true)"
+[[ -n "$worker_pid" ]] || { echo "team-idle watcher did not record worker pid" >&2; exit 1; }
+[[ -n "$window_id" ]] || { echo "team-idle watcher did not record tmux window id" >&2; exit 1; }
+kill -0 "$worker_pid" 2>/dev/null || { echo "team-idle watcher process is not alive after team create" >&2; exit 1; }
+tmux list-windows -a -F '#{window_id}' | grep -Fxq "$window_id" || {
+  echo "team-idle watcher tmux window is not alive after team create" >&2
+  exit 1
+}
 
 sleep 2
 if wait_for_text "$creator_pane" '<notification type="team-idle"' 1; then
@@ -135,6 +146,41 @@ ATMUX_HOME="$atmux_home" ATMUX_REPO="$repo_name" "$ATMUX_BIN" watcher kill "$wat
 watchers_after="$(ATMUX_HOME="$atmux_home" ATMUX_REPO="$repo_name" "$ATMUX_BIN" watcher list)"
 if printf '%s\n' "$watchers_after" | grep -Fq "$watcher_id"; then
   echo "team-idle watcher survived watcher kill" >&2
+  exit 1
+fi
+if tmux list-windows -a -F '#{window_id}' | grep -Fxq "$window_id"; then
+  echo "team-idle watcher tmux window survived watcher kill" >&2
+  exit 1
+fi
+
+team_kill_name="${team_name}kill"
+TMUX=1 TMUX_PANE="$creator_pane" \
+  ATMUX_HOME="$atmux_home" ATMUX_REPO="$repo_name" ATMUX_SOURCE_ROOT="$REPO_ROOT" \
+  ATMUX_TEAM_IDLE_SECONDS=1 ATMUX_TEAM_IDLE_INTERVAL=1 \
+  ATMUX_AGENT_NAME="creator" ATMUX_SESSION_NAME="$creator_session" \
+  "$ATMUX_BIN" team create "$team_kill_name" --shared-worktree >/tmp/atmux-team-idle-kill-create.out 2>/tmp/atmux-team-idle-kill-create.err
+
+watchers="$(ATMUX_HOME="$atmux_home" ATMUX_REPO="$repo_name" "$ATMUX_BIN" watcher list)"
+printf '%s\n' "$watchers" | grep -Fq "team-idle:${repo_name}--team--${team_kill_name}:"
+team_kill_watcher_id="$(printf '%s\n' "$watchers" | grep -F "team-idle:${repo_name}--team--${team_kill_name}:" | head -n1)"
+[[ -n "$team_kill_watcher_id" ]] || { echo "failed to parse team-kill watcher id" >&2; exit 1; }
+team_kill_watcher_name="${team_kill_watcher_id##*:}"
+team_kill_watcher_dir="$atmux_home/watch-team-idle/${repo_name}--team--${team_kill_name}/watchers/$team_kill_watcher_name"
+team_kill_window_id="$(cat "$team_kill_watcher_dir/window_id" 2>/dev/null || true)"
+[[ -n "$team_kill_window_id" ]] || { echo "team-kill watcher did not record tmux window id" >&2; exit 1; }
+tmux list-windows -a -F '#{window_id}' | grep -Fxq "$team_kill_window_id" || {
+  echo "team-kill watcher tmux window is not alive after team create" >&2
+  exit 1
+}
+
+ATMUX_HOME="$atmux_home" ATMUX_REPO="$repo_name" "$ATMUX_BIN" team kill "$team_kill_name"
+watchers_after="$(ATMUX_HOME="$atmux_home" ATMUX_REPO="$repo_name" "$ATMUX_BIN" watcher list)"
+if printf '%s\n' "$watchers_after" | grep -Fq "$team_kill_watcher_id"; then
+  echo "team-idle watcher survived team kill" >&2
+  exit 1
+fi
+if tmux list-windows -a -F '#{window_id}' | grep -Fxq "$team_kill_window_id"; then
+  echo "team-idle watcher tmux window survived team kill" >&2
   exit 1
 fi
 

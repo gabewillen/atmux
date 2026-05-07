@@ -589,16 +589,50 @@ subscribe_caller_to_team_idle() {
   [[ -n "$atmux_bin" ]] || return 0
   source_root="$(resolve_source_root_for_team)"
   log_file="$watcher_dir/worker.log"
-  (
-    ATMUX_HOME="$ATMUX_HOME" \
-    ATMUX_SOURCE_ROOT="$source_root" \
-    ATMUX_REPO="$repo" \
-      "$atmux_bin" team _idle-watch \
-        --repo "$repo" --team "$team" --watcher "$watcher_name" \
-        --idle "${ATMUX_TEAM_IDLE_SECONDS:-30}" \
-        --interval "${ATMUX_TEAM_IDLE_INTERVAL:-2}"
-  ) >>"$log_file" 2>&1 &
-  atmux_fs_write_field "$watcher_dir/worker.pid" "$!"
+
+  local -a watch_cmd=(
+    env
+    "ATMUX_HOME=$ATMUX_HOME"
+    "ATMUX_SOURCE_ROOT=$source_root"
+    "ATMUX_REPO=$repo"
+    "$atmux_bin" team _idle-watch
+    --repo "$repo" --team "$team" --watcher "$watcher_name"
+    --idle "${ATMUX_TEAM_IDLE_SECONDS:-30}"
+    --interval "${ATMUX_TEAM_IDLE_INTERVAL:-2}"
+  )
+  local quoted_cmd="" arg window_id=""
+  for arg in "${watch_cmd[@]}"; do
+    quoted_cmd+="$(printf '%q ' "$arg")"
+  done
+  quoted_cmd+=">>$(printf '%q' "$log_file") 2>&1"
+
+  # Keep the long-running watcher under tmux, not as a bare child of
+  # `team create`. Real adapter panes may reap or hang up background
+  # children when the submitted command exits; a tmux window has the
+  # same lifetime model as other atmux watchers and stays tied to the
+  # creator session.
+  if window_id="$(tmux new-window -a -d -P -F '#{window_id}' \
+        -t "$session" \
+        -n "team-idle-${team}" \
+        -c "${ATMUX_WORKTREE:-$PWD}" \
+        "$quoted_cmd" 2>>"$log_file")" && [[ -n "$window_id" ]]; then
+    atmux_fs_write_field "$watcher_dir/window_id" "$window_id"
+    local worker_pid=""
+    worker_pid="$(tmux list-panes -t "$window_id" -F '#{pane_pid}' 2>/dev/null | head -n1 || true)"
+    [[ -n "$worker_pid" ]] && atmux_fs_write_field "$watcher_dir/worker.pid" "$worker_pid"
+  else
+    printf '[%s] tmux new-window failed; falling back to background process\n' "$(date +%H:%M:%S)" >>"$log_file"
+    (
+      ATMUX_HOME="$ATMUX_HOME" \
+      ATMUX_SOURCE_ROOT="$source_root" \
+      ATMUX_REPO="$repo" \
+        "$atmux_bin" team _idle-watch \
+          --repo "$repo" --team "$team" --watcher "$watcher_name" \
+          --idle "${ATMUX_TEAM_IDLE_SECONDS:-30}" \
+          --interval "${ATMUX_TEAM_IDLE_INTERVAL:-2}"
+    ) >>"$log_file" 2>&1 &
+    atmux_fs_write_field "$watcher_dir/worker.pid" "$!"
+  fi
   team_idle_watcher_id "$repo" "$team" "$watcher_name"
 }
 
@@ -944,7 +978,11 @@ create_team() {
   local idle_subscription_attr=""
   if [[ -n "${TMUX:-}" ]]; then
     local caller_session caller_repo
-    caller_session="$(tmux display-message -p '#S' 2>/dev/null || true)"
+    if [[ -n "${TMUX_PANE:-}" ]]; then
+      caller_session="$(tmux display-message -t "$TMUX_PANE" -p '#S' 2>/dev/null || true)"
+    else
+      caller_session="$(tmux display-message -p '#S' 2>/dev/null || true)"
+    fi
     if [[ -n "$caller_session" ]] && tmux has-session -t "$caller_session" 2>/dev/null; then
       caller_repo="$(tmux show-environment -t "$caller_session" ATMUX_REPO 2>/dev/null | sed -n 's/^ATMUX_REPO=//p' || true)"
       if [[ -z "$caller_repo" || "$caller_repo" == "$repo_name" ]]; then
@@ -1049,12 +1087,16 @@ remove_team_owned_worktree() {
 }
 
 remove_team_idle_watchers() {
-  local repo="$1" team="$2" root watcher_dir worker_pid
+  local repo="$1" team="$2" root watcher_dir worker_pid window_id
   root="$(team_idle_watchers_dir "$repo" "$team")"
   [[ -d "$root" ]] || return 0
   while IFS= read -r watcher_dir; do
     [[ -d "$watcher_dir" ]] || continue
     worker_pid="$(cat "$watcher_dir/worker.pid" 2>/dev/null | tr -d '\r\n' || true)"
+    window_id="$(cat "$watcher_dir/window_id" 2>/dev/null | tr -d '\r\n' || true)"
+    if [[ -n "$window_id" ]]; then
+      tmux kill-window -t "$window_id" >/dev/null 2>&1 || true
+    fi
     if [[ -n "$worker_pid" ]] && kill -0 "$worker_pid" 2>/dev/null; then
       kill -TERM "$worker_pid" 2>/dev/null || true
     fi

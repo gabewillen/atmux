@@ -127,38 +127,7 @@ read_team_role_manifest() {
 }
 
 resolve_atmux_runner_for_team() {
-  # Locate the `atmux` front-end so the team can spawn members. Mirrors the
-  # path search used inside agent create.
-  if [[ -n "${ATMUX_SOURCE_ROOT:-}" && -x "${ATMUX_SOURCE_ROOT}/bin/atmux" ]]; then
-    printf '%s\n' "${ATMUX_SOURCE_ROOT}/bin/atmux"
-    return 0
-  fi
-  local repo_root=""
-  if repo_root="$(git rev-parse --show-toplevel 2>/dev/null)"; then
-    if [[ -x "$repo_root/bin/atmux" ]]; then
-      printf '%s\n' "$repo_root/bin/atmux"
-      return 0
-    fi
-  fi
-  if command -v atmux >/dev/null 2>&1; then
-    printf '%s\n' atmux
-    return 0
-  fi
-  return 1
-}
-
-resolve_source_root_for_team() {
-  if [[ -n "${ATMUX_SOURCE_ROOT:-}" && -d "$ATMUX_SOURCE_ROOT" ]]; then
-    printf '%s\n' "$ATMUX_SOURCE_ROOT"
-    return 0
-  fi
-  local source_root
-  source_root="$(cd -- "$HERE/../.." 2>/dev/null && pwd || true)"
-  if [[ -n "$source_root" && -x "$source_root/bin/atmux" ]]; then
-    printf '%s\n' "$source_root"
-    return 0
-  fi
-  printf '%s/src/atmux\n' "${ATMUX_HOME:-$HOME/.atmux}"
+  atmux_resolve_runner_bin
 }
 
 parse_duration_seconds() {
@@ -558,82 +527,6 @@ run_team_idle_watch() {
     fi
     sleep "$interval"
   done
-}
-
-subscribe_caller_to_team_idle() {
-  local repo="$1" team="$2"
-  local pane="" session="" agent="" watcher_name="" watcher_dir="" atmux_bin="" source_root="" log_file=""
-  pane="$(atmux_resolve_current_pane)"
-  [[ -n "$pane" ]] || return 0
-  if ! tmux display-message -t "$pane" -p '#{pane_id}' >/dev/null 2>&1; then
-    return 0
-  fi
-  session="$(tmux display-message -t "$pane" -p '#{session_name}' 2>/dev/null || true)"
-  agent="${ATMUX_AGENT_NAME:-}"
-  if [[ -z "$agent" && -n "$session" ]]; then
-    agent="$(atmux_resolve_session_env "$session" ATMUX_AGENT_NAME)"
-  fi
-  [[ -n "$agent" || "$(atmux_resolve_session_env "$session" ATMUX_SESSION_KIND)" == "agent" ]] || return 0
-
-  watcher_name="$(pane_queue_key "$pane")"
-  watcher_dir="$(team_idle_watcher_dir "$repo" "$team" "$watcher_name")"
-  mkdir -p "$watcher_dir"
-  atmux_fs_write_field "$watcher_dir/pane" "$pane"
-  atmux_fs_write_field "$watcher_dir/session" "$session"
-  atmux_fs_write_field "$watcher_dir/agent" "$agent"
-  atmux_fs_write_field "$watcher_dir/repo" "$repo"
-  atmux_fs_write_field "$watcher_dir/team" "$team"
-  atmux_fs_write_field "$watcher_dir/subscribed_at" "$(timestamp_utc)"
-
-  atmux_bin="$(resolve_atmux_runner_for_team || true)"
-  [[ -n "$atmux_bin" ]] || return 0
-  source_root="$(resolve_source_root_for_team)"
-  log_file="$watcher_dir/worker.log"
-
-  local -a watch_cmd=(
-    env
-    "ATMUX_HOME=$ATMUX_HOME"
-    "ATMUX_SOURCE_ROOT=$source_root"
-    "ATMUX_REPO=$repo"
-    "$atmux_bin" team _idle-watch
-    --repo "$repo" --team "$team" --watcher "$watcher_name"
-    --idle "${ATMUX_TEAM_IDLE_SECONDS:-30}"
-    --interval "${ATMUX_TEAM_IDLE_INTERVAL:-2}"
-  )
-  local quoted_cmd="" arg window_id=""
-  for arg in "${watch_cmd[@]}"; do
-    quoted_cmd+="$(printf '%q ' "$arg")"
-  done
-  quoted_cmd+=">>$(printf '%q' "$log_file") 2>&1"
-
-  # Keep the long-running watcher under tmux, not as a bare child of
-  # `team create`. Real adapter panes may reap or hang up background
-  # children when the submitted command exits; a tmux window has the
-  # same lifetime model as other atmux watchers and stays tied to the
-  # creator session.
-  if window_id="$(tmux new-window -a -d -P -F '#{window_id}' \
-        -t "$session" \
-        -n "team-idle-${team}" \
-        -c "${ATMUX_WORKTREE:-$PWD}" \
-        "$quoted_cmd" 2>>"$log_file")" && [[ -n "$window_id" ]]; then
-    atmux_fs_write_field "$watcher_dir/window_id" "$window_id"
-    local worker_pid=""
-    worker_pid="$(tmux list-panes -t "$window_id" -F '#{pane_pid}' 2>/dev/null | head -n1 || true)"
-    [[ -n "$worker_pid" ]] && atmux_fs_write_field "$watcher_dir/worker.pid" "$worker_pid"
-  else
-    printf '[%s] tmux new-window failed; falling back to background process\n' "$(date +%H:%M:%S)" >>"$log_file"
-    (
-      ATMUX_HOME="$ATMUX_HOME" \
-      ATMUX_SOURCE_ROOT="$source_root" \
-      ATMUX_REPO="$repo" \
-        "$atmux_bin" team _idle-watch \
-          --repo "$repo" --team "$team" --watcher "$watcher_name" \
-          --idle "${ATMUX_TEAM_IDLE_SECONDS:-30}" \
-          --interval "${ATMUX_TEAM_IDLE_INTERVAL:-2}"
-    ) >>"$log_file" 2>&1 &
-    atmux_fs_write_field "$watcher_dir/worker.pid" "$!"
-  fi
-  team_idle_watcher_id "$repo" "$team" "$watcher_name"
 }
 
 create_team() {

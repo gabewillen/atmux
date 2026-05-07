@@ -1,0 +1,187 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+source "$(dirname "${BASH_SOURCE[0]}")/lib/isolate-tmux.sh"
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+ATMUX_BIN="$REPO_ROOT/bin/atmux"
+export ATMUX_SOURCE_ROOT="$REPO_ROOT"
+
+wait_for_text() {
+  local target="$1"
+  local needle="$2"
+  local timeout="${3:-10}"
+  local deadline now snap compact
+  deadline=$(( $(date +%s) + timeout ))
+  while true; do
+    snap="$(tmux capture-pane -p -t "$target" -S -300 2>/dev/null || true)"
+    compact="$(printf '%s' "$snap" | tr -d '\r\n')"
+    if printf '%s' "$compact" | grep -Fq "$needle"; then
+      return 0
+    fi
+    now="$(date +%s)"
+    (( now < deadline )) || return 1
+    sleep 0.1
+  done
+}
+
+tmp_root="$(mktemp -d "${TMPDIR:-/tmp}/atmux-agent-idle.XXXXXX")"
+atmux_home="$tmp_root/.atmux"
+repo_name="agentidle${RANDOM}"
+creator_session="atmux-${repo_name}-creator"
+child_agent="worker${RANDOM}"
+cleanup_agent="cleanup${RANDOM}"
+team_agent="member${RANDOM}"
+team_name="idleteam${RANDOM}"
+
+cleanup() {
+  TMUX_TMPDIR="$ATMUX_TESTS_TMUX_TMPDIR" tmux kill-server >/dev/null 2>&1 || true
+  rm -rf "$tmp_root"
+}
+trap cleanup EXIT
+
+mkdir -p "$atmux_home/adapters/mockidle/scripts"
+cat > "$atmux_home/adapters/mockidle/cmd" <<'ADAPTER'
+#!/usr/bin/env bash
+set -euo pipefail
+case "${1:-}" in
+  control-file) printf 'AGENTS.md\n' ;;
+  prepare-prompt) : ;;
+  start) sleep 600 ;;
+  status) printf '<status adapter="mockidle" owner="agent" state="busy" model="" reasoning_level="" control_file="AGENTS.md" />\n' ;;
+  model) printf 'mock\n' ;;
+  reasoning-level) printf 'medium\n' ;;
+  *) exit 2 ;;
+esac
+ADAPTER
+cat > "$atmux_home/adapters/mockidle/scripts/status" <<'STATUS'
+#!/usr/bin/env bash
+set -euo pipefail
+pane="${ATMUX_TARGET_PANE:-}"
+session="$(tmux display-message -t "$pane" -p '#{session_name}' 2>/dev/null || true)"
+state="$(tmux show-environment -t "$session" ATMUX_STATE 2>/dev/null | sed -n 's/^ATMUX_STATE=//p' || true)"
+printf '<status adapter="mockidle" state="%s" />\n' "${state:-busy}"
+STATUS
+chmod +x "$atmux_home/adapters/mockidle/cmd" "$atmux_home/adapters/mockidle/scripts/status"
+
+tmux new-session -d -s "$creator_session" -n "$creator_session" -c "$REPO_ROOT" "/bin/bash" -l
+tmux set-environment -t "$creator_session" ATMUX_HOME "$atmux_home"
+tmux set-environment -t "$creator_session" ATMUX_REPO "$repo_name"
+tmux set-environment -t "$creator_session" ATMUX_SOURCE_ROOT "$REPO_ROOT"
+tmux set-environment -t "$creator_session" ATMUX_AGENT_NAME "creator"
+tmux set-environment -t "$creator_session" ATMUX_SESSION_NAME "$creator_session"
+tmux set-environment -t "$creator_session" ATMUX_SESSION_KIND "agent"
+creator_pane="$(tmux list-panes -t "$creator_session" -F '#{pane_id}' 2>/dev/null | head -n1)"
+[[ -n "$creator_pane" ]] || { echo "creator pane missing" >&2; exit 1; }
+
+TMUX=1 TMUX_PANE="$creator_pane" \
+  ATMUX_HOME="$atmux_home" ATMUX_REPO="$repo_name" ATMUX_SOURCE_ROOT="$REPO_ROOT" \
+  ATMUX_AGENT_NAME="creator" ATMUX_SESSION_NAME="$creator_session" \
+  ATMUX_AGENT_IDLE_SECONDS=1 ATMUX_AGENT_IDLE_INTERVAL=1 \
+  "$ATMUX_BIN" agent create "$child_agent" --role worker --intelligence 20 \
+    --adapter mockidle --shared-worktree >/tmp/atmux-agent-idle-create.out 2>/tmp/atmux-agent-idle-create.err
+
+child_session="atmux-${repo_name}-${child_agent}"
+tmux has-session -t "$child_session" 2>/dev/null || {
+  echo "standalone child session was not created" >&2
+  cat /tmp/atmux-agent-idle-create.err >&2 2>/dev/null || true
+  exit 1
+}
+
+watchers="$(ATMUX_HOME="$atmux_home" ATMUX_REPO="$repo_name" "$ATMUX_BIN" watcher list)"
+printf '%s\n' "$watchers" | grep -Fq "agent-idle:${repo_name}--agent--${child_agent}:"
+watcher_id="$(printf '%s\n' "$watchers" | grep -F "agent-idle:${repo_name}--agent--${child_agent}:" | head -n1)"
+[[ -n "$watcher_id" ]] || { echo "failed to parse agent-idle watcher id" >&2; exit 1; }
+watcher_name="${watcher_id##*:}"
+watcher_dir="$atmux_home/watch-agent-idle/${repo_name}--agent--${child_agent}/watchers/$watcher_name"
+worker_pid="$(cat "$watcher_dir/worker.pid" 2>/dev/null || true)"
+window_id="$(cat "$watcher_dir/window_id" 2>/dev/null || true)"
+[[ -n "$worker_pid" ]] || { echo "agent-idle watcher did not record worker pid" >&2; exit 1; }
+[[ -n "$window_id" ]] || { echo "agent-idle watcher did not record tmux window id" >&2; exit 1; }
+kill -0 "$worker_pid" 2>/dev/null || { echo "agent-idle watcher process is not alive" >&2; exit 1; }
+tmux list-windows -a -F '#{window_id}' | grep -Fxq "$window_id" || {
+  echo "agent-idle watcher tmux window is not alive" >&2
+  exit 1
+}
+
+sleep 2
+if wait_for_text "$creator_pane" '<notification type="agent-idle"' 1; then
+  echo "agent-idle fired while child was busy" >&2
+  exit 1
+fi
+
+tmux set-environment -t "$child_session" ATMUX_STATE "idle"
+if ! wait_for_text "$creator_pane" '<notification type="agent-idle" from="'"$child_agent"'"' 10; then
+  echo "creator did not receive child agent-idle notification" >&2
+  tmux capture-pane -p -t "$creator_pane" -S -160 >&2 || true
+  exit 1
+fi
+
+ATMUX_HOME="$atmux_home" ATMUX_REPO="$repo_name" "$ATMUX_BIN" watcher kill "$watcher_id"
+watchers_after="$(ATMUX_HOME="$atmux_home" ATMUX_REPO="$repo_name" "$ATMUX_BIN" watcher list)"
+if printf '%s\n' "$watchers_after" | grep -Fq "$watcher_id"; then
+  echo "agent-idle watcher survived watcher kill" >&2
+  exit 1
+fi
+if tmux list-windows -a -F '#{window_id}' | grep -Fxq "$window_id"; then
+  echo "agent-idle watcher tmux window survived watcher kill" >&2
+  exit 1
+fi
+
+TMUX=1 TMUX_PANE="$creator_pane" \
+  ATMUX_HOME="$atmux_home" ATMUX_REPO="$repo_name" ATMUX_SOURCE_ROOT="$REPO_ROOT" \
+  ATMUX_AGENT_NAME="creator" ATMUX_SESSION_NAME="$creator_session" \
+  ATMUX_AGENT_IDLE_SECONDS=1 ATMUX_AGENT_IDLE_INTERVAL=1 \
+  "$ATMUX_BIN" agent create "$cleanup_agent" --role worker --intelligence 20 \
+    --adapter mockidle --shared-worktree >/tmp/atmux-agent-idle-cleanup-create.out 2>/tmp/atmux-agent-idle-cleanup-create.err
+
+cleanup_session="atmux-${repo_name}-${cleanup_agent}"
+tmux has-session -t "$cleanup_session" 2>/dev/null || {
+  echo "cleanup child session was not created" >&2
+  cat /tmp/atmux-agent-idle-cleanup-create.err >&2 2>/dev/null || true
+  exit 1
+}
+cleanup_watch_dir="$atmux_home/watch-agent-idle/${repo_name}--agent--${cleanup_agent}"
+[[ -d "$cleanup_watch_dir/watchers" ]] || { echo "cleanup child did not register agent-idle watcher" >&2; exit 1; }
+ATMUX_HOME="$atmux_home" ATMUX_REPO="$repo_name" "$ATMUX_BIN" agent kill "$cleanup_agent" >/dev/null
+if [[ -d "$cleanup_watch_dir" ]]; then
+  echo "agent kill left parent agent-idle watch directory behind" >&2
+  find "$cleanup_watch_dir" -maxdepth 3 -print >&2
+  exit 1
+fi
+
+team_state="$atmux_home/teams/$repo_name/$team_name"
+mkdir -p "$team_state"
+printf '%s\n' "$team_name" > "$team_state/name"
+
+TMUX=1 TMUX_PANE="$creator_pane" \
+  ATMUX_HOME="$atmux_home" ATMUX_REPO="$repo_name" ATMUX_SOURCE_ROOT="$REPO_ROOT" \
+  ATMUX_AGENT_NAME="creator" ATMUX_SESSION_NAME="$creator_session" \
+  ATMUX_AGENT_IDLE_SECONDS=1 ATMUX_AGENT_IDLE_INTERVAL=1 \
+  "$ATMUX_BIN" agent create "$team_agent" --team "$team_name" --role worker --intelligence 20 \
+    --adapter mockidle --shared-worktree >/tmp/atmux-agent-idle-team-create.out 2>/tmp/atmux-agent-idle-team-create.err
+
+team_session="atmux-${repo_name}-${team_agent}"
+tmux has-session -t "$team_session" 2>/dev/null || {
+  echo "team child session was not created" >&2
+  cat /tmp/atmux-agent-idle-team-create.err >&2 2>/dev/null || true
+  exit 1
+}
+
+watchers="$(ATMUX_HOME="$atmux_home" ATMUX_REPO="$repo_name" "$ATMUX_BIN" watcher list)"
+if printf '%s\n' "$watchers" | grep -Fq "agent-idle:${repo_name}--agent--${team_agent}:"; then
+  echo "team member create registered a direct agent-idle watcher" >&2
+  printf '%s\n' "$watchers" >&2
+  exit 1
+fi
+printf '%s\n' "$watchers" | grep -Fq "team-idle:${repo_name}--team--${team_name}:"
+
+ATMUX_HOME="$atmux_home" ATMUX_REPO="$repo_name" "$ATMUX_BIN" agent kill "$team_agent" >/dev/null
+watchers_after="$(ATMUX_HOME="$atmux_home" ATMUX_REPO="$repo_name" "$ATMUX_BIN" watcher list)"
+if printf '%s\n' "$watchers_after" | grep -Fq "agent-idle:${repo_name}--agent--${team_agent}:"; then
+  echo "agent kill left a direct agent-idle watcher for team member" >&2
+  exit 1
+fi
+
+echo "ok: agent create subscribes creator to child idle unless team idle covers it"

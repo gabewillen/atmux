@@ -64,7 +64,7 @@ kill_pid() {
   local signal_name="$3"
 
   local repo_name
-  repo_name="$(repo_name_from_context)"
+  repo_name="$(atmux_resolve_repo_name)"
   local exec_dir
   exec_dir="$(exec_dir_for_repo_pid "$repo_name" "$pid")"
 
@@ -173,29 +173,23 @@ prs_watch_pid_file() {
   printf '%s/worker.pid\n' "$(prs_watch_dir "$key")"
 }
 
-read_trimmed_file() {
-  local file="$1"
-  [[ -f "$file" ]] || return 0
-  tr -d '\r\n' < "$file" 2>/dev/null || true
-}
-
 pr_worker_running_for_key() {
   local key="$1" pid=""
-  pid="$(read_trimmed_file "$(pr_watch_pid_file "$key")")"
+  pid="$(atmux_fs_read_trimmed "$(pr_watch_pid_file "$key")")"
   [[ -n "$pid" ]] || return 1
   kill -0 "$pid" 2>/dev/null
 }
 
 issues_worker_running_for_key() {
   local key="$1" pid=""
-  pid="$(read_trimmed_file "$(issues_watch_pid_file "$key")")"
+  pid="$(atmux_fs_read_trimmed "$(issues_watch_pid_file "$key")")"
   [[ -n "$pid" ]] || return 1
   kill -0 "$pid" 2>/dev/null
 }
 
 prs_worker_running_for_key() {
   local key="$1" pid=""
-  pid="$(read_trimmed_file "$(prs_watch_pid_file "$key")")"
+  pid="$(atmux_fs_read_trimmed "$(prs_watch_pid_file "$key")")"
   [[ -n "$pid" ]] || return 1
   kill -0 "$pid" 2>/dev/null
 }
@@ -341,7 +335,7 @@ kill_watcher() {
         echo "atmux watcher kill: watcher not found: $watcher_id" >&2
         exit 2
       fi
-      worker_pid="$(read_trimmed_file "$watcher_file/worker.pid")"
+      worker_pid="$(atmux_fs_read_trimmed "$watcher_file/worker.pid")"
       rm -rf "$watcher_file"
       if [[ -n "$worker_pid" ]] && kill -0 "$worker_pid" 2>/dev/null; then
         kill -TERM "$worker_pid" 2>/dev/null || true
@@ -355,46 +349,6 @@ kill_watcher() {
 }
 
 # --- Agent mode helpers ---
-
-normalize_repo_name() {
-  local raw="${1:-}"
-  local normalized=""
-  normalized="$(printf '%s' "$raw" | sed -E 's/[^A-Za-z0-9_-]+/_/g; s/_+/_/g; s/^_+//; s/_+$//')"
-  if [[ -z "$normalized" ]]; then
-    normalized="repo"
-  fi
-  printf '%s\n' "$normalized"
-}
-
-repo_context() {
-  local repo_root repo_name
-  if ! repo_root="$(git rev-parse --show-toplevel 2>/dev/null)"; then
-    echo "must be run from a git repository" >&2
-    exit 1
-  fi
-  repo_name="${ATMUX_REPO:-}"
-  if [[ -z "$repo_name" && -n "${TMUX:-}" ]]; then
-    repo_name="$(tmux show-environment ATMUX_REPO 2>/dev/null | sed -n 's/^ATMUX_REPO=//p' || true)"
-  fi
-  if [[ -z "$repo_name" ]]; then
-    repo_name="$(basename "$repo_root")"
-  fi
-  repo_name="$(normalize_repo_name "$repo_name")"
-  printf '%s\n%s\n' "$repo_root" "$repo_name"
-}
-
-matches_any_pattern() {
-  local value="$1"
-  shift || true
-  local pattern
-  for pattern in "$@"; do
-    # shellcheck disable=SC2053
-    if [[ "$value" == $pattern ]]; then
-      return 0
-    fi
-  done
-  return 1
-}
 
 run_role_hook() {
   local cmd="$1"
@@ -439,7 +393,7 @@ signal_adapter_pane() {
   local session="$1"
   local wait_secs="${2:-5}"
   local pane pid i
-  pane="$(primary_pane_for_session "$session")"
+  pane="$(atmux_resolve_primary_pane "$session")"
   [[ -n "$pane" ]] || return 0
   pid="$(tmux display-message -t "$pane" -p '#{pane_pid}' 2>/dev/null || true)"
   [[ -n "$pid" ]] || return 0
@@ -458,7 +412,7 @@ kill_agents() {
   {
     IFS= read -r repo_root
     IFS= read -r repo_name
-  } < <(repo_context)
+  } < <(atmux_resolve_repo_context)
 
   local atmux_home="${ATMUX_HOME:-$HOME/.atmux}"
   local worktree_root="$atmux_home/agents"
@@ -467,7 +421,7 @@ kill_agents() {
   local candidates
   candidates="$(
     {
-      tmux list-sessions -F '#{session_name}' 2>/dev/null | awk -v p="$prefix" 'index($0,p)==1 { print }'
+      atmux_resolve_repo_sessions "$repo_name"
       if [[ -d "$worktree_root" ]]; then
         find "$worktree_root" -maxdepth 1 -mindepth 1 -type d -name "${repo_name}-*" -exec basename {} \; | sed 's/^/atmux-/'
       fi
@@ -483,8 +437,8 @@ kill_agents() {
 
     # Match against full session name, short name (without atmux-repo- prefix), or agent name
     local short_name="${session#"$prefix"}"
-    if ! matches_any_pattern "$session" "$@" && \
-       ! matches_any_pattern "$short_name" "$@"; then
+    if ! atmux_match_any_pattern "$session" "$@" && \
+       ! atmux_match_any_pattern "$short_name" "$@"; then
       continue
     fi
 
@@ -500,7 +454,7 @@ kill_agents() {
     # afterward (env reads need the session to still exist).
     local team_owned_worktree=""
     if tmux has-session -t "$session" 2>/dev/null; then
-      session_kind="$(get_session_env "$session" ATMUX_SESSION_KIND)"
+      session_kind="$(atmux_resolve_session_env "$session" ATMUX_SESSION_KIND)"
       # Wind the adapter down first so the role.stop hook below sees the
       # adapter process gone but the session env still readable. Team
       # sessions don't run an adapter — skip the wind-down so we don't
@@ -509,18 +463,18 @@ kill_agents() {
         signal_adapter_pane "$session" 5
       fi
       if [[ "$session_kind" == "team" ]]; then
-        team_owned_flag="$(get_session_env "$session" ATMUX_TEAM_WORKTREE_OWNED)"
+        team_owned_flag="$(atmux_resolve_session_env "$session" ATMUX_TEAM_WORKTREE_OWNED)"
         if [[ "$team_owned_flag" == "1" ]]; then
-          team_owned_worktree="$(get_session_env "$session" ATMUX_WORKTREE)"
+          team_owned_worktree="$(atmux_resolve_session_env "$session" ATMUX_WORKTREE)"
         fi
       fi
-      role_stop="$(get_session_env "$session" ATMUX_ROLE_STOP)"
+      role_stop="$(atmux_resolve_session_env "$session" ATMUX_ROLE_STOP)"
       if [[ -n "$role_stop" ]]; then
-        role_dir="$(get_session_env "$session" ATMUX_ROLE_DIR)"
-        role_state_dir="$(get_session_env "$session" ATMUX_ROLE_STATE_DIR)"
-        role_name="$(get_session_env "$session" ATMUX_ROLE)"
-        team_name="$(get_session_env "$session" ATMUX_TEAM)"
-        worktree="$(get_session_env "$session" ATMUX_WORKTREE)"
+        role_dir="$(atmux_resolve_session_env "$session" ATMUX_ROLE_DIR)"
+        role_state_dir="$(atmux_resolve_session_env "$session" ATMUX_ROLE_STATE_DIR)"
+        role_name="$(atmux_resolve_session_env "$session" ATMUX_ROLE)"
+        team_name="$(atmux_resolve_session_env "$session" ATMUX_TEAM)"
+        worktree="$(atmux_resolve_session_env "$session" ATMUX_WORKTREE)"
         ATMUX_AGENT_NAME="$short_name" \
         ATMUX_AGENT_SESSION="$session" \
         ATMUX_REPO="$repo_name" \
@@ -597,11 +551,11 @@ kill_agents() {
       agent_name="$session"
     fi
 
-    results_xml+="  <agent name=\"$(xml_escape "$agent_name")\" session=\"$(xml_escape "$session")\">"
+    results_xml+="  <agent name=\"$(atmux_xml_escape "$agent_name")\" session=\"$(atmux_xml_escape "$session")\">"
     if [[ -n "$note" ]]; then
-      results_xml+="<status state=\"$(xml_escape "$state")\" removed_session=\"$removed_session\" removed_worktree=\"$removed_worktree\" removed_branch=\"$removed_branch\" note=\"$(xml_escape "$note")\" />"
+      results_xml+="<status state=\"$(atmux_xml_escape "$state")\" removed_session=\"$removed_session\" removed_worktree=\"$removed_worktree\" removed_branch=\"$removed_branch\" note=\"$(atmux_xml_escape "$note")\" />"
     else
-      results_xml+="<status state=\"$(xml_escape "$state")\" removed_session=\"$removed_session\" removed_worktree=\"$removed_worktree\" removed_branch=\"$removed_branch\" />"
+      results_xml+="<status state=\"$(atmux_xml_escape "$state")\" removed_session=\"$removed_session\" removed_worktree=\"$removed_worktree\" removed_branch=\"$removed_branch\" />"
     fi
     results_xml+="</agent>"$'\n'
   done <<< "$candidates"
@@ -729,7 +683,7 @@ main() {
     {
       IFS= read -r repo_root
       IFS= read -r repo_name
-    } < <(repo_context)
+    } < <(atmux_resolve_repo_context)
     if [[ "$assume_yes" -ne 1 ]]; then
       confirm_kill_all "$repo_name"
     fi

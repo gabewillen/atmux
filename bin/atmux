@@ -30,6 +30,8 @@ fi
 
 # shellcheck source=bin/(atmux)/(lib)/command-docs
 source "$ATMUX_SOURCE_ROOT/bin/(atmux)/(lib)/command-docs"
+# shellcheck source=bin/(atmux)/(lib)/xml
+source "$ATMUX_SOURCE_ROOT/bin/(atmux)/(lib)/xml"
 
 # Resolve a non-shimmed `git` for internal use. Agent shim proxies keep
 # PATH sanitized and export ATMUX_REAL_GIT for git, but this dispatcher can
@@ -108,10 +110,6 @@ usage() {
 
 ensure_atmux_home() {
   mkdir -p "$ATMUX_HOME/bin" "$ATMUX_HOME/bin/scripts" "$ATMUX_HOME/agents" "$ATMUX_HOME/adapters" "$ATMUX_HOME/shims"
-}
-
-xml_escape() {
-  printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g' -e "s/'/\&apos;/g"
 }
 
 normalize_github_repo() {
@@ -208,7 +206,7 @@ should_wrap_command() {
   fi
 
   case "$cmd" in
-    exec|watch|watcher|notify|kill|install)
+    exec|watch|watcher|notify|kill|install|role)
       return 1
       ;;
     agent)
@@ -237,7 +235,7 @@ emit_atmux_wrapper() {
   first_nonempty="$(awk 'NF { print; exit }' "$stdout_file" 2>/dev/null || true)"
 
   printf '<atmux command="%s" exit_code="%s" date="%s" time="%s">\n' \
-    "$(xml_escape "$command_text")" "$(xml_escape "$rc")" \
+    "$(atmux_xml_escape "$command_text")" "$(atmux_xml_escape "$rc")" \
     "$(date -u +%Y-%m-%d)" "$(date -u +%H:%M:%SZ)"
 
   if [[ -s "$stdout_file" ]]; then
@@ -248,12 +246,12 @@ emit_atmux_wrapper() {
         *) printf '\n' ;;
       esac
     else
-      printf '  <output>%s</output>\n' "$(xml_escape "$(cat "$stdout_file")")"
+      printf '  <output>%s</output>\n' "$(atmux_xml_escape "$(cat "$stdout_file")")"
     fi
   fi
 
   if [[ -s "$stderr_file" ]]; then
-    printf '  <error>%s</error>\n' "$(xml_escape "$(cat "$stderr_file")")"
+    printf '  <error>%s</error>\n' "$(atmux_xml_escape "$(cat "$stderr_file")")"
   fi
 
   printf '</atmux>\n'

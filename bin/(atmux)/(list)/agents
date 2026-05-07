@@ -7,29 +7,11 @@ source "$HERE/../notify"
 # shellcheck source=bin/(atmux)/(internal)/reporter
 source "$HERE/../(internal)/reporter"
 
-repo_context() {
-  local repo_root repo_name
-  if ! repo_root="$(git rev-parse --show-toplevel 2>/dev/null)"; then
-    echo "atmux agent list must be run from a git repository" >&2
-    exit 1
-  fi
-
-  repo_name="${ATMUX_REPO:-}"
-  if [[ -z "$repo_name" && -n "${TMUX:-}" ]]; then
-    repo_name="$(tmux show-environment ATMUX_REPO 2>/dev/null | sed -n 's/^ATMUX_REPO=//p' || true)"
-  fi
-  if [[ -z "$repo_name" ]]; then
-    repo_name="$(basename "$repo_root")"
-  fi
-  repo_name="$(normalize_name "$repo_name")"
-  printf '%s\n%s\n' "$repo_root" "$repo_name"
-}
-
 resolve_adapter_cmd_for_session() {
   local session="$1"
   local adapter source_root
-  adapter="$(get_session_env "$session" ATMUX_ADAPTER)"
-  source_root="$(get_session_env "$session" ATMUX_SOURCE_ROOT)"
+  adapter="$(atmux_resolve_session_env "$session" ATMUX_ADAPTER)"
+  source_root="$(atmux_resolve_session_env "$session" ATMUX_SOURCE_ROOT)"
   [[ -n "$adapter" ]] || adapter="codex"
 
   if [[ -n "$source_root" && -x "$source_root/adapter/$adapter/cmd" ]]; then
@@ -63,13 +45,13 @@ status_node_for_session() {
   local passive_status="${2:-0}"
   local pane adapter adapter_cmd source_root status_out node
 
-  adapter="$(get_session_env "$session" ATMUX_ADAPTER)"
-  source_root="$(get_session_env "$session" ATMUX_SOURCE_ROOT)"
-  pane="$(primary_pane_for_session "$session")"
+  adapter="$(atmux_resolve_session_env "$session" ATMUX_ADAPTER)"
+  source_root="$(atmux_resolve_session_env "$session" ATMUX_SOURCE_ROOT)"
+  pane="$(atmux_resolve_primary_pane "$session")"
   [[ -n "$adapter" ]] || adapter="codex"
 
   if ! adapter_cmd="$(resolve_adapter_cmd_for_session "$session")"; then
-    printf '<status adapter="%s" owner="agent" state="errored" model="" reasoning_level="" control_file="" />\n' "$(xml_escape "$adapter")"
+    printf '<status adapter="%s" owner="agent" state="errored" model="" reasoning_level="" control_file="" />\n' "$(atmux_xml_escape "$adapter")"
     return 0
   fi
 
@@ -84,7 +66,7 @@ status_node_for_session() {
   if [[ -n "$node" ]]; then
     printf '%s\n' "$node"
   else
-    printf '<status adapter="%s" owner="agent" state="errored" model="" reasoning_level="" control_file="" />\n' "$(xml_escape "$adapter")"
+    printf '<status adapter="%s" owner="agent" state="errored" model="" reasoning_level="" control_file="" />\n' "$(atmux_xml_escape "$adapter")"
   fi
 }
 
@@ -128,7 +110,7 @@ main() {
   {
     IFS= read -r repo_root
     IFS= read -r repo_name
-  } < <(repo_context)
+  } < <(atmux_resolve_repo_context)
 
   prefix="atmux-${repo_name}-"
   local mode
@@ -136,7 +118,7 @@ main() {
 
   if [[ "$mode" == "xml" ]]; then
     # XML mode: keep the existing nested format byte-for-byte.
-    printf '<agents repo="%s">\n' "$(xml_escape "$repo_name")"
+    printf '<agents repo="%s">\n' "$(atmux_xml_escape "$repo_name")"
     while IFS= read -r session; do
       [[ -z "$session" ]] && continue
       [[ "$session" == "$prefix"* ]] || continue
@@ -146,13 +128,13 @@ main() {
       local aname
       aname="$(agent_local_name "$repo_name" "$session")"
       if [[ "$status" -eq 1 ]]; then
-        printf '  <agent name="%s" session="%s">\n' "$(xml_escape "$aname")" "$(xml_escape "$session")"
+        printf '  <agent name="%s" session="%s">\n' "$(atmux_xml_escape "$aname")" "$(atmux_xml_escape "$session")"
         printf '    %s\n' "$(status_node_for_session "$session" 1)"
         printf '  </agent>\n'
       else
-        printf '  <agent name="%s" session="%s" />\n' "$(xml_escape "$aname")" "$(xml_escape "$session")"
+        printf '  <agent name="%s" session="%s" />\n' "$(atmux_xml_escape "$aname")" "$(atmux_xml_escape "$session")"
       fi
-    done < <(tmux list-sessions -F '#{session_name}' 2>/dev/null | sort -u || true)
+    done < <(atmux_resolve_repo_sessions "$repo_name" | sort -u || true)
     printf '</agents>\n'
     return
   fi
@@ -183,7 +165,7 @@ main() {
     else
       report_record agent name="$aname" session="$session"
     fi
-  done < <(tmux list-sessions -F '#{session_name}' 2>/dev/null | sort -u || true)
+  done < <(atmux_resolve_repo_sessions "$repo_name" | sort -u || true)
   report_close agents
 }
 

@@ -88,7 +88,7 @@ main() {
   [[ "$coalesce" =~ ^[0-9]+$ ]] || { echo "invalid --coalesce: $coalesce" >&2; exit 2; }
 
   local repo_name
-  repo_name="$(repo_name_from_context)"
+  repo_name="$(atmux_resolve_repo_name)"
   local exec_dir
   exec_dir="$(exec_dir_for_repo_pid "$repo_name" "$pid")"
 
@@ -106,7 +106,7 @@ main() {
   fi
 
   local my_pane
-  my_pane="$(current_pane)"
+  my_pane="$(atmux_resolve_current_pane)"
 
   local stream_dir="" output_fifo="" event_fifo="" bridge_pid="" stream_rc=0
   set +e
@@ -128,7 +128,7 @@ main() {
   mkdir -p "$exec_dir/watchers"
   local watcher_file
   watcher_file="$(mktemp "$exec_dir/watchers/watcher.XXXXXX")"
-  write_field "$watcher_file" "${my_pane}|${event_fifo}"
+  atmux_fs_write_field "$watcher_file" "${my_pane}|${event_fifo}"
 
   cleanup_watcher() {
     exec 8>&- 8<&- || true

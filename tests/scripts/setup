@@ -9,16 +9,8 @@ SCRIPTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 TESTS_DIR="$(cd -- "$SCRIPTS_DIR/.." && pwd)"
 REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
 ATMUX_BIN="${ATMUX_TEST_ATMUX_BIN:-$REPO_ROOT/bin/atmux}"
-
-normalize_name() {
-  local raw="${1:-}"
-  local normalized
-  normalized="$(printf '%s' "$raw" | sed -E 's/[^A-Za-z0-9_-]+/_/g; s/_+/_/g; s/^_+//; s/_+$//')"
-  if [[ -z "$normalized" ]]; then
-    normalized="repo"
-  fi
-  printf '%s\n' "$normalized"
-}
+# shellcheck source=bin/(atmux)/(lib)/resolver
+source "$REPO_ROOT/bin/(atmux)/(lib)/resolver"
 
 require_cmd() {
   command -v "$1" >/dev/null 2>&1 || {
@@ -36,7 +28,7 @@ main() {
   fi
 
   local repo_name team_name agent1 agent2 team_session pane1 pane2
-  repo_name="$(normalize_name "$(basename "$REPO_ROOT")")"
+  repo_name="$(atmux_resolve_normalized_name "$(basename "$REPO_ROOT")")"
   team_name="${ATMUX_TEST_TEAM_NAME:-teamtest-$RANDOM}"
   agent1="atmux-${repo_name}-sender"
   agent2="atmux-${repo_name}-receiver"
@@ -60,11 +52,11 @@ main() {
 
   ATMUX_REPO="$repo_name" "$ATMUX_BIN" team create "$team_name" --shared-worktree >/dev/null
   members_dir="${ATMUX_HOME:-$HOME/.atmux}/teams/$repo_name/$team_name/members"
-  mkdir -p "$members_dir/$(normalize_name "$agent1")" "$members_dir/$(normalize_name "$agent2")"
-  printf '%s\n' "$agent1" > "$members_dir/$(normalize_name "$agent1")/session"
-  printf '%s\n' "sender" > "$members_dir/$(normalize_name "$agent1")/name"
-  printf '%s\n' "$agent2" > "$members_dir/$(normalize_name "$agent2")/session"
-  printf '%s\n' "receiver" > "$members_dir/$(normalize_name "$agent2")/name"
+  mkdir -p "$members_dir/$(atmux_resolve_normalized_name "$agent1")" "$members_dir/$(atmux_resolve_normalized_name "$agent2")"
+  printf '%s\n' "$agent1" > "$members_dir/$(atmux_resolve_normalized_name "$agent1")/session"
+  printf '%s\n' "sender" > "$members_dir/$(atmux_resolve_normalized_name "$agent1")/name"
+  printf '%s\n' "$agent2" > "$members_dir/$(atmux_resolve_normalized_name "$agent2")/session"
+  printf '%s\n' "receiver" > "$members_dir/$(atmux_resolve_normalized_name "$agent2")/name"
 
   printf 'REPO_ROOT=%q\n' "$REPO_ROOT"
   printf 'REPO_NAME=%q\n' "$repo_name"

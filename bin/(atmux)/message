@@ -45,7 +45,7 @@ resolve_repo_name() {
     echo "unable to resolve repo; pass --repo <repo> or run inside a git repo" >&2
     exit 2
   fi
-  normalize_name "$repo"
+  atmux_resolve_normalized_name "$repo"
 }
 
 message_root_for_repo() {
@@ -76,7 +76,7 @@ current_message_recipients() {
   session="$(current_session_name)"
   if [[ -n "$session" ]]; then
     recipients+=("$session")
-    short="$(session_short_name "$session" "$repo")"
+    short="$(atmux_resolve_session_short_name "$session" "$repo")"
     if [[ -n "$short" ]]; then
       recipients+=("$short")
       recipients+=("atmux-${repo}-${short}")
@@ -119,16 +119,16 @@ current_reader_key() {
   local session="" pane=""
   session="$(current_session_name)"
   if [[ -n "$session" ]]; then
-    normalize_name "session-$session"
+    atmux_resolve_normalized_name "session-$session"
     return 0
   fi
   if [[ -n "${ATMUX_AGENT_NAME:-}" ]]; then
-    normalize_name "agent-$ATMUX_AGENT_NAME"
+    atmux_resolve_normalized_name "agent-$ATMUX_AGENT_NAME"
     return 0
   fi
-  pane="$(current_pane)"
+  pane="$(atmux_resolve_current_pane)"
   if [[ -n "$pane" ]]; then
-    normalize_name "pane-$pane"
+    atmux_resolve_normalized_name "pane-$pane"
     return 0
   fi
   printf 'local\n'
@@ -136,14 +136,14 @@ current_reader_key() {
 
 current_subscription_pane() {
   local pane="" session=""
-  pane="$(current_pane)"
+  pane="$(atmux_resolve_current_pane)"
   if [[ -n "$pane" ]]; then
     printf '%s\n' "$pane"
     return 0
   fi
   session="$(current_session_name)"
   if [[ -n "$session" ]]; then
-    pane="$(primary_pane_for_session "$session")"
+    pane="$(atmux_resolve_primary_pane "$session")"
     if [[ -n "$pane" ]]; then
       printf '%s\n' "$pane"
       return 0
@@ -181,7 +181,7 @@ current_agent_is_team_message_subscriber() {
   watchers_dir="$(team_message_watchers_dir "$repo" "$team")"
   [[ -d "$watchers_dir" ]] || return 1
 
-  current_p="$(current_pane)"
+  current_p="$(atmux_resolve_current_pane)"
   current_s="$(current_session_name)"
 
   while IFS= read -r file; do
@@ -212,7 +212,7 @@ mark_team_message_read() {
   local dir="$1" reader_key="$2"
   mkdir -p "$dir/read"
   if [[ ! -f "$dir/read/$reader_key" ]]; then
-    write_field "$dir/read/$reader_key" "$(timestamp_utc)"
+    atmux_fs_write_field "$dir/read/$reader_key" "$(timestamp_utc)"
   fi
 }
 
@@ -239,7 +239,7 @@ read_message() {
         shift 2
         ;;
       --team)
-        team_name="$(normalize_name "${2:-}")"
+        team_name="$(atmux_resolve_normalized_name "${2:-}")"
         shift 2
         ;;
       *)
@@ -272,14 +272,14 @@ read_message() {
     reply_required="$(cat "$dir/reply_required" 2>/dev/null || true)"
     timestamp="$(cat "$dir/timestamp" 2>/dev/null || true)"
     stopped="$(cat "$dir/stopped" 2>/dev/null || true)"
-    [[ -n "$stopped" ]] && stopped_attr=" stopped=\"$(xml_escape "$stopped")\""
+    [[ -n "$stopped" ]] && stopped_attr=" stopped=\"$(atmux_xml_escape "$stopped")\""
 
     printf '<message id="%s" type="team" from="%s" team="%s" reply_required="%s" timestamp="%s"%s>\n' \
-      "$(xml_escape "$id")" \
-      "$(xml_escape "$from")" \
-      "$(xml_escape "$team_name")" \
-      "$(xml_escape "$reply_required")" \
-      "$(xml_escape "$timestamp")" \
+      "$(atmux_xml_escape "$id")" \
+      "$(atmux_xml_escape "$from")" \
+      "$(atmux_xml_escape "$team_name")" \
+      "$(atmux_xml_escape "$reply_required")" \
+      "$(atmux_xml_escape "$timestamp")" \
       "$stopped_attr"
     printf '  <body>%s</body>\n' "$body"
     printf '</message>\n'
@@ -311,21 +311,21 @@ read_message() {
   fi
 
   local stopped_attr=""
-  [[ -n "$stopped" ]] && stopped_attr=" stopped=\"$(xml_escape "$stopped")\""
+  [[ -n "$stopped" ]] && stopped_attr=" stopped=\"$(atmux_xml_escape "$stopped")\""
 
   printf '<message id="%s" from="%s" to="%s" reply_required="%s" timestamp="%s"%s>\n' \
-    "$(xml_escape "$id")" \
-    "$(xml_escape "$from")" \
-    "$(xml_escape "$to")" \
-    "$(xml_escape "$reply_required")" \
-    "$(xml_escape "$timestamp")" \
+    "$(atmux_xml_escape "$id")" \
+    "$(atmux_xml_escape "$from")" \
+    "$(atmux_xml_escape "$to")" \
+    "$(atmux_xml_escape "$reply_required")" \
+    "$(atmux_xml_escape "$timestamp")" \
     "$stopped_attr"
   printf '  <body>%s</body>\n' "$body"
   printf '</message>\n'
 
   # Mark read exactly once (no notification to author — avoids agent loops)
   if [[ ! -f "$dir/read_at" ]]; then
-    write_field "$dir/read_at" "$(timestamp_utc)"
+    atmux_fs_write_field "$dir/read_at" "$(timestamp_utc)"
   fi
 }
 
@@ -345,7 +345,7 @@ list_messages() {
         shift
         ;;
       --team)
-        team_name="$(normalize_name "${2:-}")"
+        team_name="$(atmux_resolve_normalized_name "${2:-}")"
         shift 2
         ;;
       *)
@@ -431,7 +431,7 @@ subscribe_team_messages() {
         shift 2
         ;;
       --team)
-        team_name="$(normalize_name "${2:-}")"
+        team_name="$(atmux_resolve_normalized_name "${2:-}")"
         shift 2
         ;;
       *)
@@ -461,18 +461,18 @@ subscribe_team_messages() {
   watcher_name="$(pane_queue_key "$pane")"
   watcher_dir="$(team_message_watcher_file "$repo" "$team_name" "$watcher_name")"
   mkdir -p "$watcher_dir"
-  write_field "$watcher_dir/pane" "$pane"
-  write_field "$watcher_dir/session" "$session"
-  write_field "$watcher_dir/agent" "$agent"
-  write_field "$watcher_dir/repo" "$repo"
-  write_field "$watcher_dir/team" "$team_name"
-  write_field "$watcher_dir/subscribed_at" "$(timestamp_utc)"
+  atmux_fs_write_field "$watcher_dir/pane" "$pane"
+  atmux_fs_write_field "$watcher_dir/session" "$session"
+  atmux_fs_write_field "$watcher_dir/agent" "$agent"
+  atmux_fs_write_field "$watcher_dir/repo" "$repo"
+  atmux_fs_write_field "$watcher_dir/team" "$team_name"
+  atmux_fs_write_field "$watcher_dir/subscribed_at" "$(timestamp_utc)"
 
   printf '<subscription type="team-message" repo="%s" team="%s" watcher_id="%s" pane="%s" />\n' \
-    "$(xml_escape "$repo")" \
-    "$(xml_escape "$team_name")" \
-    "$(xml_escape "$(team_message_watcher_id "$repo" "$team_name" "$watcher_name")")" \
-    "$(xml_escape "$pane")"
+    "$(atmux_xml_escape "$repo")" \
+    "$(atmux_xml_escape "$team_name")" \
+    "$(atmux_xml_escape "$(team_message_watcher_id "$repo" "$team_name" "$watcher_name")")" \
+    "$(atmux_xml_escape "$pane")"
 }
 
 unsubscribe_team_messages() {
@@ -485,7 +485,7 @@ unsubscribe_team_messages() {
         shift 2
         ;;
       --team)
-        team_name="$(normalize_name "${2:-}")"
+        team_name="$(atmux_resolve_normalized_name "${2:-}")"
         shift 2
         ;;
       *)
@@ -513,9 +513,9 @@ unsubscribe_team_messages() {
   rm -rf "$watcher_dir"
 
   printf '<subscription type="team-message" repo="%s" team="%s" watcher_id="%s" removed="true" />\n' \
-    "$(xml_escape "$repo")" \
-    "$(xml_escape "$team_name")" \
-    "$(xml_escape "$(team_message_watcher_id "$repo" "$team_name" "$watcher_name")")"
+    "$(atmux_xml_escape "$repo")" \
+    "$(atmux_xml_escape "$team_name")" \
+    "$(atmux_xml_escape "$(team_message_watcher_id "$repo" "$team_name" "$watcher_name")")"
 }
 
 list_team_message_subscriptions() {
@@ -528,7 +528,7 @@ list_team_message_subscriptions() {
         shift 2
         ;;
       --team)
-        team_name="$(normalize_name "${2:-}")"
+        team_name="$(atmux_resolve_normalized_name "${2:-}")"
         shift 2
         ;;
       *)

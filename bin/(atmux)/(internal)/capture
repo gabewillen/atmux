@@ -27,9 +27,9 @@ capture_session_panes() {
     [[ -z "$pane" ]] && continue
     snapshot="$(tmux capture-pane -p -t "$pane" -S "-$lines" 2>/dev/null | tr -d '\r' || true)"
     printf '  <capture session="%s" pane="%s" lines="%s"%s>%s</capture>\n' \
-      "$(xml_escape "$session")" \
-      "$(xml_escape "$pane")" \
-      "$(xml_escape "$lines")" \
+      "$(atmux_xml_escape "$session")" \
+      "$(atmux_xml_escape "$pane")" \
+      "$(atmux_xml_escape "$lines")" \
       "$extra_attrs" \
       "$snapshot"
   done < <(tmux list-panes -t "$session" -F '#{pane_id}' 2>/dev/null || true)
@@ -219,7 +219,7 @@ if [[ "$team_tiled" -eq 1 && -z "$team_target" ]]; then
   exit 2
 fi
 
-repo_name="$(repo_name_from_context)"
+repo_name="$(atmux_resolve_repo_name)"
 
 if [[ "$capture_all" -eq 1 ]]; then
   current_pane=""
@@ -227,7 +227,7 @@ if [[ "$capture_all" -eq 1 ]]; then
     current_pane="$(tmux display-message -p '#{pane_id}' 2>/dev/null || true)"
   fi
 
-  printf '<captures scope="all" repo="%s">\n' "$(xml_escape "$repo_name")"
+  printf '<captures scope="all" repo="%s">\n' "$(atmux_xml_escape "$repo_name")"
   while IFS= read -r line; do
     [[ -z "$line" ]] && continue
     s="${line%% *}"
@@ -241,9 +241,9 @@ if [[ "$capture_all" -eq 1 ]]; then
     fi
     snapshot="$(tmux capture-pane -p -t "$p" -S "-$lines" 2>/dev/null | tr -d '\r' || true)"
     printf '  <capture session="%s" pane="%s" lines="%s">%s</capture>\n' \
-      "$(xml_escape "$s")" \
-      "$(xml_escape "$p")" \
-      "$(xml_escape "$lines")" \
+      "$(atmux_xml_escape "$s")" \
+      "$(atmux_xml_escape "$p")" \
+      "$(atmux_xml_escape "$lines")" \
       "$snapshot"
   done < <(tmux list-panes -a -F '#{session_name} #{pane_id}' 2>/dev/null || true)
   printf '</captures>\n'
@@ -261,19 +261,19 @@ if [[ -n "$agent_target" ]]; then
     echo "target is a team/view name; use --team instead" >&2
     exit 2
   fi
-  if [[ "$(get_session_env "$session" ATMUX_SESSION_KIND)" == "team" ]]; then
+  if [[ "$(atmux_resolve_session_env "$session" ATMUX_SESSION_KIND)" == "team" ]]; then
     echo "target is a team/view name; use --team instead" >&2
     exit 2
   fi
 
-  agent_name="$(get_session_env "$session" ATMUX_AGENT_NAME)"
+  agent_name="$(atmux_resolve_session_env "$session" ATMUX_AGENT_NAME)"
   if [[ -z "$agent_name" ]]; then
-    agent_name="$(session_short_name "$session" "$repo_name")"
+    agent_name="$(atmux_resolve_session_short_name "$session" "$repo_name")"
   fi
   printf '<captures scope="agent" agent="%s" session="%s">\n' \
-    "$(xml_escape "$agent_name")" \
-    "$(xml_escape "$session")"
-  capture_session_panes "$session" "$lines" " agent=\"$(xml_escape "$agent_name")\""
+    "$(atmux_xml_escape "$agent_name")" \
+    "$(atmux_xml_escape "$session")"
+  capture_session_panes "$session" "$lines" " agent=\"$(atmux_xml_escape "$agent_name")\""
   printf '</captures>\n'
   exit 0
 fi
@@ -290,24 +290,24 @@ if [[ "$team_tiled" -eq 1 ]]; then
   "$HERE/../team" view --no-attach "$team_name" >/dev/null
   wait_team_view_render_ready "$session" "$repo_name" "$team_name"
   printf '<captures scope="team-view" team="%s" session="%s" layout="tiled">\n' \
-    "$(xml_escape "$team_name")" \
-    "$(xml_escape "$session")"
+    "$(atmux_xml_escape "$team_name")" \
+    "$(atmux_xml_escape "$session")"
   snapshot="$(capture_team_view_render_all "$session")"
   visible_lines="$(printf '%s\n' "$snapshot" | wc -l | tr -d '[:space:]')"
   printf '  <capture session="%s" lines="%s" team="%s" layout="tiled">%s</capture>\n' \
-    "$(xml_escape "$session")" \
-    "$(xml_escape "$visible_lines")" \
-    "$(xml_escape "$team_name")" \
+    "$(atmux_xml_escape "$session")" \
+    "$(atmux_xml_escape "$visible_lines")" \
+    "$(atmux_xml_escape "$team_name")" \
     "$snapshot"
   printf '</captures>\n'
   exit 0
 fi
 
 printf '<captures scope="team" team="%s" session="%s">\n' \
-  "$(xml_escape "$team_name")" \
-  "$(xml_escape "$session")"
+  "$(atmux_xml_escape "$team_name")" \
+  "$(atmux_xml_escape "$session")"
 while IFS= read -r member_session; do
   [[ -n "$member_session" ]] || continue
-  capture_session_panes "$member_session" "$lines" " team=\"$(xml_escape "$team_name")\""
+  capture_session_panes "$member_session" "$lines" " team=\"$(atmux_xml_escape "$team_name")\""
 done < <(team_member_sessions_from_state "$repo_name" "$team_name")
 printf '</captures>\n'

@@ -54,7 +54,7 @@ resolve_repo_name() {
     echo "unable to resolve repo; pass --repo <repo> or run inside a git repo" >&2
     exit 2
   fi
-  normalize_name "$repo"
+  atmux_resolve_normalized_name "$repo"
 }
 
 current_actor_name() {
@@ -71,7 +71,7 @@ current_actor_name() {
     local session=""
     session="$(tmux display-message -p '#S' 2>/dev/null || true)"
     if [[ -n "$session" ]]; then
-      session_short_name "$session" "$repo"
+      atmux_resolve_session_short_name "$session" "$repo"
       return
     fi
   fi
@@ -98,8 +98,8 @@ identity_matches() {
   [[ "$left" == "$right" ]] && return 0
 
   if [[ -n "$repo" ]]; then
-    left_short="$(session_short_name "$left" "$repo")"
-    right_short="$(session_short_name "$right" "$repo")"
+    left_short="$(atmux_resolve_session_short_name "$left" "$repo")"
+    right_short="$(atmux_resolve_session_short_name "$right" "$repo")"
     [[ "$left_short" == "$right_short" ]] && return 0
     [[ "atmux-${repo}-${left_short}" == "$right" ]] && return 0
     [[ "atmux-${repo}-${right_short}" == "$left" ]] && return 0
@@ -176,24 +176,24 @@ create_pr() {
   created_at="$(now_utc)"
 
   mkdir -p "$dir"
-  write_field "$dir/title" "$title"
-  write_field "$dir/description" "$description"
-  write_field "$dir/source" "$source_branch"
-  write_field "$dir/target" "$target_branch"
-  write_field "$dir/state" "open"
-  write_field "$dir/created_at" "$created_at"
-  write_field "$dir/updated_at" "$created_at"
-  write_field "$dir/assigned_to" ""
-  write_field "$dir/assigned_by" ""
-  write_field "$dir/assigned_at" ""
-  write_field "$dir/claimed_by" ""
-  write_field "$dir/claimed_at" ""
+  atmux_fs_write_field "$dir/title" "$title"
+  atmux_fs_write_field "$dir/description" "$description"
+  atmux_fs_write_field "$dir/source" "$source_branch"
+  atmux_fs_write_field "$dir/target" "$target_branch"
+  atmux_fs_write_field "$dir/state" "open"
+  atmux_fs_write_field "$dir/created_at" "$created_at"
+  atmux_fs_write_field "$dir/updated_at" "$created_at"
+  atmux_fs_write_field "$dir/assigned_to" ""
+  atmux_fs_write_field "$dir/assigned_by" ""
+  atmux_fs_write_field "$dir/assigned_at" ""
+  atmux_fs_write_field "$dir/claimed_by" ""
+  atmux_fs_write_field "$dir/claimed_at" ""
 
   printf '<pull-request id="%s" repo="%s" state="open" uri="%s" path="%s" />\n' \
-    "$(xml_escape "$id")" \
-    "$(xml_escape "$repo")" \
-    "$(xml_escape "atmux://pull-request/$repo/$id")" \
-    "$(xml_escape "$dir")"
+    "$(atmux_xml_escape "$id")" \
+    "$(atmux_xml_escape "$repo")" \
+    "$(atmux_xml_escape "atmux://pull-request/$repo/$id")" \
+    "$(atmux_xml_escape "$dir")"
 }
 
 list_prs() {
@@ -293,24 +293,24 @@ get_pr() {
   claimed_at="$(read_field "$dir/claimed_at")"
 
   printf '<pull-request id="%s" repo="%s" state="%s" created_at="%s" updated_at="%s" uri="%s">\n' \
-    "$(xml_escape "$id")" \
-    "$(xml_escape "$repo")" \
-    "$(xml_escape "$state")" \
-    "$(xml_escape "$created_at")" \
-    "$(xml_escape "$updated_at")" \
-    "$(xml_escape "atmux://pull-request/$repo/$id")"
-  printf '  <title>%s</title>\n' "$(xml_escape "$title")"
-  printf '  <description>%s</description>\n' "$(xml_escape "$description")"
+    "$(atmux_xml_escape "$id")" \
+    "$(atmux_xml_escape "$repo")" \
+    "$(atmux_xml_escape "$state")" \
+    "$(atmux_xml_escape "$created_at")" \
+    "$(atmux_xml_escape "$updated_at")" \
+    "$(atmux_xml_escape "atmux://pull-request/$repo/$id")"
+  printf '  <title>%s</title>\n' "$(atmux_xml_escape "$title")"
+  printf '  <description>%s</description>\n' "$(atmux_xml_escape "$description")"
   printf '  <branches source="%s" target="%s" />\n' \
-    "$(xml_escape "$source_branch")" \
-    "$(xml_escape "$target_branch")"
+    "$(atmux_xml_escape "$source_branch")" \
+    "$(atmux_xml_escape "$target_branch")"
   printf '  <assignment to="%s" by="%s" at="%s" />\n' \
-    "$(xml_escape "$assigned_to")" \
-    "$(xml_escape "$assigned_by")" \
-    "$(xml_escape "$assigned_at")"
+    "$(atmux_xml_escape "$assigned_to")" \
+    "$(atmux_xml_escape "$assigned_by")" \
+    "$(atmux_xml_escape "$assigned_at")"
   printf '  <claim by="%s" at="%s" />\n' \
-    "$(xml_escape "$claimed_by")" \
-    "$(xml_escape "$claimed_at")"
+    "$(atmux_xml_escape "$claimed_by")" \
+    "$(atmux_xml_escape "$claimed_at")"
   printf '</pull-request>\n'
 }
 
@@ -360,26 +360,26 @@ assign_pr() {
   now="$(now_utc)"
   assigned_by="$(current_actor_name "$repo")"
 
-  write_field "$dir/assigned_to" "$to"
-  write_field "$dir/assigned_by" "$assigned_by"
-  write_field "$dir/assigned_at" "$now"
-  write_field "$dir/claimed_by" ""
-  write_field "$dir/claimed_at" ""
-  write_field "$dir/state" "assigned"
-  write_field "$dir/updated_at" "$now"
+  atmux_fs_write_field "$dir/assigned_to" "$to"
+  atmux_fs_write_field "$dir/assigned_by" "$assigned_by"
+  atmux_fs_write_field "$dir/assigned_at" "$now"
+  atmux_fs_write_field "$dir/claimed_by" ""
+  atmux_fs_write_field "$dir/claimed_at" ""
+  atmux_fs_write_field "$dir/state" "assigned"
+  atmux_fs_write_field "$dir/updated_at" "$now"
 
   printf '<pull-request id="%s" repo="%s" state="assigned" assigned_to="%s" assigned_by="%s" assigned_at="%s" claimed_by="" claimed_at="" />\n' \
-    "$(xml_escape "$id")" \
-    "$(xml_escape "$repo")" \
-    "$(xml_escape "$to")" \
-    "$(xml_escape "$assigned_by")" \
-    "$(xml_escape "$now")"
+    "$(atmux_xml_escape "$id")" \
+    "$(atmux_xml_escape "$repo")" \
+    "$(atmux_xml_escape "$to")" \
+    "$(atmux_xml_escape "$assigned_by")" \
+    "$(atmux_xml_escape "$now")"
 
   local actor_pane assignee_session assignee_pane notification_xml
-  actor_pane="$(current_pane)"
+  actor_pane="$(atmux_resolve_current_pane)"
   assignee_session="$("$HERE/agent" resolve "$to" "$repo" 2>/dev/null || true)"
   if [[ -n "$assignee_session" ]]; then
-    assignee_pane="$(primary_pane_for_session "$assignee_session")"
+    assignee_pane="$(atmux_resolve_primary_pane "$assignee_session")"
   fi
   notification_xml="$(build_notification "pull-request" "assign" "atmux pr get $id" "state=assigned")"
   if [[ -n "${assignee_pane:-}" && "$assignee_pane" != "$actor_pane" ]]; then
@@ -449,25 +449,25 @@ claim_pr() {
 
   now="$(now_utc)"
   if [[ -z "$assigned_to" ]]; then
-    write_field "$dir/assigned_to" "$by"
-    write_field "$dir/assigned_by" "self-claim"
-    write_field "$dir/assigned_at" "$now"
+    atmux_fs_write_field "$dir/assigned_to" "$by"
+    atmux_fs_write_field "$dir/assigned_by" "self-claim"
+    atmux_fs_write_field "$dir/assigned_at" "$now"
     assigned_to="$by"
   fi
-  write_field "$dir/claimed_by" "$by"
-  write_field "$dir/claimed_at" "$now"
-  write_field "$dir/state" "in_progress"
-  write_field "$dir/updated_at" "$now"
+  atmux_fs_write_field "$dir/claimed_by" "$by"
+  atmux_fs_write_field "$dir/claimed_at" "$now"
+  atmux_fs_write_field "$dir/state" "in_progress"
+  atmux_fs_write_field "$dir/updated_at" "$now"
 
   printf '<pull-request id="%s" repo="%s" state="in_progress" assigned_to="%s" claimed_by="%s" claimed_at="%s" />\n' \
-    "$(xml_escape "$id")" \
-    "$(xml_escape "$repo")" \
-    "$(xml_escape "$assigned_to")" \
-    "$(xml_escape "$by")" \
-    "$(xml_escape "$now")"
+    "$(atmux_xml_escape "$id")" \
+    "$(atmux_xml_escape "$repo")" \
+    "$(atmux_xml_escape "$assigned_to")" \
+    "$(atmux_xml_escape "$by")" \
+    "$(atmux_xml_escape "$now")"
 
   local actor_pane notification_xml
-  actor_pane="$(current_pane)"
+  actor_pane="$(atmux_resolve_current_pane)"
   notification_xml="$(build_notification "pull-request" "claim" "atmux pr get $id" "state=in_progress")"
   notify_pull_request_watchers "$dir" "$actor_pane" "$notification_xml"
 }

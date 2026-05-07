@@ -39,7 +39,7 @@ resolve_repo_name() {
     echo "unable to resolve repo; pass --repo <repo> or run inside a git repo" >&2
     exit 2
   fi
-  normalize_name "$repo"
+  atmux_resolve_normalized_name "$repo"
 }
 
 current_actor_name() {
@@ -56,7 +56,7 @@ current_actor_name() {
     local session=""
     session="$(tmux display-message -p '#S' 2>/dev/null || true)"
     if [[ -n "$session" ]]; then
-      session_short_name "$session" "$repo"
+      atmux_resolve_session_short_name "$session" "$repo"
       return
     fi
   fi
@@ -77,7 +77,7 @@ notify_agent_by_name() {
     session="atmux-${repo}-${agent_name}"
   fi
   local pane
-  pane="$(primary_pane_for_session "$session" 2>/dev/null || true)"
+  pane="$(atmux_resolve_primary_pane "$session" 2>/dev/null || true)"
   [[ -n "$pane" ]] || return 0
   [[ "$pane" == "$skip_pane" ]] && return 0
 
@@ -164,27 +164,27 @@ mkdir -p "$comments_dir"
 
 # Filename: timestamp + author for uniqueness and sort order
 comment_file="$comments_dir/${now//:/}-${author}"
-write_field "$comment_file" "$message"
-write_field "$target_dir/updated_at" "$now"
+atmux_fs_write_field "$comment_file" "$message"
+atmux_fs_write_field "$target_dir/updated_at" "$now"
 
 if [[ "$target_kind" == "issue" ]]; then
   printf '<comment issue_id="%s" repo="%s" author="%s" timestamp="%s">\n' \
-    "$(xml_escape "$target_id")" \
-    "$(xml_escape "$repo")" \
-    "$(xml_escape "$author")" \
-    "$(xml_escape "$now")"
+    "$(atmux_xml_escape "$target_id")" \
+    "$(atmux_xml_escape "$repo")" \
+    "$(atmux_xml_escape "$author")" \
+    "$(atmux_xml_escape "$now")"
 else
   printf '<comment pr_id="%s" repo="%s" author="%s" timestamp="%s">\n' \
-    "$(xml_escape "$target_id")" \
-    "$(xml_escape "$repo")" \
-    "$(xml_escape "$author")" \
-    "$(xml_escape "$now")"
+    "$(atmux_xml_escape "$target_id")" \
+    "$(atmux_xml_escape "$repo")" \
+    "$(atmux_xml_escape "$author")" \
+    "$(atmux_xml_escape "$now")"
 fi
-printf '  <body>%s</body>\n' "$(xml_escape "$message")"
+printf '  <body>%s</body>\n' "$(atmux_xml_escape "$message")"
 printf '</comment>\n'
 
 # Notify watchers, assignee, and assigner
-actor_pane="$(current_pane)"
+actor_pane="$(atmux_resolve_current_pane)"
 notification_xml="$(build_notification "$notification_type" "comment" "$get_command" "state=comment")"
 
 if [[ -n "$actor_pane" ]]; then

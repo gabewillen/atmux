@@ -102,7 +102,7 @@ current_session_name() {
   fi
   if [[ -n "${ATMUX_AGENT_NAME:-}" ]]; then
     local repo_name=""
-    repo_name="$(repo_name_from_context)"
+    repo_name="$(atmux_resolve_repo_name)"
     if [[ -n "$repo_name" ]]; then
       printf 'atmux-%s-%s\n' "$repo_name" "${ATMUX_AGENT_NAME}"
       return 0
@@ -143,7 +143,7 @@ send_scheduled_notification() {
   from_session="$(notification_sender)"
   payload="$(build_notification "scheduled" "$from_session" "" "text=$notification_text")"
   target_session="$(default_notification_target)"
-  target_pane="$(primary_pane_for_session "$target_session")"
+  target_pane="$(atmux_resolve_primary_pane "$target_session")"
   if [[ -z "$target_pane" ]]; then
     echo "failed to locate pane for session: $target_session" >&2
     exit 1
@@ -201,7 +201,7 @@ target_resolves_to_self_only() {
   [[ -n "$from_session" ]] || return 1
   [[ "$target" == "$from_session" ]] && return 0
 
-  repo_name="$(repo_name_from_context)"
+  repo_name="$(atmux_resolve_repo_name)"
 
   if team_name="$(resolve_team_name "$target" "$repo_name")"; then
     while IFS= read -r member; do
@@ -348,18 +348,18 @@ if [[ "$no_detach" -eq 0 ]]; then
 
   if [[ "$mode_kind" == "notification" ]]; then
     printf '<schedule kind="notification" to="%s" mode="%s" duration="%s" pid="%s" pane="%s" />\n' \
-      "$(xml_escape "$(default_notification_target)")" \
-      "$(xml_escape "$mode")" \
-      "$(xml_escape "$duration")" \
-      "$(xml_escape "$pid")" \
-      "$(xml_escape "$pane")"
+      "$(atmux_xml_escape "$(default_notification_target)")" \
+      "$(atmux_xml_escape "$mode")" \
+      "$(atmux_xml_escape "$duration")" \
+      "$(atmux_xml_escape "$pid")" \
+      "$(atmux_xml_escape "$pane")"
   else
     printf '<schedule kind="command" mode="%s" duration="%s" pid="%s" pane="%s" command="%s" />\n' \
-      "$(xml_escape "$mode")" \
-      "$(xml_escape "$duration")" \
-      "$(xml_escape "$pid")" \
-      "$(xml_escape "$pane")" \
-      "$(xml_escape "$(describe_command "${command_args[@]}")")"
+      "$(atmux_xml_escape "$mode")" \
+      "$(atmux_xml_escape "$duration")" \
+      "$(atmux_xml_escape "$pid")" \
+      "$(atmux_xml_escape "$pane")" \
+      "$(atmux_xml_escape "$(describe_command "${command_args[@]}")")"
   fi
   exit 0
 fi
@@ -383,9 +383,9 @@ while true; do
     send_scheduled_notification "$notification_text"
     count=$((count + 1))
     printf '<schedule kind="notification" to="%s" mode="interval" duration="%s" iteration="%s" />\n' \
-      "$(xml_escape "$(default_notification_target)")" \
-      "$(xml_escape "$interval_raw")" \
-      "$(xml_escape "$count")"
+      "$(atmux_xml_escape "$(default_notification_target)")" \
+      "$(atmux_xml_escape "$interval_raw")" \
+      "$(atmux_xml_escape "$count")"
     continue
   fi
 
@@ -397,8 +397,8 @@ while true; do
   fi
   count=$((count + 1))
   printf '<schedule kind="command" mode="interval" duration="%s" iteration="%s" exit_code="%s" command="%s" />\n' \
-    "$(xml_escape "$interval_raw")" \
-    "$(xml_escape "$count")" \
-    "$(xml_escape "$rc")" \
-    "$(xml_escape "$(describe_command "${command_args[@]}")")"
+    "$(atmux_xml_escape "$interval_raw")" \
+    "$(atmux_xml_escape "$count")" \
+    "$(atmux_xml_escape "$rc")" \
+    "$(atmux_xml_escape "$(describe_command "${command_args[@]}")")"
 done

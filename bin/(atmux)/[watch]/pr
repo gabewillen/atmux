@@ -70,7 +70,7 @@ parse_pr_url() {
 
 pr_watch_key() {
   local owner="$1" repo="$2" number="$3"
-  normalize_name "${owner}_${repo}_pr_${number}"
+  atmux_resolve_normalized_name "${owner}_${repo}_pr_${number}"
 }
 
 pr_watch_dir() {
@@ -118,12 +118,6 @@ pr_watch_state_file() {
   printf '%s/state\n' "$(pr_watch_dir "$key")"
 }
 
-read_trimmed_file() {
-  local file="$1"
-  [[ -f "$file" ]] || return 0
-  tr -d '\r\n' < "$file" 2>/dev/null || true
-}
-
 adaptive_poll_sleep() {
   local interval="$1" failures="${2:-0}" max="${ATMUX_GITHUB_WATCH_MAX_INTERVAL:-300}"
   awk -v base="$interval" -v failures="$failures" -v max="$max" 'BEGIN {
@@ -140,13 +134,13 @@ adaptive_poll_sleep() {
 
 watcher_deadline_from_file() {
   local file="$1" raw=""
-  raw="$(read_trimmed_file "$file")"
+  raw="$(atmux_fs_read_trimmed "$file")"
   printf '%s\n' "${raw##*|}"
 }
 
 watcher_pane_from_file() {
   local file="$1" raw=""
-  raw="$(read_trimmed_file "$file")"
+  raw="$(atmux_fs_read_trimmed "$file")"
   printf '%s\n' "${raw%%|*}"
 }
 
@@ -403,7 +397,7 @@ notify_repo_on_pr_merged() {
 pr_worker_running() {
   local key="$1" pid=""
 
-  pid="$(read_trimmed_file "$(pr_watch_pid_file "$key")")"
+  pid="$(atmux_fs_read_trimmed "$(pr_watch_pid_file "$key")")"
   [[ -n "$pid" ]] || return 1
   kill -0 "$pid" 2>/dev/null
 }
@@ -419,7 +413,7 @@ acquire_pr_worker_lock() {
     return 0
   fi
 
-  pid="$(read_trimmed_file "$pid_file")"
+  pid="$(atmux_fs_read_trimmed "$pid_file")"
   if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
     return 1
   fi
@@ -528,7 +522,7 @@ serve_pr_watch() {
   mkdir -p "$watchers_dir"
 
   local snapshot="" baseline_snapshot="" baseline_initialized=0 watch_state="open" poll_data="" new_line="" payload="" failure_count=0
-  snapshot="$(read_trimmed_file "$snapshot_file")"
+  snapshot="$(atmux_fs_read_trimmed "$snapshot_file")"
   printf '%s\n' "$watch_state" > "$state_file"
 
   while true; do
@@ -639,7 +633,7 @@ main() {
   fi
 
   local pane="" key="" watcher_file="" expires_at="0"
-  pane="$(current_pane)"
+  pane="$(atmux_resolve_current_pane)"
   [[ -n "$pane" ]] || { echo "atmux pr watch: unable to resolve current pane" >&2; exit 2; }
 
   key="$(pr_watch_key "$owner" "$repo" "$number")"
@@ -648,7 +642,7 @@ main() {
   if [[ -n "$timeout_sec" && "$timeout_sec" != "0" ]]; then
     expires_at="$(( $(date +%s) + timeout_sec ))"
   fi
-  write_field "$watcher_file" "${pane}|${expires_at}"
+  atmux_fs_write_field "$watcher_file" "${pane}|${expires_at}"
   if [[ -n "$exec_cmd" ]]; then
     printf '%s' "$exec_cmd" > "${watcher_file}.exec"
   else
@@ -657,13 +651,13 @@ main() {
 
   ensure_pr_watch_worker "$key" "$pr_url" "$owner" "$repo" "$number" "$interval"
   printf '<watch type="pr" url="%s" repo="%s/%s" number="%s" pane="%s" timeout="%s" watcher_id="%s" />\n' \
-    "$(xml_escape "$pr_url")" \
-    "$(xml_escape "$owner")" \
-    "$(xml_escape "$repo")" \
-    "$(xml_escape "$number")" \
-    "$(xml_escape "$pane")" \
-    "$(xml_escape "$timeout_sec")" \
-    "$(xml_escape "$(pr_watch_watcher_id "$key" "$pane")")"
+    "$(atmux_xml_escape "$pr_url")" \
+    "$(atmux_xml_escape "$owner")" \
+    "$(atmux_xml_escape "$repo")" \
+    "$(atmux_xml_escape "$number")" \
+    "$(atmux_xml_escape "$pane")" \
+    "$(atmux_xml_escape "$timeout_sec")" \
+    "$(atmux_xml_escape "$(pr_watch_watcher_id "$key" "$pane")")"
 }
 
 case "${1:-}" in

@@ -57,7 +57,7 @@ main() {
   [[ -n "$pid" ]] || { echo "missing --pid" >&2; exit 2; }
 
   local repo_name
-  repo_name="$(repo_name_from_context)"
+  repo_name="$(atmux_resolve_repo_name)"
   local exec_dir
   exec_dir="$(exec_dir_for_repo_pid "$repo_name" "$pid")"
 
@@ -75,11 +75,11 @@ main() {
   mkdir -p "$exec_dir/watchers"
   watcher_file="$(mktemp "$exec_dir/watchers/watcher.XXXXXX")"
   local pane
-  pane="$(current_pane)"
+  pane="$(atmux_resolve_current_pane)"
   event_fifo="${watcher_file}.fifo"
   mkfifo "$event_fifo"
   exec 9<>"$event_fifo"
-  write_field "$watcher_file" "${pane}|${event_fifo}"
+  atmux_fs_write_field "$watcher_file" "${pane}|${event_fifo}"
 
   cleanup_watcher() {
     exec 9>&- 9<&- || true

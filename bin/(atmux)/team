@@ -72,24 +72,6 @@ Description:
 USAGE
 }
 
-repo_context() {
-  local repo_root repo_name
-  if ! repo_root="$(git rev-parse --show-toplevel 2>/dev/null)"; then
-    echo "atmux team must be run from a git repository" >&2
-    exit 1
-  fi
-
-  repo_name="${ATMUX_REPO:-}"
-  if [[ -z "$repo_name" && -n "${TMUX:-}" ]]; then
-    repo_name="$(tmux show-environment ATMUX_REPO 2>/dev/null | sed -n 's/^ATMUX_REPO=//p' || true)"
-  fi
-  if [[ -z "$repo_name" ]]; then
-    repo_name="$(basename "$repo_root")"
-  fi
-  repo_name="$(normalize_name "$repo_name")"
-  printf '%s\n%s\n' "$repo_root" "$repo_name"
-}
-
 resolve_role_runner() {
   # Mirrors agent:resolve_role_runner so team create can locate the `role`
   # subcommand in the same install layouts.
@@ -231,12 +213,11 @@ teardown_team() {
   while IFS= read -r member_session; do
     [[ -z "$member_session" ]] && continue
     [[ "$member_session" == "$session" ]] && continue
-    member_team="$(get_session_env "$member_session" ATMUX_TEAM)"
+    member_team="$(atmux_resolve_session_env "$member_session" ATMUX_TEAM)"
     [[ "$member_team" == "$team" ]] || continue
     member_short="${member_session#"$prefix"}"
     member_shorts+=("$member_short")
-  done < <(tmux list-sessions -F '#{session_name}' 2>/dev/null \
-            | awk -v p="$prefix" 'index($0,p)==1 { print }')
+  done < <(atmux_resolve_repo_sessions "$repo")
   if [[ "${#member_shorts[@]}" -gt 0 && -n "$atmux_bin" ]]; then
     "$atmux_bin" agent kill "${member_shorts[@]}" >/dev/null 2>&1 || true
   fi
@@ -450,7 +431,7 @@ run_team_role_hook_bounded() {
 
 team_idle_status_script_for_session() {
   local session="$1" adapter candidate
-  adapter="$(get_session_env "$session" ATMUX_ADAPTER)"
+  adapter="$(atmux_resolve_session_env "$session" ATMUX_ADAPTER)"
   [[ -n "$adapter" ]] || return 1
   for candidate in \
     "${ATMUX_SOURCE_ROOT:-$ATMUX_HOME/src/atmux}/adapter/$adapter/scripts/status" \
@@ -466,13 +447,13 @@ team_idle_status_script_for_session() {
 team_idle_member_state() {
   local session="$1" pane status_script status_xml state agent_name session_name selected_adapter status_source_root
   tmux has-session -t "$session" 2>/dev/null || { printf 'missing\n'; return 0; }
-  pane="$(primary_pane_for_session "$session")"
+  pane="$(atmux_resolve_primary_pane "$session")"
   [[ -n "$pane" ]] || { printf 'missing\n'; return 0; }
   status_script="$(team_idle_status_script_for_session "$session" || true)"
   if [[ -n "$status_script" ]]; then
-    agent_name="$(get_session_env "$session" ATMUX_AGENT_NAME)"
-    session_name="$(get_session_env "$session" ATMUX_SESSION_NAME)"
-    selected_adapter="$(get_session_env "$session" ATMUX_ADAPTER_SELECTED)"
+    agent_name="$(atmux_resolve_session_env "$session" ATMUX_AGENT_NAME)"
+    session_name="$(atmux_resolve_session_env "$session" ATMUX_SESSION_NAME)"
+    selected_adapter="$(atmux_resolve_session_env "$session" ATMUX_ADAPTER_SELECTED)"
     status_source_root="${ATMUX_SOURCE_ROOT:-$ATMUX_HOME/src/atmux}"
     status_xml="$(ATMUX_HOME="$ATMUX_HOME" \
       ATMUX_SOURCE_ROOT="$status_source_root" \
@@ -530,18 +511,18 @@ team_idle_notification_xml() {
     member_names+="${member#atmux-"${repo}"-}"
   done < <(team_member_sessions_from_state "$repo" "$team" | sort -u)
   printf '<notification type="team-idle" team="%s" reason="all_idle" members="%s" stable_seconds="%s" member_names="%s"/>' \
-    "$(xml_escape "$team")" \
-    "$(xml_escape "$count")" \
-    "$(xml_escape "$stable_seconds")" \
-    "$(xml_escape "$member_names")"
+    "$(atmux_xml_escape "$team")" \
+    "$(atmux_xml_escape "$count")" \
+    "$(atmux_xml_escape "$stable_seconds")" \
+    "$(atmux_xml_escape "$member_names")"
 }
 
 run_team_idle_watch() {
   local explicit_repo="" team_name="" watcher_name="" idle_seconds="${ATMUX_TEAM_IDLE_SECONDS:-30}" interval="${ATMUX_TEAM_IDLE_INTERVAL:-2}"
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --repo) explicit_repo="$(normalize_name "${2:-}")"; shift 2 ;;
-      --team) team_name="$(normalize_name "${2:-}")"; shift 2 ;;
+      --repo) explicit_repo="$(atmux_resolve_normalized_name "${2:-}")"; shift 2 ;;
+      --team) team_name="$(atmux_resolve_normalized_name "${2:-}")"; shift 2 ;;
       --watcher) watcher_name="${2:-}"; shift 2 ;;
       --idle) idle_seconds="${2:-}"; shift 2 ;;
       --interval) interval="${2:-}"; shift 2 ;;
@@ -582,7 +563,7 @@ run_team_idle_watch() {
 subscribe_caller_to_team_idle() {
   local repo="$1" team="$2"
   local pane="" session="" agent="" watcher_name="" watcher_dir="" atmux_bin="" source_root="" log_file=""
-  pane="$(current_pane)"
+  pane="$(atmux_resolve_current_pane)"
   [[ -n "$pane" ]] || return 0
   if ! tmux display-message -t "$pane" -p '#{pane_id}' >/dev/null 2>&1; then
     return 0
@@ -590,19 +571,19 @@ subscribe_caller_to_team_idle() {
   session="$(tmux display-message -t "$pane" -p '#{session_name}' 2>/dev/null || true)"
   agent="${ATMUX_AGENT_NAME:-}"
   if [[ -z "$agent" && -n "$session" ]]; then
-    agent="$(get_session_env "$session" ATMUX_AGENT_NAME)"
+    agent="$(atmux_resolve_session_env "$session" ATMUX_AGENT_NAME)"
   fi
-  [[ -n "$agent" || "$(get_session_env "$session" ATMUX_SESSION_KIND)" == "agent" ]] || return 0
+  [[ -n "$agent" || "$(atmux_resolve_session_env "$session" ATMUX_SESSION_KIND)" == "agent" ]] || return 0
 
   watcher_name="$(pane_queue_key "$pane")"
   watcher_dir="$(team_idle_watcher_dir "$repo" "$team" "$watcher_name")"
   mkdir -p "$watcher_dir"
-  write_field "$watcher_dir/pane" "$pane"
-  write_field "$watcher_dir/session" "$session"
-  write_field "$watcher_dir/agent" "$agent"
-  write_field "$watcher_dir/repo" "$repo"
-  write_field "$watcher_dir/team" "$team"
-  write_field "$watcher_dir/subscribed_at" "$(timestamp_utc)"
+  atmux_fs_write_field "$watcher_dir/pane" "$pane"
+  atmux_fs_write_field "$watcher_dir/session" "$session"
+  atmux_fs_write_field "$watcher_dir/agent" "$agent"
+  atmux_fs_write_field "$watcher_dir/repo" "$repo"
+  atmux_fs_write_field "$watcher_dir/team" "$team"
+  atmux_fs_write_field "$watcher_dir/subscribed_at" "$(timestamp_utc)"
 
   atmux_bin="$(resolve_atmux_runner_for_team || true)"
   [[ -n "$atmux_bin" ]] || return 0
@@ -617,7 +598,7 @@ subscribe_caller_to_team_idle() {
         --idle "${ATMUX_TEAM_IDLE_SECONDS:-30}" \
         --interval "${ATMUX_TEAM_IDLE_INTERVAL:-2}"
   ) >>"$log_file" 2>&1 &
-  write_field "$watcher_dir/worker.pid" "$!"
+  atmux_fs_write_field "$watcher_dir/worker.pid" "$!"
   team_idle_watcher_id "$repo" "$team" "$watcher_name"
 }
 
@@ -751,9 +732,9 @@ create_team() {
   {
     IFS= read -r repo_root
     IFS= read -r repo_name
-  } < <(repo_context)
+  } < <(atmux_resolve_repo_context)
 
-  team_name="$(normalize_name "$raw_name")"
+  team_name="$(atmux_resolve_normalized_name "$raw_name")"
   session="atmux-${repo_name}-team-${team_name}"
   state_dir="$(team_state_dir "$repo_name" "$team_name")"
   doc_dir="$repo_root/docs/atmux/$team_name"
@@ -814,13 +795,13 @@ create_team() {
     existing_role="$(cat "$state_dir/role" 2>/dev/null || true)"
     existing_deadline="$(cat "$state_dir/deadline_at" 2>/dev/null || true)"
     printf '<team name="%s" repo="%s" session="%s" state_dir="%s" doc_dir="%s"%s%s />\n' \
-      "$(xml_escape "$team_name")" \
-      "$(xml_escape "$repo_name")" \
-      "$(xml_escape "$existing_session")" \
-      "$(xml_escape "$state_dir")" \
-      "$(xml_escape "$existing_doc_dir")" \
-      "$([[ -n "$existing_role" ]] && printf ' role="%s"' "$(xml_escape "$existing_role")")" \
-      "$([[ -n "$existing_deadline" ]] && printf ' deadline_at="%s"' "$(xml_escape "$existing_deadline")")"
+      "$(atmux_xml_escape "$team_name")" \
+      "$(atmux_xml_escape "$repo_name")" \
+      "$(atmux_xml_escape "$existing_session")" \
+      "$(atmux_xml_escape "$state_dir")" \
+      "$(atmux_xml_escape "$existing_doc_dir")" \
+      "$([[ -n "$existing_role" ]] && printf ' role="%s"' "$(atmux_xml_escape "$existing_role")")" \
+      "$([[ -n "$existing_deadline" ]] && printf ' deadline_at="%s"' "$(atmux_xml_escape "$existing_deadline")")"
     return 0
   fi
 
@@ -877,23 +858,23 @@ create_team() {
     deadline_epoch=$(( started_epoch + duration_seconds ))
     deadline_at="$(epoch_to_utc "$deadline_epoch")"
   fi
-  write_field "$state_dir/name" "$team_name"
-  write_field "$state_dir/repo" "$repo_name"
-  write_field "$state_dir/session_name" "$session"
-  write_field "$state_dir/worktree_path" "$team_work_dir"
-  write_field "$state_dir/doc_dir" "$doc_dir"
-  write_field "$state_dir/created_at" "$(timestamp_utc)"
-  write_field "$state_dir/started_epoch" "$started_epoch"
-  [[ -n "$role" ]] && write_field "$state_dir/role" "$role"
-  [[ -n "$role_dir" ]] && write_field "$state_dir/role_dir" "$role_dir"
-  [[ -n "$start_cmd" ]] && write_field "$state_dir/role_start" "$start_cmd"
-  [[ -n "$stop_cmd" ]] && write_field "$state_dir/role_stop" "$stop_cmd"
-  [[ -n "$time_limit" ]] && write_field "$state_dir/time_limit" "$time_limit"
-  [[ -n "$deadline_epoch" ]] && write_field "$state_dir/deadline_epoch" "$deadline_epoch"
-  [[ -n "$deadline_at" ]] && write_field "$state_dir/deadline_at" "$deadline_at"
+  atmux_fs_write_field "$state_dir/name" "$team_name"
+  atmux_fs_write_field "$state_dir/repo" "$repo_name"
+  atmux_fs_write_field "$state_dir/session_name" "$session"
+  atmux_fs_write_field "$state_dir/worktree_path" "$team_work_dir"
+  atmux_fs_write_field "$state_dir/doc_dir" "$doc_dir"
+  atmux_fs_write_field "$state_dir/created_at" "$(timestamp_utc)"
+  atmux_fs_write_field "$state_dir/started_epoch" "$started_epoch"
+  [[ -n "$role" ]] && atmux_fs_write_field "$state_dir/role" "$role"
+  [[ -n "$role_dir" ]] && atmux_fs_write_field "$state_dir/role_dir" "$role_dir"
+  [[ -n "$start_cmd" ]] && atmux_fs_write_field "$state_dir/role_start" "$start_cmd"
+  [[ -n "$stop_cmd" ]] && atmux_fs_write_field "$state_dir/role_stop" "$stop_cmd"
+  [[ -n "$time_limit" ]] && atmux_fs_write_field "$state_dir/time_limit" "$time_limit"
+  [[ -n "$deadline_epoch" ]] && atmux_fs_write_field "$state_dir/deadline_epoch" "$deadline_epoch"
+  [[ -n "$deadline_at" ]] && atmux_fs_write_field "$state_dir/deadline_at" "$deadline_at"
   if [[ "$team_worktree_owned" -eq 1 ]]; then
-    write_field "$state_dir/owned-worktree" "$team_work_dir"
-    [[ -n "$team_worktree_branch" ]] && write_field "$state_dir/owned-worktree-branch" "$team_worktree_branch"
+    atmux_fs_write_field "$state_dir/owned-worktree" "$team_work_dir"
+    [[ -n "$team_worktree_branch" ]] && atmux_fs_write_field "$state_dir/owned-worktree-branch" "$team_worktree_branch"
   fi
   write_team_session_manifest "$state_dir/manifest" "$repo_name" "$team_name" "$session" \
     "$role" "$role_dir" "$team_work_dir" "$doc_dir" \
@@ -970,20 +951,20 @@ create_team() {
         tmux set-environment -t "$caller_session" ATMUX_DEFAULT_TEAM "$team_name" >/dev/null 2>&1 || true
         idle_watcher_id="$(subscribe_caller_to_team_idle "$repo_name" "$team_name" || true)"
         if [[ -n "$idle_watcher_id" ]]; then
-          idle_subscription_attr=" idle_subscription=\"team-idle\" idle_watcher_id=\"$(xml_escape "$idle_watcher_id")\""
+          idle_subscription_attr=" idle_subscription=\"team-idle\" idle_watcher_id=\"$(atmux_xml_escape "$idle_watcher_id")\""
         fi
       fi
     fi
   fi
 
   printf '<team name="%s" repo="%s" session="%s" state_dir="%s" doc_dir="%s"%s%s%s />\n' \
-    "$(xml_escape "$team_name")" \
-    "$(xml_escape "$repo_name")" \
-    "$(xml_escape "$session")" \
-    "$(xml_escape "$state_dir")" \
-    "$(xml_escape "$doc_dir")" \
-    "$([[ -n "$role" ]] && printf ' role="%s"' "$(xml_escape "$role")")" \
-    "$([[ -n "${team_deadline_at:-}" ]] && printf ' deadline_at="%s"' "$(xml_escape "$team_deadline_at")")" \
+    "$(atmux_xml_escape "$team_name")" \
+    "$(atmux_xml_escape "$repo_name")" \
+    "$(atmux_xml_escape "$session")" \
+    "$(atmux_xml_escape "$state_dir")" \
+    "$(atmux_xml_escape "$doc_dir")" \
+    "$([[ -n "$role" ]] && printf ' role="%s"' "$(atmux_xml_escape "$role")")" \
+    "$([[ -n "${team_deadline_at:-}" ]] && printf ' deadline_at="%s"' "$(atmux_xml_escape "$team_deadline_at")")" \
     "$idle_subscription_attr"
 }
 
@@ -992,7 +973,7 @@ list_teams() {
   {
     IFS= read -r _
     IFS= read -r repo_name
-  } < <(repo_context)
+  } < <(atmux_resolve_repo_context)
 
   report_open teams repo="$repo_name"
   local base dir name session doc_dir deadline_at role
@@ -1086,7 +1067,7 @@ kill_teams() {
   {
     IFS= read -r repo_root
     IFS= read -r repo_name
-  } < <(repo_context)
+  } < <(atmux_resolve_repo_context)
   atmux_bin="$(resolve_atmux_runner_for_team || true)"
   [[ -n "$atmux_bin" ]] || { echo "atmux team kill: cannot locate atmux binary" >&2; exit 127; }
 
@@ -1121,7 +1102,7 @@ view_team() {
   {
     IFS= read -r repo_root
     IFS= read -r repo_name
-  } < <(repo_context)
+  } < <(atmux_resolve_repo_context)
   team_name="$(resolve_team_name "$target" "$repo_name")" || { echo "team not found: $target" >&2; exit 1; }
   team_session="atmux-${repo_name}-team-${team_name}"
   attach_cmd="$(atmux_tmux_attach_command)" || exit 1
@@ -1177,9 +1158,9 @@ view_team() {
     exec "$real_tmux" -S "$socket" attach-session -t "$team_session"
   fi
   printf '<team-view name="%s" repo="%s" session="%s" />\n' \
-    "$(xml_escape "$team_name")" \
-    "$(xml_escape "$repo_name")" \
-    "$(xml_escape "atmux-${repo_name}-team-${team_name}")"
+    "$(atmux_xml_escape "$team_name")" \
+    "$(atmux_xml_escape "$repo_name")" \
+    "$(atmux_xml_escape "atmux-${repo_name}-team-${team_name}")"
 }
 
 sub="${1:-}"
@@ -1226,7 +1207,7 @@ case "$sub" in
     fi
     r_repo="${2:-}"
     if [[ -z "$r_repo" ]]; then
-      r_repo="$(repo_name_from_context)"
+      r_repo="$(atmux_resolve_repo_name)"
     fi
 
     if team_name="$(resolve_team_name "$target" "$r_repo")"; then

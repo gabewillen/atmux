@@ -7,7 +7,7 @@
 #   report_open        → opens a collection
 #   report_record      → emits one record (key=value attrs)
 #   report_close       → closes the collection (flushes table in CLI mode)
-#   report_xml_escape  → XML-escape a value (re-export for callers)
+#   atmux_xml_escape  → XML-escape a value from (lib)/xml
 #
 # Mode selection:
 #   ATMUX_REPORTER=xml   → always XML
@@ -16,15 +16,14 @@
 #   unset                → same as auto
 #   ATMUX_NO_WRAP=1      → forces CLI (legacy alias, takes precedence over auto)
 
+# shellcheck source=bin/(atmux)/(lib)/xml
+source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)/(lib)/xml"
+
 # Guard against double-sourcing.
 if [[ -n "${__ATMUX_REPORTER_SOURCED:-}" ]]; then
   return 0 2>/dev/null || true
 fi
 __ATMUX_REPORTER_SOURCED=1
-
-report_xml_escape() {
-  printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g' -e "s/'/\&apos;/g"
-}
 
 reporter_mode() {
   case "${ATMUX_REPORTER:-}" in
@@ -63,7 +62,7 @@ report_open() {
     for kv in "$@"; do
       k="${kv%%=*}"
       v="${kv#*=}"
-      out+=" ${k}=\"$(report_xml_escape "$v")\""
+      out+=" ${k}=\"$(atmux_xml_escape "$v")\""
     done
     printf '%s>\n' "$out"
     return
@@ -106,7 +105,7 @@ report_record() {
     for kv in "$@"; do
       k="${kv%%=*}"
       v="${kv#*=}"
-      out+=" ${k}=\"$(report_xml_escape "$v")\""
+      out+=" ${k}=\"$(atmux_xml_escape "$v")\""
     done
     printf '%s />\n' "$out"
     return

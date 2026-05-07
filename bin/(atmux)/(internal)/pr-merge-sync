@@ -59,7 +59,7 @@ done
 }
 [[ -n "$url" ]] || url="https://github.com/$owner_repo/pull/$number"
 
-repo_name="$(repo_name_from_context)"
+repo_name="$(atmux_resolve_repo_name)"
 dedupe_dir="$ATMUX_HOME/pr-merge-sync/$repo_name"
 dedupe_key="$(printf '%s\037%s\037%s\n' "$owner_repo" "$number" "$url" | cksum | awk '{print $1}')"
 dedupe_file="$dedupe_dir/$dedupe_key"
@@ -69,8 +69,8 @@ if ! (
   printf 'repo=%s\nnumber=%s\nurl=%s\nsource=%s\n' "$owner_repo" "$number" "$url" "$source_name" > "$dedupe_file"
 ) 2>/dev/null; then
   printf '<pr-merge-sync repo="%s" number="%s" duplicate="true" notified="0" />\n' \
-    "$(xml_escape "$owner_repo")" \
-    "$(xml_escape "$number")"
+    "$(atmux_xml_escape "$owner_repo")" \
+    "$(atmux_xml_escape "$number")"
   exit 0
 fi
 
@@ -91,7 +91,7 @@ payload_for_target() {
 notify_session() {
   local session="$1" target_kind="$2" target_name="$3"
   local pane payload
-  pane="$(primary_pane_for_session "$session" 2>/dev/null || true)"
+  pane="$(atmux_resolve_primary_pane "$session" 2>/dev/null || true)"
   [[ -n "$pane" ]] || return 1
   if [[ "${ATMUX_PR_MERGE_SYNC_DRY_RUN:-0}" == "1" ]]; then
     if [[ -n "${ATMUX_PR_MERGE_SYNC_LOG:-}" ]]; then
@@ -122,22 +122,18 @@ already_notified() {
   text_has_line "$notified_sessions" "$session"
 }
 
-if tmux list-sessions -F '#{session_name}' >/dev/null 2>&1; then
-  while IFS= read -r session; do
-    [[ -n "$session" ]] || continue
-    case "$session" in
-      atmux-"$repo_name"-team-*) continue ;;
-      atmux-"$repo_name"-*) ;;
-      *) continue ;;
-    esac
-    team="$(get_session_env "$session" ATMUX_TEAM)"
-    [[ -z "$team" ]] || continue
-    if notify_session "$session" "agent" "$(session_short_name "$session" "$repo_name")"; then
-      notified_count=$((notified_count + 1))
-      mark_notified "$session"
-    fi
-  done < <(tmux list-sessions -F '#{session_name}' 2>/dev/null | sort -u)
-fi
+while IFS= read -r session; do
+  [[ -n "$session" ]] || continue
+  case "$session" in
+    atmux-"$repo_name"-team-*) continue ;;
+  esac
+  team="$(atmux_resolve_session_env "$session" ATMUX_TEAM)"
+  [[ -z "$team" ]] || continue
+  if notify_session "$session" "agent" "$(atmux_resolve_session_short_name "$session" "$repo_name")"; then
+    notified_count=$((notified_count + 1))
+    mark_notified "$session"
+  fi
+done < <(atmux_resolve_repo_sessions "$repo_name" | sort -u)
 
 teams_base="$ATMUX_HOME/teams/$repo_name"
 if [[ -d "$teams_base" ]]; then
@@ -157,6 +153,6 @@ if [[ -d "$teams_base" ]]; then
 fi
 
 printf '<pr-merge-sync repo="%s" number="%s" duplicate="false" notified="%s" />\n' \
-  "$(xml_escape "$owner_repo")" \
-  "$(xml_escape "$number")" \
-  "$(xml_escape "$notified_count")"
+  "$(atmux_xml_escape "$owner_repo")" \
+  "$(atmux_xml_escape "$number")" \
+  "$(atmux_xml_escape "$notified_count")"

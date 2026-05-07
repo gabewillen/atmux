@@ -10,6 +10,14 @@ ATMUX_HOME="${ATMUX_HOME:-$HOME/.atmux}"
 source "$ATMUX_NOTIFY_DIR/(lib)/tmux"
 # shellcheck source=bin/(atmux)/(lib)/manifest
 source "$ATMUX_NOTIFY_DIR/(lib)/manifest"
+# shellcheck source=bin/(atmux)/(lib)/xml
+source "$ATMUX_NOTIFY_DIR/(lib)/xml"
+# shellcheck source=bin/(atmux)/(lib)/resolver
+source "$ATMUX_NOTIFY_DIR/(lib)/resolver"
+# shellcheck source=bin/(atmux)/(lib)/fs
+source "$ATMUX_NOTIFY_DIR/(lib)/fs"
+# shellcheck source=bin/(atmux)/(lib)/notification
+source "$ATMUX_NOTIFY_DIR/(lib)/notification"
 
 debug_notify_enabled() {
   case "${ATMUX_DEBUG_NOTIFY:-0}" in
@@ -51,58 +59,6 @@ ensure_internal_real_tmux() {
 
 ensure_internal_real_tmux
 
-normalize_name() {
-  local raw="${1:-}"
-  local normalized=""
-  normalized="$(printf '%s' "$raw" | sed -E 's/[^A-Za-z0-9_-]+/_/g; s/_+/_/g; s/^_+//; s/_+$//')"
-  if [[ -z "$normalized" ]]; then
-    normalized="repo"
-  fi
-  printf '%s\n' "$normalized"
-}
-
-xml_escape() {
-  printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g' -e "s/'/\&apos;/g"
-}
-
-primary_pane_for_session() {
-  local session="$1"
-  tmux list-panes -a -F '#{session_name} #{pane_id}' 2>/dev/null | awk -v s="$session" '$1==s { print $2; exit }'
-}
-
-current_pane() {
-  # Prefer TMUX_PANE (set by tmux per-pane) — display-message -p resolves
-  # wrong without an attached client.
-  if [[ -n "${TMUX_PANE:-}" ]]; then
-    printf '%s\n' "$TMUX_PANE"
-    return 0
-  fi
-  if [[ -n "${TMUX:-}" ]]; then
-    tmux display-message -p '#{pane_id}' 2>/dev/null || true
-    return 0
-  fi
-  if [[ -n "${ATMUX_SESSION_NAME:-}" ]]; then
-    primary_pane_for_session "$ATMUX_SESSION_NAME"
-    return 0
-  fi
-  return 0
-}
-
-pane_queue_key() {
-  local pane="$1"
-  local session=""
-  session="$(tmux display-message -t "$pane" -p "#{session_name}" 2>/dev/null || true)"
-  if [[ -n "$session" ]]; then
-    pane="${session}-${pane}"
-  fi
-  printf '%s\n' "${pane//[^A-Za-z0-9_.-]/_}"
-}
-
-notify_queue_dir() {
-  local pane="$1"
-  printf '%s/notify-queue/%s\n' "$ATMUX_HOME" "$(pane_queue_key "$pane")"
-}
-
 team_message_root_for_team() {
   local repo="$1" team="$2"
   printf '%s/team-messages/%s/%s\n' "$ATMUX_HOME" "$repo" "$team"
@@ -120,7 +76,7 @@ team_members_dir() {
 
 team_member_key() {
   local session="$1"
-  normalize_name "$session"
+  atmux_resolve_normalized_name "$session"
 }
 
 team_member_dir() {
@@ -137,7 +93,7 @@ team_state_exists() {
 
 resolve_team_name() {
   local target="$1" repo_name="$2" team_name
-  team_name="$(normalize_name "$target")"
+  team_name="$(atmux_resolve_normalized_name "$target")"
   if team_state_exists "$repo_name" "$team_name"; then
     printf '%s\n' "$team_name"
     return 0
@@ -180,16 +136,16 @@ record_team_member_state() {
   [[ -n "$repo" && -n "$team" && -n "$session" ]] || return 0
   dir="$(team_member_dir "$repo" "$team" "$session")"
   mkdir -p "$dir"
-  write_field "$dir/session" "$session"
-  write_field "$dir/name" "$name"
-  write_field "$dir/role" "$role"
-  write_field "$dir/adapter" "$adapter"
-  write_field "$dir/joined_at" "$(timestamp_utc)"
+  atmux_fs_write_field "$dir/session" "$session"
+  atmux_fs_write_field "$dir/name" "$name"
+  atmux_fs_write_field "$dir/role" "$role"
+  atmux_fs_write_field "$dir/adapter" "$adapter"
+  atmux_fs_write_field "$dir/joined_at" "$(timestamp_utc)"
 }
 
 team_message_watch_key() {
   local repo="$1" team="$2"
-  normalize_name "${repo}--team--${team}"
+  atmux_resolve_normalized_name "${repo}--team--${team}"
 }
 
 team_message_watch_dir() {
@@ -214,7 +170,7 @@ team_message_watcher_id() {
 
 team_idle_watch_key() {
   local repo="$1" team="$2"
-  normalize_name "${repo}--team--${team}"
+  atmux_resolve_normalized_name "${repo}--team--${team}"
 }
 
 team_idle_watch_dir() {
@@ -300,7 +256,7 @@ resolve_input_end_for_pane() {
   sess="$(tmux display-message -t "$pane" -p "#{session_name}" 2>/dev/null || true)"
   [[ -n "$sess" ]] || return 1
 
-  adapter="$(get_session_env "$sess" ATMUX_ADAPTER)"
+  adapter="$(atmux_resolve_session_env "$sess" ATMUX_ADAPTER)"
   [[ -n "$adapter" ]] || return 1
 
   resolve_input_end_for_adapter "$adapter" "$source_root"
@@ -457,7 +413,7 @@ resolve_prompt_prefix_for_pane() {
   sess="$(tmux display-message -t "$pane" -p "#{session_name}" 2>/dev/null || true)"
   [[ -n "$sess" ]] || return 1
 
-  adapter="$(get_session_env "$sess" ATMUX_ADAPTER)"
+  adapter="$(atmux_resolve_session_env "$sess" ATMUX_ADAPTER)"
   [[ -n "$adapter" ]] || return 1
 
   resolve_input_prompt_for_adapter "$adapter" "$source_root"
@@ -470,7 +426,7 @@ resolve_adapter_for_pane() {
   sess="$(tmux display-message -t "$pane" -p "#{session_name}" 2>/dev/null || true)"
   [[ -n "$sess" ]] || return 1
 
-  get_session_env "$sess" ATMUX_ADAPTER
+  atmux_resolve_session_env "$sess" ATMUX_ADAPTER
 }
 
 resolve_status_script_for_adapter() {
@@ -714,900 +670,6 @@ restore_after_failed_delivery() {
   restore_prompt_input "$pane" "$prompt_prefix" "$saved_input"
 }
 
-wait_for_pane_ready() {
-  local pane="$1"
-  local source_root="$2"
-  local prompt_prefix="${3:-}"
-  local timeout="${4:-${ATMUX_SEND_READY_TIMEOUT_SECONDS:-45}}"
-  local deadline now adapter status_script status_xml state
-
-  [[ "$timeout" =~ ^[0-9]+$ ]] || timeout=45
-  deadline=$(( $(date +%s) + timeout ))
-  adapter="$(resolve_adapter_for_pane "$pane" 2>/dev/null || true)"
-  status_script=""
-  if [[ -n "$adapter" ]]; then
-    status_script="$(resolve_status_script_for_adapter "$adapter" "$source_root" 2>/dev/null || true)"
-  fi
-
-  while true; do
-    if [[ -n "$prompt_prefix" ]] && ! pane_has_prompt_line "$pane" "$prompt_prefix"; then
-      :
-    else
-      if [[ -n "$status_script" ]]; then
-        status_xml="$(ATMUX_HOME="$ATMUX_HOME" ATMUX_SOURCE_ROOT="$source_root" ATMUX_STATUS_PASSIVE=1 \
-          ATMUX_TARGET_PANE="$pane" "$status_script" 2>/dev/null || true)"
-        state="$(status_state_from_xml "$status_xml")"
-        case "$state" in
-          idle|errored|usage-limit) return 0 ;;
-        esac
-      else
-        return 0
-      fi
-    fi
-
-    now="$(date +%s)"
-    if (( now >= deadline )); then
-      debug_notify "ready:timeout pane=$(printf '%q' "$pane") prompt_prefix=$(printf '%q' "$prompt_prefix") adapter=$(printf '%q' "$adapter")"
-      return 1
-    fi
-    sleep 0.2
-  done
-}
-
-wait_for_prompt_input_settled() {
-  local pane="$1"
-  local prompt_prefix="$2"
-  local fallback_wait="$3"
-  local timeout="${ATMUX_SEND_PASTE_READY_TIMEOUT_SECONDS:-12}"
-  local deadline now input cursor_info
-  local last_input="" last_cursor="" stable_count=0
-
-  if [[ -z "$prompt_prefix" ]]; then
-    sleep "$fallback_wait"
-    return 0
-  fi
-
-  if ! pane_has_prompt_line "$pane" "$prompt_prefix"; then
-    debug_notify "deliver:paste_ready_no_prompt pane=$(printf '%q' "$pane")"
-    sleep "$fallback_wait"
-    return 0
-  fi
-
-  deadline=$(( $(date +%s) + timeout ))
-  while true; do
-    input="$(extract_prompt_input "$pane" "$prompt_prefix" 2>/dev/null || true)"
-    cursor_info="$(pane_cursor_position "$pane" 2>/dev/null || true)"
-
-    if [[ -n "$input" && "$input" == "$last_input" && "$cursor_info" == "$last_cursor" ]]; then
-      stable_count=$((stable_count + 1))
-      if (( stable_count >= 2 )); then
-        debug_notify "deliver:paste_ready pane=$(printf '%q' "$pane") input_len=${#input} cursor=$(printf '%q' "$cursor_info")"
-        return 0
-      fi
-    else
-      stable_count=0
-    fi
-
-    last_input="$input"
-    last_cursor="$cursor_info"
-    now="$(date +%s)"
-    if (( now >= deadline )); then
-      debug_notify "deliver:paste_ready_timeout pane=$(printf '%q' "$pane") input_len=${#input} cursor=$(printf '%q' "$cursor_info")"
-      return 0
-    fi
-    sleep 0.1
-  done
-}
-
-submit_notification_input() {
-  local pane="$1"
-  local prompt_prefix="$2"
-  local submit_keys="$3"
-  local submit_wait="$4"
-  local attempts="${ATMUX_SEND_SUBMIT_RETRY_ATTEMPTS:-3}"
-  local attempt sk
-  local before_input before_cursor before_y
-  local after_input after_cursor after_y
-  local deadline now
-  local submit_verify_timeout="${ATMUX_SEND_SUBMIT_VERIFY_SECONDS:-2}"
-
-  [[ "$attempts" =~ ^[0-9]+$ ]] || attempts=3
-  (( attempts > 0 )) || attempts=1
-  [[ "$submit_verify_timeout" =~ ^[0-9]+$ ]] || submit_verify_timeout=2
-
-  for (( attempt=1; attempt<=attempts; attempt++ )); do
-    before_input=""
-    before_cursor=""
-    before_y=""
-    if [[ -n "$prompt_prefix" ]]; then
-      before_input="$(extract_prompt_input "$pane" "$prompt_prefix" 2>/dev/null || true)"
-      before_cursor="$(pane_cursor_position "$pane" 2>/dev/null || true)"
-      before_y="${before_cursor##* }"
-    fi
-
-    debug_notify "deliver:submit_attempt pane=$(printf '%q' "$pane") attempt=$attempt input_len=${#before_input} cursor=$(printf '%q' "$before_cursor")"
-    for sk in $submit_keys; do
-      tmux send-keys -t "$pane" "$sk" >/dev/null 2>&1 || {
-        debug_notify "deliver:submit_failed pane=$(printf '%q' "$pane") key=$(printf '%q' "$sk")"
-        return 1
-      }
-    done
-
-    if [[ -z "$prompt_prefix" ]] || ! pane_has_prompt_line "$pane" "$prompt_prefix"; then
-      sleep "$submit_wait"
-      debug_notify "deliver:submit_unverified_no_prompt pane=$(printf '%q' "$pane") attempt=$attempt"
-      return 0
-    fi
-
-    # Give the adapter a beat to actually process the Enter before we
-    # start polling. Without this delay the first extract runs ~0ms
-    # after send-keys returned, and a busy/slow adapter hasn't cleared
-    # the input box yet — we'd then count it as "input still present"
-    # and spuriously retry. The verify loop's deadline is small
-    # (default 2s); polling tight against a still-processing input
-    # just burns budget on noise. Wait once, then enter the loop.
-    sleep "$submit_wait"
-
-    deadline=$(( $(date +%s) + submit_verify_timeout ))
-    while true; do
-      after_input="$(extract_prompt_input "$pane" "$prompt_prefix" 2>/dev/null || true)"
-      after_cursor="$(pane_cursor_position "$pane" 2>/dev/null || true)"
-      after_y="${after_cursor##* }"
-
-      if [[ -n "$before_y" && -n "$after_y" && "$before_y" =~ ^[0-9]+$ && "$after_y" =~ ^[0-9]+$ && "$after_y" -gt "$before_y" ]]; then
-        sleep "$submit_wait"
-        debug_notify "deliver:submit_accepted pane=$(printf '%q' "$pane") attempt=$attempt reason=cursor_advanced before=$(printf '%q' "$before_cursor") after=$(printf '%q' "$after_cursor")"
-        return 0
-      fi
-      if [[ -n "$before_input" && -z "$after_input" ]]; then
-        sleep "$submit_wait"
-        debug_notify "deliver:submit_accepted pane=$(printf '%q' "$pane") attempt=$attempt reason=input_cleared"
-        return 0
-      fi
-      if [[ -n "$before_input" ]] && ! pane_has_prompt_line "$pane" "$prompt_prefix"; then
-        sleep "$submit_wait"
-        debug_notify "deliver:submit_accepted pane=$(printf '%q' "$pane") attempt=$attempt reason=prompt_gone"
-        return 0
-      fi
-
-      now="$(date +%s)"
-      if (( now >= deadline )); then
-        break
-      fi
-      sleep 0.1
-    done
-
-    if (( attempt < attempts )); then
-      debug_notify "deliver:submit_retry pane=$(printf '%q' "$pane") attempt=$attempt before_len=${#before_input} after_len=${#after_input} before_cursor=$(printf '%q' "$before_cursor") after_cursor=$(printf '%q' "$after_cursor")"
-      wait_for_prompt_input_settled "$pane" "$prompt_prefix" "$submit_wait"
-    fi
-  done
-
-  debug_notify "deliver:submit_unverified pane=$(printf '%q' "$pane") attempts=$attempts"
-  sleep "$submit_wait"
-  return 1
-}
-
-deliver_notification_to_pane() {
-  local pane="$1"
-  local payload="$2"
-  local submit_keys="$3"
-  local prompt_prefix="${4:-}"
-  local pre_keys="${5:-}"
-  local settle paste_submit_wait submit_wait no_prompt_ready_wait
-  local interrupt_settle
-
-  settle="${ATMUX_SEND_SETTLE_SECONDS:-0.4}"
-  paste_submit_wait="${ATMUX_SEND_PASTE_TO_SUBMIT_WAIT_SECONDS:-0.8}"
-  submit_wait="${ATMUX_SEND_SUBMIT_WAIT_SECONDS:-0.3}"
-  no_prompt_ready_wait="${ATMUX_SEND_NO_PROMPT_READY_SECONDS:-0.6}"
-  interrupt_settle="${ATMUX_SEND_INTERRUPT_SETTLE_SECONDS:-0.6}"
-
-  debug_notify "deliver:start pane=$(printf '%q' "$pane") submit_keys=$(printf '%q' "$submit_keys") pre_keys=$(printf '%q' "$pre_keys") $(payload_debug_summary "$payload")"
-
-  if [[ -n "$pre_keys" ]]; then
-    local pk
-    for pk in $pre_keys; do
-      tmux send-keys -t "$pane" "$pk" >/dev/null 2>&1 || {
-        debug_notify "deliver:pre_key_failed pane=$(printf '%q' "$pane") key=$(printf '%q' "$pk")"
-        return 1
-      }
-    done
-    sleep "$interrupt_settle"
-    debug_notify "deliver:pre_keys_sent pane=$(printf '%q' "$pane") settle=$interrupt_settle"
-  elif [[ -z "$prompt_prefix" ]]; then
-    sleep "$no_prompt_ready_wait"
-  fi
-
-  tmux send-keys -t "$pane" C-u >/dev/null 2>&1 || {
-    debug_notify "deliver:clear_failed pane=$(printf '%q' "$pane")"
-    return 1
-  }
-  sleep "$settle"
-  tmux send-keys -t "$pane" -l "$payload" >/dev/null 2>&1 || {
-    debug_notify "deliver:payload_failed pane=$(printf '%q' "$pane")"
-    return 1
-  }
-  wait_for_prompt_input_settled "$pane" "$prompt_prefix" "$paste_submit_wait"
-
-  # Large payloads can fool wait_for_prompt_input_settled: tmux flushes the
-  # paste in chunks, so the captured input briefly looks stable while more
-  # bytes are still in flight, and the adapter (claude/codex) needs extra
-  # time to ingest the full input before submit. Add a length-scaled pause
-  # before pressing Enter. Tunable via ATMUX_SEND_PASTE_PER_KB_SECONDS
-  # (default 0.05s/KB; capped via ATMUX_SEND_PASTE_BONUS_MAX_SECONDS at 5s).
-  # Skipped for payloads under ATMUX_SEND_PASTE_BONUS_MIN_BYTES (default 1024).
-  local payload_len=${#payload}
-  local bonus_min="${ATMUX_SEND_PASTE_BONUS_MIN_BYTES:-1024}"
-  local per_kb="${ATMUX_SEND_PASTE_PER_KB_SECONDS:-0.05}"
-  local bonus_max="${ATMUX_SEND_PASTE_BONUS_MAX_SECONDS:-5}"
-  [[ "$bonus_min" =~ ^[0-9]+$ ]] || bonus_min=1024
-  if (( payload_len >= bonus_min )); then
-    local bonus
-    bonus="$(awk -v len="$payload_len" -v rate="$per_kb" -v cap="$bonus_max" '
-      BEGIN {
-        b = (len / 1024) * rate
-        if (b > cap) b = cap
-        if (b < 0) b = 0
-        printf "%.3f", b
-      }')"
-    if [[ -n "$bonus" && "$bonus" != "0.000" ]]; then
-      debug_notify "deliver:length_bonus pane=$(printf '%q' "$pane") payload_len=$payload_len bonus=${bonus}s per_kb=${per_kb}s cap=${bonus_max}s"
-      sleep "$bonus"
-    fi
-  fi
-
-  submit_notification_input "$pane" "$prompt_prefix" "$submit_keys" "$submit_wait" || return 1
-  debug_notify "deliver:done pane=$(printf '%q' "$pane")"
-  return 0
-}
-
-next_notification_queue_id() {
-  local qdir="$1"
-  local lock_dir="$qdir/seq.lock"
-  local payload_dir="$qdir/payloads"
-  local current="0"
-  local next=1
-  local item_dir item_base item_num
-
-  mkdir -p "$qdir"
-  while ! mkdir "$lock_dir" 2>/dev/null; do
-    sleep 0.01
-  done
-
-  if [[ -f "$qdir/next_id" ]]; then
-    current="$(tr -d '\r\n' < "$qdir/next_id" 2>/dev/null || printf '0')"
-    [[ "$current" =~ ^[0-9]+$ ]] || current="0"
-  fi
-
-  if [[ -d "$payload_dir" ]]; then
-    while IFS= read -r item_dir; do
-      item_base="$(basename "$item_dir")"
-      [[ "$item_base" =~ ^[0-9]+$ ]] || continue
-      item_num="$(( 10#$item_base ))"
-      if (( item_num > current )); then
-        current="$item_num"
-      fi
-    done < <(find "$payload_dir" -mindepth 1 -maxdepth 1 -type d 2>/dev/null)
-  fi
-
-  next="$(( 10#$current + 1 ))"
-  while [[ -e "$payload_dir/$(printf '%010d' "$next")" ]]; do
-    next="$(( next + 1 ))"
-  done
-
-  printf '%s\n' "$next" > "$qdir/next_id"
-  rmdir "$lock_dir" >/dev/null 2>&1 || true
-
-  printf '%010d\n' "$next"
-}
-
-queue_notification_payload() {
-  local pane="$1"
-  local payload="$2"
-  local submit_key_str="$3"
-  local qdir payload_dir queue_id item_dir tmp_dir
-  local pre_key_str="${ATMUX_NOTIFY_PRE_KEYS:-}"
-  local bypass_idle="${ATMUX_NOTIFY_BYPASS_IDLE:-0}"
-
-  qdir="$(notify_queue_dir "$pane")"
-  payload_dir="$qdir/payloads"
-  mkdir -p "$payload_dir"
-
-  queue_id="$(next_notification_queue_id "$qdir")"
-  item_dir="$payload_dir/$queue_id"
-  tmp_dir="$payload_dir/.${queue_id}.tmp.$$"
-  mkdir -p "$tmp_dir"
-  write_field "$tmp_dir/payload" "$payload"
-  write_field "$tmp_dir/submit_keys" "$submit_key_str"
-  write_field "$tmp_dir/state" "queued"
-  write_field "$tmp_dir/attempts" "0"
-  write_field "$tmp_dir/created_at" "$(timestamp_utc)"
-  if [[ -n "$pre_key_str" ]]; then
-    write_field "$tmp_dir/pre_keys" "$pre_key_str"
-  fi
-  if [[ "$bypass_idle" == "1" ]]; then
-    write_field "$tmp_dir/bypass_idle" "1"
-  fi
-  mv "$tmp_dir" "$item_dir"
-  debug_notify "queue:enqueued pane=$(printf '%q' "$pane") qdir=$(printf '%q' "$qdir") queue_id=$(printf '%q' "$queue_id") submit_keys=$(printf '%q' "$submit_key_str") pre_keys=$(printf '%q' "$pre_key_str") bypass_idle=$bypass_idle $(payload_debug_summary "$payload")"
-}
-
-notification_item_attempts() {
-  local item_dir="$1" attempts=""
-  attempts="$(read_state_field "$item_dir/attempts")"
-  [[ "$attempts" =~ ^[0-9]+$ ]] || attempts=0
-  printf '%s\n' "$attempts"
-}
-
-notification_retry_delay_seconds() {
-  local attempts="$1"
-  local base="${ATMUX_NOTIFY_RETRY_BASE_SECONDS:-1}"
-  local max="${ATMUX_NOTIFY_RETRY_MAX_SECONDS:-60}"
-  [[ "$base" =~ ^[0-9]+$ ]] || base=1
-  [[ "$max" =~ ^[0-9]+$ ]] || max=60
-  (( base > 0 )) || base=1
-  (( max >= base )) || max="$base"
-
-  local delay="$base"
-  local idx
-  for (( idx=1; idx<attempts; idx++ )); do
-    delay=$(( delay * 2 ))
-    if (( delay >= max )); then
-      delay="$max"
-      break
-    fi
-  done
-  printf '%s\n' "$delay"
-}
-
-notification_item_due() {
-  local item_dir="$1" now next_attempt
-  next_attempt="$(read_state_field "$item_dir/next_attempt_at")"
-  [[ "$next_attempt" =~ ^[0-9]+$ ]] || return 0
-  now="$(date +%s)"
-  (( now >= next_attempt ))
-}
-
-mark_notification_attempt_failed() {
-  local item_dir="$1"
-  local attempts delay now max
-  attempts="$(notification_item_attempts "$item_dir")"
-  attempts=$(( attempts + 1 ))
-  now="$(date +%s)"
-  max="${ATMUX_NOTIFY_MAX_OUTER_ATTEMPTS:-3}"
-  [[ "$max" =~ ^[0-9]+$ ]] || max=3
-  (( max > 0 )) || max=3
-
-  write_field "$item_dir/attempts" "$attempts"
-  write_field "$item_dir/last_attempt_at" "$now"
-  write_field "$item_dir/last_error" "delivery_unverified"
-
-  if (( attempts >= max )); then
-    # Give up. The worker loop notices state=failed and dispatches a
-    # delivery-failed notification back to the original sender (parsed
-    # from the payload's `from` attribute), then drops the item.
-    write_field "$item_dir/state" "failed"
-    return 0
-  fi
-
-  delay="$(notification_retry_delay_seconds "$attempts")"
-  write_field "$item_dir/state" "retrying"
-  write_field "$item_dir/next_attempt_at" "$(( now + delay ))"
-}
-
-mark_notification_delivered() {
-  local item_dir="$1"
-  write_field "$item_dir/state" "delivered"
-  write_field "$item_dir/delivered_at" "$(timestamp_utc)"
-}
-
-# Parse a notification XML's `from=` attribute. Returns empty if not
-# found or malformed.
-notification_payload_from() {
-  local payload="$1"
-  printf '%s' "$payload" | sed -n 's/.*<notification[^>]* from="\([^"]*\)".*/\1/p' | head -n1
-}
-
-notification_payload_type() {
-  local payload="$1"
-  printf '%s' "$payload" | sed -n 's/.*<notification[^>]* type="\([^"]*\)".*/\1/p' | head -n1
-}
-
-# Send a `delivery-failed` notification back to the original sender so
-# they know the message never made it. The recipient is the session
-# named in the payload's `from=` attribute. Routed through `atmux send`
-# so all the usual session-name resolution (team/agent/raw session)
-# applies.
-dispatch_delivery_failed_notice() {
-  local recipient_pane="$1" item_dir="$2" payload="$3"
-  local from_session original_type attempts source_root atmux_bin
-  from_session="$(notification_payload_from "$payload")"
-  original_type="$(notification_payload_type "$payload")"
-  attempts="$(notification_item_attempts "$item_dir")"
-
-  if [[ -z "$from_session" ]]; then
-    debug_notify "deliver:failed_no_sender pane=$(printf '%q' "$recipient_pane") payload_summary=$(payload_debug_summary "$payload")"
-    return 0
-  fi
-
-  source_root="${ATMUX_SOURCE_ROOT:-$ATMUX_HOME/src/atmux}"
-  atmux_bin="$source_root/bin/atmux"
-  [[ -x "$atmux_bin" ]] || atmux_bin="atmux"
-
-  debug_notify "deliver:failed_dispatch pane=$(printf '%q' "$recipient_pane") sender=$(printf '%q' "$from_session") attempts=$attempts type=$(printf '%q' "$original_type")"
-
-  # Build the failure notice through the canonical builder so the
-  # sender receives the same shape as every other notification.
-  local notice_xml
-  notice_xml="$(build_notification "delivery-failed" "$recipient_pane" "" \
-    "original_type=$original_type" \
-    "attempts=$attempts")"
-
-  # Resolve the sender's session to its primary pane so we can enqueue
-  # the notification directly. Going through `atmux send` would wrap
-  # the XML inside another `<notification type="message">`, which is
-  # not what we want here.
-  local sender_pane
-  sender_pane="$(primary_pane_for_session "$from_session" 2>/dev/null || true)"
-  if [[ -z "$sender_pane" ]]; then
-    debug_notify "deliver:failed_unresolvable sender=$(printf '%q' "$from_session")"
-    return 0
-  fi
-
-  # Best-effort: if the sender's pane is gone, we've still logged.
-  "$atmux_bin" notify --pane "$sender_pane" --xml "$notice_xml" >/dev/null 2>&1 || true
-}
-
-notification_worker_pid_file() {
-  local qdir="$1"
-  printf '%s/worker.pid\n' "$qdir"
-}
-
-notification_wake_fifo() {
-  local qdir="$1"
-  printf '%s/wake.fifo\n' "$qdir"
-}
-
-notification_worker_running() {
-  local qdir="$1"
-  local pid=""
-
-  if [[ -f "$(notification_worker_pid_file "$qdir")" ]]; then
-    pid="$(tr -d '\r\n' < "$(notification_worker_pid_file "$qdir")" 2>/dev/null || true)"
-  fi
-  if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
-    return 0
-  fi
-  return 1
-}
-
-acquire_notification_worker_lock() {
-  local qdir="$1"
-  local lock_dir="$qdir/lock"
-  local pid_file
-  pid_file="$(notification_worker_pid_file "$qdir")"
-  local pid=""
-
-  if mkdir "$lock_dir" 2>/dev/null; then
-    printf '%s\n' "$$" > "$pid_file"
-    debug_notify "worker:lock_acquired qdir=$(printf '%q' "$qdir")"
-    return 0
-  fi
-
-  if [[ -f "$pid_file" ]]; then
-    pid="$(tr -d '\r\n' < "$pid_file" 2>/dev/null || true)"
-  fi
-  if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
-    debug_notify "worker:lock_busy qdir=$(printf '%q' "$qdir") existing_pid=$(printf '%q' "$pid")"
-    return 1
-  fi
-
-  rm -rf "$lock_dir" "$pid_file"
-  if mkdir "$lock_dir" 2>/dev/null; then
-    printf '%s\n' "$$" > "$pid_file"
-    debug_notify "worker:stale_lock_recovered qdir=$(printf '%q' "$qdir")"
-    return 0
-  fi
-  return 1
-}
-
-cleanup_notification_worker() {
-  local qdir="$1"
-  local payload_dir="$qdir/payloads"
-
-  rm -f "$(notification_wake_fifo "$qdir")"
-  rm -rf "$qdir/lock" "$(notification_worker_pid_file "$qdir")"
-  if rmdir "$payload_dir" >/dev/null 2>&1; then
-    rm -f "$qdir/next_id"
-    rmdir "$qdir" >/dev/null 2>&1 || true
-  fi
-}
-
-open_notification_wake_fifo() {
-  local qdir="$1"
-  local fifo
-
-  fifo="$(notification_wake_fifo "$qdir")"
-  if [[ -e "$fifo" && ! -p "$fifo" ]]; then
-    rm -f "$fifo"
-  fi
-  if [[ ! -p "$fifo" ]]; then
-    mkfifo "$fifo" || return 1
-  fi
-}
-
-signal_notification_worker() {
-  local pane="$1"
-  local qdir fifo
-
-  qdir="$(notify_queue_dir "$pane")"
-  fifo="$(notification_wake_fifo "$qdir")"
-  [[ -p "$fifo" ]] || return 0
-
-  { printf 'wake\n' > "$fifo"; } >/dev/null 2>&1 &
-}
-
-wait_for_notification_wake() {
-  local qdir="$1"
-  local timeout="$2"
-  local fifo
-
-  fifo="$(notification_wake_fifo "$qdir")"
-  [[ -p "$fifo" ]] || return 0
-
-  if [[ "$timeout" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
-    sleep "$timeout"
-  fi
-}
-
-wait_for_notification_wake_fd() {
-  local timeout="$1"
-  read -r -t "$timeout" _ <&8 || true
-}
-
-serve_notification_queue() {
-  local pane="$1"
-  local source_root="$2"
-  local qdir payload_dir item_dir payload submit_keys extract_rc
-  local prompt_prefix="" saved_input=""
-  local batch_active=0
-  local poll_interval="${ATMUX_NOTIFY_WORKER_POLL_SECONDS:-1}"
-  local idle_timeout="${ATMUX_NOTIFY_WORKER_IDLE_TIMEOUT_SECONDS:-300}"
-  local mode_poll_interval="${ATMUX_NOTIFY_WORKER_MODE_POLL_SECONDS:-0.2}"
-  local last_activity
-  local wake_timeout="${ATMUX_NOTIFY_WORKER_WAKE_TIMEOUT_SECONDS:-1}"
-  local wake_fd_open=0
-  local mode_hook_index="$(( ($$ + RANDOM) % 1000000 ))"
-  local mode_hook_installed=0
-  local pane_session="" pane_command="" bootstrap_state="" adapter_state=""
-  local -a items=()
-
-  qdir="$(notify_queue_dir "$pane")"
-  payload_dir="$qdir/payloads"
-  mkdir -p "$payload_dir"
-
-  acquire_notification_worker_lock "$qdir" || return 0
-
-  cleanup_worker_runtime() {
-    if (( mode_hook_installed == 1 )) && pane_exists "$pane"; then
-      tmux set-hook -p -t "$pane" -u "pane-mode-changed[$mode_hook_index]" >/dev/null 2>&1 || true
-    fi
-    exec 8>&- 8<&- || true
-    cleanup_notification_worker "$qdir"
-  }
-
-  trap cleanup_worker_runtime EXIT
-  debug_notify "worker:start pane=$(printf '%q' "$pane") qdir=$(printf '%q' "$qdir") source_root=$(printf '%q' "$source_root")"
-  last_activity="$(date +%s)"
-  if open_notification_wake_fifo "$qdir" && exec 8<>"$(notification_wake_fifo "$qdir")"; then
-    wake_fd_open=1
-    debug_notify "worker:wake_fifo_ready pane=$(printf '%q' "$pane") fifo=$(printf '%q' "$(notification_wake_fifo "$qdir")")"
-    local wake_fifo_q
-    printf -v wake_fifo_q '%q' "$(notification_wake_fifo "$qdir")"
-    if tmux set-hook -p -t "$pane" "pane-mode-changed[$mode_hook_index]" "run-shell -b 'printf wake\\\\n > $wake_fifo_q'" >/dev/null 2>&1; then
-      mode_hook_installed=1
-      debug_notify "worker:mode_hook_ready pane=$(printf '%q' "$pane") hook_index=$mode_hook_index"
-    fi
-  else
-    debug_notify "worker:wake_fifo_unavailable pane=$(printf '%q' "$pane") fifo=$(printf '%q' "$(notification_wake_fifo "$qdir")")"
-  fi
-
-  while true; do
-    if ! pane_exists "$pane"; then
-      debug_notify "worker:pane_gone pane=$(printf '%q' "$pane")"
-      break
-    fi
-
-    items=()
-    while IFS= read -r item_dir; do
-      [[ -n "$item_dir" ]] || continue
-      case "$(basename "$item_dir")" in
-        .*) continue ;;
-      esac
-      items+=("$item_dir")
-    done < <(find "$payload_dir" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort)
-
-    if [[ ${#items[@]} -eq 0 ]]; then
-      if (( batch_active == 1 )); then
-        restore_prompt_input "$pane" "$prompt_prefix" "$saved_input"
-        debug_notify "worker:restore pane=$(printf '%q' "$pane") saved_input_len=${#saved_input}"
-        prompt_prefix=""
-        saved_input=""
-        batch_active=0
-        last_activity="$(date +%s)"
-        continue
-      fi
-
-      if [[ "$idle_timeout" =~ ^[0-9]+$ ]] && (( idle_timeout > 0 )); then
-        local now
-        now="$(date +%s)"
-        if (( now - last_activity >= idle_timeout )); then
-          debug_notify "worker:idle_timeout pane=$(printf '%q' "$pane") idle_timeout=$idle_timeout"
-          break
-        fi
-      fi
-
-      if (( wake_fd_open == 1 )); then
-        wait_for_notification_wake_fd "$wake_timeout"
-      elif [[ -p "$(notification_wake_fifo "$qdir")" ]]; then
-        wait_for_notification_wake "$qdir" "$wake_timeout"
-      else
-        sleep "$poll_interval"
-      fi
-      continue
-    fi
-
-    if pane_notification_blocked "$pane"; then
-      if (( wake_fd_open == 1 )); then
-        wait_for_notification_wake_fd "$wake_timeout"
-      else
-        sleep "$mode_poll_interval"
-      fi
-      continue
-    fi
-
-    prompt_prefix="$(resolve_prompt_prefix_for_pane "$pane" "$source_root" 2>/dev/null || true)"
-    pane_session="$(tmux display-message -t "$pane" -p '#{session_name}' 2>/dev/null || true)"
-    pane_command="$(tmux display-message -t "$pane" -p '#{pane_current_command}' 2>/dev/null || true)"
-    bootstrap_state=""
-    adapter_state=""
-    if [[ -n "$pane_session" ]]; then
-      bootstrap_state="$(get_session_env "$pane_session" ATMUX_BOOTSTRAP_STATE)"
-      adapter_state="$(get_session_env "$pane_session" ATMUX_ADAPTER)"
-    fi
-    if [[ "$adapter_state" == "auto" || ( "$bootstrap_state" == "pending" && -z "$prompt_prefix" ) ]]; then
-      debug_notify "worker:bootstrap_pending pane=$(printf '%q' "$pane") session=$(printf '%q' "$pane_session") command=$(printf '%q' "$pane_command") adapter=$(printf '%q' "$adapter_state") bootstrap=$(printf '%q' "$bootstrap_state")"
-      sleep "$mode_poll_interval"
-      continue
-    fi
-    # If any due item has bypass_idle=1 (--steer / --interrupt), skip the
-    # wait-for-pane-ready gate so the message goes through even mid-tool.
-    local _has_bypass_due=0
-    local _scan_item
-    for _scan_item in "${items[@]}"; do
-      [[ -d "$_scan_item" ]] || continue
-      if ! notification_item_due "$_scan_item"; then
-        continue
-      fi
-      if [[ -f "$_scan_item/bypass_idle" ]]; then
-        _has_bypass_due=1
-        break
-      fi
-    done
-    if (( _has_bypass_due == 0 )) && [[ -n "$prompt_prefix" ]] && ! wait_for_pane_ready "$pane" "$source_root" "$prompt_prefix"; then
-      debug_notify "worker:not_ready pane=$(printf '%q' "$pane") prompt_prefix=$(printf '%q' "$prompt_prefix")"
-      sleep "$mode_poll_interval"
-      continue
-    fi
-
-    if (( batch_active == 0 )); then
-      if [[ -n "$prompt_prefix" ]]; then
-        extract_rc=0
-        saved_input="$(extract_prompt_input "$pane" "$prompt_prefix")" || extract_rc=$?
-        if (( extract_rc != 0 )); then
-          debug_notify "worker:prompt_extract_failed pane=$(printf '%q' "$pane") rc=$extract_rc"
-          sleep "$mode_poll_interval"
-          continue
-        fi
-      else
-        saved_input=""
-      fi
-      batch_active=1
-      debug_notify "worker:prompt pane=$(printf '%q' "$pane") prompt_prefix=$(printf '%q' "$prompt_prefix") saved_input_len=${#saved_input}"
-    fi
-    last_activity="$(date +%s)"
-
-    local due_item_count=0
-    for item_dir in "${items[@]}"; do
-      [[ -d "$item_dir" ]] || continue
-      if ! notification_item_due "$item_dir"; then
-        continue
-      fi
-      due_item_count=$((due_item_count + 1))
-      if pane_notification_blocked "$pane"; then
-        break
-      fi
-      prompt_prefix="$(resolve_prompt_prefix_for_pane "$pane" "$source_root" 2>/dev/null || true)"
-      pane_session="$(tmux display-message -t "$pane" -p '#{session_name}' 2>/dev/null || true)"
-      pane_command="$(tmux display-message -t "$pane" -p '#{pane_current_command}' 2>/dev/null || true)"
-      bootstrap_state=""
-      adapter_state=""
-      if [[ -n "$pane_session" ]]; then
-        bootstrap_state="$(get_session_env "$pane_session" ATMUX_BOOTSTRAP_STATE)"
-        adapter_state="$(get_session_env "$pane_session" ATMUX_ADAPTER)"
-      fi
-      if [[ "$adapter_state" == "auto" || ( "$bootstrap_state" == "pending" && -z "$prompt_prefix" ) ]]; then
-        debug_notify "worker:item_bootstrap_pending pane=$(printf '%q' "$pane") session=$(printf '%q' "$pane_session") command=$(printf '%q' "$pane_command") adapter=$(printf '%q' "$adapter_state") bootstrap=$(printf '%q' "$bootstrap_state")"
-        break
-      fi
-      # Outer loop already ran wait_for_pane_ready when batch_active was set,
-      # and submit_input_with_keys falls back to unverified delivery when the
-      # prompt has scrolled out of view. Skipping a redundant 45s ready-poll
-      # here keeps a long burst from stalling on every item once the cursor
-      # rolls past the viewport.
-      payload="$(cat "$item_dir/payload" 2>/dev/null || true)"
-      submit_keys="$(cat "$item_dir/submit_keys" 2>/dev/null || printf 'Enter')"
-      local pre_keys=""
-      if [[ -f "$item_dir/pre_keys" ]]; then
-        pre_keys="$(cat "$item_dir/pre_keys" 2>/dev/null || true)"
-      fi
-      debug_notify "worker:item pane=$(printf '%q' "$pane") item_dir=$(printf '%q' "$item_dir") submit_keys=$(printf '%q' "$submit_keys") pre_keys=$(printf '%q' "$pre_keys") $(payload_debug_summary "$payload")"
-      if deliver_notification_to_pane "$pane" "$payload" "$submit_keys" "$prompt_prefix" "$pre_keys"; then
-        mark_notification_delivered "$item_dir"
-        rm -rf "$item_dir"
-      else
-        debug_notify "worker:item_failed pane=$(printf '%q' "$pane") item_dir=$(printf '%q' "$item_dir")"
-        mark_notification_attempt_failed "$item_dir"
-        # Once the cap is hit the item is in state=failed; notify the
-        # original sender so they know the message was not delivered,
-        # then remove the item so the queue doesn't keep retrying.
-        if [[ "$(read_state_field "$item_dir/state")" == "failed" ]]; then
-          dispatch_delivery_failed_notice "$pane" "$item_dir" "$payload"
-          rm -rf "$item_dir"
-        fi
-        if (( batch_active == 1 )); then
-          restore_after_failed_delivery "$pane" "$prompt_prefix" "$saved_input"
-          prompt_prefix=""
-          saved_input=""
-          batch_active=0
-        fi
-      fi
-      last_activity="$(date +%s)"
-    done
-
-    if (( due_item_count == 0 )); then
-      if (( batch_active == 1 )); then
-        restore_prompt_input "$pane" "$prompt_prefix" "$saved_input"
-        debug_notify "worker:restore_waiting_retry pane=$(printf '%q' "$pane") saved_input_len=${#saved_input}"
-        prompt_prefix=""
-        saved_input=""
-        batch_active=0
-        last_activity="$(date +%s)"
-      fi
-      if (( wake_fd_open == 1 )); then
-        wait_for_notification_wake_fd "$wake_timeout"
-      else
-        sleep "$poll_interval"
-      fi
-    fi
-  done
-
-  trap - EXIT
-  cleanup_worker_runtime
-  debug_notify "worker:done pane=$(printf '%q' "$pane")"
-}
-
-ensure_notification_worker() {
-  local pane="$1"
-  local source_root="$2"
-  local qdir
-  local notify_script
-  local attempt
-
-  qdir="$(notify_queue_dir "$pane")"
-  mkdir -p "$qdir/payloads"
-
-  if notification_worker_running "$qdir"; then
-    return 0
-  fi
-
-  notify_script="$(resolve_notify_script_path "$source_root")"
-
-  # The queue worker MUST live in the recipient pane's session. The
-  # worker is keyed to that pane (polls its queue and tmux send-keys
-  # to it). When the recipient session is killed the worker has
-  # nothing useful to do, so binding its lifetime to that session is
-  # correct — kill-session cascade-kills the worker, no orphan.
-  #
-  # If we can't resolve the recipient's session (the pane id is bogus
-  # or the session is already gone), we fail to spawn rather than
-  # falling back to a nohup'd worker — that fallback would either
-  # deliver to a dead pane (pointless) or accumulate as an orphan.
-  local recipient_session=""
-  recipient_session="$(tmux display-message -p -t "$pane" '#{session_name}' 2>/dev/null || true)"
-
-  debug_notify "worker:spawn pane=$(printf '%q' "$pane") qdir=$(printf '%q' "$qdir") session=$(printf '%q' "${recipient_session:-<none>}")"
-
-  if [[ -z "$recipient_session" ]] || ! tmux has-session -t "$recipient_session" 2>/dev/null; then
-    debug_notify "worker:spawn_failed pane=$(printf '%q' "$pane") reason=no_recipient_session"
-    return 1
-  fi
-
-  # Build a small launcher script (avoids quoting issues across tmux's
-  # `sh -c` re-parse) and spawn it as a tmux window in the recipient's
-  # session. `-a` appends after the current window so we never collide
-  # with the adapter pane at index 0.
-  mkdir -p "$qdir"
-  local runner="$qdir/worker-runner.sh"
-  {
-    printf '#!/usr/bin/env bash\n'
-    printf 'export ATMUX_HOME=%q\n' "$ATMUX_HOME"
-    printf 'export ATMUX_SOURCE_ROOT=%q\n' "$source_root"
-    printf 'export ATMUX_REAL_TMUX=%q\n' "${ATMUX_REAL_TMUX:-}"
-    printf 'export ATMUX_ALLOW_REAL_TMUX=1\n'
-    printf 'export ATMUX_DEBUG_NOTIFY=%q\n' "${ATMUX_DEBUG_NOTIFY:-0}"
-    printf 'exec %q __serve-queue --pane %q --source-root %q\n' \
-      "$notify_script" "$pane" "$source_root"
-  } > "$runner"
-  chmod +x "$runner"
-
-  local window_name="notify-${pane#%}"
-  if ! tmux new-window -a -d \
-          -t "${recipient_session}:" \
-          -n "$window_name" \
-          "$runner" 2>/dev/null; then
-    debug_notify "worker:spawn_failed pane=$(printf '%q' "$pane") reason=tmux_new_window_failed session=$(printf '%q' "$recipient_session")"
-    return 1
-  fi
-
-  for (( attempt=0; attempt<20; attempt++ )); do
-    if notification_worker_running "$qdir"; then
-      return 0
-    fi
-    sleep 0.05
-  done
-
-  return 0
-}
-
-# Send a notification to a pane in the background. Delivery is serialized per
-# pane so rapid sends cannot interleave or clobber restored input.
-send_notification() {
-  local pane="$1"
-  local payload="$2"
-  shift 2
-  local submit_key_str="${*:-Enter}"
-  [[ -n "$pane" ]] || {
-    debug_notify "send_notification:missing_pane $(payload_debug_summary "$payload")"
-    return 1
-  }
-  if ! pane_exists "$pane"; then
-    debug_notify "send_notification:invalid_pane pane=$(printf '%q' "$pane") $(payload_debug_summary "$payload")"
-    return 1
-  fi
-
-  local source_root="${ATMUX_SOURCE_ROOT:-${ATMUX_HOME:-$HOME/.atmux}/src/atmux}"
-  local notify_script
-  notify_script="$(resolve_notify_script_path "$source_root")"
-  debug_notify "send_notification:start pane=$(printf '%q' "$pane") source_root=$(printf '%q' "$source_root") submit_keys=$(printf '%q' "$submit_key_str") $(payload_debug_summary "$payload")"
-
-  queue_notification_payload "$pane" "$payload" "$submit_key_str" || return 1
-  ensure_notification_worker "$pane" "$source_root"
-  signal_notification_worker "$pane"
-  debug_notify "send_notification:worker_ready pane=$(printf '%q' "$pane")"
-}
-
-# Unified notification builder.
-# Usage: build_notification <type> <from> <hint-cmd> [key=value ...]
-# Output: <notification type="..." from="..." hint="run `<cmd>`" key="value" ...>text</notification>
-#
-# The 3rd positional arg is the bare atmux command the receiver should
-# run; build_notification wraps it as `hint="run \`<cmd>\`"`. Earlier
-# revisions emitted this as `cmd="<cmd>"`, but `cmd` was ambiguous
-# (producer-side command vs. receiver-side command). `hint` is
-# explicitly receiver-side and the `run \`...\`` framing makes the
-# intended action unmistakable.
 build_notification() {
   local type="$1" from="$2" hint_cmd="$3"
   shift 3
@@ -1623,19 +685,19 @@ build_notification() {
       has_body=1
       continue
     fi
-    attrs+=" ${k}=\"$(xml_escape "$v")\""
+    attrs+=" ${k}=\"$(atmux_xml_escape "$v")\""
   done
   local hint_attr=""
   if [[ -n "$hint_cmd" ]]; then
-    hint_attr=" hint=\"$(xml_escape "run \`$hint_cmd\`")\""
+    hint_attr=" hint=\"$(atmux_xml_escape "run \`$hint_cmd\`")\""
   fi
   if [[ "$has_body" -eq 1 ]]; then
     printf '<notification type="%s" from="%s"%s%s>%s</notification>' \
-      "$(xml_escape "$type")" \
-      "$(xml_escape "$from")" \
+      "$(atmux_xml_escape "$type")" \
+      "$(atmux_xml_escape "$from")" \
       "$hint_attr" \
       "$attrs" \
-      "$(xml_escape "$body")"
+      "$(atmux_xml_escape "$body")"
   else
     # Self-closing tag with NO space before `/>`. cursor-agent treats
     # ` /<chars>` in its input box as a slash-command invocation; the
@@ -1645,25 +707,10 @@ build_notification() {
     # is purely a defensive tightening for adapters with sticky
     # slash-command parsers.
     printf '<notification type="%s" from="%s"%s%s/>' \
-      "$(xml_escape "$type")" \
-      "$(xml_escape "$from")" \
+      "$(atmux_xml_escape "$type")" \
+      "$(atmux_xml_escape "$from")" \
       "$hint_attr" \
       "$attrs"
-  fi
-}
-
-get_session_env() {
-  local session="$1" key="$2"
-  tmux show-environment -t "$session" "$key" 2>/dev/null | sed -n "s/^${key}=//p" || true
-}
-
-session_short_name() {
-  local session="$1" repo="$2"
-  local prefix="atmux-${repo}-"
-  if [[ -n "$repo" && "$session" == "$prefix"* ]]; then
-    printf '%s\n' "${session#"$prefix"}"
-  else
-    printf '%s\n' "$session"
   fi
 }
 
@@ -1739,28 +786,6 @@ id() {
   # grep, rm, mv, find, and most other CLI tools, breaking any caller
   # that passes the id as the first positional argument.
   printf '%s\n' "${s/#-/x}"
-}
-
-repo_name_from_context() {
-  local repo_name="${ATMUX_REPO:-}"
-  if [[ -z "$repo_name" && -n "${TMUX:-}" ]]; then
-    repo_name="$(tmux show-environment ATMUX_REPO 2>/dev/null | sed -n 's/^ATMUX_REPO=//p' || true)"
-  fi
-  if [[ -z "$repo_name" ]]; then
-    local repo_root=""
-    repo_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
-    if [[ -n "$repo_root" ]]; then
-      repo_name="$(basename "$repo_root")"
-    fi
-  fi
-  normalize_name "$repo_name"
-}
-
-write_field() {
-  local file="$1"
-  local value="${2:-}"
-  mkdir -p "$(dirname "$file")"
-  printf '%s\n' "$value" > "$file"
 }
 
 exec_root_for_repo() {
@@ -1994,7 +1019,7 @@ notify_cli_main() {
       resolve_session="$(tmux display-message -t "$pane" -p '#{session_name}' 2>/dev/null || true)"
     fi
     if [[ -n "$resolve_session" ]]; then
-      adapter="$(get_session_env "$resolve_session" ATMUX_ADAPTER)"
+      adapter="$(atmux_resolve_session_env "$resolve_session" ATMUX_ADAPTER)"
     fi
     if [[ -n "$adapter" ]]; then
       while IFS= read -r __qk_line; do

@@ -34,7 +34,7 @@ sender_session() {
   local from="${ATMUX_SESSION_NAME:-}"
   if [[ -z "$from" ]]; then
     local from_repo
-    from_repo="$(repo_name_from_context)"
+    from_repo="$(atmux_resolve_repo_name)"
     if [[ -n "$from_repo" ]]; then
       from="atmux-${from_repo}-${ATMUX_AGENT_NAME:-unknown}"
     else
@@ -46,13 +46,13 @@ sender_session() {
 
 sender_pane() {
   local pane=""
-  pane="$(current_pane)"
+  pane="$(atmux_resolve_current_pane)"
   if [[ -n "$pane" ]]; then
     printf '%s\n' "$pane"
     return 0
   fi
   if [[ -n "${from_session:-}" ]]; then
-    pane="$(primary_pane_for_session "$from_session")"
+    pane="$(atmux_resolve_primary_pane "$from_session")"
     if [[ -n "$pane" ]]; then
       printf '%s\n' "$pane"
       return 0
@@ -98,11 +98,11 @@ store_message() {
   dir="$root/$id"
   mkdir -p "$dir"
   ts="$(timestamp_utc)"
-  write_field "$dir/from" "$from"
-  write_field "$dir/to" "$to"
-  write_field "$dir/body" "$body"
-  write_field "$dir/reply_required" "$reply_required"
-  write_field "$dir/timestamp" "$ts"
+  atmux_fs_write_field "$dir/from" "$from"
+  atmux_fs_write_field "$dir/to" "$to"
+  atmux_fs_write_field "$dir/body" "$body"
+  atmux_fs_write_field "$dir/reply_required" "$reply_required"
+  atmux_fs_write_field "$dir/timestamp" "$ts"
   printf '%s\n' "$id"
 }
 
@@ -115,18 +115,18 @@ store_team_message() {
   dir="$root/$id"
   mkdir -p "$dir"
   ts="$(timestamp_utc)"
-  write_field "$dir/from" "$from"
-  write_field "$dir/team" "$team"
-  write_field "$dir/body" "$body"
-  write_field "$dir/reply_required" "$reply_required"
-  write_field "$dir/timestamp" "$ts"
+  atmux_fs_write_field "$dir/from" "$from"
+  atmux_fs_write_field "$dir/team" "$team"
+  atmux_fs_write_field "$dir/body" "$body"
+  atmux_fs_write_field "$dir/reply_required" "$reply_required"
+  atmux_fs_write_field "$dir/timestamp" "$ts"
   printf '%s\n' "$id"
 }
 
 resolve_steer_keys() {
   local session="$1"
   local adapter=""
-  adapter="$(get_session_env "$session" ATMUX_ADAPTER)"
+  adapter="$(atmux_resolve_session_env "$session" ATMUX_ADAPTER)"
   if [[ -n "$adapter" ]]; then
     resolve_submit_keys "$adapter" "steer"
   else
@@ -137,7 +137,7 @@ resolve_steer_keys() {
 resolve_abort_keys() {
   local session="$1"
   local adapter=""
-  adapter="$(get_session_env "$session" ATMUX_ADAPTER)"
+  adapter="$(atmux_resolve_session_env "$session" ATMUX_ADAPTER)"
   if [[ -z "$adapter" ]]; then
     return 0
   fi
@@ -184,7 +184,7 @@ send_to_session() {
     debug_notify "send:target_session_missing session=$(printf '%q' "$target_session")"
     return 1
   fi
-  target_pane="$(primary_pane_for_session "$target_session")"
+  target_pane="$(atmux_resolve_primary_pane "$target_session")"
   if [[ -z "$target_pane" ]]; then
     debug_notify "send:target_pane_missing session=$(printf '%q' "$target_session")"
     return 1
@@ -258,7 +258,7 @@ if [[ "$reply_required" -eq 1 ]]; then
   reply_required_value="true"
 fi
 
-repo_name="$(repo_name_from_context)"
+repo_name="$(atmux_resolve_repo_name)"
 from_session="$(sender_session)"
 debug_notify "send:start from=$(printf '%q' "$from_session") to=$(printf '%q' "$target_name") repo=$(printf '%q' "$repo_name") interrupt=$interrupt reply_required=$reply_required"
 
@@ -308,12 +308,12 @@ if [[ -n "$team_session" ]]; then
        send_to_session "$s" "$payload" ${member_keys[@]+"${member_keys[@]}"}; then
       delivered=$((delivered + 1))
       notified_sessions+="$s"$'\n'
-      member_pane="$(primary_pane_for_session "$s")"
+      member_pane="$(atmux_resolve_primary_pane "$s")"
       [[ -n "$member_pane" ]] && notified_panes+="$member_pane"$'\n'
-      results+="  <target kind=\"member\" session=\"$(xml_escape "$s")\" queued=\"true\" />"$'\n'
+      results+="  <target kind=\"member\" session=\"$(atmux_xml_escape "$s")\" queued=\"true\" />"$'\n'
     else
       failed=$((failed + 1))
-      results+="  <target kind=\"member\" session=\"$(xml_escape "$s")\" queued=\"false\" />"$'\n'
+      results+="  <target kind=\"member\" session=\"$(atmux_xml_escape "$s")\" queued=\"false\" />"$'\n'
     fi
   done
 
@@ -338,21 +338,21 @@ if [[ -n "$team_session" ]]; then
         delivered=$((delivered + 1))
         notified_panes+="$subscriber_pane"$'\n'
         [[ -n "$subscriber_session" ]] && notified_sessions+="$subscriber_session"$'\n'
-        results+="  <target kind=\"subscriber\" watcher=\"$(xml_escape "$subscriber_name")\" pane=\"$(xml_escape "$subscriber_pane")\" queued=\"true\" />"$'\n'
+        results+="  <target kind=\"subscriber\" watcher=\"$(atmux_xml_escape "$subscriber_name")\" pane=\"$(atmux_xml_escape "$subscriber_pane")\" queued=\"true\" />"$'\n'
       else
         failed=$((failed + 1))
-        results+="  <target kind=\"subscriber\" watcher=\"$(xml_escape "$subscriber_name")\" pane=\"$(xml_escape "$subscriber_pane")\" queued=\"false\" />"$'\n'
+        results+="  <target kind=\"subscriber\" watcher=\"$(atmux_xml_escape "$subscriber_name")\" pane=\"$(atmux_xml_escape "$subscriber_pane")\" queued=\"false\" />"$'\n'
       fi
     done < <(find "$subscribers_dir" -mindepth 1 -maxdepth 1 \( -type f -o -type d \) 2>/dev/null | sort)
   fi
 
   printf '<send to="team" name="%s" session="%s" message_id="%s" queued="%s" attempted="%s" failed="%s">\n%s</send>\n' \
-    "$(xml_escape "$team_name")" \
-    "$(xml_escape "$team_session")" \
-    "$(xml_escape "$msg_id")" \
-    "$(xml_escape "$delivered")" \
-    "$(xml_escape "$attempted")" \
-    "$(xml_escape "$failed")" \
+    "$(atmux_xml_escape "$team_name")" \
+    "$(atmux_xml_escape "$team_session")" \
+    "$(atmux_xml_escape "$msg_id")" \
+    "$(atmux_xml_escape "$delivered")" \
+    "$(atmux_xml_escape "$attempted")" \
+    "$(atmux_xml_escape "$failed")" \
     "$results"
 
   if (( failed > 0 )); then
@@ -401,6 +401,6 @@ if ! ATMUX_NOTIFY_PRE_KEYS="$target_pre_keys" \
   exit 1
 fi
 printf '<send to="agent" name="%s" session="%s" message_id="%s" queued="1" attempted="1" failed="0" />\n' \
-  "$(xml_escape "$target_name")" \
-  "$(xml_escape "$target_session")" \
-  "$(xml_escape "$msg_id")"
+  "$(atmux_xml_escape "$target_name")" \
+  "$(atmux_xml_escape "$target_session")" \
+  "$(atmux_xml_escape "$msg_id")"

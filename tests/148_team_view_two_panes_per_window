@@ -5,18 +5,11 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/isolate-tmux.sh"
 
 TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPTS_DIR="$TESTS_DIR/scripts"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+# shellcheck source=bin/(atmux)/(lib)/resolver
+source "$REPO_ROOT/bin/(atmux)/(lib)/resolver"
 
 eval "$("$SCRIPTS_DIR/setup")"
-
-normalize_name() {
-  local raw="${1:-}"
-  local normalized
-  normalized="$(printf '%s' "$raw" | sed -E 's/[^A-Za-z0-9_-]+/_/g; s/_+/_/g; s/^_+//; s/_+$//')"
-  if [[ -z "$normalized" ]]; then
-    normalized="repo"
-  fi
-  printf '%s\n' "$normalized"
-}
 
 extra_sessions=()
 cleanup() {
@@ -40,9 +33,9 @@ for name in reviewer planner reporter; do
   tmux set-environment -t "$session" ATMUX_REPO "$REPO_NAME"
   tmux set-environment -t "$session" ATMUX_AGENT_NAME "$name"
   tmux set-environment -t "$session" ATMUX_SESSION_NAME "$session"
-  mkdir -p "$members_dir/$(normalize_name "$session")"
-  printf '%s\n' "$session" > "$members_dir/$(normalize_name "$session")/session"
-  printf '%s\n' "$name" > "$members_dir/$(normalize_name "$session")/name"
+  mkdir -p "$members_dir/$(atmux_resolve_normalized_name "$session")"
+  printf '%s\n' "$session" > "$members_dir/$(atmux_resolve_normalized_name "$session")/session"
+  printf '%s\n' "$name" > "$members_dir/$(atmux_resolve_normalized_name "$session")/name"
 done
 
 marker1="tva$RANDOM"

@@ -27,6 +27,10 @@ Create agents, teams, or other manager agents to do the actual work:
 
 Use the new agent/team idle notifications as operational signals. When a delegated agent or team becomes idle, decide whether to review, redirect, ask for missing verification, create a PR, or shut it down.
 
+Before creating a team role, inspect the relevant role manifest or help output if you are not certain which adapters, members, and `--set` keys it supports. Do not guess override keys. If a create command fails, read the error, inspect the resulting team/agent state, clean up partial state if needed, and make one corrected attempt instead of retrying variants blindly.
+
+If you receive a duplicate notification for a message or event you already read and are actively handling, do not restart the task or re-read the same message unless the content changed. Acknowledge it as a duplicate in your own notes and continue the current delegation plan.
+
 ## Adapter Selection
 
 Before creating any agent or team, choose the adapter deliberately. Consider both adapter capabilities and current utilization within the team:

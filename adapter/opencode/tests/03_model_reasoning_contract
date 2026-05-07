@@ -24,6 +24,15 @@ ATMUX_HOME="$atmux_home" "$ADAPTER_DIR/scripts/reasoning-level" set medium >/dev
 ATMUX_HOME="$atmux_home" "$ADAPTER_DIR/scripts/reasoning-level" set extra-high >/dev/null
 [[ "$(ATMUX_HOME="$atmux_home" "$ADAPTER_DIR/scripts/reasoning-level" get)" == "extra-high" ]] || { echo "unexpected extra-high reasoning get" >&2; exit 1; }
 
+ATMUX_HOME="$atmux_home" "$ADAPTER_DIR/scripts/reasoning-level" set xhigh >/dev/null
+[[ "$(ATMUX_HOME="$atmux_home" "$ADAPTER_DIR/scripts/reasoning-level" get)" == "extra-high" ]] || { echo "unexpected xhigh alias reasoning get" >&2; exit 1; }
+
+ATMUX_HOME="$atmux_home" "$ADAPTER_DIR/scripts/model" set openai/gpt-5.5 xhigh >/dev/null
+[[ "$(ATMUX_HOME="$atmux_home" "$ADAPTER_DIR/scripts/model" get)" == "openai/gpt-5.5" ]] \
+  || { echo "unexpected model after set with xhigh reasoning" >&2; exit 1; }
+[[ "$(ATMUX_HOME="$atmux_home" "$ADAPTER_DIR/scripts/reasoning-level" get)" == "extra-high" ]] \
+  || { echo "unexpected reasoning after model set xhigh" >&2; exit 1; }
+
 if ATMUX_HOME="$atmux_home" "$ADAPTER_DIR/scripts/model" set 'not-a-model' >/dev/null 2>&1; then
   echo "invalid model unexpectedly succeeded" >&2
   exit 1

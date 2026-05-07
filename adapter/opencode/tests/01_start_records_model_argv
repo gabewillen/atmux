@@ -96,6 +96,10 @@ af="$(run_start reasoning-extra-space ATMUX_INTELLIGENCE=50 "ATMUX_REASONING_LEV
 assert_arg_eq "$af" --variant xhigh opencode-reasoning-extra-space
 assert_arg_present_line "$af" '--dangerously-skip-permissions' opencode-reasoning-extra-space
 
+af="$(run_start reasoning-xhigh-alias ATMUX_INTELLIGENCE=50 ATMUX_REASONING_LEVEL=xhigh)"
+assert_arg_eq "$af" --variant xhigh opencode-xhigh-alias
+assert_arg_present_line "$af" '--dangerously-skip-permissions' opencode-xhigh-alias
+
 af="$(run_start cli-variant ATMUX_INTELLIGENCE=50 -- --variant user-set)"
 assert_arg_eq "$af" --variant user-set opencode-cli-variant
 assert_arg_eq "$af" --model openai/gpt-5.5 opencode-cli-variant

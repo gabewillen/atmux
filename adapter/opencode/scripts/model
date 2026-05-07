@@ -19,7 +19,7 @@ normalize_model() {
 normalize_reasoning() {
   case "${1:-}" in
     low|medium|high) printf '%s\n' "$1" ;;
-    extra-high|extra_high|extra\ high|extrahigh) printf '%s\n' 'extra-high' ;;
+    extra-high|extra_high|extra\ high|extrahigh|xhigh|xh) printf '%s\n' 'extra-high' ;;
     *) return 1 ;;
   esac
 }

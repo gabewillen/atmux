@@ -10,7 +10,7 @@ source "$state_file"
 normalize_reasoning() {
   case "${1:-}" in
     low|medium|high) printf '%s\n' "$1" ;;
-    extra_high|extra-high|extra\ high|extrahigh) printf '%s\n' 'extra-high' ;;
+    extra_high|extra-high|extra\ high|extrahigh|xhigh|xh) printf '%s\n' 'extra-high' ;;
     *) return 1 ;;
   esac
 }

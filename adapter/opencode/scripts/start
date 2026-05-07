@@ -66,7 +66,7 @@ normalize_model() {
 normalize_reasoning() {
   case "${1:-}" in
     low|medium|high) printf '%s\n' "$1" ;;
-    extra-high|extra_high|extra\ high|extrahigh) printf '%s\n' 'extra-high' ;;
+    extra-high|extra_high|extra\ high|extrahigh|xhigh|xh) printf '%s\n' 'extra-high' ;;
     *) return 1 ;;
   esac
 }
@@ -79,7 +79,7 @@ reasoning_to_variant() {
     low) printf '%s\n' low ;;
     medium) printf '%s\n' medium ;;
     high) printf '%s\n' high ;;
-    extra-high) printf '%s\n' xhigh ;;
+    extra-high|xhigh|xh) printf '%s\n' xhigh ;;
     *) printf '%s\n' medium ;;
   esac
 }

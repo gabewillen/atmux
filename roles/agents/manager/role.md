@@ -31,7 +31,7 @@ Use the new agent/team idle notifications as operational signals. When a delegat
 
 Before creating any agent or team, choose the adapter deliberately. Consider both adapter capabilities and current utilization within the team:
 
-- Inspect current load with `atmux agent status --all`, `atmux team status`, queue depth, idle notifications, usage-limit signals, and known active PR/issue work before assigning more work.
+- Inspect current load with `atmux agent list --all --status`, `atmux team status`, queue depth, idle notifications, usage-limit signals, and known active PR/issue work before assigning more work.
 - Prefer fast, low-cost adapters for simple mechanical edits, formatting, small test additions, and repetitive implementation.
 - Prefer stronger reasoning adapters for architecture, concurrency, unclear bugs, migrations, security-sensitive changes, and final review.
 - Avoid putting every subtask on the same adapter when usage limits, queue depth, or team contention make another adapter a better fit.

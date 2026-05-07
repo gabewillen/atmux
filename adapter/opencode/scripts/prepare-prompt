@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Writes atmux prompt text to a sidecar markdown file and points OpenCode at it
+# via OPENCODE_CONFIG (merged with other config). See
+# https://opencode.ai/docs/config — `instructions` accepts file paths.
+
+args_file="${ATMUX_PREP_ARGS_FILE:-}"
+env_file="${ATMUX_PREP_ENV_FILE:-}"
+[[ -n "$args_file" ]] || { echo "prepare-prompt: ATMUX_PREP_ARGS_FILE not set" >&2; exit 2; }
+[[ -n "$env_file" ]]  || { echo "prepare-prompt: ATMUX_PREP_ENV_FILE not set"  >&2; exit 2; }
+
+content="$(cat)"
+[[ -n "$content" ]] || exit 0
+
+ATMUX_HOME="${ATMUX_HOME:-$HOME/.atmux}"
+repo="${ATMUX_REPO:-repo}"
+agent="${ATMUX_AGENT_NAME:-agent}"
+prep_dir="$ATMUX_HOME/state/agents/$repo/$agent"
+mkdir -p "$prep_dir"
+
+abs_prep="$(cd "$prep_dir" && pwd)"
+instructions_md="$abs_prep/opencode-atmux-instructions.md"
+config_json="$abs_prep/opencode-atmux-config.json"
+
+printf '%s\n' "$content" > "$instructions_md"
+
+ATMUX_INSTRUCTIONS_MD="$instructions_md" python3 -c '
+import json, os
+path = os.environ["ATMUX_INSTRUCTIONS_MD"]
+print(json.dumps({"instructions": [path]}))
+' > "$config_json"
+
+printf 'OPENCODE_CONFIG=%s\n' "$config_json" >> "$env_file"

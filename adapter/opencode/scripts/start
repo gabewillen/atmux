@@ -1,0 +1,131 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+export PATH="${HOME}/.local/bin:/opt/homebrew/bin:/usr/local/bin:${PATH}"
+if [[ -n "${ATMUX_SHIM_PROXY_DIR:-}" ]]; then
+  shim_safe_entries=()
+  IFS=: read -r -a path_entries <<< "$PATH"
+  for path_entry in "${path_entries[@]}"; do
+    [[ -n "$path_entry" ]] || continue
+    [[ "$path_entry" == "$ATMUX_SHIM_PROXY_DIR" ]] && continue
+    shim_safe_entries+=("$path_entry")
+  done
+  if ((${#shim_safe_entries[@]})); then
+    shim_safe_path=$(IFS=:; printf '%s' "${shim_safe_entries[*]}")
+    export PATH="$ATMUX_SHIM_PROXY_DIR:$shim_safe_path"
+  else
+    export PATH="$ATMUX_SHIM_PROXY_DIR"
+  fi
+fi
+
+manifest_lib="${ATMUX_SOURCE_ROOT:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../.." && pwd)}/bin/(atmux)/(lib)/manifest"
+# shellcheck source=bin/(atmux)/(lib)/manifest
+source "$manifest_lib"
+
+set_bootstrap_state() {
+  local state="$1"
+  local session=""
+  if [[ -n "${TMUX:-}" ]]; then
+    session="$(tmux display-message -p '#S' 2>/dev/null || true)"
+  fi
+  [[ -n "$session" ]] || return 0
+  tmux set-environment -t "$session" ATMUX_BOOTSTRAP_STATE "$state" >/dev/null 2>&1 || true
+}
+
+if ! command -v opencode >/dev/null 2>&1; then
+  echo "opencode command not found in PATH (install: https://opencode.ai/docs/cli)" >&2
+  exit 127
+fi
+
+state_dir="${ATMUX_HOME:-$HOME/.atmux}/adapters/opencode"
+state_file="$state_dir/state.env"
+mkdir -p "$state_dir"
+[[ -f "$state_file" ]] || printf 'MODEL=%s\nREASONING_LEVEL=%s\n' 'openai/gpt-5.5' 'medium' > "$state_file"
+# shellcheck disable=SC1090
+source "$state_file"
+
+arg_present() {
+  local needle="$1"
+  shift || true
+  local arg
+  for arg in "$@"; do
+    [[ "$arg" == "$needle" ]] && return 0
+  done
+  return 1
+}
+
+normalize_model() {
+  local m="${1:-}"
+  if [[ "$m" =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]*/[a-zA-Z0-9][a-zA-Z0-9._-]*$ ]]; then
+    printf '%s\n' "$m"
+    return 0
+  fi
+  return 1
+}
+
+normalize_reasoning() {
+  case "${1:-}" in
+    low|medium|high) printf '%s\n' "$1" ;;
+    extra-high|extra_high|extrahigh) printf '%s\n' 'extra-high' ;;
+    *) return 1 ;;
+  esac
+}
+
+reasoning_to_variant() {
+  # OpenCode --variant is provider-specific reasoning effort. Map atmux
+  # reasoning_level to common CLI labels; extra-high -> xhigh (matches
+  # OpenCode `opencode run` conventions / codex-style xhigh tier).
+  case "${1:-medium}" in
+    low) printf '%s\n' low ;;
+    medium) printf '%s\n' medium ;;
+    high) printf '%s\n' high ;;
+    extra-high) printf '%s\n' xhigh ;;
+    *) printf '%s\n' medium ;;
+  esac
+}
+
+if [[ -n "${ATMUX_INTELLIGENCE:-}" && "${ATMUX_INTELLIGENCE}" =~ ^[0-9]+$ ]] \
+  && (( ATMUX_INTELLIGENCE >= 0 && ATMUX_INTELLIGENCE <= 100 )); then
+  manifest_path="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)/manifest"
+  profile="$(resolve_profile_from_manifest "$ATMUX_INTELLIGENCE" "$manifest_path" || true)"
+  if [[ -n "$profile" ]]; then
+    prof_model="${profile%% *}"
+    prof_reasoning="${profile#* }"
+    MODEL="$(normalize_model "$prof_model" || printf '%s\n' "$MODEL")"
+    REASONING_LEVEL="$(normalize_reasoning "$prof_reasoning" || printf '%s\n' "$REASONING_LEVEL")"
+  fi
+fi
+
+if [[ -n "${ATMUX_OPENCODE_MODEL:-}" ]]; then
+  MODEL="$(normalize_model "$ATMUX_OPENCODE_MODEL" || { echo "invalid ATMUX_OPENCODE_MODEL: $ATMUX_OPENCODE_MODEL" >&2; exit 2; })"
+fi
+if [[ -n "${ATMUX_OPENCODE_REASONING_LEVEL:-}" ]]; then
+  REASONING_LEVEL="$(normalize_reasoning "$ATMUX_OPENCODE_REASONING_LEVEL" || { echo "invalid ATMUX_OPENCODE_REASONING_LEVEL: $ATMUX_OPENCODE_REASONING_LEVEL" >&2; exit 2; })"
+fi
+
+if [[ -n "${ATMUX_MODEL:-}" ]]; then
+  MODEL="$ATMUX_MODEL"
+fi
+if [[ -n "${ATMUX_REASONING_LEVEL:-}" ]]; then
+  REASONING_LEVEL="$ATMUX_REASONING_LEVEL"
+fi
+
+printf 'MODEL=%s\nREASONING_LEVEL=%s\n' "$MODEL" "$REASONING_LEVEL" > "$state_file"
+
+args=()
+if (($# > 0)); then
+  args+=("$@")
+fi
+if ! arg_present --model "${args[@]+"${args[@]}"}" && ! arg_present -m "${args[@]+"${args[@]}"}"; then
+  args=(--model "$MODEL" "${args[@]+"${args[@]}"}")
+fi
+if ! arg_present --variant "${args[@]+"${args[@]}"}"; then
+  args+=("--variant" "$(reasoning_to_variant "$REASONING_LEVEL")")
+fi
+if ! arg_present --dangerously-skip-permissions "${args[@]+"${args[@]}"}"; then
+  args+=(--dangerously-skip-permissions)
+fi
+
+set_bootstrap_state ready
+echo "starting opencode in $(pwd)"
+exec opencode "${args[@]+"${args[@]}"}"

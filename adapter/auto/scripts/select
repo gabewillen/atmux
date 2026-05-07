@@ -110,6 +110,9 @@ adapter_available() {
     cursor-agent)
       command -v agent >/dev/null 2>&1 || command -v cursor-agent >/dev/null 2>&1
       ;;
+    opencode)
+      command -v opencode >/dev/null 2>&1
+      ;;
     *)
       return 0
       ;;

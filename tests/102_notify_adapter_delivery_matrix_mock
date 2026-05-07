@@ -6,7 +6,7 @@ set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/isolate-tmux.sh"
 
 # Full matrix: every shipped adapter (claude-code, codex, cursor-agent,
-# gemini) x {steer, interrupt} mode, delivered against a mock `cat` pane
+# gemini, opencode) x {steer, interrupt} mode, delivered against a mock `cat` pane
 # primed with the adapter's real input.start. Verifies:
 #   1. Payload text reaches the pane (notification was "entered").
 #   2. Submit happens (cursor advances past the prompt line == "submitted").
@@ -60,6 +60,7 @@ prompt_for() {
     codex)       printf '%s' '›' ;;
     cursor-agent) printf '%s' '→' ;;
     gemini)      printf '%s' '*' ;;
+    opencode)    printf '%s' '┃' ;;
     *) return 1 ;;
   esac
 }
@@ -118,7 +119,7 @@ probe() {
 
   tmux kill-session -t "$session" >/dev/null 2>&1 || true
   # Disable INTR generation so adapters whose abort key is C-c (cursor-agent,
-  # gemini) don't kill the mock pane on --interrupt. The Ctrl-C still appears
+  # gemini, opencode) don't kill the mock pane on --interrupt. The Ctrl-C still appears
   # as a control character in cat's input stream, which is what the test
   # cares about (pre_keys reached the pane before the payload).
   tmux new-session -d -s "$session" -n "$session" -x 120 -y 30 \
@@ -178,10 +179,10 @@ probe() {
   return 0
 }
 
-echo "matrix: 4 adapters x 2 modes -> 8 mock-pane deliveries" >&2
+echo "matrix: 5 adapters x 2 modes -> 10 mock-pane deliveries" >&2
 
 failures=0
-for adapter in claude-code codex cursor-agent gemini; do
+for adapter in claude-code codex cursor-agent gemini opencode; do
   for mode in steer interrupt; do
     if ! probe "$adapter" "$mode"; then
       failures=$((failures + 1))

@@ -54,6 +54,7 @@ prompt_for() {
     codex)       printf '%s' '›' ;;
     cursor-agent) printf '%s' '→' ;;
     gemini)      printf '%s' '*' ;;
+    opencode)    printf '%s' '┃' ;;
     *) return 1 ;;
   esac
 }
@@ -210,13 +211,13 @@ probe() {
   return 0
 }
 
-echo "matrix: 4 adapters x 7 adversarial payloads -> 28 probes" >&2
+echo "matrix: 5 adapters x 7 adversarial payloads -> 35 probes" >&2
 
 # Each probe builds its own session/pane, so they're independent. Run all
-# 28 probes concurrently (in 4 adapter-batches of 7) and join.
+# 35 probes concurrently (in 5 adapter-batches of 7) and join.
 probe_pids=()
 probe_outs=()
-for adapter in claude-code codex cursor-agent gemini; do
+for adapter in claude-code codex cursor-agent gemini opencode; do
   for kind in baseline embedded_lf embedded_cr contains_prompt leading_prompt giant xml_specials; do
     out="$(mktemp "${TMPDIR:-/tmp}/atmux-probe-${adapter}-${kind}-XXX.log")"
     ( probe "$adapter" "$kind" >"$out" 2>&1 ) &

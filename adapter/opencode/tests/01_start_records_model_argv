@@ -1,0 +1,105 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+source "$(dirname "${BASH_SOURCE[0]}")/../../../tests/lib/isolate-tmux.sh"
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+ADAPTER_DIR="$(cd -- "$TESTS_DIR/.." && pwd)"
+
+tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/atmux-opencode-start-args.XXXXXX")"
+cleanup() { rm -rf "$tmp_dir"; }
+trap cleanup EXIT
+
+mkdir -p "$tmp_dir/bin"
+cat > "$tmp_dir/bin/_record" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$@" > "$ATMUX_FAKE_ARGS"
+SH
+chmod +x "$tmp_dir/bin/_record"
+ln -sf _record "$tmp_dir/bin/opencode"
+
+run_start() {
+  local label="$1"
+  shift
+  local args_file="$tmp_dir/args-$label"
+  local home_dir="$tmp_dir/home-$label"
+  local worktree="$tmp_dir/work-$label"
+  mkdir -p "$worktree"
+
+  local env_pairs=()
+  local start_argv=()
+  local mode=env
+  local item
+  for item in "$@"; do
+    if [[ "$mode" == "env" && "$item" == "--" ]]; then
+      mode=argv
+      continue
+    fi
+    if [[ "$mode" == "env" ]]; then
+      env_pairs+=("$item")
+    else
+      start_argv+=("$item")
+    fi
+  done
+
+  (
+    cd "$worktree"
+    env -i \
+      HOME="${HOME:-/tmp}" \
+      PATH="$tmp_dir/bin:/usr/bin:/bin" \
+      ATMUX_HOME="$home_dir" \
+      ATMUX_FAKE_ARGS="$args_file" \
+      "${env_pairs[@]+"${env_pairs[@]}"}" \
+      "$ADAPTER_DIR/scripts/start" "${start_argv[@]+"${start_argv[@]}"}" >/dev/null 2>&1
+  )
+  printf '%s\n' "$args_file"
+}
+
+arg_value_after() {
+  local file="$1" needle="$2"
+  awk -v n="$needle" '
+    found {print; exit}
+    $0 == n {found=1}
+  ' "$file"
+}
+
+assert_arg_eq() {
+  local file="$1" flag="$2" expected="$3" tag="$4"
+  local got
+  got="$(arg_value_after "$file" "$flag" || true)"
+  if [[ "$got" != "$expected" ]]; then
+    echo "fail [$tag]: expected $flag=$expected, got '$got'" >&2
+    sed 's/^/    /' "$file" >&2
+    exit 1
+  fi
+}
+
+assert_arg_present_line() {
+  local file="$1" expected="$2" tag="$3"
+  if ! grep -Fx -- "$expected" "$file" >/dev/null 2>&1; then
+    echo "fail [$tag]: expected argv line '$expected'" >&2
+    sed 's/^/    /' "$file" >&2
+    exit 1
+  fi
+}
+
+af="$(run_start int-only ATMUX_INTELLIGENCE=50)"
+assert_arg_eq "$af" --model openai/gpt-5.5 opencode-int-only
+assert_arg_eq "$af" --variant medium opencode-int-only
+assert_arg_present_line "$af" '--dangerously-skip-permissions' opencode-int-only
+
+af="$(run_start reasoning ATMUX_INTELLIGENCE=50 ATMUX_REASONING_LEVEL=extra-high)"
+assert_arg_eq "$af" --variant xhigh opencode-reasoning
+assert_arg_present_line "$af" '--dangerously-skip-permissions' opencode-reasoning
+
+af="$(run_start cli-variant ATMUX_INTELLIGENCE=50 -- --variant user-set)"
+assert_arg_eq "$af" --variant user-set opencode-cli-variant
+assert_arg_eq "$af" --model openai/gpt-5.5 opencode-cli-variant
+assert_arg_present_line "$af" '--dangerously-skip-permissions' opencode-cli-variant
+
+# Caller-supplied flag: must not duplicate
+af="$(run_start cli-perms ATMUX_INTELLIGENCE=50 -- --dangerously-skip-permissions)"
+n_perms="$(grep -c -Fx -- '--dangerously-skip-permissions' "$af" || true)"
+[[ "$n_perms" -eq 1 ]] || { echo "fail: expected single --dangerously-skip-permissions, got $n_perms" >&2; exit 1; }
+
+echo "PASS 01_start_records_model_argv"

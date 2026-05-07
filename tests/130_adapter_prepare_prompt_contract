@@ -6,6 +6,7 @@ set -euo pipefail
 #   - codex        → adds --config developer_instructions=<TOML-quoted-text>.
 #   - gemini       → writes sidecar under $ATMUX_HOME, emits GEMINI_SYSTEM_MD env.
 #   - cursor-agent → writes <worktree>/.cursor/rules/atmux.mdc, no args/env.
+#   - opencode     → sidecar JSON under $ATMUX_HOME + OPENCODE_CONFIG env.
 #   - none of them touch <worktree>/{AGENTS,CLAUDE,GEMINI}.md.
 
 TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -138,8 +139,35 @@ grep -Fq 'ROLE: tester' "$sidecar" \
   || { echo "fail: cursor sidecar missing role content" >&2; exit 1; }
 assert_no_pollution "$worktree"
 
+# === opencode ===============================================================
+worktree="$tmp_root/oc-wt"
+mkdir -p "$worktree"
+oc_home="$tmp_root/oc-home"
+args="$tmp_root/oc.args"; envf="$tmp_root/oc.env"
+: > "$args"; : > "$envf"
+printf '%s' "$SAMPLE" \
+  | ATMUX_HOME="$oc_home" ATMUX_REPO=demo ATMUX_AGENT_NAME=worker \
+    ATMUX_WORKTREE="$worktree" \
+    ATMUX_PREP_ARGS_FILE="$args" ATMUX_PREP_ENV_FILE="$envf" \
+    "$REPO_ROOT/adapter/opencode/scripts/prepare-prompt"
+
+[[ ! -s "$args" ]] \
+  || { echo "fail: opencode should not emit argv pairs; got: $(xxd "$args")" >&2; exit 1; }
+line="$(grep '^OPENCODE_CONFIG=' "$envf" | tail -n 1)"
+[[ -n "$line" ]] || { echo "fail: opencode env missing OPENCODE_CONFIG; got: $(cat "$envf")" >&2; exit 1; }
+cfg="${line#OPENCODE_CONFIG=}"
+[[ -f "$cfg" ]] || { echo "fail: opencode config missing at $cfg" >&2; exit 1; }
+inst_dir="$oc_home/state/agents/demo/worker"
+expected_md="$(cd "$inst_dir" && pwd)/opencode-atmux-instructions.md"
+python3 -c "import json,sys; c=json.load(open(sys.argv[1])); assert c.get('instructions')==[sys.argv[2]]" "$cfg" "$expected_md" \
+  || { echo "fail: opencode config instructions path mismatch" >&2; exit 1; }
+[[ -f "$expected_md" ]] || { echo "fail: opencode instructions sidecar missing" >&2; exit 1; }
+grep -Fq 'ROLE: tester' "$expected_md" \
+  || { echo "fail: opencode sidecar missing role content" >&2; exit 1; }
+assert_no_pollution "$worktree"
+
 # === empty stdin: no-op for every adapter ===================================
-for adapter in claude-code codex gemini cursor-agent; do
+for adapter in claude-code codex gemini cursor-agent opencode; do
   noop_args="$tmp_root/${adapter}.noop.args"
   noop_env="$tmp_root/${adapter}.noop.env"
   : > "$noop_args"; : > "$noop_env"
@@ -195,4 +223,4 @@ printf '%s' "$SAMPLE" \
 [[ ! -s "$no_sel_args" && ! -s "$no_sel_env" ]] \
   || { echo "fail: auto with no resolvable adapter should produce no prep output" >&2; exit 1; }
 
-echo "ok: prepare-prompt contract holds for all four adapters (and auto delegates correctly) and never touches AGENTS.md/CLAUDE.md/GEMINI.md"
+echo "ok: prepare-prompt contract holds for all five first-party adapters (and auto delegates correctly) and never touches AGENTS.md/CLAUDE.md/GEMINI.md"

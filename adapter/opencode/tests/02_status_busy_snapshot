@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+source "$(dirname "${BASH_SOURCE[0]}")/../../../tests/lib/isolate-tmux.sh"
+
+export ATMUX_ALLOW_OUTSIDE_TMUX="${ATMUX_ALLOW_OUTSIDE_TMUX:-1}"
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+ADAPTER_DIR="$(cd -- "$TESTS_DIR/.." && pwd)"
+
+command -v tmux >/dev/null 2>&1 || { echo "tmux not found" >&2; exit 1; }
+
+session_name="atmux-opencode-status-$$-$RANDOM"
+atmux_home="$(mktemp -d "${TMPDIR:-/tmp}/atmux-opencode-status.XXXXXX")"
+
+cleanup() {
+  tmux kill-session -t "$session_name" >/dev/null 2>&1 || true
+  rm -rf "$atmux_home"
+}
+trap cleanup EXIT
+
+tmux new-session -d -s "$session_name" -n "$session_name" \
+  "bash -c 'printf \"%s\\n\" thinking...; exec sleep 120'"
+
+pane_id="$(tmux list-panes -t "$session_name" -F '#{pane_id}' 2>/dev/null | head -n 1)"
+[[ -n "$pane_id" ]] || { echo "missing pane" >&2; exit 1; }
+
+deadline=$(( $(date +%s) + 10 ))
+while true; do
+  snap="$(tmux capture-pane -p -t "$pane_id" -S -50 2>/dev/null | tr -d '\r' || true)"
+  if printf '%s' "$snap" | grep -Fq 'thinking'; then
+    break
+  fi
+  if (( $(date +%s) >= deadline )); then
+    echo "timeout waiting for fixture text" >&2
+    tmux capture-pane -p -t "$pane_id" -S -20 >&2 || true
+    exit 1
+  fi
+  sleep 0.2
+done
+
+status_out="$(ATMUX_HOME="$atmux_home" ATMUX_TARGET_PANE="$pane_id" "$ADAPTER_DIR/scripts/status")"
+
+printf '%s\n' "$status_out" | grep -Fq 'adapter="opencode"' || { echo "bad adapter in $status_out" >&2; exit 1; }
+printf '%s\n' "$status_out" | grep -Fq 'state="busy"' || { echo "expected busy state, got: $status_out" >&2; exit 1; }
+
+echo "PASS 02_status_busy_snapshot"

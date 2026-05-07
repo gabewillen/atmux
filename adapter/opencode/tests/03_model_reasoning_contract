@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+ADAPTER_DIR="$(cd -- "$TESTS_DIR/.." && pwd)"
+
+atmux_home="$(mktemp -d "${TMPDIR:-/tmp}/atmux-opencode-test-home.XXXXXX")"
+cleanup() {
+  rm -rf "$atmux_home"
+}
+trap cleanup EXIT
+
+expected_list=$'openai/gpt-5.4-mini\nopenai/gpt-5.5\nopenai/gpt-5.5-fast\nopenai/gpt-5.5-pro\ngoogle/gemini-3-flash-preview'
+model_list="$(ATMUX_HOME="$atmux_home" "$ADAPTER_DIR/scripts/model" list)"
+[[ "$model_list" == "$expected_list" ]] || { echo "unexpected model list: $model_list" >&2; exit 1; }
+
+ATMUX_HOME="$atmux_home" "$ADAPTER_DIR/scripts/model" set openai/gpt-5.5-pro high >/dev/null
+[[ "$(ATMUX_HOME="$atmux_home" "$ADAPTER_DIR/scripts/model" get)" == "openai/gpt-5.5-pro" ]] || { echo "unexpected model get" >&2; exit 1; }
+[[ "$(ATMUX_HOME="$atmux_home" "$ADAPTER_DIR/scripts/reasoning-level" get)" == "high" ]] || { echo "unexpected reasoning get after model set" >&2; exit 1; }
+
+ATMUX_HOME="$atmux_home" "$ADAPTER_DIR/scripts/reasoning-level" set medium >/dev/null
+[[ "$(ATMUX_HOME="$atmux_home" "$ADAPTER_DIR/scripts/reasoning-level" get)" == "medium" ]] || { echo "unexpected reasoning-level get" >&2; exit 1; }
+
+ATMUX_HOME="$atmux_home" "$ADAPTER_DIR/scripts/reasoning-level" set extra-high >/dev/null
+[[ "$(ATMUX_HOME="$atmux_home" "$ADAPTER_DIR/scripts/reasoning-level" get)" == "extra-high" ]] || { echo "unexpected extra-high reasoning get" >&2; exit 1; }
+
+if ATMUX_HOME="$atmux_home" "$ADAPTER_DIR/scripts/model" set 'not-a-model' >/dev/null 2>&1; then
+  echo "invalid model unexpectedly succeeded" >&2
+  exit 1
+fi
+if ATMUX_HOME="$atmux_home" "$ADAPTER_DIR/scripts/model" set 'anthropic' >/dev/null 2>&1; then
+  echo "invalid model (no slash) unexpectedly succeeded" >&2
+  exit 1
+fi
+if ATMUX_HOME="$atmux_home" "$ADAPTER_DIR/scripts/reasoning-level" set invalid >/dev/null 2>&1; then
+  echo "invalid reasoning-level unexpectedly succeeded" >&2
+  exit 1
+fi
+
+echo "PASS 03_model_reasoning_contract"

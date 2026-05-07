@@ -1189,6 +1189,13 @@ spawn_agent_session() {
 
   if [[ -n "${ATMUX_TEAM:-}" ]]; then
     record_team_member_state "$repo_name" "$ATMUX_TEAM" "$session" "$name" "${ATMUX_ROLE:-}" "$adapter"
+    subscribe_caller_to_team_idle \
+      "$repo_name" "$ATMUX_TEAM" \
+      "${ATMUX_TEAM_IDLE_SECONDS:-${ATMUX_AGENT_IDLE_SECONDS:-30}}" \
+      "${ATMUX_TEAM_IDLE_INTERVAL:-${ATMUX_AGENT_IDLE_INTERVAL:-2}}" \
+      >/dev/null 2>&1 || true
+  else
+    subscribe_caller_to_agent_idle "$repo_name" "$name" "$session" >/dev/null 2>&1 || true
   fi
 
   local -a cmd=("$source_root/bin/(atmux)/agent" "_run-adapter" "--adapter" "$adapter")

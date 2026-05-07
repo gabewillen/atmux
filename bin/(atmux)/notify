@@ -193,6 +193,197 @@ team_idle_watcher_id() {
   printf 'team-idle:%s:%s\n' "$(team_idle_watch_key "$repo" "$team")" "$watcher_name"
 }
 
+agent_idle_watch_key() {
+  local repo="$1" agent="$2"
+  atmux_resolve_normalized_name "${repo}--agent--${agent}"
+}
+
+agent_idle_watch_dir() {
+  local repo="$1" agent="$2"
+  printf '%s/watch-agent-idle/%s\n' "$ATMUX_HOME" "$(agent_idle_watch_key "$repo" "$agent")"
+}
+
+agent_idle_watchers_dir() {
+  local repo="$1" agent="$2"
+  printf '%s/watchers\n' "$(agent_idle_watch_dir "$repo" "$agent")"
+}
+
+agent_idle_watcher_dir() {
+  local repo="$1" agent="$2" watcher_name="$3"
+  printf '%s/%s\n' "$(agent_idle_watchers_dir "$repo" "$agent")" "$watcher_name"
+}
+
+agent_idle_watcher_id() {
+  local repo="$1" agent="$2" watcher_name="$3"
+  printf 'agent-idle:%s:%s\n' "$(agent_idle_watch_key "$repo" "$agent")" "$watcher_name"
+}
+
+atmux_resolve_runner_bin() {
+  if [[ -n "${ATMUX_SOURCE_ROOT:-}" && -x "${ATMUX_SOURCE_ROOT}/bin/atmux" ]]; then
+    printf '%s\n' "${ATMUX_SOURCE_ROOT}/bin/atmux"
+    return 0
+  fi
+  local repo_root=""
+  if repo_root="$(git rev-parse --show-toplevel 2>/dev/null)"; then
+    if [[ -x "$repo_root/bin/atmux" ]]; then
+      printf '%s\n' "$repo_root/bin/atmux"
+      return 0
+    fi
+  fi
+  if command -v atmux >/dev/null 2>&1; then
+    printf '%s\n' atmux
+    return 0
+  fi
+  return 1
+}
+
+atmux_resolve_source_root() {
+  if [[ -n "${ATMUX_SOURCE_ROOT:-}" && -d "$ATMUX_SOURCE_ROOT" ]]; then
+    printf '%s\n' "$ATMUX_SOURCE_ROOT"
+    return 0
+  fi
+  local source_root
+  source_root="$(cd -- "$ATMUX_NOTIFY_DIR/../.." 2>/dev/null && pwd || true)"
+  if [[ -n "$source_root" && -x "$source_root/bin/atmux" ]]; then
+    printf '%s\n' "$source_root"
+    return 0
+  fi
+  printf '%s/src/atmux\n' "${ATMUX_HOME:-$HOME/.atmux}"
+}
+
+atmux_resolve_caller_watcher_context() {
+  ATMUX_WATCHER_PANE=""
+  ATMUX_WATCHER_SESSION=""
+  ATMUX_WATCHER_AGENT=""
+  ATMUX_WATCHER_NAME=""
+
+  ATMUX_WATCHER_PANE="$(atmux_resolve_current_pane)"
+  [[ -n "$ATMUX_WATCHER_PANE" ]] || return 1
+  if ! tmux display-message -t "$ATMUX_WATCHER_PANE" -p '#{pane_id}' >/dev/null 2>&1; then
+    return 1
+  fi
+  ATMUX_WATCHER_SESSION="$(tmux display-message -t "$ATMUX_WATCHER_PANE" -p '#{session_name}' 2>/dev/null || true)"
+  ATMUX_WATCHER_AGENT="${ATMUX_AGENT_NAME:-}"
+  if [[ -z "$ATMUX_WATCHER_AGENT" && -n "$ATMUX_WATCHER_SESSION" ]]; then
+    ATMUX_WATCHER_AGENT="$(atmux_resolve_session_env "$ATMUX_WATCHER_SESSION" ATMUX_AGENT_NAME)"
+  fi
+  [[ -n "$ATMUX_WATCHER_AGENT" || "$(atmux_resolve_session_env "$ATMUX_WATCHER_SESSION" ATMUX_SESSION_KIND)" == "agent" ]] || return 1
+  ATMUX_WATCHER_NAME="$(pane_queue_key "$ATMUX_WATCHER_PANE")"
+  return 0
+}
+
+atmux_watcher_window_alive() {
+  local watcher_dir="$1" existing_window_id=""
+  existing_window_id="$(atmux_fs_read_trimmed "$watcher_dir/window_id")"
+  [[ -n "$existing_window_id" ]] || return 1
+  tmux list-windows -a -F '#{window_id}' 2>/dev/null | grep -Fxq "$existing_window_id"
+}
+
+atmux_launch_managed_watcher() {
+  local watcher_dir="$1" session="$2" window_name="$3"
+  shift 3
+  local log_file="$watcher_dir/worker.log"
+  local quoted_cmd="" arg window_id=""
+  for arg in "$@"; do
+    quoted_cmd+="$(printf '%q ' "$arg")"
+  done
+  quoted_cmd+=">>$(printf '%q' "$log_file") 2>&1"
+
+  if window_id="$(tmux new-window -a -d -P -F '#{window_id}' \
+        -t "$session" \
+        -n "$window_name" \
+        -c "${ATMUX_WORKTREE:-$PWD}" \
+        "$quoted_cmd" 2>>"$log_file")" && [[ -n "$window_id" ]]; then
+    atmux_fs_write_field "$watcher_dir/window_id" "$window_id"
+    local worker_pid=""
+    worker_pid="$(tmux list-panes -t "$window_id" -F '#{pane_pid}' 2>/dev/null | head -n1 || true)"
+    [[ -n "$worker_pid" ]] && atmux_fs_write_field "$watcher_dir/worker.pid" "$worker_pid"
+  else
+    printf '[%s] tmux new-window failed; falling back to background process\n' "$(date +%H:%M:%S)" >>"$log_file"
+    ( "$@" ) >>"$log_file" 2>&1 &
+    atmux_fs_write_field "$watcher_dir/worker.pid" "$!"
+  fi
+}
+
+atmux_write_caller_watcher_fields() {
+  local watcher_dir="$1"
+  mkdir -p "$watcher_dir"
+  atmux_fs_write_field "$watcher_dir/pane" "$ATMUX_WATCHER_PANE"
+  atmux_fs_write_field "$watcher_dir/session" "$ATMUX_WATCHER_SESSION"
+  atmux_fs_write_field "$watcher_dir/agent" "$ATMUX_WATCHER_AGENT"
+  atmux_fs_write_field "$watcher_dir/subscribed_at" "$(timestamp_utc)"
+}
+
+subscribe_caller_to_team_idle() {
+  local repo="$1" team="$2" idle_seconds="${3:-${ATMUX_TEAM_IDLE_SECONDS:-30}}" interval="${4:-${ATMUX_TEAM_IDLE_INTERVAL:-2}}"
+  local watcher_name="" watcher_dir="" atmux_bin="" source_root=""
+  [[ -n "$repo" && -n "$team" ]] || return 0
+  atmux_resolve_caller_watcher_context || return 0
+
+  watcher_name="$ATMUX_WATCHER_NAME"
+  watcher_dir="$(team_idle_watcher_dir "$repo" "$team" "$watcher_name")"
+  if [[ -d "$watcher_dir" ]] && atmux_watcher_window_alive "$watcher_dir"; then
+    team_idle_watcher_id "$repo" "$team" "$watcher_name"
+    return 0
+  fi
+  atmux_write_caller_watcher_fields "$watcher_dir"
+  atmux_fs_write_field "$watcher_dir/repo" "$repo"
+  atmux_fs_write_field "$watcher_dir/team" "$team"
+
+  atmux_bin="$(atmux_resolve_runner_bin || true)"
+  [[ -n "$atmux_bin" ]] || return 0
+  source_root="$(atmux_resolve_source_root)"
+
+  local -a watch_cmd=(
+    env
+    "ATMUX_HOME=$ATMUX_HOME"
+    "ATMUX_SOURCE_ROOT=$source_root"
+    "ATMUX_REPO=$repo"
+    "$atmux_bin" team _idle-watch
+    --repo "$repo" --team "$team" --watcher "$watcher_name"
+    --idle "$idle_seconds"
+    --interval "$interval"
+  )
+  atmux_launch_managed_watcher "$watcher_dir" "$ATMUX_WATCHER_SESSION" "team-idle-${team}" "${watch_cmd[@]}"
+  team_idle_watcher_id "$repo" "$team" "$watcher_name"
+}
+
+subscribe_caller_to_agent_idle() {
+  local repo="$1" target_agent="$2" target_session="$3"
+  local watcher_name="" watcher_dir="" atmux_bin="" source_root="" notify_exec_cmd=""
+  [[ -n "$repo" && -n "$target_agent" && -n "$target_session" ]] || return 0
+  atmux_resolve_caller_watcher_context || return 0
+
+  watcher_name="$ATMUX_WATCHER_NAME"
+  watcher_dir="$(agent_idle_watcher_dir "$repo" "$target_agent" "$watcher_name")"
+  if [[ -d "$watcher_dir" ]] && atmux_watcher_window_alive "$watcher_dir"; then
+    agent_idle_watcher_id "$repo" "$target_agent" "$watcher_name"
+    return 0
+  fi
+  atmux_write_caller_watcher_fields "$watcher_dir"
+  atmux_fs_write_field "$watcher_dir/repo" "$repo"
+  atmux_fs_write_field "$watcher_dir/target_agent" "$target_agent"
+  atmux_fs_write_field "$watcher_dir/target_session" "$target_session"
+
+  atmux_bin="$(atmux_resolve_runner_bin || true)"
+  [[ -n "$atmux_bin" ]] || return 0
+  source_root="$(atmux_resolve_source_root)"
+  notify_exec_cmd="$(printf '%q notify --pane %q --xml -' "$atmux_bin" "$ATMUX_WATCHER_PANE")"
+
+  local -a watch_cmd=(
+    env
+    "ATMUX_HOME=$ATMUX_HOME"
+    "ATMUX_SOURCE_ROOT=$source_root"
+    "ATMUX_REPO=$repo"
+    "$atmux_bin" agent watch "$target_agent"
+    --idle "${ATMUX_AGENT_IDLE_SECONDS:-30}"
+    --interval "${ATMUX_AGENT_IDLE_INTERVAL:-2}"
+    --exec "$notify_exec_cmd"
+  )
+  atmux_launch_managed_watcher "$watcher_dir" "$ATMUX_WATCHER_SESSION" "agent-idle-${target_agent}" "${watch_cmd[@]}"
+  agent_idle_watcher_id "$repo" "$target_agent" "$watcher_name"
+}
+
 resolve_notify_script_path() {
   local source_root="$1"
   local notify_script="$source_root/bin/(atmux)/notify"

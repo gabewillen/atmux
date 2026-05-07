@@ -133,6 +133,11 @@ team_idle_watch_dir_for_key() {
   printf '%s/watch-team-idle/%s\n' "$ATMUX_HOME" "$key"
 }
 
+agent_idle_watch_dir_for_key() {
+  local key="$1"
+  printf '%s/watch-agent-idle/%s\n' "$ATMUX_HOME" "$key"
+}
+
 pr_watch_watchers_dir() {
   local key="$1"
   printf '%s/watchers\n' "$(pr_watch_dir "$key")"
@@ -156,6 +161,11 @@ team_message_watch_watchers_dir() {
 team_idle_watch_watchers_dir() {
   local key="$1"
   printf '%s/watchers\n' "$(team_idle_watch_dir_for_key "$key")"
+}
+
+agent_idle_watch_watchers_dir() {
+  local key="$1"
+  printf '%s/watchers\n' "$(agent_idle_watch_dir_for_key "$key")"
 }
 
 pr_watch_pid_file() {
@@ -345,6 +355,23 @@ kill_watcher() {
         kill -TERM "$worker_pid" 2>/dev/null || true
       fi
       ;;
+    agent-idle)
+      local watcher_file worker_pid window_id
+      watcher_file="$(agent_idle_watch_watchers_dir "$key")/$watcher_name"
+      if [[ ! -e "$watcher_file" ]]; then
+        echo "atmux watcher kill: watcher not found: $watcher_id" >&2
+        exit 2
+      fi
+      worker_pid="$(atmux_fs_read_trimmed "$watcher_file/worker.pid")"
+      window_id="$(atmux_fs_read_trimmed "$watcher_file/window_id")"
+      rm -rf "$watcher_file"
+      if [[ -n "$window_id" ]]; then
+        tmux kill-window -t "$window_id" >/dev/null 2>&1 || true
+      fi
+      if [[ -n "$worker_pid" ]] && kill -0 "$worker_pid" 2>/dev/null; then
+        kill -TERM "$worker_pid" 2>/dev/null || true
+      fi
+      ;;
     *)
       echo "atmux watcher kill: unsupported watcher type: $kind" >&2
       exit 2
@@ -387,6 +414,26 @@ run_role_hook_bounded() {
     sleep 0.2
   done
   wait "$pid"
+}
+
+remove_agent_idle_watchers() {
+  local repo="$1" agent="$2" watch_dir root watcher_dir worker_pid window_id
+  watch_dir="$(agent_idle_watch_dir "$repo" "$agent")"
+  root="$watch_dir/watchers"
+  [[ -d "$root" ]] || return 0
+  while IFS= read -r watcher_dir; do
+    [[ -d "$watcher_dir" ]] || continue
+    worker_pid="$(atmux_fs_read_trimmed "$watcher_dir/worker.pid")"
+    window_id="$(atmux_fs_read_trimmed "$watcher_dir/window_id")"
+    rm -rf "$watcher_dir"
+    if [[ -n "$window_id" ]]; then
+      tmux kill-window -t "$window_id" >/dev/null 2>&1 || true
+    fi
+    if [[ -n "$worker_pid" ]] && kill -0 "$worker_pid" 2>/dev/null; then
+      kill -TERM "$worker_pid" 2>/dev/null || true
+    fi
+  done < <(find "$root" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort)
+  rm -rf -- "$watch_dir"
 }
 
 signal_adapter_pane() {
@@ -452,6 +499,11 @@ kill_agents() {
     local removed_worktree="false"
     local removed_branch="false"
     local note=""
+    local agent_name="${session#atmux-"${repo_name}"-}"
+    if [[ "$agent_name" == "$session" ]]; then
+      agent_name="$session"
+    fi
+    remove_agent_idle_watchers "$repo_name" "$agent_name"
 
     # Team sessions can own a worktree they created at team-create time.
     # Capture that path BEFORE killing the session so we can remove it
@@ -548,11 +600,6 @@ kill_agents() {
       else
         removed_branch="true"
       fi
-    fi
-
-    local agent_name="${session#atmux-"${repo_name}"-}"
-    if [[ "$agent_name" == "$session" ]]; then
-      agent_name="$session"
     fi
 
     results_xml+="  <agent name=\"$(atmux_xml_escape "$agent_name")\" session=\"$(atmux_xml_escape "$session")\">"

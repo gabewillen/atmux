@@ -24,7 +24,7 @@ run_start() {
   local args_file="$tmp_dir/args-$label"
   local home_dir="$tmp_dir/home-$label"
   local worktree="$tmp_dir/work-$label"
-  mkdir -p "$worktree"
+  mkdir -p "$worktree" "$home_dir"
 
   local env_pairs=()
   local start_argv=()
@@ -45,7 +45,7 @@ run_start() {
   (
     cd "$worktree"
     env -i \
-      HOME="${HOME:-/tmp}" \
+      HOME="$home_dir" \
       PATH="$tmp_dir/bin:/usr/bin:/bin" \
       ATMUX_HOME="$home_dir" \
       ATMUX_FAKE_ARGS="$args_file" \

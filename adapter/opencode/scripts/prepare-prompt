@@ -25,10 +25,24 @@ config_json="$abs_prep/opencode-atmux-config.json"
 
 printf '%s\n' "$content" > "$instructions_md"
 
-ATMUX_INSTRUCTIONS_MD="$instructions_md" python3 -c '
+write_opencode_config_json() {
+  local abs_path="$1" out="$2"
+  if command -v python3 >/dev/null 2>&1 \
+    && ATMUX_INSTRUCTIONS_MD="$abs_path" python3 -c '
 import json, os
 path = os.environ["ATMUX_INSTRUCTIONS_MD"]
 print(json.dumps({"instructions": [path]}))
-' > "$config_json"
+' > "$out" 2>/dev/null; then
+    return 0
+  fi
+  local esc="$abs_path"
+  esc="${esc//\\/\\\\}"
+  esc="${esc//\"/\\\"}"
+  esc="${esc//$'\n'/\\n}"
+  esc="${esc//$'\r'/\\r}"
+  printf '{"instructions":["%s"]}\n' "$esc" > "$out"
+}
+
+write_opencode_config_json "$instructions_md" "$config_json"
 
 printf 'OPENCODE_CONFIG=%s\n' "$config_json" >> "$env_file"

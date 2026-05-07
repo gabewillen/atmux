@@ -1,0 +1,96 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd -P)"
+WORK="$(mktemp -d "${TMPDIR:-/tmp}/atmux-manager-hooks.XXXXXX")"
+trap 'rm -rf "$WORK"' EXIT
+
+stub_bin="$WORK/bin"
+mkdir -p "$stub_bin"
+
+cat > "$stub_bin/gh" <<'EOF'
+#!/usr/bin/env bash
+if [[ "$1 $2" == "repo view" ]]; then
+  printf 'octo/example\n'
+  exit 0
+fi
+exit 1
+EOF
+chmod +x "$stub_bin/gh"
+
+cat > "$stub_bin/atmux" <<'EOF'
+#!/usr/bin/env bash
+case "$1 $2" in
+  "watcher kill")
+    printf '%s\n' "$3" >> "$ATMUX_TEST_KILLED"
+    exit 0
+    ;;
+  "issue watch")
+    printf '<watch started="true" watcher_id="issue-feed:octo-example" />\n'
+    exit 0
+    ;;
+  "pr watch")
+    printf '<watch started="true" watcher_id="pr-feed:octo-example" />\n'
+    exit 0
+    ;;
+esac
+exit 1
+EOF
+chmod +x "$stub_bin/atmux"
+
+state="$WORK/state"
+mkdir -p "$state"
+printf 'old-issue\nold-pr\n' > "$state/watcher-ids"
+
+ATMUX_TEST_KILLED="$WORK/killed" \
+ATMUX_ROLE_STATE_DIR="$state" \
+PATH="$stub_bin:$PATH" \
+"$ROOT/roles/agents/manager/start"
+
+if [[ "$(cat "$state/watcher-ids")" != $'issue-feed:octo-example\npr-feed:octo-example' ]]; then
+  echo "fail: manager start did not record new watcher ids" >&2
+  cat "$state/watcher-ids" >&2
+  exit 1
+fi
+
+if [[ "$(cat "$WORK/killed")" != $'old-issue\nold-pr' ]]; then
+  echo "fail: manager start did not clean stale watchers" >&2
+  cat "$WORK/killed" >&2
+  exit 1
+fi
+
+test_home="$WORK/home"
+stop_state="$test_home/.atmux/state/agents/octo-example/manager/role"
+mkdir -p "$stop_state"
+printf 'old-stop\n' > "$stop_state/watcher-ids"
+
+env -u ATMUX_HOME \
+  HOME="$test_home" \
+  ATMUX_TEST_KILLED="$WORK/stop-killed" \
+  ATMUX_ROLE_STATE_DIR="$stop_state" \
+  PATH="$stub_bin:$PATH" \
+  "$ROOT/roles/agents/manager/stop"
+
+if [[ -d "$stop_state" ]]; then
+  echo "fail: manager stop did not remove safe state dir with ATMUX_HOME unset" >&2
+  exit 1
+fi
+
+if [[ "$(cat "$WORK/stop-killed")" != "old-stop" ]]; then
+  echo "fail: manager stop did not kill watcher with ATMUX_HOME unset" >&2
+  cat "$WORK/stop-killed" >&2
+  exit 1
+fi
+
+missing_home_state="$WORK/missing-home-state"
+mkdir -p "$missing_home_state"
+if env -u ATMUX_HOME -u HOME \
+  ATMUX_TEST_KILLED="$WORK/missing-home-killed" \
+  ATMUX_ROLE_STATE_DIR="$missing_home_state" \
+  PATH="$stub_bin:$PATH" \
+  "$ROOT/roles/agents/manager/stop" >/dev/null 2>&1; then
+  echo "fail: manager stop succeeded without ATMUX_HOME or HOME" >&2
+  exit 1
+fi
+
+echo "ok: manager role hooks handle stale watchers and unset ATMUX_HOME"

@@ -1,0 +1,9 @@
+# Sourced by atmux when an agent is created with --role manager.
+
+KIND=agent
+INTELLIGENCE=90
+
+# The manager chooses adapters for delegated agents/teams based on task fit,
+# capacity, usage pressure, and required reasoning depth. Keep the manager
+# itself broadly compatible so callers can override as needed.
+ADAPTERS=(codex claude-code cursor-agent opencode gemini)

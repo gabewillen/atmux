@@ -50,7 +50,7 @@ Prefer:
 Examples:
 
 ```sh
-atmux schedule --interval 45m --notification "triage unanswered delegate messages once"
+atmux schedule --once 45m --notification "triage unanswered delegate messages once"
 ```
 
 ```sh

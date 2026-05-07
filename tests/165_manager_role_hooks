@@ -82,4 +82,15 @@ if [[ "$(cat "$WORK/stop-killed")" != "old-stop" ]]; then
   exit 1
 fi
 
+missing_home_state="$WORK/missing-home-state"
+mkdir -p "$missing_home_state"
+if env -u ATMUX_HOME -u HOME \
+  ATMUX_TEST_KILLED="$WORK/missing-home-killed" \
+  ATMUX_ROLE_STATE_DIR="$missing_home_state" \
+  PATH="$stub_bin:$PATH" \
+  "$ROOT/roles/agents/manager/stop" >/dev/null 2>&1; then
+  echo "fail: manager stop succeeded without ATMUX_HOME or HOME" >&2
+  exit 1
+fi
+
 echo "ok: manager role hooks handle stale watchers and unset ATMUX_HOME"

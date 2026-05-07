@@ -129,7 +129,8 @@ parse_model_and_reasoning() {
 infer_state() {
   local snapshot="$1"
 
-  if printf '%s\n' "$snapshot" | grep -Eqi 'usage.?limit|rate.?limit|quota.*(exceeded|reached)|429|insufficient.?credits'; then
+  if printf '%s\n' "$snapshot" | grep -Eqi \
+    'usage.?limit|rate[-_ ]?limit(ed)?|too many requests|quota.*(exceeded|reached|exhausted)|insufficient.?credits|out of credits|credits.*(exhausted|depleted)|no credits (left|remaining)'; then
     printf '%s\n' 'usage-limit'
     return
   fi

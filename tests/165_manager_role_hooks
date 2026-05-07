@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd -P)"
+WORK="$(mktemp -d "${TMPDIR:-/tmp}/atmux-manager-hooks.XXXXXX")"
+trap 'rm -rf "$WORK"' EXIT
+
+stub_bin="$WORK/bin"
+mkdir -p "$stub_bin"
+
+cat > "$stub_bin/gh" <<'EOF'
+#!/usr/bin/env bash
+if [[ "$1 $2" == "repo view" ]]; then
+  printf 'octo/example\n'
+  exit 0
+fi
+exit 1
+EOF
+chmod +x "$stub_bin/gh"
+
+cat > "$stub_bin/atmux" <<'EOF'
+#!/usr/bin/env bash
+case "$1 $2" in
+  "watcher kill")
+    printf '%s\n' "$3" >> "$ATMUX_TEST_KILLED"
+    exit 0
+    ;;
+  "issue watch"|"pr watch")
+    printf '<watch started="true" />\n'
+    exit 0
+    ;;
+esac
+exit 1
+EOF
+chmod +x "$stub_bin/atmux"
+
+state="$WORK/state"
+mkdir -p "$state"
+printf 'old-issue\nold-pr\n' > "$state/watcher-ids"
+
+ATMUX_TEST_KILLED="$WORK/killed" \
+ATMUX_ROLE_STATE_DIR="$state" \
+PATH="$stub_bin:$PATH" \
+"$ROOT/roles/agents/manager/start"
+
+if [[ -s "$state/watcher-ids" ]]; then
+  echo "fail: manager start recorded empty watcher ids" >&2
+  cat "$state/watcher-ids" >&2
+  exit 1
+fi
+
+if [[ "$(cat "$WORK/killed")" != $'old-issue\nold-pr' ]]; then
+  echo "fail: manager start did not clean stale watchers" >&2
+  cat "$WORK/killed" >&2
+  exit 1
+fi
+
+tmpdir="${TMPDIR:-/tmp}"
+tmpdir="${tmpdir%/}"
+stop_state="$(mktemp -d "$tmpdir/atmux-manager-role-test.XXXXXX")"
+printf 'old-stop\n' > "$stop_state/watcher-ids"
+
+env -u ATMUX_HOME \
+  ATMUX_TEST_KILLED="$WORK/stop-killed" \
+  ATMUX_ROLE_STATE_DIR="$stop_state" \
+  PATH="$stub_bin:$PATH" \
+  "$ROOT/roles/agents/manager/stop"
+
+if [[ -d "$stop_state" ]]; then
+  echo "fail: manager stop did not remove safe state dir with ATMUX_HOME unset" >&2
+  exit 1
+fi
+
+if [[ "$(cat "$WORK/stop-killed")" != "old-stop" ]]; then
+  echo "fail: manager stop did not kill watcher with ATMUX_HOME unset" >&2
+  cat "$WORK/stop-killed" >&2
+  exit 1
+fi
+
+echo "ok: manager role hooks handle stale watchers and unset ATMUX_HOME"

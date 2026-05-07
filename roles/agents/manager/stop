@@ -4,16 +4,23 @@ set -euo pipefail
 
 state="${ATMUX_ROLE_STATE_DIR:-}"
 [[ -n "$state" && -d "$state" ]] || exit 0
+atmux_home="${ATMUX_HOME:-${HOME:-}/.atmux}"
+[[ -n "$atmux_home" ]] || {
+  echo "manager stop: unable to resolve ATMUX_HOME" >&2
+  exit 1
+}
+tmpdir="${TMPDIR:-/tmp}"
+tmpdir="${tmpdir%/}"
 
 case "$state" in
-  /|/tmp|/var|/var/tmp|"$HOME"|"$HOME"/.atmux|"$PWD")
+  /|/tmp|/var|/var/tmp|"${HOME:-}"|"${HOME:-}"/.atmux|"$PWD")
     echo "manager stop: refusing to remove suspicious state path: $state" >&2
     exit 1
     ;;
 esac
 
 case "$state" in
-  "$ATMUX_HOME"/state/agents/*|"$ATMUX_HOME"/roles/state/*|/tmp/atmux-manager-role-test.*) ;;
+  "$atmux_home"/state/agents/*|"$atmux_home"/roles/state/*|/tmp/atmux-manager-role-test.*|"$tmpdir"/atmux-manager-role-test.*) ;;
   *)
     echo "manager stop: refusing to remove unexpected state path: $state" >&2
     exit 1

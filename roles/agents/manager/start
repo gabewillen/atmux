@@ -33,6 +33,7 @@ record_watcher_id() {
   local xml="$1" watcher_id=""
   watcher_id="$(printf '%s\n' "$xml" | sed -n 's/.*watcher_id="\([^"]*\)".*/\1/p')"
   [[ -n "$watcher_id" ]] && printf '%s\n' "$watcher_id" >> "$state/watcher-ids"
+  return 0
 }
 
 issue_xml="$(atmux issue watch --feed "$gh_repo" 2>/dev/null || true)"

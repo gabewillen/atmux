@@ -130,10 +130,6 @@ resolve_atmux_runner_for_team() {
   atmux_resolve_runner_bin
 }
 
-resolve_source_root_for_team() {
-  atmux_resolve_source_root
-}
-
 parse_duration_seconds() {
   local raw="${1:-}"
   local value unit multiplier

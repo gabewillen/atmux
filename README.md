@@ -197,7 +197,7 @@ Run:
 | `atmux path watch <glob> [--timeout <seconds>] [--duration <seconds>]` | Operate on filesystem paths matched by a glob. |
 | `atmux pr create --title <title> [--description <description>]` | Repo-scoped pull request tickets on filesystem. |
 | `atmux process watch <pid> [--timeout <seconds>] [--interval <seconds>]` | Watch or stop an atmux exec-tracked child process. |
-| `atmux role list` | Manage adapter-agnostic roles. |
+| `atmux role list [--details]` | Manage adapter-agnostic roles. |
 | `atmux schedule (--interval <duration> \| --once <duration>) [--no-detach] --notification <text>` | Schedule a future or repeating action. |
 | `atmux send --to <agent\|team> [--reply-required] [--interrupt] "message"` | Send XML messages to a single agent or every agent in a team. |
 | `atmux team create <name> [--role <role>] [--start <cmd>] [--stop <cmd>]` | Manage repo-scoped teams of agents. |

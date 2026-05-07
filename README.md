@@ -112,6 +112,10 @@ The `--intelligence 0–100` flag selects a model and reasoning level via the ad
 | `gemini` | 40–74 | `gemini-3-flash-preview` | `medium` |
 | `gemini` | 75–89 | `gemini-3.1-pro-preview` | `medium` |
 | `gemini` | 90–100 | `gemini-3.1-pro-preview` | `high` |
+| `opencode` | 0–29 | `openai/gpt-5.5` | `low` |
+| `opencode` | 30–59 | `openai/gpt-5.5` | `medium` |
+| `opencode` | 60–84 | `openai/gpt-5.5` | `high` |
+| `opencode` | 85–100 | `openai/gpt-5.5` | `extra-high` |
 
 ### Adapters
 
@@ -123,6 +127,7 @@ Adapters translate `atmux` commands to a specific AI CLI. The default adapter is
 | `codex` | OpenAI Codex |
 | `cursor-agent` | Cursor AI |
 | `gemini` | Gemini CLI |
+| `opencode` | OpenCode |
 
 ```sh
 # Use a specific adapter

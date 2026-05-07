@@ -1,0 +1,169 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+source "$(dirname "${BASH_SOURCE[0]}")/../../../tests/lib/isolate-tmux.sh"
+
+export ATMUX_ALLOW_OUTSIDE_TMUX="${ATMUX_ALLOW_OUTSIDE_TMUX:-1}"
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+ADAPTER_DIR="$(cd -- "$TESTS_DIR/.." && pwd)"
+
+command -v tmux >/dev/null 2>&1 || { echo "tmux not found" >&2; exit 1; }
+
+session_name="atmux-opencode-status-$$-$RANDOM"
+session_json="atmux-opencode-status-json-$$-$RANDOM"
+session_cli="atmux-opencode-status-cli-$$-$RANDOM"
+session_fp="atmux-opencode-status-fp-$$-$RANDOM"
+session_ul="atmux-opencode-status-ul-$$-$RANDOM"
+atmux_home="$(mktemp -d "${TMPDIR:-/tmp}/atmux-opencode-status.XXXXXX")"
+atmux_home_json="$(mktemp -d "${TMPDIR:-/tmp}/atmux-opencode-status-json.XXXXXX")"
+atmux_home_cli="$(mktemp -d "${TMPDIR:-/tmp}/atmux-opencode-status-cli.XXXXXX")"
+atmux_home_fp="$(mktemp -d "${TMPDIR:-/tmp}/atmux-opencode-status-fp.XXXXXX")"
+atmux_home_ul="$(mktemp -d "${TMPDIR:-/tmp}/atmux-opencode-status-ul.XXXXXX")"
+
+cleanup() {
+  tmux kill-session -t "$session_name" >/dev/null 2>&1 || true
+  tmux kill-session -t "$session_json" >/dev/null 2>&1 || true
+  tmux kill-session -t "$session_cli" >/dev/null 2>&1 || true
+  tmux kill-session -t "$session_fp" >/dev/null 2>&1 || true
+  tmux kill-session -t "$session_ul" >/dev/null 2>&1 || true
+  rm -rf "$atmux_home" "$atmux_home_json" "$atmux_home_cli" "$atmux_home_fp" "$atmux_home_ul"
+}
+trap cleanup EXIT
+
+tmux new-session -d -s "$session_name" -n "$session_name" \
+  "bash -c 'printf \"%s\\n\" thinking...; exec sleep 120'"
+
+pane_id="$(tmux list-panes -t "$session_name" -F '#{pane_id}' 2>/dev/null | head -n 1)"
+[[ -n "$pane_id" ]] || { echo "missing pane" >&2; exit 1; }
+
+deadline=$(( $(date +%s) + 10 ))
+while true; do
+  snap="$(tmux capture-pane -p -t "$pane_id" -S -50 2>/dev/null | tr -d '\r' || true)"
+  if printf '%s' "$snap" | grep -Fq 'thinking'; then
+    break
+  fi
+  if (( $(date +%s) >= deadline )); then
+    echo "timeout waiting for fixture text" >&2
+    tmux capture-pane -p -t "$pane_id" -S -20 >&2 || true
+    exit 1
+  fi
+  sleep 0.2
+done
+
+status_out="$(ATMUX_HOME="$atmux_home" ATMUX_TARGET_PANE="$pane_id" "$ADAPTER_DIR/scripts/status")"
+
+printf '%s\n' "$status_out" | grep -Fq 'adapter="opencode"' || { echo "bad adapter in $status_out" >&2; exit 1; }
+printf '%s\n' "$status_out" | grep -Fq 'state="busy"' || { echo "expected busy state, got: $status_out" >&2; exit 1; }
+
+# Snapshot with OpenCode init JSON: refresh REASONING_LEVEL (+ model) into state
+mkdir -p "$atmux_home_json/adapters/opencode"
+printf 'MODEL=%s\nREASONING_LEVEL=%s\n' 'openai/gpt-5.5' 'medium' > "$atmux_home_json/adapters/opencode/state.env"
+
+tmux new-session -d -s "$session_json" -n "$session_json" \
+  "bash -c 'printf \"%s\\n\" \"{\\\"type\\\":\\\"init\\\",\\\"model\\\":\\\"openai/gpt-5.4\\\",\\\"variant\\\":\\\"xhigh\\\"}\"; exec sleep 120'"
+
+pane_json="$(tmux list-panes -t "$session_json" -F '#{pane_id}' 2>/dev/null | head -n 1)"
+[[ -n "$pane_json" ]] || { echo "missing json pane" >&2; exit 1; }
+deadline=$(( $(date +%s) + 10 ))
+while true; do
+  snapj="$(tmux capture-pane -p -t "$pane_json" -S -50 2>/dev/null | tr -d '\r' || true)"
+  if printf '%s' "$snapj" | grep -Fq 'openai/gpt-5.4'; then
+    break
+  fi
+  if (( $(date +%s) >= deadline )); then
+    echo "timeout waiting for json fixture" >&2
+    tmux capture-pane -p -t "$pane_json" -S -20 >&2 || true
+    exit 1
+  fi
+  sleep 0.2
+done
+
+status_json="$(ATMUX_HOME="$atmux_home_json" ATMUX_TARGET_PANE="$pane_json" "$ADAPTER_DIR/scripts/status")"
+printf '%s\n' "$status_json" | grep -Fq 'state="idle"' || { echo "expected idle state for json pane, got: $status_json" >&2; exit 1; }
+printf '%s\n' "$status_json" | grep -Fq 'model="openai/gpt-5.4"' || { echo "expected parsed model in $status_json" >&2; exit 1; }
+printf '%s\n' "$status_json" | grep -Fq 'reasoning_level="extra-high"' \
+  || { echo "expected extra-high from variant xhigh in $status_json" >&2; exit 1; }
+# shellcheck disable=SC1090
+source "$atmux_home_json/adapters/opencode/state.env"
+[[ "$MODEL" == "openai/gpt-5.4" && "$REASONING_LEVEL" == "extra-high" ]] \
+  || { echo "fail: state.env not updated (MODEL=$MODEL REASONING_LEVEL=$REASONING_LEVEL)" >&2; exit 1; }
+
+# CLI argv line: --variant high wins over stale state
+mkdir -p "$atmux_home_cli/adapters/opencode"
+printf 'MODEL=%s\nREASONING_LEVEL=%s\n' 'openai/gpt-5.5' 'extra-high' > "$atmux_home_cli/adapters/opencode/state.env"
+
+tmux new-session -d -s "$session_cli" -n "$session_cli" \
+  "bash -c 'printf \"%s\\n\" \"opencode run --model openai/gpt-5.4 --variant high\"; exec sleep 120'"
+
+pane_cli="$(tmux list-panes -t "$session_cli" -F '#{pane_id}' 2>/dev/null | head -n 1)"
+[[ -n "$pane_cli" ]] || { echo "missing cli pane" >&2; exit 1; }
+deadline=$(( $(date +%s) + 10 ))
+while true; do
+  snapc="$(tmux capture-pane -p -t "$pane_cli" -S -50 2>/dev/null | tr -d '\r' || true)"
+  if printf '%s' "$snapc" | grep -Fq -- '--variant high'; then
+    break
+  fi
+  if (( $(date +%s) >= deadline )); then
+    echo "timeout waiting for cli fixture" >&2
+    tmux capture-pane -p -t "$pane_cli" -S -20 >&2 || true
+    exit 1
+  fi
+  sleep 0.2
+done
+
+status_cli="$(ATMUX_HOME="$atmux_home_cli" ATMUX_TARGET_PANE="$pane_cli" "$ADAPTER_DIR/scripts/status")"
+printf '%s\n' "$status_cli" | grep -Fq 'reasoning_level="high"' \
+  || { echo "expected high from --variant high in $status_cli" >&2; exit 1; }
+# shellcheck disable=SC1090
+source "$atmux_home_cli/adapters/opencode/state.env"
+[[ "$REASONING_LEVEL" == "high" ]] \
+  || { echo "fail: state.env reasoning not updated (REASONING_LEVEL=$REASONING_LEVEL)" >&2; exit 1; }
+
+# Unrelated "429" / model id substring must not force usage-limit (stay busy)
+mkdir -p "$atmux_home_fp/adapters/opencode"
+printf 'MODEL=%s\nREASONING_LEVEL=%s\n' 'openai/gpt-5.5' 'medium' > "$atmux_home_fp/adapters/opencode/state.env"
+tmux new-session -d -s "$session_fp" -n "$session_fp" \
+  "bash -c 'printf \"%s\\n\" thinking... \"openai/gpt-4.29-smoke\" \"issue 429\"; exec sleep 120'"
+pane_fp="$(tmux list-panes -t "$session_fp" -F '#{pane_id}' 2>/dev/null | head -n 1)"
+[[ -n "$pane_fp" ]] || { echo "missing fp pane" >&2; exit 1; }
+deadline=$(( $(date +%s) + 10 ))
+while true; do
+  snfp="$(tmux capture-pane -p -t "$pane_fp" -S -50 2>/dev/null | tr -d '\r' || true)"
+  if printf '%s' "$snfp" | grep -Fq 'thinking'; then
+    break
+  fi
+  if (( $(date +%s) >= deadline )); then
+    echo "timeout waiting for fp fixture" >&2
+    exit 1
+  fi
+  sleep 0.2
+done
+status_fp="$(ATMUX_HOME="$atmux_home_fp" ATMUX_TARGET_PANE="$pane_fp" "$ADAPTER_DIR/scripts/status")"
+printf '%s\n' "$status_fp" | grep -Fq 'state="busy"' \
+  || { echo "expected busy when only spurious 429 tokens, got: $status_fp" >&2; exit 1; }
+
+# Real rate-limit wording still maps to usage-limit
+mkdir -p "$atmux_home_ul/adapters/opencode"
+printf 'MODEL=%s\nREASONING_LEVEL=%s\n' 'openai/gpt-5.5' 'medium' > "$atmux_home_ul/adapters/opencode/state.env"
+tmux new-session -d -s "$session_ul" -n "$session_ul" \
+  "bash -c 'printf \"%s\\n\" \"Error: rate limit exceeded - try again later.\"; exec sleep 120'"
+pane_ul="$(tmux list-panes -t "$session_ul" -F '#{pane_id}' 2>/dev/null | head -n 1)"
+[[ -n "$pane_ul" ]] || { echo "missing ul pane" >&2; exit 1; }
+deadline=$(( $(date +%s) + 10 ))
+while true; do
+  snul="$(tmux capture-pane -p -t "$pane_ul" -S -50 2>/dev/null | tr -d '\r' || true)"
+  if printf '%s' "$snul" | grep -Fq 'rate limit'; then
+    break
+  fi
+  if (( $(date +%s) >= deadline )); then
+    echo "timeout waiting for ul fixture" >&2
+    exit 1
+  fi
+  sleep 0.2
+done
+status_ul="$(ATMUX_HOME="$atmux_home_ul" ATMUX_TARGET_PANE="$pane_ul" "$ADAPTER_DIR/scripts/status")"
+printf '%s\n' "$status_ul" | grep -Fq 'state="usage-limit"' \
+  || { echo "expected usage-limit for rate limit message, got: $status_ul" >&2; exit 1; }
+
+echo "PASS 02_status_busy_snapshot"

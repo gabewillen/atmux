@@ -61,6 +61,7 @@ prompt_for() {
     codex)       printf '%s' '›' ;;
     cursor-agent) printf '%s' '→' ;;
     gemini)      printf '%s' '*' ;;
+    opencode)    printf '%s' '┃' ;;
     *) return 1 ;;
   esac
 }
@@ -241,7 +242,7 @@ probe_no_adapter() {
   return 0
 }
 
-echo "matrix: pane-state edges (4 adapters x 2 cases + 1 cross-cutting)" >&2
+echo "matrix: pane-state edges (5 adapters x 2 cases + 1 cross-cutting)" >&2
 
 # Burst delivery occasionally drops the last item under load (suspected
 # race between the queue worker's drain check and a late-signaled item).
@@ -274,7 +275,7 @@ launch_probe() {
 
 probe_burst_with_retry() { probe_with_retry probe_burst "$1"; }
 
-for adapter in claude-code codex cursor-agent gemini; do
+for adapter in claude-code codex cursor-agent gemini opencode; do
   launch_probe probe_burst_with_retry "$adapter" "burst-${adapter}"
   launch_probe probe_killed_pane "$adapter" "killed-${adapter}"
 done

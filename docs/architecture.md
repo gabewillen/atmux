@@ -71,6 +71,7 @@ Built-in adapters:
 - `codex`
 - `cursor-agent`
 - `gemini`
+- `opencode`
 
 Each adapter owns its CLI-specific startup arguments, status parsing, model validation, and input submit keys.
 
@@ -86,6 +87,15 @@ For Gemini, low intelligence intentionally selects the lite model:
 | 40-74 | `gemini-3-flash-preview` | `medium` |
 | 75-89 | `gemini-3.1-pro-preview` | `medium` |
 | 90-100 | `gemini-3.1-pro-preview` | `high` |
+
+OpenCode uses the same band sizes as Codex, with `openai/gpt-5.5` and reasoning level varying by tier:
+
+| Intelligence | Model | Reasoning |
+|--------------|-------|-----------|
+| 0-29 | `openai/gpt-5.5` | `low` |
+| 30-59 | `openai/gpt-5.5` | `medium` |
+| 60-84 | `openai/gpt-5.5` | `high` |
+| 85-100 | `openai/gpt-5.5` | `extra-high` |
 
 ### Notification Queue
 

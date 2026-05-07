@@ -35,6 +35,7 @@ chmod +x "$tmp_dir/bin/_record"
 ln -sf _record "$tmp_dir/bin/gemini"
 ln -sf _record "$tmp_dir/bin/claude"
 ln -sf _record "$tmp_dir/bin/codex"
+ln -sf _record "$tmp_dir/bin/opencode"
 ln -sf _record "$tmp_dir/bin/cursor-agent"
 ln -sf _record "$tmp_dir/bin/agent"
 # Same stub at the paths cursor-agent injects.
@@ -54,10 +55,21 @@ run_start() {
   mkdir -p "$worktree"
 
   local start_script="$REPO_ROOT/adapter/$adapter/scripts/start"
-  # Use `env` to apply caller-supplied KEY=VALUE pairs: bash only honors
-  # such pairs as env prefixes when they appear literally before a
-  # command, not when expanded from an array (they'd otherwise be treated
-  # as a command and fail with "command not found").
+  local env_pairs=()
+  local start_argv=()
+  local mode=env
+  local item
+  for item in "$@"; do
+    if [[ "$mode" == "env" && "$item" == "--" ]]; then
+      mode=argv
+      continue
+    fi
+    if [[ "$mode" == "env" ]]; then
+      env_pairs+=("$item")
+    else
+      start_argv+=("$item")
+    fi
+  done
   (
     cd "$worktree"
     env -i \
@@ -66,8 +78,8 @@ run_start() {
       TMUX_TMPDIR="${TMUX_TMPDIR:-}" \
       ATMUX_HOME="$home_dir" \
       ATMUX_FAKE_ARGS="$args_file" \
-      "$@" \
-      "$start_script" >/dev/null 2>&1
+      "${env_pairs[@]+"${env_pairs[@]}"}" \
+      "$start_script" "${start_argv[@]+"${start_argv[@]}"}" >/dev/null 2>&1
   )
   printf '%s\n' "$args_file"
 }
@@ -95,7 +107,7 @@ assert_arg_eq() {
 
 assert_arg_present() {
   local file="$1" expected="$2" tag="$3"
-  if ! grep -Fx "$expected" "$file" >/dev/null 2>&1; then
+  if ! grep -Fx -- "$expected" "$file" >/dev/null 2>&1; then
     echo "fail [$tag]: expected argv line '$expected'" >&2
     echo "  captured argv:" >&2
     sed 's/^/    /' "$file" >&2
@@ -158,4 +170,45 @@ af="$(run_start cursor-agent override \
         ATMUX_MODEL=probe-cursor-model)"
 assert_arg_eq "$af" --model probe-cursor-model cursor-override
 
-echo "ok: gemini/claude-code/codex/cursor-agent start scripts honor ATMUX_MODEL/ATMUX_REASONING_LEVEL overrides"
+# === opencode ========================================================
+af="$(run_start opencode int-only ATMUX_INTELLIGENCE=50)"
+assert_arg_eq "$af" --model openai/gpt-5.5 opencode-int-only
+assert_arg_eq "$af" --variant medium opencode-int-only
+assert_arg_present "$af" '--dangerously-skip-permissions' opencode-int-only
+
+af="$(run_start opencode int-low ATMUX_INTELLIGENCE=10)"
+assert_arg_eq "$af" --model openai/gpt-5.5 opencode-int-low
+assert_arg_eq "$af" --variant low opencode-int-low
+assert_arg_present "$af" '--dangerously-skip-permissions' opencode-int-low
+
+af="$(run_start opencode reasoning-xhigh \
+        ATMUX_INTELLIGENCE=50 \
+        ATMUX_REASONING_LEVEL=extra-high)"
+assert_arg_eq "$af" --model openai/gpt-5.5 opencode-reasoning-xhigh
+assert_arg_eq "$af" --variant xhigh opencode-reasoning-xhigh
+assert_arg_present "$af" '--dangerously-skip-permissions' opencode-reasoning-xhigh
+
+af="$(run_start opencode reasoning-xhigh-token \
+        ATMUX_INTELLIGENCE=50 \
+        ATMUX_REASONING_LEVEL=xhigh)"
+assert_arg_eq "$af" --model openai/gpt-5.5 opencode-reasoning-xhigh-token
+assert_arg_eq "$af" --variant xhigh opencode-reasoning-xhigh-token
+assert_arg_present "$af" '--dangerously-skip-permissions' opencode-reasoning-xhigh-token
+
+af="$(run_start opencode override \
+        ATMUX_INTELLIGENCE=50 \
+        ATMUX_MODEL=openai/gpt-5.4)"
+assert_arg_eq "$af" --model openai/gpt-5.4 opencode-override
+assert_arg_eq "$af" --variant medium opencode-override
+assert_arg_present "$af" '--dangerously-skip-permissions' opencode-override
+
+af="$(run_start opencode cli-variant ATMUX_INTELLIGENCE=50 -- --variant user-variant)"
+assert_arg_eq "$af" --variant user-variant opencode-cli-variant
+assert_arg_eq "$af" --model openai/gpt-5.5 opencode-cli-variant
+assert_arg_present "$af" '--dangerously-skip-permissions' opencode-cli-variant
+
+af="$(run_start opencode cli-perms ATMUX_INTELLIGENCE=50 -- --dangerously-skip-permissions)"
+n_perms="$(grep -c -Fx -- '--dangerously-skip-permissions' "$af" || true)"
+[[ "$n_perms" -eq 1 ]] || { echo "fail: opencode must not duplicate --dangerously-skip-permissions (got $n_perms)" >&2; exit 1; }
+
+echo "ok: gemini/claude-code/codex/cursor-agent/opencode start scripts honor ATMUX_MODEL/ATMUX_REASONING_LEVEL overrides"

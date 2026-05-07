@@ -68,6 +68,7 @@ Current built-in mapping:
 - Creates filesystem-backed team state under `<ATMUX_HOME>/teams/{{repo}}/{{name}}/`.
 - Team members are still tmux-backed agent sessions, but membership is not inferred from an optional tmux view.
 - Use `atmux team view <name>` to create an optional multiagent tmux view.
+- The built-in `collab` team role configures its facilitator exclusively via `--set facilitator.<field>=…` (and matching undotted `--set facilitator_*` keys surfaced to the manifest as `ATMUX_TEAM_SET_FACILITATOR_*`); overrides for retired `leader` / `arbiter` / `recorder` slots are ignored.
 
 ### `atmux issue create --title <title> [--description "..."] [--todo "..."]`
 - Creates a filesystem issue in `<ATMUX_HOME>/issues/{{repo}}/`.

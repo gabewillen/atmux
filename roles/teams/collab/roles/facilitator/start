@@ -19,12 +19,12 @@ if [[ -n "$pid" ]]; then
   exit 0
 fi
 
-leader_session="${ATMUX_SESSION_NAME:-}"
-leader_pane=""
-if [[ -n "$leader_session" ]]; then
-  leader_pane="$(tmux list-panes -t "$leader_session" -F '#{pane_id}' 2>/dev/null | head -n1 || true)"
+facilitator_session="${ATMUX_SESSION_NAME:-}"
+facilitator_pane=""
+if [[ -n "$facilitator_session" ]]; then
+  facilitator_pane="$(tmux list-panes -t "$facilitator_session" -F '#{pane_id}' 2>/dev/null | head -n1 || true)"
 fi
-[[ -n "$leader_pane" ]] || exit 0
+[[ -n "$facilitator_pane" ]] || exit 0
 
 seconds="$(
   case "$interval" in
@@ -38,6 +38,6 @@ seconds="$(
 )"
 [[ "$seconds" =~ ^[0-9]+$ && "$seconds" -gt 0 ]] || seconds=300
 
-tmux new-window -a -d -t "$leader_session" -n collab-ticks \
-  "while true; do sleep $seconds; printf '<notification type=\"scheduled\" from=\"collab\" text=\"%s\">%s</notification>\\n' '$tick_text' '$tick_text' | atmux notify --pane '$leader_pane' --xml - >/dev/null 2>&1 || true; done" \
+tmux new-window -a -d -t "$facilitator_session" -n collab-ticks \
+  "while true; do sleep $seconds; printf '<notification type=\"scheduled\" from=\"collab\" text=\"%s\">%s</notification>\\n' '$tick_text' '$tick_text' | atmux notify --pane '$facilitator_pane' --xml - >/dev/null 2>&1 || true; done" \
   2>>"$state/tick.log" || true

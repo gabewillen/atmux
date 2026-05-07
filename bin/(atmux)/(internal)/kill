@@ -417,8 +417,9 @@ run_role_hook_bounded() {
 }
 
 remove_agent_idle_watchers() {
-  local repo="$1" agent="$2" root watcher_dir worker_pid window_id
-  root="$(agent_idle_watchers_dir "$repo" "$agent")"
+  local repo="$1" agent="$2" watch_dir root watcher_dir worker_pid window_id
+  watch_dir="$(agent_idle_watch_dir "$repo" "$agent")"
+  root="$watch_dir/watchers"
   [[ -d "$root" ]] || return 0
   while IFS= read -r watcher_dir; do
     [[ -d "$watcher_dir" ]] || continue
@@ -432,6 +433,7 @@ remove_agent_idle_watchers() {
       kill -TERM "$worker_pid" 2>/dev/null || true
     fi
   done < <(find "$root" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort)
+  rm -rf -- "$watch_dir"
 }
 
 signal_adapter_pane() {

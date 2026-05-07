@@ -74,39 +74,6 @@ ensure_team_has_capacity() {
   return 0
 }
 
-resolve_atmux_runner_for_agent() {
-  if [[ -n "${ATMUX_SOURCE_ROOT:-}" && -x "${ATMUX_SOURCE_ROOT}/bin/atmux" ]]; then
-    printf '%s\n' "${ATMUX_SOURCE_ROOT}/bin/atmux"
-    return 0
-  fi
-  local repo_root=""
-  if repo_root="$(git rev-parse --show-toplevel 2>/dev/null)"; then
-    if [[ -x "$repo_root/bin/atmux" ]]; then
-      printf '%s\n' "$repo_root/bin/atmux"
-      return 0
-    fi
-  fi
-  if command -v atmux >/dev/null 2>&1; then
-    printf '%s\n' atmux
-    return 0
-  fi
-  return 1
-}
-
-resolve_source_root_for_agent() {
-  if [[ -n "${ATMUX_SOURCE_ROOT:-}" && -d "$ATMUX_SOURCE_ROOT" ]]; then
-    printf '%s\n' "$ATMUX_SOURCE_ROOT"
-    return 0
-  fi
-  local source_root
-  source_root="$(cd -- "$HERE/../.." 2>/dev/null && pwd || true)"
-  if [[ -n "$source_root" && -x "$source_root/bin/atmux" ]]; then
-    printf '%s\n' "$source_root"
-    return 0
-  fi
-  printf '%s/src/atmux\n' "${ATMUX_HOME:-$HOME/.atmux}"
-}
-
 subscribe_caller_to_agent_idle() {
   local repo="$1" target_agent="$2" target_session="$3"
   local pane="" session="" agent="" watcher_name="" watcher_dir="" atmux_bin="" source_root="" log_file=""
@@ -142,9 +109,9 @@ subscribe_caller_to_agent_idle() {
   atmux_fs_write_field "$watcher_dir/target_session" "$target_session"
   atmux_fs_write_field "$watcher_dir/subscribed_at" "$(timestamp_utc)"
 
-  atmux_bin="$(resolve_atmux_runner_for_agent || true)"
+  atmux_bin="$(atmux_resolve_runner_bin || true)"
   [[ -n "$atmux_bin" ]] || return 0
-  source_root="$(resolve_source_root_for_agent)"
+  source_root="$(atmux_resolve_source_root)"
   log_file="$watcher_dir/worker.log"
   local notify_exec_cmd=""
   notify_exec_cmd="$(printf '%q notify --pane %q --xml -' "$atmux_bin" "$pane")"
@@ -188,86 +155,6 @@ subscribe_caller_to_agent_idle() {
     atmux_fs_write_field "$watcher_dir/worker.pid" "$!"
   fi
   agent_idle_watcher_id "$repo" "$target_agent" "$watcher_name"
-}
-
-subscribe_caller_to_team_idle_from_agent() {
-  local repo="$1" team="$2"
-  local pane="" session="" agent="" watcher_name="" watcher_dir="" atmux_bin="" source_root="" log_file=""
-  [[ -n "$repo" && -n "$team" ]] || return 0
-  pane="$(atmux_resolve_current_pane)"
-  [[ -n "$pane" ]] || return 0
-  if ! tmux display-message -t "$pane" -p '#{pane_id}' >/dev/null 2>&1; then
-    return 0
-  fi
-  session="$(tmux display-message -t "$pane" -p '#{session_name}' 2>/dev/null || true)"
-  agent="${ATMUX_AGENT_NAME:-}"
-  if [[ -z "$agent" && -n "$session" ]]; then
-    agent="$(atmux_resolve_session_env "$session" ATMUX_AGENT_NAME)"
-  fi
-  [[ -n "$agent" || "$(atmux_resolve_session_env "$session" ATMUX_SESSION_KIND)" == "agent" ]] || return 0
-
-  watcher_name="$(pane_queue_key "$pane")"
-  watcher_dir="$(team_idle_watcher_dir "$repo" "$team" "$watcher_name")"
-  if [[ -d "$watcher_dir" ]]; then
-    local existing_window_id=""
-    existing_window_id="$(atmux_fs_read_trimmed "$watcher_dir/window_id")"
-    if [[ -n "$existing_window_id" ]] && tmux list-windows -a -F '#{window_id}' 2>/dev/null | grep -Fxq "$existing_window_id"; then
-      team_idle_watcher_id "$repo" "$team" "$watcher_name"
-      return 0
-    fi
-  fi
-  mkdir -p "$watcher_dir"
-  atmux_fs_write_field "$watcher_dir/pane" "$pane"
-  atmux_fs_write_field "$watcher_dir/session" "$session"
-  atmux_fs_write_field "$watcher_dir/agent" "$agent"
-  atmux_fs_write_field "$watcher_dir/repo" "$repo"
-  atmux_fs_write_field "$watcher_dir/team" "$team"
-  atmux_fs_write_field "$watcher_dir/subscribed_at" "$(timestamp_utc)"
-
-  atmux_bin="$(resolve_atmux_runner_for_agent || true)"
-  [[ -n "$atmux_bin" ]] || return 0
-  source_root="$(resolve_source_root_for_agent)"
-  log_file="$watcher_dir/worker.log"
-
-  local -a watch_cmd=(
-    env
-    "ATMUX_HOME=$ATMUX_HOME"
-    "ATMUX_SOURCE_ROOT=$source_root"
-    "ATMUX_REPO=$repo"
-    "$atmux_bin" team _idle-watch
-    --repo "$repo" --team "$team" --watcher "$watcher_name"
-    --idle "${ATMUX_TEAM_IDLE_SECONDS:-${ATMUX_AGENT_IDLE_SECONDS:-30}}"
-    --interval "${ATMUX_TEAM_IDLE_INTERVAL:-${ATMUX_AGENT_IDLE_INTERVAL:-2}}"
-  )
-  local quoted_cmd="" arg window_id=""
-  for arg in "${watch_cmd[@]}"; do
-    quoted_cmd+="$(printf '%q ' "$arg")"
-  done
-  quoted_cmd+=">>$(printf '%q' "$log_file") 2>&1"
-
-  if window_id="$(tmux new-window -a -d -P -F '#{window_id}' \
-        -t "$session" \
-        -n "team-idle-${team}" \
-        -c "${ATMUX_WORKTREE:-$PWD}" \
-        "$quoted_cmd" 2>>"$log_file")" && [[ -n "$window_id" ]]; then
-    atmux_fs_write_field "$watcher_dir/window_id" "$window_id"
-    local worker_pid=""
-    worker_pid="$(tmux list-panes -t "$window_id" -F '#{pane_pid}' 2>/dev/null | head -n1 || true)"
-    [[ -n "$worker_pid" ]] && atmux_fs_write_field "$watcher_dir/worker.pid" "$worker_pid"
-  else
-    printf '[%s] tmux new-window failed; falling back to background process\n' "$(date +%H:%M:%S)" >>"$log_file"
-    (
-      ATMUX_HOME="$ATMUX_HOME" \
-      ATMUX_SOURCE_ROOT="$source_root" \
-      ATMUX_REPO="$repo" \
-        "$atmux_bin" team _idle-watch \
-          --repo "$repo" --team "$team" --watcher "$watcher_name" \
-          --idle "${ATMUX_TEAM_IDLE_SECONDS:-${ATMUX_AGENT_IDLE_SECONDS:-30}}" \
-          --interval "${ATMUX_TEAM_IDLE_INTERVAL:-${ATMUX_AGENT_IDLE_INTERVAL:-2}}"
-    ) >>"$log_file" 2>&1 &
-    atmux_fs_write_field "$watcher_dir/worker.pid" "$!"
-  fi
-  team_idle_watcher_id "$repo" "$team" "$watcher_name"
 }
 
 resolve_pattern_targets() {
@@ -1385,7 +1272,11 @@ spawn_agent_session() {
 
   if [[ -n "${ATMUX_TEAM:-}" ]]; then
     record_team_member_state "$repo_name" "$ATMUX_TEAM" "$session" "$name" "${ATMUX_ROLE:-}" "$adapter"
-    subscribe_caller_to_team_idle_from_agent "$repo_name" "$ATMUX_TEAM" >/dev/null 2>&1 || true
+    subscribe_caller_to_team_idle \
+      "$repo_name" "$ATMUX_TEAM" \
+      "${ATMUX_TEAM_IDLE_SECONDS:-${ATMUX_AGENT_IDLE_SECONDS:-30}}" \
+      "${ATMUX_TEAM_IDLE_INTERVAL:-${ATMUX_AGENT_IDLE_INTERVAL:-2}}" \
+      >/dev/null 2>&1 || true
   else
     subscribe_caller_to_agent_idle "$repo_name" "$name" "$session" >/dev/null 2>&1 || true
   fi

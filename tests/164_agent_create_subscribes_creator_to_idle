@@ -31,6 +31,7 @@ atmux_home="$tmp_root/.atmux"
 repo_name="agentidle${RANDOM}"
 creator_session="atmux-${repo_name}-creator"
 child_agent="worker${RANDOM}"
+cleanup_agent="cleanup${RANDOM}"
 team_agent="member${RANDOM}"
 team_name="idleteam${RANDOM}"
 
@@ -125,6 +126,28 @@ if printf '%s\n' "$watchers_after" | grep -Fq "$watcher_id"; then
 fi
 if tmux list-windows -a -F '#{window_id}' | grep -Fxq "$window_id"; then
   echo "agent-idle watcher tmux window survived watcher kill" >&2
+  exit 1
+fi
+
+TMUX=1 TMUX_PANE="$creator_pane" \
+  ATMUX_HOME="$atmux_home" ATMUX_REPO="$repo_name" ATMUX_SOURCE_ROOT="$REPO_ROOT" \
+  ATMUX_AGENT_NAME="creator" ATMUX_SESSION_NAME="$creator_session" \
+  ATMUX_AGENT_IDLE_SECONDS=1 ATMUX_AGENT_IDLE_INTERVAL=1 \
+  "$ATMUX_BIN" agent create "$cleanup_agent" --role worker --intelligence 20 \
+    --adapter mockidle --shared-worktree >/tmp/atmux-agent-idle-cleanup-create.out 2>/tmp/atmux-agent-idle-cleanup-create.err
+
+cleanup_session="atmux-${repo_name}-${cleanup_agent}"
+tmux has-session -t "$cleanup_session" 2>/dev/null || {
+  echo "cleanup child session was not created" >&2
+  cat /tmp/atmux-agent-idle-cleanup-create.err >&2 2>/dev/null || true
+  exit 1
+}
+cleanup_watch_dir="$atmux_home/watch-agent-idle/${repo_name}--agent--${cleanup_agent}"
+[[ -d "$cleanup_watch_dir/watchers" ]] || { echo "cleanup child did not register agent-idle watcher" >&2; exit 1; }
+ATMUX_HOME="$atmux_home" ATMUX_REPO="$repo_name" "$ATMUX_BIN" agent kill "$cleanup_agent" >/dev/null
+if [[ -d "$cleanup_watch_dir" ]]; then
+  echo "agent kill left parent agent-idle watch directory behind" >&2
+  find "$cleanup_watch_dir" -maxdepth 3 -print >&2
   exit 1
 fi
 

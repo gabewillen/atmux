@@ -66,7 +66,7 @@ normalize_model() {
 normalize_reasoning() {
   case "${1:-}" in
     low|medium|high) printf '%s\n' "$1" ;;
-    extra-high|extra_high|extrahigh) printf '%s\n' 'extra-high' ;;
+    extra-high|extra_high|extra\ high|extrahigh) printf '%s\n' 'extra-high' ;;
     *) return 1 ;;
   esac
 }
@@ -107,7 +107,7 @@ if [[ -n "${ATMUX_MODEL:-}" ]]; then
   MODEL="$ATMUX_MODEL"
 fi
 if [[ -n "${ATMUX_REASONING_LEVEL:-}" ]]; then
-  REASONING_LEVEL="$ATMUX_REASONING_LEVEL"
+  REASONING_LEVEL="$(normalize_reasoning "$ATMUX_REASONING_LEVEL" || printf '%s\n' "$ATMUX_REASONING_LEVEL")"
 fi
 
 printf 'MODEL=%s\nREASONING_LEVEL=%s\n' "$MODEL" "$REASONING_LEVEL" > "$state_file"

@@ -58,7 +58,7 @@ atmux exec --detach -- make test-all
 ```
 
 ```sh
-ATMUX_ALLOW_OUTSIDE_TMUX=1 atmux process watch 12345 --timeout 7200
+atmux process watch 12345 --timeout 7200
 ```
 
 ```sh

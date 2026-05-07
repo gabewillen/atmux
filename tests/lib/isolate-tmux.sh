@@ -27,7 +27,7 @@ fi
 
 # Tests must not inherit the invoking agent's identity. Individual tests set
 # these explicitly when they need agent-mode behavior.
-unset ATMUX_AGENT_NAME ATMUX_SESSION_NAME ATMUX_TEAM ATMUX_ROLE
+unset ATMUX_AGENT_NAME ATMUX_SESSION_NAME ATMUX_TEAM ATMUX_ROLE ATMUX_REPO ATMUX_WORKTREE
 
 __atmux_isolate_real_tmux() {
   local repo_root="" shim_path="" candidate resolved

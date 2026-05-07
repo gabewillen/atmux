@@ -2,11 +2,15 @@
 set -euo pipefail
 
 ATMUX_HOME="${ATMUX_HOME:-$HOME/.atmux}"
+HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=bin/(atmux)/(lib)/xml
+source "$HERE/(lib)/xml"
 
 usage() {
   cat <<'USAGE'
 Usage:
-  atmux role list
+  atmux role list [--details]
+  atmux role info [--kind agent|team] <name>
   atmux role show <name>
   atmux role resolve [--kind agent|team] <name>
   atmux role kind <name>
@@ -30,6 +34,9 @@ Description:
   KIND defaults to `agent`. KIND=team roles are consumed by
   `atmux team create --role <name>` and receive ATMUX_TEAM /
   ATMUX_ROLE_STATE_DIR / ATMUX_WORKTREE in their start hook.
+
+  `role info` and `role list --details` emit XML so new role metadata can be
+  added later without changing positional columns.
 
 Resolution precedence (first match wins):
     ATMUX_ROLE_SEARCH_PREPEND/<name>      (team member spawning only)
@@ -242,6 +249,144 @@ list_roles() {
       printf '%s\t%s\t%s\n' "$name" "$kind" "$dir"
     done < <(find "$base/teams" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | sort)
   done < <(role_search_paths)
+}
+
+role_summary() {
+  local dir="$1" line
+  [[ -f "$dir/README.md" || -f "$dir/role.md" ]] || return 0
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
+    case "$line" in
+      \#*) continue ;;
+    esac
+    printf '%s\n' "$line"
+    return 0
+  done < <(cat "$dir/README.md" "$dir/role.md" 2>/dev/null)
+}
+
+role_manifest_details() {
+  local dir="$1" manifest="$dir/manifest"
+  [[ -f "$manifest" ]] || return 0
+  (
+    KIND=""
+    INTELLIGENCE=""
+    ADAPTERS=()
+    MEMBERS=()
+    ATMUX_TEAM="${ATMUX_TEAM:-role-info}"
+    ATMUX_REPO="${ATMUX_REPO:-repo}"
+    # shellcheck source=/dev/null
+    source "$manifest" 2>/dev/null || true
+    if [[ -n "$KIND" ]]; then
+      printf 'KIND=%s\n' "$KIND"
+    fi
+    if [[ -n "$INTELLIGENCE" ]]; then
+      printf 'INTELLIGENCE=%s\n' "$INTELLIGENCE"
+    fi
+    if [[ "${#ADAPTERS[@]}" -gt 0 ]]; then
+      local old_ifs="$IFS"
+      IFS=,
+      printf 'ADAPTERS=%s\n' "${ADAPTERS[*]}"
+      IFS="$old_ifs"
+    fi
+    if [[ "${#MEMBERS[@]}" -gt 0 ]]; then
+      local member
+      for member in "${MEMBERS[@]}"; do
+        printf 'MEMBER=%s\n' "$member"
+      done
+    fi
+  )
+}
+
+role_set_keys() {
+  local dir="$1" manifest="$dir/manifest"
+  [[ -f "$manifest" ]] || return 0
+  grep -Eo 'ATMUX_TEAM_SET_[A-Z0-9_]+' "$manifest" 2>/dev/null \
+    | sed 's/^ATMUX_TEAM_SET_//' \
+    | tr '[:upper:]' '[:lower:]' \
+    | sort -u
+}
+
+role_hooks() {
+  local dir="$1" hooks=()
+  [[ -x "$dir/start" ]] && hooks+=(start)
+  [[ -x "$dir/stop" ]] && hooks+=(stop)
+  if [[ "${#hooks[@]}" -eq 0 ]]; then
+    printf 'none\n'
+  else
+    local old_ifs="$IFS"
+    IFS=,
+    printf '%s\n' "${hooks[*]}"
+    IFS="$old_ifs"
+  fi
+}
+
+emit_role_xml() {
+  local name="$1" kind="$2" dir="$3"
+  local summary details intelligence adapters hooks create_cmd key member adapter
+  summary="$(role_summary "$dir" || true)"
+  details="$(role_manifest_details "$dir" || true)"
+  intelligence="$(printf '%s\n' "$details" | sed -n 's/^INTELLIGENCE=//p' | head -n 1)"
+  adapters="$(printf '%s\n' "$details" | sed -n 's/^ADAPTERS=//p' | head -n 1)"
+  hooks="$(role_hooks "$dir")"
+  if [[ "$kind" == "team" ]]; then
+    create_cmd="atmux team create <team-name> --role $name"
+  else
+    create_cmd="atmux agent create <agent-name> --role $name --intelligence <0-100>"
+  fi
+
+  printf '  <role name="%s" kind="%s" path="%s">\n' \
+    "$(atmux_xml_escape "$name")" "$(atmux_xml_escape "$kind")" "$(atmux_xml_escape "$dir")"
+  [[ -n "$summary" ]] && printf '    <summary>%s</summary>\n' "$(atmux_xml_escape "$summary")"
+  printf '    <create>%s</create>\n' "$(atmux_xml_escape "$create_cmd")"
+  printf '    <hooks>%s</hooks>\n' "$(atmux_xml_escape "$hooks")"
+  [[ -n "$intelligence" ]] && printf '    <default_intelligence>%s</default_intelligence>\n' "$(atmux_xml_escape "$intelligence")"
+  if [[ -n "$adapters" ]]; then
+    printf '    <adapters>\n'
+    local old_ifs="$IFS"
+    IFS=,
+    for adapter in $adapters; do
+      [[ -n "$adapter" ]] && printf '      <adapter name="%s" />\n' "$(atmux_xml_escape "$adapter")"
+    done
+    IFS="$old_ifs"
+    printf '    </adapters>\n'
+  fi
+  if role_set_keys "$dir" | grep -q .; then
+    printf '    <set_keys>\n'
+    while IFS= read -r key; do
+      [[ -n "$key" ]] && printf '      <set_key name="%s" />\n' "$(atmux_xml_escape "$key")"
+    done < <(role_set_keys "$dir")
+    printf '    </set_keys>\n'
+  fi
+  if printf '%s\n' "$details" | grep -q '^MEMBER='; then
+    printf '    <members>\n'
+    while IFS= read -r member; do
+      [[ -n "$member" ]] && printf '      <member command="%s" />\n' "$(atmux_xml_escape "$member")"
+    done < <(printf '%s\n' "$details" | sed -n 's/^MEMBER=//p')
+    printf '    </members>\n'
+  fi
+  printf '  </role>\n'
+}
+
+role_info() {
+  local name="$1" want_kind="${2:-}" dir kind
+  if ! dir="$(resolve_role_dir "$name" "$want_kind")"; then
+    echo "role not found: $name" >&2
+    return 1
+  fi
+  kind="$(role_path_kind "$dir")"
+  printf '<roles>\n'
+  emit_role_xml "$name" "$kind" "$dir"
+  printf '</roles>\n'
+}
+
+list_roles_details() {
+  local name kind dir
+  printf '<roles>\n'
+  while IFS=$'\t' read -r name kind dir; do
+    [[ -n "$name" ]] || continue
+    emit_role_xml "$name" "$kind" "$dir"
+  done < <(list_roles)
+  printf '</roles>\n'
 }
 
 resolve_create_dest() {
@@ -582,7 +727,34 @@ shift || true
 
 case "$sub" in
   list)
-    list_roles
+    case "${1:-}" in
+      "" ) list_roles ;;
+      --details) list_roles_details ;;
+      -h|--help)
+        echo "usage: atmux role list [--details]"
+        ;;
+      *) echo "usage: atmux role list [--details]" >&2; exit 2 ;;
+    esac
+    ;;
+  info|describe)
+    want_kind=""
+    case "${1:-}" in
+      --kind)
+        want_kind="${2:-}"
+        shift 2 || true
+        ;;
+      --kind=*)
+        want_kind="${1#--kind=}"
+        shift
+        ;;
+    esac
+    case "$want_kind" in
+      ""|agent|team) ;;
+      *) echo "usage: atmux role info [--kind agent|team] <name>" >&2; exit 2 ;;
+    esac
+    name="${1:-}"
+    [[ -n "$name" ]] || { echo "usage: atmux role info [--kind agent|team] <name>" >&2; exit 2; }
+    role_info "$name" "$want_kind"
     ;;
   show)
     name="${1:-}"

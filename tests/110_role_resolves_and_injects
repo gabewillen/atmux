@@ -30,6 +30,11 @@ cat > "$roles_dir/agents/sample/role.md" <<'EOF'
 
 Hello from the sample role.
 EOF
+cat > "$roles_dir/agents/sample/README.md" <<'EOF'
+# Sample
+
+Short sample role summary.
+EOF
 
 cat > "$roles_dir/agents/sample/manifest" <<'EOF'
 INTELLIGENCE=42
@@ -59,6 +64,14 @@ cat > "$roles_dir/agents/h-agent/role.md" <<'EOF'
 EOF
 cat > "$roles_dir/teams/h-team/role.md" <<'EOF'
 # Hierarchical team
+EOF
+cat > "$roles_dir/teams/h-team/manifest" <<'EOF'
+KIND=team
+driver_adapter="${ATMUX_TEAM_SET_DRIVER_ADAPTER:-codex}"
+driver_intelligence="${ATMUX_TEAM_SET_DRIVER_INTELLIGENCE:-20}"
+MEMBERS=(
+  "${ATMUX_TEAM}-driver --role driver --adapter ${driver_adapter} --intelligence ${driver_intelligence} --shared-worktree"
+)
 EOF
 agent_resolved="$(ATMUX_HOME="$tmp_root/.atmux" "$ROLE_BIN" resolve --kind agent h-agent)"
 [[ "$agent_resolved" == "$roles_dir/agents/h-agent" ]] || {
@@ -90,6 +103,61 @@ private_resolved="$(ATMUX_HOME="$tmp_root/.atmux" "$ROLE_BIN" private-agent h-me
 # `atmux role show` prints role.md verbatim.
 ATMUX_HOME="$tmp_root/.atmux" "$ROLE_BIN" show sample | grep -q "Hello from the sample role." || {
   echo "fail: role show did not print role.md body" >&2
+  exit 1
+}
+
+sample_info="$(ATMUX_HOME="$tmp_root/.atmux" "$ROLE_BIN" info sample)"
+printf '%s\n' "$sample_info" | grep -Fq '<role name="sample" kind="agent"' || {
+  echo "fail: role info missing name" >&2
+  echo "$sample_info" >&2
+  exit 1
+}
+printf '%s\n' "$sample_info" | grep -Fxq "    <summary>Short sample role summary.</summary>" || {
+  echo "fail: role info missing README summary" >&2
+  echo "$sample_info" >&2
+  exit 1
+}
+printf '%s\n' "$sample_info" | grep -Fxq "    <default_intelligence>42</default_intelligence>" || {
+  echo "fail: role info missing manifest intelligence" >&2
+  echo "$sample_info" >&2
+  exit 1
+}
+printf '%s\n' "$sample_info" | grep -Fxq '      <adapter name="claude-code" />' \
+  && printf '%s\n' "$sample_info" | grep -Fxq '      <adapter name="codex" />' || {
+  echo "fail: role info missing manifest adapters" >&2
+  echo "$sample_info" >&2
+  exit 1
+}
+team_info="$(ATMUX_HOME="$tmp_root/.atmux" "$ROLE_BIN" info --kind team h-team)"
+printf '%s\n' "$team_info" | grep -Fxq "    <create>atmux team create &lt;team-name&gt; --role h-team</create>" || {
+  echo "fail: team role info missing create command" >&2
+  echo "$team_info" >&2
+  exit 1
+}
+printf '%s\n' "$team_info" | grep -Fxq '      <set_key name="driver_adapter" />' \
+  && printf '%s\n' "$team_info" | grep -Fxq '      <set_key name="driver_intelligence" />' || {
+  echo "fail: team role info missing --set keys" >&2
+  echo "$team_info" >&2
+  exit 1
+}
+printf '%s\n' "$team_info" | grep -Fq 'command="role-info-driver --role driver --adapter codex --intelligence 20 --shared-worktree"' || {
+  echo "fail: team role info missing expanded member" >&2
+  echo "$team_info" >&2
+  exit 1
+}
+details_out="$(ATMUX_HOME="$tmp_root/.atmux" "$ROLE_BIN" list --details)"
+printf '%s\n' "$details_out" | grep -Fq '<roles>' \
+  && printf '%s\n' "$details_out" | grep -Fq '<role name="sample" kind="agent"' \
+  && printf '%s\n' "$details_out" | grep -Fq '<default_intelligence>42</default_intelligence>' || {
+  echo "fail: role list --details missing sample metadata" >&2
+  echo "$details_out" >&2
+  exit 1
+}
+printf '%s\n' "$details_out" | grep -Fq '<role name="h-team" kind="team"' \
+  && printf '%s\n' "$details_out" | grep -Fq '<set_key name="driver_adapter" />' \
+  && printf '%s\n' "$details_out" | grep -Fq '<set_key name="driver_intelligence" />' || {
+  echo "fail: role list --details missing team set keys" >&2
+  echo "$details_out" >&2
   exit 1
 }
 

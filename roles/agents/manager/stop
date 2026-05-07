@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# Role stop hook for manager. Tears down feed watcher registrations.
+set -euo pipefail
+
+state="${ATMUX_ROLE_STATE_DIR:-}"
+[[ -n "$state" && -d "$state" ]] || exit 0
+atmux_home="${ATMUX_HOME:-}"
+if [[ -z "$atmux_home" && -n "${HOME:-}" ]]; then
+  atmux_home="$HOME/.atmux"
+fi
+[[ -n "$atmux_home" ]] || {
+  echo "manager stop: unable to resolve ATMUX_HOME" >&2
+  exit 1
+}
+
+case "$state" in
+  /|/tmp|/var|/var/tmp|"${HOME:-}"|"${HOME:-}"/.atmux|"$PWD")
+    echo "manager stop: refusing to remove suspicious state path: $state" >&2
+    exit 1
+    ;;
+esac
+
+case "$state" in
+  "$atmux_home"/state/agents/*|"$atmux_home"/roles/state/*) ;;
+  *)
+    echo "manager stop: refusing to remove unexpected state path: $state" >&2
+    exit 1
+    ;;
+esac
+
+if [[ -f "$state/watcher-ids" ]]; then
+  while IFS= read -r watcher_id; do
+    [[ -n "$watcher_id" ]] || continue
+    atmux watcher kill "$watcher_id" >/dev/null 2>&1 || true
+  done < "$state/watcher-ids"
+fi
+
+rm -rf "$state"

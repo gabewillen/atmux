@@ -12,7 +12,7 @@ The default install is project-local: atmux lives in `<project>/.atmux`, its sou
 - **Role and team aware.** Roles define reusable prompts/hooks; teams spawn coordinated member agents.
 - **Agent-editable.** A project install keeps atmux source next to your code, so missing workflow glue can be patched locally.
 
-> **Experimental** — this project is under active development (current version: `0.23.4`). APIs, commands, and behavior may change without notice. Use at your own risk.
+> **Experimental** — this project is under active development (current version: `0.24.0`). APIs, commands, and behavior may change without notice. Use at your own risk.
 
 ## Install
 
@@ -82,6 +82,7 @@ atmux agent create tester   --role tester   --team platform --intelligence 55
 | Role | Description | Demo |
 |------|-------------|------|
 | [`gh-pr-reviewer`](roles/agents/gh-pr-reviewer/README.md) | The `gh-pr-reviewer` role reviews GitHub pull requests, looks for concrete risks in the diff, and posts structured review feedback with `gh`. |  |
+| [`manager`](roles/agents/manager/README.md) | The `manager` role is a delegation-only engineering lead for a repository. It subscribes to issue and pull-request feeds, triages incoming work, creates agents or teams to implement and review changes, and keeps model usage aligned with task complexity. |  |
 
 #### Built-in team roles
 
@@ -196,7 +197,7 @@ Run:
 | `atmux path watch <glob> [--timeout <seconds>] [--duration <seconds>]` | Operate on filesystem paths matched by a glob. |
 | `atmux pr create --title <title> [--description <description>]` | Repo-scoped pull request tickets on filesystem. |
 | `atmux process watch <pid> [--timeout <seconds>] [--interval <seconds>]` | Watch or stop an atmux exec-tracked child process. |
-| `atmux role list` | Manage adapter-agnostic roles. |
+| `atmux role list [--details]` | Manage adapter-agnostic roles. |
 | `atmux schedule (--interval <duration> \| --once <duration>) [--no-detach] --notification <text>` | Schedule a future or repeating action. |
 | `atmux send --to <agent\|team> [--reply-required] [--interrupt] "message"` | Send XML messages to a single agent or every agent in a team. |
 | `atmux team create <name> [--role <role>] [--start <cmd>] [--stop <cmd>]` | Manage repo-scoped teams of agents. |

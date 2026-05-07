@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.24.0 — Manager role
+
+- Added a built-in `manager` agent role for delegation-only engineering
+  coordination. Manager agents subscribe to repository issue and PR feeds,
+  triage incoming work, choose appropriate agents/teams, and enforce adapter,
+  intelligence, model, reasoning, and usage-discipline decisions without
+  editing code directly.
+
 ## 0.23.4 — PR merge conflict notifications
 
 - GitHub PR watchers now include merge-conflict state in their polling

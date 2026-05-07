@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# Role start hook for manager.
+#
+# Subscribes the manager pane to repository issue and PR feeds. Feed events
+# are sent directly to the manager pane by the watcher subsystem; watcher ids
+# are recorded so the stop hook can tear them down.
+set -euo pipefail
+
+state="${ATMUX_ROLE_STATE_DIR:-}"
+[[ -n "$state" ]] || exit 0
+mkdir -p "$state"
+
+if ! command -v gh >/dev/null 2>&1; then
+  echo "manager: gh not installed; skipping issue/PR feed subscriptions" >&2
+  exit 0
+fi
+
+gh_repo="$(gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null || true)"
+if [[ -z "$gh_repo" ]]; then
+  echo "manager: not a GitHub repo (gh repo view failed); skipping issue/PR feed subscriptions" >&2
+  exit 0
+fi
+
+record_watcher_id() {
+  local xml="$1" watcher_id=""
+  watcher_id="$(printf '%s\n' "$xml" | sed -n 's/.*watcher_id="\([^"]*\)".*/\1/p')"
+  [[ -n "$watcher_id" ]] && printf '%s\n' "$watcher_id" >> "$state/watcher-ids"
+}
+
+issue_xml="$(atmux issue watch --feed "$gh_repo" 2>/dev/null || true)"
+record_watcher_id "$issue_xml"
+
+pr_xml="$(atmux pr watch --feed "$gh_repo" 2>/dev/null || true)"
+record_watcher_id "$pr_xml"

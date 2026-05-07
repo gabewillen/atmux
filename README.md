@@ -82,6 +82,7 @@ atmux agent create tester   --role tester   --team platform --intelligence 55
 | Role | Description | Demo |
 |------|-------------|------|
 | [`gh-pr-reviewer`](roles/agents/gh-pr-reviewer/README.md) | The `gh-pr-reviewer` role reviews GitHub pull requests, looks for concrete risks in the diff, and posts structured review feedback with `gh`. |  |
+| [`manager`](roles/agents/manager/README.md) | The `manager` role is a delegation-only engineering lead for a repository. It subscribes to issue and pull-request feeds, triages incoming work, creates agents or teams to implement and review changes, and keeps model usage aligned with task complexity. |  |
 
 #### Built-in team roles
 

@@ -53,4 +53,41 @@ for adapter in claude-code codex cursor-agent gemini opencode; do
     || { echo "fail: $adapter status did not capture fallback pane" >&2; cat "$log" >&2; exit 1; }
 done
 
-echo "ok: adapter status uses ATMUX_TMUX context without skipping fallbacks"
+resolver_log="$tmp_dir/resolver.tmux.log"
+tmux() {
+  printf '%s\n' "$*" >> "$resolver_log"
+  case "${1:-}" in
+    display-message)
+      echo "display-message should not be used without raw TMUX" >&2
+      return 1
+      ;;
+    list-panes)
+      printf 'atmux-test-session %%resolver-fallback-pane\n'
+      ;;
+    *)
+      return 0
+      ;;
+  esac
+}
+
+# shellcheck source=bin/(atmux)/(lib)/resolver
+source "$REPO_ROOT/bin/(atmux)/(lib)/resolver"
+
+unset TMUX TMUX_PANE ATMUX_TMUX_PANE
+ATMUX_TMUX=/tmp/atmux-test-tmux,123,0
+ATMUX_SESSION_NAME=atmux-test-session
+pane="$(atmux_resolve_current_pane)"
+
+if [[ "$pane" != "%resolver-fallback-pane" ]]; then
+  echo "fail: resolver did not fall back through ATMUX_SESSION_NAME" >&2
+  printf 'resolved pane: %s\n' "$pane" >&2
+  cat "$resolver_log" >&2
+  exit 1
+fi
+if grep -q '^display-message' "$resolver_log"; then
+  echo "fail: resolver used display-message with ATMUX_TMUX but no TMUX" >&2
+  cat "$resolver_log" >&2
+  exit 1
+fi
+
+echo "ok: adapter status and resolver use ATMUX_TMUX context without skipping fallbacks"

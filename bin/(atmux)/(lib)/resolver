@@ -39,7 +39,7 @@ atmux_resolve_current_pane() {
     printf '%s\n' "$TMUX_PANE"
     return 0
   fi
-  if [[ -n "${ATMUX_TMUX:-}${TMUX:-}" ]]; then
+  if [[ -n "${TMUX:-}" ]]; then
     tmux display-message -p '#{pane_id}' 2>/dev/null || true
     return 0
   fi

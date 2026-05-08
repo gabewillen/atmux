@@ -12,7 +12,7 @@ The default install is project-local: atmux lives in `<project>/.atmux`, its sou
 - **Role and team aware.** Roles define reusable prompts/hooks; teams spawn coordinated member agents.
 - **Agent-editable.** A project install keeps atmux source next to your code, so missing workflow glue can be patched locally.
 
-> **Experimental** — this project is under active development (current version: `0.24.0`). APIs, commands, and behavior may change without notice. Use at your own risk.
+> **Experimental** — this project is under active development (current version: `0.25.0`). APIs, commands, and behavior may change without notice. Use at your own risk.
 
 ## Install
 
@@ -88,7 +88,7 @@ atmux agent create tester   --role tester   --team platform --intelligence 55
 
 | Role | Description | Members | Demo |
 |------|-------------|---------|------|
-| [`collab`](roles/teams/collab/README.md) | Create a multi-agent deliberation team: | [`arbiter`](roles/teams/collab/roles/arbiter/role.md): You are the Arbitrator for collab team `${ATMUX_TEAM}`.<br>[`collaborator`](roles/teams/collab/roles/collaborator/role.md): You are a substantive collaborator in collab team `${ATMUX_TEAM}`.<br>[`leader`](roles/teams/collab/roles/leader/role.md): You are the Leader for collab team `${ATMUX_TEAM}`.<br>[`recorder`](roles/teams/collab/roles/recorder/role.md): You are the Recorder for collab team `${ATMUX_TEAM}`. |  |
+| [`collab`](roles/teams/collab/README.md) | Create a multi-agent deliberation team: | [`collaborator`](roles/teams/collab/roles/collaborator/role.md): You are a substantive collaborator in collab team `${ATMUX_TEAM}`.<br>[`facilitator`](roles/teams/collab/roles/facilitator/role.md): You are the facilitator, synthesizer, and coordinator for collab team `${ATMUX_TEAM}`. |  |
 | [`pair-program`](roles/teams/pair-program/README.md) | A driver-and-navigator team role where a fast model writes code while a stronger model watches the shared worktree and interrupts with review notes when the implementation drifts. | [`driver`](roles/teams/pair-program/roles/driver/README.md): The `driver` role is the fast implementation half of the pair-programming workflow. It writes code, runs tests, and responds to navigator feedback.<br>[`navigator`](roles/teams/pair-program/roles/navigator/README.md): The `navigator` role is the review half of the pair-programming workflow. It watches a shared worktree, reviews rolling diffs, and steers the driver without editing files directly. | [demo](roles/teams/pair-program/demo.gif) |
 
 ### Intelligence scale

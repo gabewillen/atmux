@@ -1,23 +1,18 @@
-# collab: a leader-facilitated deliberation team.
+# shellcheck shell=bash
+# collab: one facilitator/coordinator agent plus substantive collaborators.
 
 KIND=team
 
-leader_adapter="${ATMUX_TEAM_SET_LEADER_ADAPTER:-codex}"
-leader_intelligence="${ATMUX_TEAM_SET_LEADER_INTELLIGENCE:-85}"
+facilitator_adapter="${ATMUX_TEAM_SET_FACILITATOR_ADAPTER:-codex}"
+facilitator_intelligence="${ATMUX_TEAM_SET_FACILITATOR_INTELLIGENCE:-85}"
+facilitator_model="${ATMUX_TEAM_SET_FACILITATOR_MODEL:-}"
+facilitator_reasoning="${ATMUX_TEAM_SET_FACILITATOR_REASONING:-}"
 
-arbitrator_adapter="${ATMUX_TEAM_SET_ARBITRATOR_ADAPTER:-codex}"
-arbitrator_intelligence="${ATMUX_TEAM_SET_ARBITRATOR_INTELLIGENCE:-85}"
+fac_opts=(--role facilitator --intelligence "$facilitator_intelligence" --adapter "$facilitator_adapter" --shared-worktree)
+[[ -n "$facilitator_model" ]] && fac_opts+=(--model "$facilitator_model")
+[[ -n "$facilitator_reasoning" ]] && fac_opts+=(--reasoning "$facilitator_reasoning")
 
-recorder_adapter="${ATMUX_TEAM_SET_RECORDER_ADAPTER:-cursor-agent}"
-recorder_intelligence="${ATMUX_TEAM_SET_RECORDER_INTELLIGENCE:-40}"
-recorder_model="${ATMUX_TEAM_SET_RECORDER_MODEL:-composer-2-fast}"
-recorder_reasoning="${ATMUX_TEAM_SET_RECORDER_REASONING:-low}"
-
-MEMBERS=(
-  "${ATMUX_TEAM}-leader       --role leader   --intelligence ${leader_intelligence} --adapter ${leader_adapter} --shared-worktree"
-  "${ATMUX_TEAM}-arbitrator   --role arbiter  --intelligence ${arbitrator_intelligence} --adapter ${arbitrator_adapter} --shared-worktree"
-  "${ATMUX_TEAM}-recorder     --role recorder --intelligence ${recorder_intelligence} --adapter ${recorder_adapter} --model ${recorder_model} --reasoning ${recorder_reasoning} --shared-worktree"
-)
+MEMBERS=("${ATMUX_TEAM}-facilitator ${fac_opts[*]}")
 
 default_collaborators="$(
   printf '%s\n' \

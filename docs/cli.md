@@ -18,6 +18,8 @@ atmux agent create planner --role planner --intelligence 80
 
 Creates filesystem-backed team state. Agents created with `--team <name>` join that team as tmux-backed members. Use `atmux team view <name>` when you want an optional multiagent tmux view.
 
+The `collab` team role configures its facilitator via `--set facilitator.<field>=…` (per-member overrides) plus undotted facilitator keys wired to **`ATMUX_TEAM_SET_FACILITATOR_ADAPTER`**, **`…_INTELLIGENCE`**, **`…_MODEL`**, and **`…_REASONING`** in its manifest; **`ATMUX_TEAM_SET_LEADER_*`**, **`…_RECORDER_*`**, **`…_ARBITRATOR_*`** are not used anymore.
+
 ### `atmux pr create --title <title> [--description <description>] [--source <branch>] [--target <branch>]`
 
 Creates a filesystem-backed pull request under `<ATMUX_HOME>/pull-requests/<repo>/`.

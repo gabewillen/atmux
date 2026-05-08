@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.25.0 — Collab facilitator cutover
+
+- Removed collab member roles `leader`, `arbiter`, and `recorder` (sessions and
+  role directories). Default
+  [`collab`](roles/teams/collab/README.md) now spawns only
+  [`facilitator`](roles/teams/collab/roles/facilitator/role.md) plus
+  `collaborator` members (facilitation, synthesis, and
+  `${ATMUX_TEAM_DOC_DIR}/final.md` live on the facilitator alone). Configure the
+  facilitator with `--set
+  facilitator.<field>=…` / undotted keys such as `facilitator_adapter` /
+  `facilitator_intelligence`, which the manifest reads as
+  `ATMUX_TEAM_SET_FACILITATOR_ADAPTER`, `…_INTELLIGENCE`, `…_MODEL`, and
+  `…_REASONING` only. Overrides for `leader`, `recorder`, or `arbiter` members
+  and `ATMUX_TEAM_SET_LEADER_*` / `…_RECORDER_*` / `…_ARBITRATOR_*` are no
+  longer consulted.
+
 ## 0.24.0 — Manager role
 
 - Added a built-in `manager` agent role for delegation-only engineering

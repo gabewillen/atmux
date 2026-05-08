@@ -43,7 +43,7 @@ if [[ "${ATMUX_STATUS_PASSIVE:-0}" == "1" && -n "${ATMUX_TARGET_PANE:-}" && -n "
       ATMUX_AGENT_NAME="${ATMUX_AGENT_NAME:-}" \
       ATMUX_SESSION_NAME="${ATMUX_SESSION_NAME:-}" \
       ATMUX_ADAPTER_SELECTED="${ATMUX_ADAPTER_SELECTED:-}" \
-      env -u ATMUX_STATE \
+      ATMUX_STATE="${ATMUX_STATE:-}" \
       "$delegated" 2>/dev/null || true)"
     derived_state="$(printf '%s' "$delegated_xml" | sed -n 's/.*state="\([^"]*\)".*/\1/p' | head -n1)"
     if [[ -n "$derived_state" ]]; then

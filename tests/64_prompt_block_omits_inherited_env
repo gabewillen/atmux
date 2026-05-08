@@ -30,6 +30,8 @@ control_text="$(
 
 printf '%s\n' "$control_text" | grep -Fq '# atmux Rules'
 printf '%s\n' "$control_text" | grep -Fq 'Use plain `atmux ...` commands; do not prefix them with inherited session environment.'
+printf '%s\n' "$control_text" | grep -Fq 'event-driven waiting'
+printf '%s\n' "$control_text" | grep -Fq 'atmux schedule --notification'
 if printf '%s\n' "$control_text" | grep -Fq '# Delegation Rules'; then
   echo "prompt block still injects delegation rules" >&2
   exit 1

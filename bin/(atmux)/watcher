@@ -58,8 +58,11 @@ case "$verb" in
     ;;
   kill)
     id="${1:-}"
+    case "$id" in
+      -h|--help|help) usage; exit 0 ;;
+    esac
     if [[ -z "$id" || "${id:0:1}" == "-" ]]; then
-      echo "usage: atmux watcher kill <id> [--timeout N]" >&2
+      usage >&2
       exit 2
     fi
     shift

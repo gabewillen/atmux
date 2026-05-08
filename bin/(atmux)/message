@@ -227,13 +227,24 @@ read_message() {
   local explicit_repo=""
   local team_name=""
 
+  case "$id" in
+    -h|--help|help)
+      usage
+      exit 0
+      ;;
+  esac
+
   if [[ -z "$id" ]]; then
-    echo "usage: atmux message read <id> [--repo <repo>] [--team <team>]" >&2
+    usage >&2
     exit 2
   fi
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
+      -h|--help|help)
+        usage
+        exit 0
+        ;;
       --repo)
         explicit_repo="${2:-}"
         shift 2
@@ -336,6 +347,10 @@ list_messages() {
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
+      -h|--help|help)
+        usage
+        exit 0
+        ;;
       --repo)
         explicit_repo="${2:-}"
         shift 2
@@ -426,6 +441,10 @@ subscribe_team_messages() {
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
+      -h|--help|help)
+        usage
+        exit 0
+        ;;
       --repo)
         explicit_repo="${2:-}"
         shift 2
@@ -480,6 +499,10 @@ unsubscribe_team_messages() {
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
+      -h|--help|help)
+        usage
+        exit 0
+        ;;
       --repo)
         explicit_repo="${2:-}"
         shift 2
@@ -523,6 +546,10 @@ list_team_message_subscriptions() {
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
+      -h|--help|help)
+        usage
+        exit 0
+        ;;
       --repo)
         explicit_repo="${2:-}"
         shift 2

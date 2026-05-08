@@ -616,6 +616,7 @@ render_atmux_prompt_block() {
     fi
     echo "# atmux Rules"
     echo "- Use plain \`atmux ...\` commands; do not prefix them with inherited session environment."
+    echo "- Prefer event-driven waiting over tight sleep loops at the foreground prompt: self reminders and ticks via \`atmux schedule --notification\` / \`atmux schedule --once|interval\`; long commands via \`atmux exec\` and \`atmux process watch\`; outbound signals via watcher-capable verbs (including \`atmux git watch\`, \`atmux path watch\`, \`atmux issue watch\`, \`atmux pr watch\`, pane watches) plus \`atmux message subscribe\` where team mail applies. Idle and delivery notifications are delivered asynchronously—use them instead of polling the shell."
     echo
     echo "# atmux help"
     if [[ -n "$atmux_help" ]]; then

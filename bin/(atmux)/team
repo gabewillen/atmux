@@ -72,6 +72,23 @@ Description:
 USAGE
 }
 
+create_team_usage() {
+  cat <<'USAGE'
+Usage:
+  atmux team create <name> [--role <role>] [--start <cmd>] [--stop <cmd>]
+                           [--worktree <path>] [--shared-worktree]
+                           [--time-limit <duration>]
+                           [--adapter <adapter>] [--intelligence <0-100>]
+                           [--model <id>] [--reasoning <level>]
+                           [--set <key>=<value>]...
+                           [--set <member>.<key>=<value>]...
+
+Description:
+  Create a new repo-scoped team. See `atmux team --help` for semantics of
+  flags and role manifests.
+USAGE
+}
+
 resolve_role_runner() {
   # Mirrors agent:resolve_role_runner so team create can locate the `role`
   # subcommand in the same install layouts.
@@ -622,8 +639,8 @@ create_team() {
       --shared-worktree) shared_worktree=1; shift ;;
       --time-limit) time_limit="${2:-}"; shift 2 ;;
       --time-limit=*) time_limit="${1#--time-limit=}"; shift ;;
-      -h|--help)
-        echo "usage: atmux team create <name> [--role <role>] [--time-limit <duration>] [--start <cmd>] [--stop <cmd>] [--worktree <path>] [--shared-worktree] [--adapter ...] [--intelligence ...] [--model ...] [--reasoning ...] [--set <key>=<val>]..."
+      -h|--help|help)
+        create_team_usage
         return 0
         ;;
       --) shift ;;
@@ -644,7 +661,7 @@ create_team() {
   done
 
   if [[ -z "$raw_name" ]]; then
-    echo "usage: atmux team create <name> [--role <role>]" >&2
+    create_team_usage >&2
     exit 2
   fi
 

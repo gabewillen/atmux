@@ -948,6 +948,12 @@ run_adapter() {
     session_name="$(tmux display-message -p '#S' 2>/dev/null || true)"
   fi
   if [[ -n "$session_name" ]] && tmux has-session -t "$session_name" 2>/dev/null; then
+    local repo_name_for_cleanup="" team_name_for_cleanup=""
+    repo_name_for_cleanup="$(atmux_resolve_session_env "$session_name" ATMUX_REPO)"
+    team_name_for_cleanup="$(atmux_resolve_session_env "$session_name" ATMUX_TEAM)"
+    if [[ -n "$repo_name_for_cleanup" && -n "$team_name_for_cleanup" ]]; then
+      remove_team_member_state "$repo_name_for_cleanup" "$team_name_for_cleanup" "$session_name"
+    fi
     tmux kill-session -t "$session_name" >/dev/null 2>&1 || true
   fi
   exit "$rc"
@@ -1620,6 +1626,22 @@ do_create() {
     IFS= read -r repo_root
     IFS= read -r repo_name
   } < <(atmux_resolve_repo_context)
+
+  if [[ "$adapter" != "auto" ]] && ! resolve_adapter_cmd_path "$adapter" >/dev/null; then
+    echo "adapter start not found: $adapter" >&2
+    exit 127
+  fi
+  if [[ -n "$adapters_list" ]]; then
+    local adapter_candidate
+    while IFS= read -r adapter_candidate; do
+      [[ -n "$adapter_candidate" ]] || continue
+      if ! resolve_adapter_cmd_path "$adapter_candidate" >/dev/null; then
+        echo "adapter start not found: $adapter_candidate" >&2
+        exit 127
+      fi
+    done < <(split_adapter_list "$adapters_list")
+  fi
+
   if [[ -n "$team" ]]; then
     ensure_team_has_capacity "$repo_name" "$team"
   fi

@@ -124,8 +124,8 @@ MATRIX_ROWS=(
 )
 
 for row in "${MATRIX_ROWS[@]}"; do
-  # shellcheck disable=SC2086 # intentional splitting of fixed probe argv
   probe_label="${row// /_}"
+  # shellcheck disable=SC2086 # intentional splitting of fixed probe argv
   set -- $row
   run_help_probe "$probe_label" "$@"
 done

@@ -29,16 +29,16 @@ control_text="$(
 )"
 
 printf '%s\n' "$control_text" | grep -Fq '# atmux Rules'
-printf '%s\n' "$control_text" | grep -Fq 'Use plain `atmux ...` commands; do not prefix them with inherited session environment.'
+printf '%s\n' "$control_text" | grep -Fq "Use plain \`atmux ...\` commands; do not prefix them with inherited session environment."
 printf '%s\n' "$control_text" | grep -Fq 'ATMUX is event-driven'
 printf '%s\n' "$control_text" | grep -Fq 'atmux schedule --notification'
 printf '%s\n' "$control_text" | grep -Fq 'atmux message subscribe'
 printf '%s\n' "$control_text" | grep -Fq 'atmux send --reply-required'
 printf '%s\n' "$control_text" | grep -Fq 'atmux agent status'
-printf '%s\n' "$control_text" | grep -Fq 'advertised `atmux <command> --help`'
+printf '%s\n' "$control_text" | grep -Fq "advertised \`atmux <command> --help\` output."
 printf '%s\n' "$control_text" | grep -Fq 'Do not describe or imply a git noun under atmux.'
 if printf '%s\n' "$control_text" | grep -Fq 'atmux git'; then
-  echo 'fail: prompt block must not contain the literal phrase `atmux git`' >&2
+  echo "fail: prompt block must not contain the literal phrase \`atmux git\`" >&2
   exit 1
 fi
 if printf '%s\n' "$control_text" | grep -Fq '# Delegation Rules'; then

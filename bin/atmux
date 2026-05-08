@@ -20,6 +20,13 @@ elif [[ -z "${ATMUX_SOURCE_ROOT:-}" ]]; then
   export ATMUX_SOURCE_ROOT
 fi
 
+if [[ -z "${ATMUX_TMUX:-}" && -n "${TMUX:-}" ]]; then
+  export ATMUX_TMUX="$TMUX"
+fi
+if [[ -z "${ATMUX_TMUX_PANE:-}" && -n "${TMUX_PANE:-}" ]]; then
+  export ATMUX_TMUX_PANE="$TMUX_PANE"
+fi
+
 # In agent sessions, always route to the source repo's atmux so help/behavior
 # stays current even if the worktree copy is stale.
 if [[ -n "${ATMUX_SOURCE_ROOT:-}" && -x "${ATMUX_SOURCE_ROOT}/bin/atmux" ]]; then

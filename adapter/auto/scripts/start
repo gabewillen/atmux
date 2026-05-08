@@ -38,7 +38,7 @@ resolve_adapter_cmd_path() {
 }
 
 current_session=""
-if [[ -n "${TMUX:-}" ]]; then
+if [[ -n "${ATMUX_TMUX:-}${TMUX:-}" ]]; then
   current_session="$(tmux display-message -p '#S' 2>/dev/null || true)"
 fi
 

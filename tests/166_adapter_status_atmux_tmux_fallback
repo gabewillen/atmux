@@ -1,0 +1,93 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+
+tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/atmux-status-atmux-tmux.XXXXXX")"
+cleanup() { rm -rf "$tmp_dir"; }
+trap cleanup EXIT
+
+mkdir -p "$tmp_dir/bin" "$tmp_dir/home" "$tmp_dir/work"
+
+cat > "$tmp_dir/bin/tmux" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$ATMUX_FAKE_TMUX_LOG"
+case "${1:-}" in
+  display-message)
+    echo "display-message should not be used without raw TMUX" >&2
+    exit 1
+    ;;
+  list-panes)
+    printf '%%fallback-pane\n'
+    ;;
+  capture-pane)
+    printf 'idle status snapshot\n'
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+SH
+chmod +x "$tmp_dir/bin/tmux"
+
+for adapter in claude-code codex cursor-agent gemini opencode; do
+  log="$tmp_dir/$adapter.tmux.log"
+  env -i \
+    HOME="$tmp_dir/home" \
+    PATH="$tmp_dir/bin:/usr/bin:/bin" \
+    ATMUX_HOME="$tmp_dir/home/.atmux-$adapter" \
+    ATMUX_FAKE_TMUX_LOG="$log" \
+    ATMUX_TMUX=/tmp/atmux-test-tmux,123,0 \
+    ATMUX_SESSION_NAME=atmux-test-session \
+    "$REPO_ROOT/adapter/$adapter/scripts/status" >/dev/null
+
+  if grep -q '^display-message' "$log"; then
+    echo "fail: $adapter status used display-message with ATMUX_TMUX but no TMUX" >&2
+    cat "$log" >&2
+    exit 1
+  fi
+  grep -q '^list-panes -t atmux-test-session' "$log" \
+    || { echo "fail: $adapter status did not fall back through ATMUX_SESSION_NAME" >&2; cat "$log" >&2; exit 1; }
+  grep -q '^capture-pane .*%fallback-pane' "$log" \
+    || { echo "fail: $adapter status did not capture fallback pane" >&2; cat "$log" >&2; exit 1; }
+done
+
+resolver_log="$tmp_dir/resolver.tmux.log"
+tmux() {
+  printf '%s\n' "$*" >> "$resolver_log"
+  case "${1:-}" in
+    display-message)
+      echo "display-message should not be used without raw TMUX" >&2
+      return 1
+      ;;
+    list-panes)
+      printf 'atmux-test-session %%resolver-fallback-pane\n'
+      ;;
+    *)
+      return 0
+      ;;
+  esac
+}
+
+# shellcheck source=bin/(atmux)/(lib)/resolver
+source "$REPO_ROOT/bin/(atmux)/(lib)/resolver"
+
+unset TMUX TMUX_PANE ATMUX_TMUX_PANE
+ATMUX_TMUX=/tmp/atmux-test-tmux,123,0
+ATMUX_SESSION_NAME=atmux-test-session
+pane="$(atmux_resolve_current_pane)"
+
+if [[ "$pane" != "%resolver-fallback-pane" ]]; then
+  echo "fail: resolver did not fall back through ATMUX_SESSION_NAME" >&2
+  printf 'resolved pane: %s\n' "$pane" >&2
+  cat "$resolver_log" >&2
+  exit 1
+fi
+if grep -q '^display-message' "$resolver_log"; then
+  echo "fail: resolver used display-message with ATMUX_TMUX but no TMUX" >&2
+  cat "$resolver_log" >&2
+  exit 1
+fi
+
+echo "ok: adapter status and resolver use ATMUX_TMUX context without skipping fallbacks"

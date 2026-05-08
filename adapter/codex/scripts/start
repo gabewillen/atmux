@@ -11,7 +11,7 @@ manifest_lib="${ATMUX_SOURCE_ROOT:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/..
 source "$manifest_lib"
 
 current_session_name() {
-  if [[ -n "${TMUX:-}" ]]; then
+  if [[ -n "${ATMUX_TMUX:-}${TMUX:-}" ]]; then
     tmux display-message -p '#S' 2>/dev/null || true
   fi
 }

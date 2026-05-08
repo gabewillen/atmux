@@ -68,9 +68,10 @@ atmux_tmux_attach_command() {
 
 atmux_tmux_current_client_is_project_server() {
   local socket tmux_socket
-  [[ -n "${TMUX:-}" ]] || return 1
+  [[ -n "${ATMUX_TMUX:-}${TMUX:-}" ]] || return 1
   socket="$(atmux_tmux_socket)"
-  tmux_socket="${TMUX%%,*}"
+  tmux_socket="${ATMUX_TMUX:-$TMUX}"
+  tmux_socket="${tmux_socket%%,*}"
   [[ "$tmux_socket" == "$socket" ]]
 }
 

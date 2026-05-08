@@ -1,0 +1,99 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+# shellcheck source=tests/lib/isolate-tmux.sh
+source "$TESTS_DIR/lib/isolate-tmux.sh"
+
+tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/atmux-gemini-redaction.XXXXXX")"
+cleanup() { rm -rf "$tmp_dir"; }
+trap cleanup EXIT
+
+mkdir -p "$tmp_dir/bin" "$tmp_dir/work"
+
+cat > "$tmp_dir/bin/gemini" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "${GEMINI_CLI_SYSTEM_SETTINGS_PATH:-}" > "$ATMUX_CAPTURE_PATH"
+printf '%s\n' "${GEMINI_CLI_NO_RELAUNCH:-}" > "$ATMUX_CAPTURE_PATH.no-relaunch"
+printf '%s\n' "${GEMINI_PTY_INFO:-}" > "$ATMUX_CAPTURE_PATH.pty-info"
+printf '%s\n' "${ATMUX_GEMINI_SHELL_WRAPPER_LOG:-}" > "$ATMUX_CAPTURE_PATH.wrapper-log"
+printf '%s\n' "${ATMUX_TMUX:-}" > "$ATMUX_CAPTURE_PATH.atmux-tmux"
+printf '%s\n' "${ATMUX_TMUX_PANE:-}" > "$ATMUX_CAPTURE_PATH.atmux-tmux-pane"
+printf '%s\n' "${SHELL:-}" > "$ATMUX_CAPTURE_PATH.shell"
+command -v bash > "$ATMUX_CAPTURE_PATH.bash"
+SH
+chmod +x "$tmp_dir/bin/gemini"
+
+capture="$tmp_dir/settings-path"
+captured_tmux="$ATMUX_TMUX_SOCKET,123,0"
+env -i \
+  HOME="$tmp_dir/home" \
+  PATH="$tmp_dir/bin:$REPO_ROOT/bin:/usr/bin:/bin" \
+  ATMUX_HOME="$tmp_dir/home/.atmux" \
+  ATMUX_ALLOW_REAL_TMUX=1 \
+  ATMUX_REAL_TMUX="$ATMUX_REAL_TMUX" \
+  ATMUX_TMUX_SOCKET="$ATMUX_TMUX_SOCKET" \
+  ATMUX_SOURCE_ROOT="$REPO_ROOT" \
+  ATMUX_AGENT_NAME=gemini-probe \
+  ATMUX_REPO=augmem \
+  ATMUX_WORKTREE="$tmp_dir/work" \
+  ATMUX_TMUX="$captured_tmux" \
+  ATMUX_TMUX_PANE=%1 \
+  ATMUX_GEMINI_SHELL_WRAPPER_DEBUG=1 \
+  ATMUX_CAPTURE_PATH="$capture" \
+  GEMINI_SYSTEM_MD="$tmp_dir/system.md" \
+  TMUX_TMPDIR="$TMUX_TMPDIR" \
+  TMUX=/tmp/atmux-test-tmux \
+  TMUX_PANE=%1 \
+  BASH_ENV="$tmp_dir/bash-env" \
+  "$REPO_ROOT/adapter/gemini/scripts/start" >/dev/null 2>&1
+
+settings_path="$(cat "$capture")"
+[[ -n "$settings_path" && -f "$settings_path" ]] \
+  || { echo "fail: gemini start did not create GEMINI_CLI_SYSTEM_SETTINGS_PATH" >&2; exit 1; }
+[[ "$(cat "$capture.no-relaunch")" == "true" ]] \
+  || { echo "fail: gemini start did not force GEMINI_CLI_NO_RELAUNCH=true" >&2; exit 1; }
+[[ "$(cat "$capture.pty-info")" == "child_process" ]] \
+  || { echo "fail: gemini start did not force GEMINI_PTY_INFO=child_process" >&2; exit 1; }
+[[ "$(cat "$capture.atmux-tmux")" == "$captured_tmux" ]] \
+  || { echo "fail: gemini start did not preserve ATMUX_TMUX" >&2; exit 1; }
+[[ "$(cat "$capture.atmux-tmux-pane")" == "%1" ]] \
+  || { echo "fail: gemini start did not preserve ATMUX_TMUX_PANE" >&2; exit 1; }
+shell_wrapper="$(cat "$capture.shell")"
+[[ -n "$shell_wrapper" && -x "$shell_wrapper" ]] \
+  || { echo "fail: gemini start did not install executable SHELL wrapper" >&2; exit 1; }
+[[ "$(cat "$capture.bash")" == "$shell_wrapper" ]] \
+  || { echo "fail: gemini start did not put shell wrapper first for bash resolution" >&2; exit 1; }
+wrapper_log="$(cat "$capture.wrapper-log")"
+[[ -n "$wrapper_log" && -f "$wrapper_log" ]] \
+  || { echo "fail: gemini start did not prepare shell wrapper log" >&2; exit 1; }
+
+wrapper_out="$(TMUX=toxic TMUX_PANE=toxic ATMUX_AGENT_NAME=gemini-probe "$shell_wrapper" -c 'printf "agent=%s tmux=%s\\n" "$ATMUX_AGENT_NAME" "${TMUX-unset}"')"
+[[ "$wrapper_out" == "agent=gemini-probe tmux=unset" ]] \
+  || { echo "fail: shell wrapper did not preserve ATMUX while clearing TMUX; got: $wrapper_out" >&2; exit 1; }
+grep -q 'ATMUX_AGENT_NAME=gemini-probe' "$wrapper_log" \
+  || { echo "fail: shell wrapper did not write diagnostic log" >&2; exit 1; }
+
+python3 - "$settings_path" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as fh:
+    data = json.load(fh)
+
+redaction = data["security"]["environmentVariableRedaction"]
+allowed = set(redaction["allowed"])
+blocked = set(redaction["blocked"])
+
+assert data["tools"]["shell"]["enableInteractiveShell"] is True
+assert redaction["enabled"] is True
+for key in ("ATMUX_AGENT_NAME", "ATMUX_HOME", "ATMUX_REPO", "ATMUX_SOURCE_ROOT", "ATMUX_TMUX", "ATMUX_TMUX_PANE", "ATMUX_WORKTREE", "GEMINI_SYSTEM_MD"):
+    assert key in allowed, f"missing allowed env {key}"
+for key in ("TMUX", "TMUX_PANE", "BASH_ENV", "ENV", "LD_PRELOAD"):
+    assert key in blocked, f"missing blocked env {key}"
+assert "TMUX" not in allowed
+assert "TMUX_PANE" not in allowed
+PY
+
+echo "ok: gemini start preserves ATMUX env while redacting tmux shell env"

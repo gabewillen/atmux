@@ -281,10 +281,17 @@ if [[ -n "$team_session" ]]; then
   attempted=0
   delivered=0
   failed=0
+  stale=0
   results=""
   notified_sessions=""
   notified_panes=""
   for s in "${members[@]+"${members[@]}"}"; do
+    if ! tmux has-session -t "$s" 2>/dev/null; then
+      stale=$((stale + 1))
+      remove_team_member_state "$repo_name" "$team_name" "$s"
+      results+="  <target kind=\"member\" session=\"$(atmux_xml_escape "$s")\" queued=\"false\" stale=\"true\" />"$'\n'
+      continue
+    fi
     attempted=$((attempted + 1))
     payload="$(build_team_message_payload "$from_session" "$team_name" "$read_cmd" "$reply_required_value")"
     member_keys=()
@@ -346,13 +353,14 @@ if [[ -n "$team_session" ]]; then
     done < <(find "$subscribers_dir" -mindepth 1 -maxdepth 1 \( -type f -o -type d \) 2>/dev/null | sort)
   fi
 
-  printf '<send to="team" name="%s" session="%s" message_id="%s" queued="%s" attempted="%s" failed="%s">\n%s</send>\n' \
+  printf '<send to="team" name="%s" session="%s" message_id="%s" queued="%s" attempted="%s" failed="%s" stale="%s">\n%s</send>\n' \
     "$(atmux_xml_escape "$team_name")" \
     "$(atmux_xml_escape "$team_session")" \
     "$(atmux_xml_escape "$msg_id")" \
     "$(atmux_xml_escape "$delivered")" \
     "$(atmux_xml_escape "$attempted")" \
     "$(atmux_xml_escape "$failed")" \
+    "$(atmux_xml_escape "$stale")" \
     "$results"
 
   if (( failed > 0 )); then

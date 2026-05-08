@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+source "$(dirname "${BASH_SOURCE[0]}")/lib/isolate-tmux.sh"
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+ATMUX_BIN="${ATMUX_TEST_ATMUX_BIN:-$REPO_ROOT/bin/atmux}"
+ATMUX_HOME="$(mktemp -d "${TMPDIR:-/tmp}/atmux-stale-team.XXXXXX")"
+export ATMUX_HOME ATMUX_SOURCE_ROOT="$REPO_ROOT" ATMUX_ALLOW_OUTSIDE_TMUX=1
+
+repo_name="stale_team_${RANDOM}"
+team_name="peer-review"
+
+cleanup() {
+  rm -rf "$ATMUX_HOME"
+}
+trap cleanup EXIT
+
+ATMUX_REPO="$repo_name" "$ATMUX_BIN" team create "$team_name" --shared-worktree >/dev/null
+
+set +e
+create_out="$(
+  ATMUX_REPO="$repo_name" "$ATMUX_BIN" agent create bad-peer \
+    --role reviewer \
+    --intelligence 50 \
+    --team "$team_name" \
+    --adapter no-such-adapter \
+    --shared-worktree 2>&1
+)"
+create_rc=$?
+set -e
+
+if [[ "$create_rc" -ne 127 ]]; then
+  echo "expected invalid adapter create to fail with 127, got $create_rc" >&2
+  printf '%s\n' "$create_out" >&2
+  exit 1
+fi
+printf '%s\n' "$create_out" | grep -Fq "adapter start not found: no-such-adapter"
+
+members_root="$ATMUX_HOME/teams/$repo_name/$team_name/members"
+if find "$members_root" -mindepth 1 -maxdepth 1 2>/dev/null | grep -q .; then
+  echo "invalid adapter create left a team member record" >&2
+  find "$members_root" -mindepth 1 -maxdepth 2 -type f -print >&2
+  exit 1
+fi
+
+stale_session="atmux-${repo_name}-dead-peer"
+stale_dir="$members_root/$stale_session"
+mkdir -p "$stale_dir"
+printf '%s\n' "$stale_session" > "$stale_dir/session"
+printf '%s\n' "dead-peer" > "$stale_dir/name"
+
+send_out="$(
+  ATMUX_REPO="$repo_name" \
+  ATMUX_AGENT_NAME="sender" \
+  ATMUX_SESSION_NAME="atmux-${repo_name}-sender" \
+    "$ATMUX_BIN" send --to "$team_name" "hello stale team"
+)"
+
+printf '%s\n' "$send_out" | grep -Fq '<send to="team"'
+printf '%s\n' "$send_out" | grep -Fq 'failed="0"'
+printf '%s\n' "$send_out" | grep -Fq 'stale="1"'
+printf '%s\n' "$send_out" | grep -Fq "session=\"$stale_session\" queued=\"false\" stale=\"true\""
+
+if [[ -e "$stale_dir" ]]; then
+  echo "stale team member record was not pruned" >&2
+  exit 1
+fi
+
+echo "ok: team send prunes stale members and invalid adapters fail before recording membership"

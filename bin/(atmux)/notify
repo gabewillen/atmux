@@ -143,6 +143,12 @@ record_team_member_state() {
   atmux_fs_write_field "$dir/joined_at" "$(timestamp_utc)"
 }
 
+remove_team_member_state() {
+  local repo="$1" team="$2" session="$3"
+  [[ -n "$repo" && -n "$team" && -n "$session" ]] || return 0
+  rm -rf -- "$(team_member_dir "$repo" "$team" "$session")" 2>/dev/null || true
+}
+
 team_message_watch_key() {
   local repo="$1" team="$2"
   atmux_resolve_normalized_name "${repo}--team--${team}"

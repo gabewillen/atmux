@@ -1045,6 +1045,16 @@ kill_teams() {
 
 view_team() {
   local target="${1:-}" attach_view=1 repo_root repo_name team_name member team_session attach_cmd pane pane_count window_index pane_slot window_target current_window_id pane_window real_tmux socket
+  if [[ "$target" == "-h" || "$target" == "--help" || "$target" == "help" ]]; then
+    cat <<'USAGE'
+Usage:
+  atmux team view [--no-attach] <name>
+
+Description:
+  Open a tmux dashboard that mirrors each team member pane.
+USAGE
+    exit 0
+  fi
   [[ -n "$target" ]] || { echo "usage: atmux team view <name>" >&2; exit 2; }
   if [[ "$target" == "--no-attach" ]]; then
     attach_view=0
@@ -1126,6 +1136,14 @@ case "$sub" in
     run_team_idle_watch "$@"
     ;;
   list|ls)
+    if [[ "${1:-}" == "-h" || "${1:-}" == "--help" || "${1:-}" == "help" ]]; then
+      usage
+      exit 0
+    fi
+    if [[ $# -gt 0 ]]; then
+      echo "atmux team list: unexpected arguments" >&2
+      exit 2
+    fi
     list_teams
     ;;
   status)
@@ -1134,6 +1152,10 @@ case "$sub" in
     ;;
   capture)
     here_team="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+    if [[ "${1:-}" == "-h" || "${1:-}" == "--help" || "${1:-}" == "help" ]]; then
+      usage
+      exit 0
+    fi
     if [[ $# -eq 0 || "${1:0:1}" == "-" ]]; then
       echo "usage: atmux team capture <name> [--tiled] [--lines N]" >&2
       exit 2
@@ -1142,6 +1164,10 @@ case "$sub" in
     exec "$here_team/(internal)/capture" --team "$target_name" "$@"
     ;;
   kill)
+    if [[ "${1:-}" == "-h" || "${1:-}" == "--help" || "${1:-}" == "help" ]]; then
+      usage
+      exit 0
+    fi
     if [[ $# -eq 0 || "${1:0:1}" == "-" ]]; then
       echo "usage: atmux team kill <name|pattern> [...]" >&2
       exit 2
@@ -1153,6 +1179,10 @@ case "$sub" in
     ;;
   resolve)
     target="${1:-}"
+    if [[ "$target" == "-h" || "$target" == "--help" || "$target" == "help" ]]; then
+      usage
+      exit 0
+    fi
     if [[ -z "$target" ]]; then
       echo "usage: atmux team resolve <name> [<repo_name>]" >&2
       exit 2

@@ -103,6 +103,10 @@ main() {
   case "$sub" in
     install)
       shift
+      if [[ "${1:-}" == "-h" || "${1:-}" == "--help" || "${1:-}" == "help" ]]; then
+        usage
+        exit 0
+      fi
       cmd_install "${1:-}"
       ;;
     ""|-h|--help|help)

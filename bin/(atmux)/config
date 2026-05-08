@@ -135,14 +135,30 @@ main() {
       cmd_get "$1"
       ;;
     set)
+      if [[ "${1:-}" == "-h" || "${1:-}" == "--help" || "${1:-}" == "help" ]]; then
+        usage
+        exit 0
+      fi
       [[ $# -ge 2 ]] || { usage >&2; exit 2; }
       cmd_set "$1" "$2"
       ;;
     unset)
+      if [[ "${1:-}" == "-h" || "${1:-}" == "--help" || "${1:-}" == "help" ]]; then
+        usage
+        exit 0
+      fi
       [[ $# -ge 1 ]] || { usage >&2; exit 2; }
       cmd_unset "$1"
       ;;
     list)
+      if [[ "${1:-}" == "-h" || "${1:-}" == "--help" || "${1:-}" == "help" ]]; then
+        usage
+        exit 0
+      fi
+      if [[ $# -gt 0 ]]; then
+        echo "atmux config list: unexpected arguments" >&2
+        exit 2
+      fi
       cmd_list
       ;;
     -h|--help|help|"")

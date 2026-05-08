@@ -134,6 +134,16 @@ create_issue() {
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
+      -h|--help|help)
+        cat <<'USAGE'
+Usage:
+  atmux issue create --title <title> [--description <description>]
+                     [--given <context>] [--when <action>] [--then <outcome>]
+                     [--todo <todo>]... [--repo <repo>]
+                     [--assign-to <agent|session>]
+USAGE
+        exit 0
+        ;;
       --title)
         title="${2:-}"
         shift 2
@@ -229,6 +239,13 @@ list_issues() {
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
+      -h|--help|help)
+        cat <<'USAGE'
+Usage:
+  atmux issue list [--repo <repo>]
+USAGE
+        exit 0
+        ;;
       --repo)
         explicit_repo="${2:-}"
         shift 2
@@ -272,6 +289,15 @@ get_issue() {
   local id="${1:-}"
   shift || true
   local explicit_repo=""
+
+  if [[ "$id" == "-h" || "$id" == "--help" || "$id" == "help" ]]; then
+    cat <<'USAGE'
+Usage:
+  atmux issue get <id> [--repo <repo>]
+  atmux issue show <id> [--repo <repo>]
+USAGE
+    exit 0
+  fi
 
   if [[ -z "$id" ]]; then
     echo "usage: atmux issue get <id> [--repo <repo>]" >&2
@@ -336,6 +362,14 @@ assign_issue() {
   shift || true
   local explicit_repo=""
   local to=""
+
+  if [[ "$id" == "-h" || "$id" == "--help" || "$id" == "help" ]]; then
+    cat <<'USAGE'
+Usage:
+  atmux issue assign <id> --to <agent|session> [--repo <repo>]
+USAGE
+    exit 0
+  fi
 
   if [[ -z "$id" ]]; then
     echo "usage: atmux issue assign <id> --to <agent|session> [--repo <repo>]" >&2
@@ -410,6 +444,14 @@ claim_issue() {
   shift || true
   local explicit_repo=""
   local by=""
+
+  if [[ "$id" == "-h" || "$id" == "--help" || "$id" == "help" ]]; then
+    cat <<'USAGE'
+Usage:
+  atmux issue claim <id> [--by <agent|session>] [--repo <repo>]
+USAGE
+    exit 0
+  fi
 
   if [[ -z "$id" ]]; then
     echo "usage: atmux issue claim <id> [--by <agent|session>] [--repo <repo>]" >&2
@@ -534,6 +576,13 @@ case "$sub" in
     ;;
   comment)
     here_issue="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+    if [[ "${1:-}" == "-h" || "${1:-}" == "--help" || "${1:-}" == "help" ]]; then
+      cat <<'USAGE'
+Usage:
+  atmux issue comment <id> "message" [--repo <repo>]
+USAGE
+      exit 0
+    fi
     if [[ $# -lt 2 ]]; then
       echo "usage: atmux issue comment <id> \"message\" [--repo R]" >&2
       exit 2
@@ -556,9 +605,25 @@ case "$sub" in
       esac
     done
     if [[ -n "$feed_repo" ]]; then
+      if [[ "${forward_args[0]:-}" =~ ^(-h|--help|help)$ ]]; then
+        cat <<'USAGE'
+Usage:
+  atmux issue watch <id> [--repo <repo>] [--timeout <s>] [--interval <s>]
+  atmux issue watch --feed <repo|url> [--timeout <s>] [--interval <s>]
+USAGE
+        exit 0
+      fi
       exec "$here_issue/[watch]/issues" --issues "$feed_repo" ${forward_args[@]+"${forward_args[@]}"}
     fi
     if [[ ${#forward_args[@]} -eq 0 || "${forward_args[0]:0:1}" == "-" ]]; then
+      if [[ "${forward_args[0]:-}" =~ ^(-h|--help|help)$ ]]; then
+        cat <<'USAGE'
+Usage:
+  atmux issue watch <id> [--repo <repo>] [--timeout <s>] [--interval <s>]
+  atmux issue watch --feed <repo|url> [--timeout <s>] [--interval <s>]
+USAGE
+        exit 0
+      fi
       echo "usage: atmux issue watch <id> [--repo R]   |   atmux issue watch --feed <repo>" >&2
       exit 2
     fi

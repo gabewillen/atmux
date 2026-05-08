@@ -9,15 +9,16 @@ source "$HERE/../notify"
 
 usage() {
   cat <<'USAGE'
-Internal kill backend. Invoked by the noun-first front-ends:
-
-  atmux process kill <pid> [--timeout <seconds>] [--signal <NAME>]
-  atmux watcher kill <id> [--timeout <seconds>]
+Usage:
   atmux agent kill <name|pattern> [name|pattern...]
   atmux agent kill --all [--yes]
+  atmux watcher kill <id> [--timeout <seconds>]
+  atmux process kill <pid> [--timeout <seconds>] [--signal <NAME>]
 
-Direct invocation (--pid, --watcher, --agent, --all) is for internal callers
-only and is not part of the user-facing CLI surface.
+  (Direct --pid/--watcher/--agent flags are internal-only entry points.)
+
+Description:
+Internal kill backend; prefer the noun-first commands above on the CLI.
 USAGE
 }
 

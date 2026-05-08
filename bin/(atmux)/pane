@@ -27,8 +27,11 @@ shift || true
 case "$verb" in
   watch)
     target="${1:-}"
+    case "$target" in
+      -h|--help|help) usage; exit 0 ;;
+    esac
     if [[ -z "$target" || "${target:0:1}" == "-" ]]; then
-      echo "usage: atmux pane watch <target> --text <needle> [...]" >&2
+      usage >&2
       exit 2
     fi
     shift

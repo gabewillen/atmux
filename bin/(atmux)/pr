@@ -118,6 +118,15 @@ create_pr() {
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
+      -h|--help|help)
+        cat <<'USAGE'
+Usage:
+  atmux pr create --title <title> [--description <description>]
+                  [--source <branch>] [--target <branch>]
+                  [--todo <todo>]... [--repo <repo>]
+USAGE
+        exit 0
+        ;;
       --title)
         title="${2:-}"
         shift 2
@@ -201,6 +210,13 @@ list_prs() {
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
+      -h|--help|help)
+        cat <<'USAGE'
+Usage:
+  atmux pr list [--repo <repo>]
+USAGE
+        exit 0
+        ;;
       --repo)
         explicit_repo="${2:-}"
         shift 2
@@ -249,6 +265,15 @@ get_pr() {
   local id="${1:-}"
   shift || true
   local explicit_repo=""
+
+  if [[ "$id" == "-h" || "$id" == "--help" || "$id" == "help" ]]; then
+    cat <<'USAGE'
+Usage:
+  atmux pr get <id> [--repo <repo>]
+  atmux pr show <id> [--repo <repo>]
+USAGE
+    exit 0
+  fi
 
   if [[ -z "$id" ]]; then
     echo "usage: atmux pr get <id> [--repo <repo>]" >&2
@@ -319,6 +344,14 @@ assign_pr() {
   shift || true
   local explicit_repo=""
   local to=""
+
+  if [[ "$id" == "-h" || "$id" == "--help" || "$id" == "help" ]]; then
+    cat <<'USAGE'
+Usage:
+  atmux pr assign <id> --to <agent|session> [--repo <repo>]
+USAGE
+    exit 0
+  fi
 
   if [[ -z "$id" ]]; then
     echo "usage: atmux pr assign <id> --to <agent|session> [--repo <repo>]" >&2
@@ -393,6 +426,14 @@ claim_pr() {
   shift || true
   local explicit_repo=""
   local by=""
+
+  if [[ "$id" == "-h" || "$id" == "--help" || "$id" == "help" ]]; then
+    cat <<'USAGE'
+Usage:
+  atmux pr claim <id> [--by <agent|session>] [--repo <repo>]
+USAGE
+    exit 0
+  fi
 
   if [[ -z "$id" ]]; then
     echo "usage: atmux pr claim <id> [--by <agent|session>] [--repo <repo>]" >&2
@@ -493,6 +534,13 @@ case "$sub" in
     ;;
   comment)
     here_pr="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+    if [[ "${1:-}" == "-h" || "${1:-}" == "--help" || "${1:-}" == "help" ]]; then
+      cat <<'USAGE'
+Usage:
+  atmux pr comment <id> "message" [--repo <repo>]
+USAGE
+      exit 0
+    fi
     if [[ $# -lt 2 ]]; then
       echo "usage: atmux pr comment <id> \"message\" [--repo R]" >&2
       exit 2
@@ -517,9 +565,25 @@ case "$sub" in
       esac
     done
     if [[ -n "$feed_repo" ]]; then
+      if [[ "${forward_args[0]:-}" =~ ^(-h|--help|help)$ ]]; then
+        cat <<'USAGE'
+Usage:
+  atmux pr watch <id|atmux-uri|github-url> [--repo <repo>] [--timeout <s>] [--interval <s>]
+  atmux pr watch --feed <repo|url> [--timeout <s>] [--interval <s>]
+USAGE
+        exit 0
+      fi
       exec "$here_pr/[watch]/prs" --prs "$feed_repo" ${forward_args[@]+"${forward_args[@]}"}
     fi
     if [[ ${#forward_args[@]} -eq 0 || "${forward_args[0]:0:1}" == "-" ]]; then
+      if [[ "${forward_args[0]:-}" =~ ^(-h|--help|help)$ ]]; then
+        cat <<'USAGE'
+Usage:
+  atmux pr watch <id|atmux-uri|github-url> [--repo <repo>] [--timeout <s>] [--interval <s>]
+  atmux pr watch --feed <repo|url> [--timeout <s>] [--interval <s>]
+USAGE
+        exit 0
+      fi
       echo "usage: atmux pr watch <id|atmux-uri|github-url> [--repo R]   |   atmux pr watch --feed <repo>" >&2
       exit 2
     fi

@@ -136,7 +136,8 @@ main() {
     case "$1" in
       -h|--help)
         cat <<'USAGE'
-Usage: atmux agent status [<name>]
+Usage:
+  atmux agent status [<name>]
 
 Show runtime state for atmux agents in the current repo:
   pane_alive  Is the tmux pane still around?

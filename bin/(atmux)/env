@@ -56,6 +56,9 @@ main() {
   case "$1" in
     get)
       shift
+      case "${1:-}" in
+        -h|--help|help) usage; exit 0 ;;
+      esac
       cmd_get "${1:-}"
       ;;
     -h|--help|help)

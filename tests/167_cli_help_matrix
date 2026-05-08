@@ -1,0 +1,133 @@
+#!/usr/bin/env bash
+# Matrix: nested --help/--help equivalents must exit 0 and emit a Usage: banner.
+# Invoked explicitly under bash — no zsh array/glob quirks. Matches probe env
+# from team message tY7pjxwuYVQq8XFQ: unset ATMUX_SOURCE_ROOT + ATMUX_NO_WRAP=1.
+set -euo pipefail
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+ATMUX_BIN="$REPO_ROOT/bin/atmux"
+
+tmp_home="$(mktemp -d "${TMPDIR:-/tmp}/atmux-help-matrix.XXXXXX")"
+cleanup() { rm -rf "$tmp_home"; }
+trap cleanup EXIT
+mkdir -p "$tmp_home"
+
+run_help_probe() {
+  local label="$1"
+  shift
+  local out rc
+  out="$(mktemp "${TMPDIR:-/tmp}/atmux-help-out.XXXXXX")"
+  if ( cd "$REPO_ROOT" && \
+       env -u ATMUX_SOURCE_ROOT \
+       ATMUX_HOME="$tmp_home" \
+       ATMUX_NO_WRAP=1 \
+       ATMUX_ALLOW_OUTSIDE_TMUX=1 \
+         "$ATMUX_BIN" "$@" >"$out" 2>&1 ); then
+    rc=0
+  else
+    rc=$?
+  fi
+
+  if [[ "$rc" -ne 0 ]]; then
+    echo "fail [$label]: expected exit 0, got $rc; output:" >&2
+    cat "$out" >&2
+    rm -f "$out"
+    exit 1
+  fi
+  if ! grep -q '^Usage:' "$out"; then
+    echo "fail [$label]: missing ^Usage: line; output:" >&2
+    cat "$out" >&2
+    rm -f "$out"
+    exit 1
+  fi
+  rm -f "$out"
+}
+
+# One string per row; split on spaces into argv (no quoting needed for these probes).
+MATRIX_ROWS=(
+  "--help"
+  "agent --help"
+  "agent create --help"
+  "agent list --help"
+  "agent status --help"
+  "agent attach --help"
+  "agent kill --help"
+  "agent capture --help"
+  "agent watch --help"
+  "agent resolve --help"
+  "team --help"
+  "team create --help"
+  "team list --help"
+  "team status --help"
+  "team kill --help"
+  "team capture --help"
+  "team view --help"
+  "team resolve --help"
+  "role --help"
+  "role create --help"
+  "role list --help"
+  "role info --help"
+  "role show --help"
+  "role resolve --help"
+  "role kind --help"
+  "role private-agent --help"
+  "issue --help"
+  "issue create --help"
+  "issue list --help"
+  "issue get --help"
+  "issue show --help"
+  "issue assign --help"
+  "issue claim --help"
+  "issue comment --help"
+  "issue watch --help"
+  "pr --help"
+  "pr create --help"
+  "pr list --help"
+  "pr get --help"
+  "pr show --help"
+  "pr assign --help"
+  "pr claim --help"
+  "pr comment --help"
+  "pr watch --help"
+  "message --help"
+  "message read --help"
+  "message list --help"
+  "message subscribe --help"
+  "message unsubscribe --help"
+  "message subscriptions --help"
+  "config --help"
+  "config get --help"
+  "config set --help"
+  "config unset --help"
+  "config list --help"
+  "env --help"
+  "env get --help"
+  "adapter --help"
+  "adapter install --help"
+  "watcher --help"
+  "watcher list --help"
+  "watcher kill --help"
+  "process --help"
+  "process watch --help"
+  "process kill --help"
+  "pane --help"
+  "pane watch --help"
+  "path --help"
+  "path watch --help"
+  "send --help"
+  "exec --help"
+  "schedule --help"
+  "notify --help"
+  "update --help"
+  "install --help"
+)
+
+for row in "${MATRIX_ROWS[@]}"; do
+  probe_label="${row// /_}"
+  # shellcheck disable=SC2086 # intentional splitting of fixed probe argv
+  set -- $row
+  run_help_probe "$probe_label" "$@"
+done
+
+echo "ok: cli help matrix (167) passes for ${#MATRIX_ROWS[@]} probes"

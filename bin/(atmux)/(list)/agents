@@ -86,6 +86,20 @@ main() {
   local all=0 status=0
   while [[ $# -gt 0 ]]; do
     case "$1" in
+      -h|--help|help)
+        cat <<'USAGE'
+Usage:
+  atmux agent list --all [--status]
+
+Description:
+  Lists repo-scoped agent sessions (--all required). Optional --status
+  enriches each row via the adapter status hook.
+
+Notes:
+  This is intentionally not the same view as atmux agent status.
+USAGE
+        exit 0
+        ;;
       -a|--all)
         all=1
         shift

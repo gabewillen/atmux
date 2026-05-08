@@ -7,14 +7,15 @@ source "$HERE/../notify"
 
 usage() {
   cat <<'USAGE'
-Internal capture backend. Invoked by the noun-first front-ends:
-
+Usage:
   atmux agent capture <name|session> [--lines <n>]
   atmux agent capture --all [--lines <n>]
   atmux team capture <name|session> [--tiled] [--lines <n>]
 
-Direct invocation (--agent, --team, --all) is for internal callers only and
-is not part of the user-facing CLI surface.
+  (Direct --agent/--team/--all flags are internal-only entry points.)
+
+Description:
+Internal capture backend; prefer the noun-first commands above on the CLI.
 USAGE
 }
 

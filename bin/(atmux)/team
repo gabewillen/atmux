@@ -72,6 +72,23 @@ Description:
 USAGE
 }
 
+create_team_usage() {
+  cat <<'USAGE'
+Usage:
+  atmux team create <name> [--role <role>] [--start <cmd>] [--stop <cmd>]
+                           [--worktree <path>] [--shared-worktree]
+                           [--time-limit <duration>]
+                           [--adapter <adapter>] [--intelligence <0-100>]
+                           [--model <id>] [--reasoning <level>]
+                           [--set <key>=<value>]...
+                           [--set <member>.<key>=<value>]...
+
+Description:
+  Create a new repo-scoped team. See `atmux team --help` for semantics of
+  flags and role manifests.
+USAGE
+}
+
 resolve_role_runner() {
   # Mirrors agent:resolve_role_runner so team create can locate the `role`
   # subcommand in the same install layouts.
@@ -415,23 +432,41 @@ team_idle_status_script_for_session() {
 
 team_idle_member_state() {
   local session="$1" pane status_script status_xml state agent_name session_name selected_adapter status_source_root
+  local session_atmux_state=""
   tmux has-session -t "$session" 2>/dev/null || { printf 'missing\n'; return 0; }
   pane="$(atmux_resolve_primary_pane "$session")"
   [[ -n "$pane" ]] || { printf 'missing\n'; return 0; }
+  session_atmux_state="$(tmux show-environment -t "$session" ATMUX_STATE 2>/dev/null | sed -n 's/^ATMUX_STATE=//p' || true)"
   status_script="$(team_idle_status_script_for_session "$session" || true)"
   if [[ -n "$status_script" ]]; then
     agent_name="$(atmux_resolve_session_env "$session" ATMUX_AGENT_NAME)"
     session_name="$(atmux_resolve_session_env "$session" ATMUX_SESSION_NAME)"
     selected_adapter="$(atmux_resolve_session_env "$session" ATMUX_ADAPTER_SELECTED)"
     status_source_root="${ATMUX_SOURCE_ROOT:-$ATMUX_HOME/src/atmux}"
-    status_xml="$(ATMUX_HOME="$ATMUX_HOME" \
-      ATMUX_SOURCE_ROOT="$status_source_root" \
-      ATMUX_STATUS_PASSIVE=1 \
-      ATMUX_TARGET_PANE="$pane" \
-      ATMUX_AGENT_NAME="$agent_name" \
-      ATMUX_SESSION_NAME="${session_name:-$session}" \
-      ATMUX_ADAPTER_SELECTED="$selected_adapter" \
-      "$status_script" 2>/dev/null || true)"
+    # Adapter status fallbacks consult ATMUX_STATE. Team-idle runs the script
+    # from the watcher process, which can inherit a stale ATMUX_STATE from the
+    # outer environment (e.g. CI). Strip it unless the member session sets it
+    # explicitly via tmux session environment (see tests/159 mockidle adapter).
+    if [[ -n "$session_atmux_state" ]]; then
+      status_xml="$(ATMUX_HOME="$ATMUX_HOME" \
+        ATMUX_SOURCE_ROOT="$status_source_root" \
+        ATMUX_STATUS_PASSIVE=1 \
+        ATMUX_TARGET_PANE="$pane" \
+        ATMUX_AGENT_NAME="$agent_name" \
+        ATMUX_SESSION_NAME="${session_name:-$session}" \
+        ATMUX_ADAPTER_SELECTED="$selected_adapter" \
+        env -u ATMUX_STATE ATMUX_STATE="$session_atmux_state" \
+        "$status_script" 2>/dev/null || true)"
+    else
+      status_xml="$(ATMUX_HOME="$ATMUX_HOME" \
+        ATMUX_SOURCE_ROOT="$status_source_root" \
+        ATMUX_STATUS_PASSIVE=1 \
+        ATMUX_TARGET_PANE="$pane" \
+        ATMUX_AGENT_NAME="$agent_name" \
+        ATMUX_SESSION_NAME="${session_name:-$session}" \
+        ATMUX_ADAPTER_SELECTED="$selected_adapter" \
+        env -u ATMUX_STATE "$status_script" 2>/dev/null || true)"
+    fi
     state="$(printf '%s' "$status_xml" | sed -n 's/.*state="\([^"]*\)".*/\1/p' | head -n1)"
     case "$state" in
       idle|errored|usage-limit) printf 'idle\n' ;;
@@ -622,8 +657,8 @@ create_team() {
       --shared-worktree) shared_worktree=1; shift ;;
       --time-limit) time_limit="${2:-}"; shift 2 ;;
       --time-limit=*) time_limit="${1#--time-limit=}"; shift ;;
-      -h|--help)
-        echo "usage: atmux team create <name> [--role <role>] [--time-limit <duration>] [--start <cmd>] [--stop <cmd>] [--worktree <path>] [--shared-worktree] [--adapter ...] [--intelligence ...] [--model ...] [--reasoning ...] [--set <key>=<val>]..."
+      -h|--help|help)
+        create_team_usage
         return 0
         ;;
       --) shift ;;
@@ -644,7 +679,7 @@ create_team() {
   done
 
   if [[ -z "$raw_name" ]]; then
-    echo "usage: atmux team create <name> [--role <role>]" >&2
+    create_team_usage >&2
     exit 2
   fi
 
@@ -1028,6 +1063,16 @@ kill_teams() {
 
 view_team() {
   local target="${1:-}" attach_view=1 repo_root repo_name team_name member team_session attach_cmd pane pane_count window_index pane_slot window_target current_window_id pane_window real_tmux socket
+  if [[ "$target" == "-h" || "$target" == "--help" || "$target" == "help" ]]; then
+    cat <<'USAGE'
+Usage:
+  atmux team view [--no-attach] <name>
+
+Description:
+  Open a tmux dashboard that mirrors each team member pane.
+USAGE
+    exit 0
+  fi
   [[ -n "$target" ]] || { echo "usage: atmux team view <name>" >&2; exit 2; }
   if [[ "$target" == "--no-attach" ]]; then
     attach_view=0
@@ -1109,6 +1154,14 @@ case "$sub" in
     run_team_idle_watch "$@"
     ;;
   list|ls)
+    if [[ "${1:-}" == "-h" || "${1:-}" == "--help" || "${1:-}" == "help" ]]; then
+      usage
+      exit 0
+    fi
+    if [[ $# -gt 0 ]]; then
+      echo "atmux team list: unexpected arguments" >&2
+      exit 2
+    fi
     list_teams
     ;;
   status)
@@ -1117,6 +1170,10 @@ case "$sub" in
     ;;
   capture)
     here_team="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+    if [[ "${1:-}" == "-h" || "${1:-}" == "--help" || "${1:-}" == "help" ]]; then
+      usage
+      exit 0
+    fi
     if [[ $# -eq 0 || "${1:0:1}" == "-" ]]; then
       echo "usage: atmux team capture <name> [--tiled] [--lines N]" >&2
       exit 2
@@ -1125,6 +1182,10 @@ case "$sub" in
     exec "$here_team/(internal)/capture" --team "$target_name" "$@"
     ;;
   kill)
+    if [[ "${1:-}" == "-h" || "${1:-}" == "--help" || "${1:-}" == "help" ]]; then
+      usage
+      exit 0
+    fi
     if [[ $# -eq 0 || "${1:0:1}" == "-" ]]; then
       echo "usage: atmux team kill <name|pattern> [...]" >&2
       exit 2
@@ -1136,6 +1197,10 @@ case "$sub" in
     ;;
   resolve)
     target="${1:-}"
+    if [[ "$target" == "-h" || "$target" == "--help" || "$target" == "help" ]]; then
+      usage
+      exit 0
+    fi
     if [[ -z "$target" ]]; then
       echo "usage: atmux team resolve <name> [<repo_name>]" >&2
       exit 2

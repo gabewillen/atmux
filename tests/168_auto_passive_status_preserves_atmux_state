@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+source "$(dirname "${BASH_SOURCE[0]}")/lib/isolate-tmux.sh"
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+AUTO_STATUS="$REPO_ROOT/adapter/auto/scripts/status"
+
+session="atmux-autostate-${RANDOM}"
+tmp_home="$(mktemp -d "${TMPDIR:-/tmp}/autostate.XXXXXX")"
+cleanup() {
+  tmux kill-session -t "$session" >/dev/null 2>&1 || true
+  rm -rf "$tmp_home"
+}
+trap cleanup EXIT
+
+tmux new-session -d -s "$session" -c "$REPO_ROOT" \
+  /bin/bash -lc "printf '%s\\n' no-codex-ui-here; exec sleep 100000"
+pane="$(tmux list-panes -t "$session" -F '#{pane_id}' 2>/dev/null | head -n1)"
+[[ -n "$pane" ]] || { echo "pane missing" >&2; exit 1; }
+
+# Session-style ATMUX_STATE (e.g. from team_idle_member_state) must reach the
+# delegated adapter — inconclusive Codex pane text alone would otherwise fall
+# back to ATMUX_STATE default idle incorrectly.
+out_busy="$(
+  ATMUX_HOME="$tmp_home" \
+  ATMUX_SOURCE_ROOT="$REPO_ROOT" \
+  ATMUX_STATUS_PASSIVE=1 \
+  ATMUX_TARGET_PANE="$pane" \
+  ATMUX_ADAPTER_SELECTED="codex" \
+  ATMUX_STATE="busy" \
+    "$AUTO_STATUS" 2>/dev/null || true
+)"
+if ! printf '%s\n' "$out_busy" | grep -Fq 'state="busy"'; then
+  echo "fail: expected auto passive delegated status busy when ATMUX_STATE=busy; got:" >&2
+  printf '%s\n' "$out_busy" >&2
+  exit 1
+fi
+if ! printf '%s\n' "$out_busy" | grep -Fq 'adapter="auto"' \
+  || ! printf '%s\n' "$out_busy" | grep -Fq 'selected="codex"'; then
+  echo "fail: expected adapter=auto with selected codex; got:" >&2
+  printf '%s\n' "$out_busy" >&2
+  exit 1
+fi
+
+# Control: omit ATMUX_STATE — codex passive should idle when pane lacks markers.
+out_idle="$(
+  ATMUX_HOME="$tmp_home" \
+  ATMUX_SOURCE_ROOT="$REPO_ROOT" \
+  ATMUX_STATUS_PASSIVE=1 \
+  ATMUX_TARGET_PANE="$pane" \
+  ATMUX_ADAPTER_SELECTED="codex" \
+    "$AUTO_STATUS" 2>/dev/null || true
+)"
+if ! printf '%s\n' "$out_idle" | grep -Fq 'state="idle"'; then
+  echo "fail: expected idle when ATMUX_STATE unset and pane inconclusive; got:" >&2
+  printf '%s\n' "$out_idle" >&2
+  exit 1
+fi
+
+echo "ok: auto passive status preserves delegated ATMUX_STATE"

@@ -38,8 +38,11 @@ shift || true
 
 require_pid() {
   local p="${1:-}"
+  case "$p" in
+    -h|--help|help) usage; exit 0 ;;
+  esac
   if [[ -z "$p" || "${p:0:1}" == "-" ]]; then
-    echo "usage: atmux process $verb <pid> [...]" >&2
+    usage >&2
     exit 2
   fi
 }

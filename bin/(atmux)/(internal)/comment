@@ -8,13 +8,14 @@ source "$HERE/../notify"
 
 usage() {
   cat <<'USAGE'
-Internal comment backend. Invoked by the noun-first front-ends:
-
+Usage:
   atmux issue comment <id> "message" [--repo <repo>]
   atmux pr comment <id> "message" [--repo <repo>]
 
-Direct invocation (--issue, --pr) is for internal callers only and is not
-part of the user-facing CLI surface.
+  (Direct --issue/--pr flags are internal-only entry points.)
+
+Description:
+Internal comment backend; prefer the noun-first commands above on the CLI.
 USAGE
 }
 

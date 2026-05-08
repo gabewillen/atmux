@@ -730,8 +730,12 @@ case "$sub" in
     case "${1:-}" in
       "" ) list_roles ;;
       --details) list_roles_details ;;
-      -h|--help)
-        echo "usage: atmux role list [--details]"
+      -h|--help|help)
+        cat <<'USAGE'
+Usage:
+  atmux role list [--details]
+USAGE
+        exit 0
         ;;
       *) echo "usage: atmux role list [--details]" >&2; exit 2 ;;
     esac
@@ -739,6 +743,13 @@ case "$sub" in
   info|describe)
     want_kind=""
     case "${1:-}" in
+      -h|--help|help)
+        cat <<'USAGE'
+Usage:
+  atmux role info [--kind agent|team] <name>
+USAGE
+        exit 0
+        ;;
       --kind)
         want_kind="${2:-}"
         shift 2 || true
@@ -758,6 +769,13 @@ case "$sub" in
     ;;
   show)
     name="${1:-}"
+    if [[ "$name" == "-h" || "$name" == "--help" || "$name" == "help" ]]; then
+      cat <<'USAGE'
+Usage:
+  atmux role show <name>
+USAGE
+      exit 0
+    fi
     [[ -n "$name" ]] || { echo "usage: atmux role show <name>" >&2; exit 2; }
     if dir="$(resolve_role_dir "$name")"; then
       if [[ -f "$dir/role.md" ]]; then
@@ -771,6 +789,13 @@ case "$sub" in
   resolve)
     want_kind=""
     case "${1:-}" in
+      -h|--help|help)
+        cat <<'USAGE'
+Usage:
+  atmux role resolve [--kind agent|team] <name>
+USAGE
+        exit 0
+        ;;
       --kind)
         want_kind="${2:-}"
         shift 2 || true
@@ -794,6 +819,13 @@ case "$sub" in
     ;;
   private-agent)
     name="${1:-}"
+    if [[ "$name" == "-h" || "$name" == "--help" || "$name" == "help" ]]; then
+      cat <<'USAGE'
+Usage:
+  atmux role private-agent <name>
+USAGE
+      exit 0
+    fi
     [[ -n "$name" ]] || { echo "usage: atmux role private-agent <name>" >&2; exit 2; }
     if dir="$(resolve_private_agent_role_dir "$name")"; then
       printf '%s\n' "$dir"
@@ -803,6 +835,13 @@ case "$sub" in
     ;;
   kind)
     name="${1:-}"
+    if [[ "$name" == "-h" || "$name" == "--help" || "$name" == "help" ]]; then
+      cat <<'USAGE'
+Usage:
+  atmux role kind <name>
+USAGE
+      exit 0
+    fi
     [[ -n "$name" ]] || { echo "usage: atmux role kind <name>" >&2; exit 2; }
     if dir="$(resolve_role_dir "$name")"; then
       role_path_kind "$dir"

@@ -129,7 +129,8 @@ main() {
     case "$1" in
       -h|--help)
         cat <<'USAGE'
-Usage: atmux team status [<name>]
+Usage:
+  atmux team status [<name>]
 
   No args:    one row per team in the repo (members / alive /
               queue_total / errors).

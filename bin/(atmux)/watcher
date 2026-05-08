@@ -54,12 +54,23 @@ shift || true
 
 case "$verb" in
   list)
+    if [[ "${1:-}" == "-h" || "${1:-}" == "--help" || "${1:-}" == "help" ]]; then
+      usage
+      exit 0
+    fi
+    if [[ $# -gt 0 ]]; then
+      echo "atmux watcher list: unexpected arguments" >&2
+      exit 2
+    fi
     list_watchers
     ;;
   kill)
     id="${1:-}"
+    case "$id" in
+      -h|--help|help) usage; exit 0 ;;
+    esac
     if [[ -z "$id" || "${id:0:1}" == "-" ]]; then
-      echo "usage: atmux watcher kill <id> [--timeout N]" >&2
+      usage >&2
       exit 2
     fi
     shift

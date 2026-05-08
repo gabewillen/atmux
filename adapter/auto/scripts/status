@@ -20,6 +20,40 @@ selected="${ATMUX_ADAPTER_SELECTED:-}"
 if [[ -z "$selected" || "$selected" == "auto" ]]; then
   selected="$(ATMUX_HOME="${ATMUX_HOME:-$HOME/.atmux}" ATMUX_SOURCE_ROOT="${ATMUX_SOURCE_ROOT:-}" "$select_script" --peek 2>/dev/null || true)"
 fi
+
+# Passive hooks (team-idle): infer idle/busy from the resolved adapter's pane
+# grammar, but keep adapter="auto" and selected=… in the emitted XML.
+if [[ "${ATMUX_STATUS_PASSIVE:-0}" == "1" && -n "${ATMUX_TARGET_PANE:-}" && -n "$selected" && "$selected" != "auto" ]]; then
+  status_root="${ATMUX_SOURCE_ROOT:-${ATMUX_HOME:-$HOME/.atmux}/src/atmux}"
+  home_root="${ATMUX_HOME:-$HOME/.atmux}"
+  delegated=""
+  for candidate in \
+    "${status_root}/adapter/${selected}/scripts/status" \
+    "${home_root}/adapters/${selected}/scripts/status"; do
+    if [[ -x "$candidate" ]]; then
+      delegated="$candidate"
+      break
+    fi
+  done
+  if [[ -n "$delegated" ]]; then
+    delegated_xml="$(ATMUX_HOME="${ATMUX_HOME:-$HOME/.atmux}" \
+      ATMUX_SOURCE_ROOT="${ATMUX_SOURCE_ROOT:-}" \
+      ATMUX_STATUS_PASSIVE=1 \
+      ATMUX_TARGET_PANE="${ATMUX_TARGET_PANE}" \
+      ATMUX_AGENT_NAME="${ATMUX_AGENT_NAME:-}" \
+      ATMUX_SESSION_NAME="${ATMUX_SESSION_NAME:-}" \
+      ATMUX_ADAPTER_SELECTED="${ATMUX_ADAPTER_SELECTED:-}" \
+      env -u ATMUX_STATE \
+      "$delegated" 2>/dev/null || true)"
+    derived_state="$(printf '%s' "$delegated_xml" | sed -n 's/.*state="\([^"]*\)".*/\1/p' | head -n1)"
+    if [[ -n "$derived_state" ]]; then
+      printf '<status adapter="%s" owner="%s" state="%s" model="" reasoning_level="" control_file="" selected="%s" strategy="availability-usage-round-robin" />\n' \
+        "auto" "$(xml_escape "$owner")" "$(xml_escape "$derived_state")" "$(xml_escape "$selected")"
+      exit 0
+    fi
+  fi
+fi
+
 state="idle"
 if [[ -z "$selected" ]]; then
   state="errored"

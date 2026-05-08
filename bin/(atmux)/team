@@ -432,23 +432,41 @@ team_idle_status_script_for_session() {
 
 team_idle_member_state() {
   local session="$1" pane status_script status_xml state agent_name session_name selected_adapter status_source_root
+  local session_atmux_state=""
   tmux has-session -t "$session" 2>/dev/null || { printf 'missing\n'; return 0; }
   pane="$(atmux_resolve_primary_pane "$session")"
   [[ -n "$pane" ]] || { printf 'missing\n'; return 0; }
+  session_atmux_state="$(tmux show-environment -t "$session" ATMUX_STATE 2>/dev/null | sed -n 's/^ATMUX_STATE=//p' || true)"
   status_script="$(team_idle_status_script_for_session "$session" || true)"
   if [[ -n "$status_script" ]]; then
     agent_name="$(atmux_resolve_session_env "$session" ATMUX_AGENT_NAME)"
     session_name="$(atmux_resolve_session_env "$session" ATMUX_SESSION_NAME)"
     selected_adapter="$(atmux_resolve_session_env "$session" ATMUX_ADAPTER_SELECTED)"
     status_source_root="${ATMUX_SOURCE_ROOT:-$ATMUX_HOME/src/atmux}"
-    status_xml="$(ATMUX_HOME="$ATMUX_HOME" \
-      ATMUX_SOURCE_ROOT="$status_source_root" \
-      ATMUX_STATUS_PASSIVE=1 \
-      ATMUX_TARGET_PANE="$pane" \
-      ATMUX_AGENT_NAME="$agent_name" \
-      ATMUX_SESSION_NAME="${session_name:-$session}" \
-      ATMUX_ADAPTER_SELECTED="$selected_adapter" \
-      "$status_script" 2>/dev/null || true)"
+    # Adapter status fallbacks consult ATMUX_STATE. Team-idle runs the script
+    # from the watcher process, which can inherit a stale ATMUX_STATE from the
+    # outer environment (e.g. CI). Strip it unless the member session sets it
+    # explicitly via tmux session environment (see tests/159 mockidle adapter).
+    if [[ -n "$session_atmux_state" ]]; then
+      status_xml="$(ATMUX_HOME="$ATMUX_HOME" \
+        ATMUX_SOURCE_ROOT="$status_source_root" \
+        ATMUX_STATUS_PASSIVE=1 \
+        ATMUX_TARGET_PANE="$pane" \
+        ATMUX_AGENT_NAME="$agent_name" \
+        ATMUX_SESSION_NAME="${session_name:-$session}" \
+        ATMUX_ADAPTER_SELECTED="$selected_adapter" \
+        env -u ATMUX_STATE ATMUX_STATE="$session_atmux_state" \
+        "$status_script" 2>/dev/null || true)"
+    else
+      status_xml="$(ATMUX_HOME="$ATMUX_HOME" \
+        ATMUX_SOURCE_ROOT="$status_source_root" \
+        ATMUX_STATUS_PASSIVE=1 \
+        ATMUX_TARGET_PANE="$pane" \
+        ATMUX_AGENT_NAME="$agent_name" \
+        ATMUX_SESSION_NAME="${session_name:-$session}" \
+        ATMUX_ADAPTER_SELECTED="$selected_adapter" \
+        env -u ATMUX_STATE "$status_script" 2>/dev/null || true)"
+    fi
     state="$(printf '%s' "$status_xml" | sed -n 's/.*state="\([^"]*\)".*/\1/p' | head -n1)"
     case "$state" in
       idle|errored|usage-limit) printf 'idle\n' ;;

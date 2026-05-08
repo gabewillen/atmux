@@ -83,6 +83,26 @@ idle_text_for_adapter() {
   esac
 }
 
+# create_member pins ATMUX_ADAPTER_SELECTED=codex for every adapter including auto.
+# Passive auto status delegates to that adapter, so pane simulation must match.
+busy_text_for_member_adapter() {
+  local adapter="$1"
+  if [[ "$adapter" == "auto" ]]; then
+    busy_text_for_adapter "codex"
+  else
+    busy_text_for_adapter "$adapter"
+  fi
+}
+
+idle_text_for_member_adapter() {
+  local adapter="$1"
+  if [[ "$adapter" == "auto" ]]; then
+    idle_text_for_adapter "codex"
+  else
+    idle_text_for_adapter "$adapter"
+  fi
+}
+
 write_member_pane() {
   local session="$1" text="$2" pane cmd
   pane="$(tmux list-panes -t "$session" -F '#{pane_id}' 2>/dev/null | head -n1)"
@@ -108,7 +128,7 @@ create_member() {
   tmux set-environment -t "$session" ATMUX_ADAPTER "$adapter"
   tmux set-environment -t "$session" ATMUX_ADAPTER_SELECTED "codex"
   tmux set-environment -t "$session" ATMUX_TEAM "$team"
-  write_member_pane "$session" "$(busy_text_for_adapter "$adapter")"
+  write_member_pane "$session" "$(busy_text_for_member_adapter "$adapter")"
   printf '%s\n' "$session"
 }
 
@@ -169,11 +189,9 @@ for adapter in "${adapters[@]}"; do
   member_session="$(create_member "$team" "$adapter" "$member_name")"
   created_sessions+=("$member_session")
   record_member "$team" "$member_session" "$member_name" "$adapter"
-  if [[ "$adapter" != "auto" ]]; then
-    sleep 2
-    assert_no_team_idle "$team"
-  fi
-  write_member_pane "$member_session" "$(idle_text_for_adapter "$adapter")"
+  sleep 2
+  assert_no_team_idle "$team"
+  write_member_pane "$member_session" "$(idle_text_for_member_adapter "$adapter")"
   assert_team_idle "$team"
 done
 
@@ -193,7 +211,7 @@ assert_no_team_idle "$mixed_team"
 
 for i in "${!adapters[@]}"; do
   adapter="${adapters[$i]}"
-  write_member_pane "${mixed_sessions[$i]}" "$(idle_text_for_adapter "$adapter")"
+  write_member_pane "${mixed_sessions[$i]}" "$(idle_text_for_member_adapter "$adapter")"
   if (( i < ${#adapters[@]} - 1 )); then
     sleep 2
     assert_no_team_idle "$mixed_team"

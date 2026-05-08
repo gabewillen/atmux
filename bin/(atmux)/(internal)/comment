@@ -26,7 +26,7 @@ resolve_repo_name() {
     repo="$explicit_repo"
   elif [[ -n "${ATMUX_REPO:-}" ]]; then
     repo="${ATMUX_REPO}"
-  elif [[ -n "${TMUX:-}" ]]; then
+  elif [[ -n "${ATMUX_TMUX:-}${TMUX:-}" ]]; then
     repo="$(tmux show-environment ATMUX_REPO 2>/dev/null | sed -n 's/^ATMUX_REPO=//p' || true)"
   fi
   if [[ -z "$repo" ]]; then
@@ -46,14 +46,14 @@ resolve_repo_name() {
 current_actor_name() {
   local repo="${1:-}"
   local actor="${ATMUX_AGENT_NAME:-}"
-  if [[ -z "$actor" && -n "${TMUX:-}" ]]; then
+  if [[ -z "$actor" && -n "${ATMUX_TMUX:-}${TMUX:-}" ]]; then
     actor="$(tmux show-environment ATMUX_AGENT_NAME 2>/dev/null | sed -n 's/^ATMUX_AGENT_NAME=//p' || true)"
   fi
   if [[ -n "$actor" ]]; then
     printf '%s\n' "$actor"
     return
   fi
-  if [[ -n "${TMUX:-}" ]]; then
+  if [[ -n "${ATMUX_TMUX:-}${TMUX:-}" ]]; then
     local session=""
     session="$(tmux display-message -p '#S' 2>/dev/null || true)"
     if [[ -n "$session" ]]; then

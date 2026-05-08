@@ -25,7 +25,7 @@ source "$manifest_lib"
 set_bootstrap_state() {
   local state="$1"
   local session=""
-  if [[ -n "${TMUX:-}" ]]; then
+  if [[ -n "${ATMUX_TMUX:-}${TMUX:-}" ]]; then
     session="$(tmux display-message -p '#S' 2>/dev/null || true)"
   fi
   [[ -n "$session" ]] || return 0

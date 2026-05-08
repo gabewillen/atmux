@@ -224,7 +224,7 @@ repo_name="$(atmux_resolve_repo_name)"
 
 if [[ "$capture_all" -eq 1 ]]; then
   current_pane=""
-  if [[ -n "${TMUX:-}" ]]; then
+  if [[ -n "${ATMUX_TMUX:-}${TMUX:-}" ]]; then
     current_pane="$(tmux display-message -p '#{pane_id}' 2>/dev/null || true)"
   fi
 

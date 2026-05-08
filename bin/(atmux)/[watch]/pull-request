@@ -41,7 +41,7 @@ resolve_pr_repo() {
     repo="$explicit_repo"
   elif [[ -n "${ATMUX_REPO:-}" ]]; then
     repo="${ATMUX_REPO}"
-  elif [[ -n "${TMUX:-}" ]]; then
+  elif [[ -n "${ATMUX_TMUX:-}${TMUX:-}" ]]; then
     repo="$(tmux show-environment ATMUX_REPO 2>/dev/null | sed -n 's/^ATMUX_REPO=//p' || true)"
   fi
 

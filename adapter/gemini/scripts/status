@@ -23,7 +23,7 @@ resolve_target() {
     printf '%s\n' "$ATMUX_TARGET_PANE"
     return
   fi
-  if [[ -n "${TMUX:-}" ]]; then
+  if [[ -n "${ATMUX_TMUX:-}${TMUX:-}" ]]; then
     tmux display-message -p '#{pane_id}' 2>/dev/null || true
     return
   fi

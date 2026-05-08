@@ -904,10 +904,10 @@ create_team() {
   # is read by `agent create` purely as a fallback for `--team` when
   # the user doesn't pass one explicitly.
   local idle_subscription_attr=""
-  if [[ -n "${TMUX:-}" ]]; then
+  if [[ -n "${ATMUX_TMUX:-}${TMUX:-}" ]]; then
     local caller_session caller_repo
-    if [[ -n "${TMUX_PANE:-}" ]]; then
-      caller_session="$(tmux display-message -t "$TMUX_PANE" -p '#S' 2>/dev/null || true)"
+    if [[ -n "${ATMUX_TMUX_PANE:-}${TMUX_PANE:-}" ]]; then
+      caller_session="$(tmux display-message -t "${ATMUX_TMUX_PANE:-$TMUX_PANE}" -p '#S' 2>/dev/null || true)"
     else
       caller_session="$(tmux display-message -p '#S' 2>/dev/null || true)"
     fi

@@ -626,7 +626,7 @@ inside_atmux_session() {
   if [[ -n "${ATMUX_SESSION_NAME:-}" ]]; then
     return 0
   fi
-  if [[ -n "${TMUX:-}" ]]; then
+  if [[ -n "${ATMUX_TMUX:-}${TMUX:-}" ]]; then
     local cur
     cur="$(tmux display-message -p '#{session_name}' 2>/dev/null || true)"
     [[ "$cur" == atmux-* ]] && return 0

@@ -13,7 +13,7 @@ source "$manifest_lib"
 set_bootstrap_state() {
   local state="$1"
   local session=""
-  if [[ -n "${TMUX:-}" ]]; then
+  if [[ -n "${ATMUX_TMUX:-}${TMUX:-}" ]]; then
     session="$(tmux display-message -p '#S' 2>/dev/null || true)"
   fi
   [[ -n "$session" ]] || return 0
@@ -49,6 +49,124 @@ normalize_reasoning() {
     low|medium|high) printf '%s\n' "$1" ;;
     *) return 1 ;;
   esac
+}
+
+print_json_string_array() {
+  local separator=""
+  local item
+  printf '['
+  for item in "$@"; do
+    printf '%s"%s"' "$separator" "$item"
+    separator=", "
+  done
+  printf ']'
+}
+
+configure_shell_environment_redaction() {
+  [[ -z "${GEMINI_CLI_SYSTEM_SETTINGS_PATH:-}" ]] || return 0
+
+  local settings_file="$state_dir/atmux-system-settings.json"
+  local -a allowed=()
+  local -a blocked=(
+    TMUX
+    TMUX_PANE
+    BASH_ENV
+    ENV
+    LD_PRELOAD
+    LD_LIBRARY_PATH
+    DYLD_INSERT_LIBRARIES
+    DYLD_LIBRARY_PATH
+    PROMPT_COMMAND
+  )
+  local env_name
+
+  while IFS= read -r env_name; do
+    case "$env_name" in
+      ATMUX_*|GEMINI_SYSTEM_MD)
+        allowed+=("$env_name")
+        ;;
+    esac
+  done < <(compgen -e | sort -u)
+
+  {
+    printf '{\n'
+    printf '  "tools": {\n'
+    printf '    "shell": {\n'
+    printf '      "enableInteractiveShell": true\n'
+    printf '    }\n'
+    printf '  },\n'
+    printf '  "security": {\n'
+    printf '    "environmentVariableRedaction": {\n'
+    printf '      "enabled": true,\n'
+    printf '      "allowed": '
+    print_json_string_array "${allowed[@]}"
+    printf ',\n'
+    printf '      "blocked": '
+    print_json_string_array "${blocked[@]}"
+    printf '\n'
+    printf '    }\n'
+    printf '  }\n'
+    printf '}\n'
+  } > "$settings_file"
+
+  export GEMINI_CLI_SYSTEM_SETTINGS_PATH="$settings_file"
+}
+
+configure_shell_wrapper() {
+  local wrapper_dir="$state_dir/shell-bin"
+  local wrapper="$wrapper_dir/bash"
+  local wrapper_log="$state_dir/shell-wrapper.log"
+  mkdir -p "$wrapper_dir"
+
+  cat > "$wrapper" <<'SH'
+#!/bin/bash
+set -euo pipefail
+
+safe_env=()
+copy_if_set() {
+  local key="$1"
+  if [[ -v "$key" ]]; then
+    safe_env+=("$key=${!key}")
+  fi
+}
+
+for key in \
+  HOME USER LOGNAME SHELL PATH PWD LANG LC_ALL TERM TMPDIR TEMP TMP \
+  SSH_AUTH_SOCK XDG_RUNTIME_DIR \
+  GEMINI_SYSTEM_MD GEMINI_CLI_SYSTEM_SETTINGS_PATH GEMINI_CLI_NO_RELAUNCH GEMINI_PTY_INFO \
+  ATMUX_GEMINI_SHELL_WRAPPER_LOG; do
+  copy_if_set "$key"
+done
+
+while IFS= read -r key; do
+  case "$key" in
+    ATMUX_*)
+      safe_env+=("$key=${!key}")
+      ;;
+  esac
+done < <(compgen -e | sort -u)
+
+if [[ -n "${ATMUX_GEMINI_SHELL_WRAPPER_LOG:-}" ]]; then
+  {
+    printf 'pid=%s ppid=%s argc=%s\n' "$$" "$PPID" "$#"
+    printf 'argv='
+    printf '%q ' "$@"
+    printf '\n'
+    printf 'PATH=%s\n' "${PATH:-}"
+    printf 'SHELL=%s\n' "${SHELL:-}"
+    printf 'TMUX=%s\n' "${TMUX:-}"
+    printf 'ATMUX_AGENT_NAME=%s\n' "${ATMUX_AGENT_NAME:-}"
+    printf '\n'
+  } >> "$ATMUX_GEMINI_SHELL_WRAPPER_LOG" 2>/dev/null || true
+fi
+
+exec env -i "${safe_env[@]}" /bin/bash "$@"
+SH
+  chmod +x "$wrapper"
+  export PATH="$wrapper_dir:$PATH"
+  export SHELL="$wrapper"
+  : > "$wrapper_log"
+  export ATMUX_GEMINI_SHELL_WRAPPER_LOG="$wrapper_log"
 }
 
 if [[ -n "${ATMUX_INTELLIGENCE:-}" && "${ATMUX_INTELLIGENCE}" =~ ^[0-9]+$ ]] \
@@ -95,5 +213,9 @@ if ! arg_present --skip-trust "${args[@]-}"; then
 fi
 
 set_bootstrap_state ready
+configure_shell_environment_redaction
+configure_shell_wrapper
+export GEMINI_CLI_NO_RELAUNCH="${GEMINI_CLI_NO_RELAUNCH:-true}"
+export GEMINI_PTY_INFO="${GEMINI_PTY_INFO:-child_process}"
 echo "starting gemini in $(pwd)"
 exec gemini "${args[@]-}"

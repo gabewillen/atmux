@@ -129,7 +129,7 @@ resolve_send_targets() {
 # === Adapter / role / runner resolution =====================================
 
 resolve_atmux_runner() {
-  if [[ -z "${ATMUX_SOURCE_ROOT:-}" && -n "${TMUX:-}" ]]; then
+  if [[ -z "${ATMUX_SOURCE_ROOT:-}" && -n "${ATMUX_TMUX:-}${TMUX:-}" ]]; then
     tmux_source_root="$(tmux show-environment ATMUX_SOURCE_ROOT 2>/dev/null | sed -n 's/^ATMUX_SOURCE_ROOT=//p' || true)"
     if [[ -n "$tmux_source_root" ]]; then
       ATMUX_SOURCE_ROOT="$tmux_source_root"
@@ -768,7 +768,7 @@ run_adapter() {
   fi
 
   local current_session=""
-  if [[ -n "${TMUX:-}" ]]; then
+  if [[ -n "${ATMUX_TMUX:-}${TMUX:-}" ]]; then
     current_session="$(tmux display-message -p '#S' 2>/dev/null || true)"
   fi
   if [[ -n "$current_session" ]]; then
@@ -902,7 +902,14 @@ run_adapter() {
 
     rc=0
     (
+      if [[ -z "${ATMUX_TMUX:-}" && -n "${TMUX:-}" ]]; then
+        export ATMUX_TMUX="$TMUX"
+      fi
+      if [[ -z "${ATMUX_TMUX_PANE:-}" && -n "${TMUX_PANE:-}" ]]; then
+        export ATMUX_TMUX_PANE="$TMUX_PANE"
+      fi
       unset ATMUX_ALLOW_REAL_TMUX
+      unset TMUX TMUX_PANE
 
       # Apply env directives produced by prepare-prompt so the adapter
       # inherits them (e.g. GEMINI_SYSTEM_MD).
@@ -950,7 +957,7 @@ run_adapter() {
   fi
 
   local session_name="${ATMUX_SESSION_NAME:-}"
-  if [[ -z "$session_name" && -n "${TMUX:-}" ]]; then
+  if [[ -z "$session_name" && -n "${ATMUX_TMUX:-}${TMUX:-}" ]]; then
     session_name="$(tmux display-message -p '#S' 2>/dev/null || true)"
   fi
   if [[ -n "$session_name" ]] && tmux has-session -t "$session_name" 2>/dev/null; then
@@ -1242,7 +1249,7 @@ attach_agent() {
     echo "usage: atmux agent attach <name>" >&2
     exit 2
   fi
-  if [[ -n "${TMUX:-}" ]]; then
+  if [[ -n "${ATMUX_TMUX:-}${TMUX:-}" ]]; then
     echo "atmux agent attach must be run outside tmux" >&2
     exit 2
   fi
@@ -1405,7 +1412,7 @@ do_create() {
   # subsequent `atmux agent create` calls from a session that just created
   # a team. Both are fallbacks for the explicit `--team` flag.
   local team="${ATMUX_TEAM:-${ATMUX_DEFAULT_TEAM:-}}"
-  if [[ -z "$team" && -n "${TMUX:-}" ]]; then
+  if [[ -z "$team" && -n "${ATMUX_TMUX:-}${TMUX:-}" ]]; then
     current_session_name="$(tmux display-message -p '#S' 2>/dev/null || true)"
     if [[ -n "$current_session_name" ]]; then
       team="$(tmux show-environment -t "$current_session_name" ATMUX_TEAM 2>/dev/null | sed -n 's/^ATMUX_TEAM=//p' || true)"

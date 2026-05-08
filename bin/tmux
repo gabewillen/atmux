@@ -29,7 +29,9 @@ if [[ "${ATMUX_ALLOW_REAL_TMUX:-}" == "1" ]]; then
   fi
   if [[ -n "$real_tmux" && -x "$real_tmux" ]]; then
     socket="${ATMUX_TMUX_SOCKET:-}"
-    if [[ -z "$socket" && -n "${TMUX:-}" ]]; then
+    if [[ -z "$socket" && -n "${ATMUX_TMUX:-}" ]]; then
+      socket="${ATMUX_TMUX%%,*}"
+    elif [[ -z "$socket" && -n "${TMUX:-}" ]]; then
       socket="${TMUX%%,*}"
     fi
     if [[ -n "$socket" ]]; then

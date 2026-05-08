@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.25.2 — CLI help matrix, Gemini notify, prompts, idle hardening
+
+- Hardened Gemini adapter notify input boundary handling.
+- Aligned nested subcommand `--help` with the documented CLI help matrix.
+- Expanded event-driven prompt guidance for agent/team workflows.
+- Hardened passive auto status and team-idle notification paths.
+
 ## 0.25.0 — Collab facilitator cutover
 
 - Removed collab member roles `leader`, `arbiter`, and `recorder` (sessions and

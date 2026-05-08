@@ -767,7 +767,7 @@ extract_prompt_input_with_end_marker() {
           break
         }
       }
-      if (idx < 1) exit 0
+      if (idx < 1) exit 1
 
       scan = lines[idx]
       while (length(scan) > 0) {
@@ -786,7 +786,7 @@ extract_prompt_input_with_end_marker() {
         scan = substr(scan, 2)
       }
 
-      if (!match(scan, end_re)) exit 0
+      if (!match(scan, end_re)) exit 1
       captured = substr(scan, 1, RSTART - 1)
       gsub(esc "\\[[0-9;]*[[:alpha:]]", "", captured)
       sub(/^[[:space:]]+/, "", captured)

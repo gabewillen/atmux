@@ -147,4 +147,55 @@ if printf '%s' "$saved_input" | grep -Fq 'gpt-5.4 xhigh'; then
   exit 1
 fi
 
+# Gemini renders a styled `*` prompt (truecolor SGR) and ends the editable
+# region at a reverse-video cursor cell. Without INPUT_END, plain capture plus
+# column-based truncation mis-bounds partial input on live panes.
+mock_adapter="gemini"
+mock_snapshot=$'status footer\n \033[39m\033[48;2;95;95;95m \033[38;2;255;135;175m* \033[38;2;255;255;255mhello-gemini-styled\033[7m\033[39m \033[0m\033[48;2;95;95;95m\n'
+tmux() {
+  if [[ "$1" == "capture-pane" ]]; then
+    printf '%s\n' "$mock_snapshot"
+    return 0
+  fi
+
+  if [[ "$1" == "display-message" ]]; then
+    local fmt="${@: -1}"
+    case "$fmt" in
+      "#{session_name}") printf '%s\n' "gemini-session" ;;
+      "#{cursor_x}") printf '%s\n' "${mock_cursor_x:-0}" ;;
+      "#{cursor_y}") printf '%s\n' "${mock_cursor_y:-0}" ;;
+      *) return 1 ;;
+    esac
+    return 0
+  fi
+
+  if [[ "$1" == "show-environment" ]]; then
+    printf '%s\n' "ATMUX_ADAPTER=gemini"
+    return 0
+  fi
+
+  command tmux "$@"
+}
+
+saved_input="$(extract_prompt_input "%mock" "[*]")"
+[[ "$saved_input" == "hello-gemini-styled" ]] || {
+  echo "expected gemini styled prompt extraction to preserve typed input before the reverse-video cursor" >&2
+  echo "got: $saved_input" >&2
+  exit 1
+}
+
+# Reverse-video cell must end the saved region: placeholder chrome after `[7m`
+# must not be treated as user input (notify would restore it).
+mock_snapshot=$' \033[38;2;255;135;175m* \033[38;2;255;255;255mpartial-only\033[7m\033[39m \033[0mType your message or @path/to/file\n'
+saved_input="$(extract_prompt_input "%mock" "[*]")"
+[[ "$saved_input" == "partial-only" ]] || {
+  echo "expected gemini extraction to stop at reverse-video cursor, omitting trailing placeholder" >&2
+  echo "got: $saved_input" >&2
+  exit 1
+}
+if printf '%s' "$saved_input" | grep -Fq 'Type your message'; then
+  echo "saved input must not include Gemini placeholder chrome" >&2
+  exit 1
+fi
+
 echo "ok: extract_prompt_input copies only between prompt symbol and cursor"

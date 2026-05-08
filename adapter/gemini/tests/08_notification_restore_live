@@ -6,6 +6,7 @@ SCRIPTS_DIR="$TESTS_DIR/scripts"
 ADAPTER_DIR="$(cd -- "$TESTS_DIR/.." && pwd)"
 REPO_ROOT="$(cd -- "$ADAPTER_DIR/../.." && pwd)"
 ATMUX_BIN="$REPO_ROOT/bin/atmux"
+NOTIFY_SCRIPT="$REPO_ROOT/bin/(atmux)/notify"
 
 wait_for_text() {
   local target="$1"
@@ -24,6 +25,52 @@ wait_for_text() {
     fi
     sleep 0.2
   done
+}
+
+# Bounded poll: notify saves/restores via extract_prompt_input; it must match
+# the typed partial text before injection (legacy plain+cursor path mis-reads
+# styled Gemini lines).
+wait_for_extract_prompt_input() {
+  local pane="$1"
+  local expected="$2"
+  local prompt_prefix="$3"
+  local timeout="${4:-20}"
+  local deadline now extracted
+  deadline=$(( $(date +%s) + timeout ))
+  while true; do
+    extracted="$(extract_prompt_input "$pane" "$prompt_prefix" 2>/dev/null || true)"
+    if [[ "$extracted" == "$expected" ]]; then
+      return 0
+    fi
+    now="$(date +%s)"
+    if (( now >= deadline )); then
+      return 1
+    fi
+    sleep 0.2
+  done
+}
+
+# After restore, the editable line must not still carry Gemini's empty-state
+# placeholder or path chrome alongside our partial text (wrong save/restore
+# bounds would concatenate placeholder with typed text).
+assert_restored_line_excludes_placeholder() {
+  local pane="$1"
+  local partial="$2"
+  local snap line bad=0
+  snap="$(tmux capture-pane -p -t "$pane" -S -1200 2>/dev/null | tr -d '\r' || true)"
+  while IFS= read -r line; do
+    [[ "$line" == *"$partial"* ]] || continue
+    if [[ "$line" == *"Type your message"* || "$line" == *"@path/to/file"* ]]; then
+      bad=1
+      break
+    fi
+  done <<< "$snap"
+  if (( bad )); then
+    printf '%s\n' "$snap" >&2
+    echo "restored input line still contains Gemini placeholder or @path chrome" >&2
+    return 1
+  fi
+  return 0
 }
 
 atmux_home="$(mktemp -d "${TMPDIR:-/tmp}/atmux-gemini-live.XXXXXX")"
@@ -45,12 +92,37 @@ fi
 tmux set-environment -t "$session_name" ATMUX_ADAPTER "gemini"
 tmux set-environment -t "$session_name" ATMUX_SESSION_NAME "$session_name"
 
+# Do not export ATMUX_HOME=$atmux_home before sourcing notify: the notify
+# library defines tmux() using atmux_tmux_socket → $ATMUX_HOME/tmux/server.sock.
+# Gemini setup already created sessions on the pre-existing atmux tmux server;
+# pointing ATMUX_HOME at this temp dir makes capture/send hit a missing socket.
+export ATMUX_SOURCE_ROOT="$REPO_ROOT"
+export ATMUX_ALLOW_OUTSIDE_TMUX=1
+# shellcheck source=bin/(atmux)/notify
+source "$NOTIFY_SCRIPT"
+
+prompt_prefix="$(resolve_input_prompt_for_adapter gemini "$REPO_ROOT")"
+[[ -n "$prompt_prefix" ]] || {
+  echo "missing INPUT_START for gemini manifest" >&2
+  exit 1
+}
+
 partial_text="partial-gemini-live-${RANDOM}"
 notification_xml="<notification type=\"test\" from=\"notify-gemini-live-${RANDOM}\" />"
 
 tmux send-keys -t "$pane_id" -l "$partial_text"
-sleep 0.5
-ATMUX_ALLOW_OUTSIDE_TMUX=1 "$ATMUX_BIN" notify --pane "$pane_id" --xml "$notification_xml"
+
+if ! wait_for_extract_prompt_input "$pane_id" "$partial_text" "$prompt_prefix" 25; then
+  tmux capture-pane -p -e -t "$pane_id" -S -120 >&2 || true
+  echo "live gemini extract_prompt_input did not match typed partial text before notify" >&2
+  exit 1
+fi
+
+# Same tmux server as setup: do not pass ATMUX_HOME=$atmux_home into `atmux
+# notify` or its subprocess will resolve a different server.sock under the
+# temp dir (pane ids are meaningless there).
+ATMUX_SOURCE_ROOT="$REPO_ROOT" ATMUX_ALLOW_OUTSIDE_TMUX=1 \
+  "$ATMUX_BIN" notify --pane "$pane_id" --xml "$notification_xml"
 
 if ! wait_for_text "$pane_id" "$notification_xml" 20; then
   tmux capture-pane -p -t "$pane_id" -S -220 >&2 || true
@@ -61,6 +133,10 @@ fi
 if ! wait_for_text "$pane_id" "$partial_text" 20; then
   tmux capture-pane -p -t "$pane_id" -S -220 >&2 || true
   echo "live gemini pane did not restore partial input" >&2
+  exit 1
+fi
+
+if ! assert_restored_line_excludes_placeholder "$pane_id" "$partial_text"; then
   exit 1
 fi
 

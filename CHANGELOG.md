@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.25.3 — ATMUX tmux env cutover
+
+- Captured tmux context as `ATMUX_TMUX` / `ATMUX_TMUX_PANE` before launching
+  adapters, while clearing raw `TMUX` / `TMUX_PANE` from adapter command
+  environments.
+- Hardened Gemini shell execution so `atmux message` and ordinary shell
+  commands no longer fail with inherited tmux `SIGHUP` behavior.
+
 ## 0.25.2 — CLI help matrix, Gemini notify, prompts, idle hardening
 
 - Hardened Gemini adapter notify input boundary handling.

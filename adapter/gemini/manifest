@@ -8,4 +8,5 @@ INTELLIGENCE_MAP=(
   "75 89 gemini-3.1-pro-preview medium"
   "90 100 gemini-3.1-pro-preview high"
 )
-INPUT_START="\\*"
+INPUT_START="[*]"
+INPUT_END="\\[(?:0;)?7m"

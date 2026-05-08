@@ -116,10 +116,25 @@ configure_shell_wrapper() {
   local wrapper_dir="$state_dir/shell-bin"
   local wrapper="$wrapper_dir/bash"
   local wrapper_log="$state_dir/shell-wrapper.log"
+  local bash_path=""
   mkdir -p "$wrapper_dir"
 
-  cat > "$wrapper" <<'SH'
-#!/bin/bash
+  if [[ -n "${BASH:-}" && -x "$BASH" && "$BASH" != "$wrapper" ]]; then
+    bash_path="$BASH"
+  else
+    while IFS= read -r candidate; do
+      [[ -n "$candidate" && -x "$candidate" && "$candidate" != "$wrapper" ]] || continue
+      bash_path="$candidate"
+      break
+    done < <(type -P -a bash 2>/dev/null || true)
+  fi
+  if [[ -z "$bash_path" ]]; then
+    echo "gemini adapter: bash command not found in PATH" >&2
+    exit 127
+  fi
+
+  printf '#!%s\n' "$bash_path" > "$wrapper"
+  cat >> "$wrapper" <<'SH'
 set -euo pipefail
 
 safe_env=()
@@ -134,7 +149,7 @@ for key in \
   HOME USER LOGNAME SHELL PATH PWD LANG LC_ALL TERM TMPDIR TEMP TMP \
   SSH_AUTH_SOCK XDG_RUNTIME_DIR \
   GEMINI_SYSTEM_MD GEMINI_CLI_SYSTEM_SETTINGS_PATH GEMINI_CLI_NO_RELAUNCH GEMINI_PTY_INFO \
-  ATMUX_GEMINI_SHELL_WRAPPER_LOG; do
+  ATMUX_GEMINI_SHELL_WRAPPER_DEBUG ATMUX_GEMINI_SHELL_WRAPPER_LOG; do
   copy_if_set "$key"
 done
 
@@ -146,7 +161,7 @@ while IFS= read -r key; do
   esac
 done < <(compgen -e | sort -u)
 
-if [[ -n "${ATMUX_GEMINI_SHELL_WRAPPER_LOG:-}" ]]; then
+if [[ "${ATMUX_GEMINI_SHELL_WRAPPER_DEBUG:-0}" == "1" && -n "${ATMUX_GEMINI_SHELL_WRAPPER_LOG:-}" ]]; then
   {
     printf 'pid=%s ppid=%s argc=%s\n' "$$" "$PPID" "$#"
     printf 'argv='
@@ -159,14 +174,17 @@ if [[ -n "${ATMUX_GEMINI_SHELL_WRAPPER_LOG:-}" ]]; then
     printf '\n'
   } >> "$ATMUX_GEMINI_SHELL_WRAPPER_LOG" 2>/dev/null || true
 fi
-
-exec env -i "${safe_env[@]}" /bin/bash "$@"
 SH
+  printf 'exec env -i "${safe_env[@]}" %q "$@"\n' "$bash_path" >> "$wrapper"
   chmod +x "$wrapper"
   export PATH="$wrapper_dir:$PATH"
   export SHELL="$wrapper"
-  : > "$wrapper_log"
-  export ATMUX_GEMINI_SHELL_WRAPPER_LOG="$wrapper_log"
+  if [[ "${ATMUX_GEMINI_SHELL_WRAPPER_DEBUG:-0}" == "1" ]]; then
+    : > "$wrapper_log"
+    export ATMUX_GEMINI_SHELL_WRAPPER_LOG="$wrapper_log"
+  else
+    unset ATMUX_GEMINI_SHELL_WRAPPER_LOG
+  fi
 }
 
 if [[ -n "${ATMUX_INTELLIGENCE:-}" && "${ATMUX_INTELLIGENCE}" =~ ^[0-9]+$ ]] \

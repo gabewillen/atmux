@@ -3,6 +3,8 @@ set -euo pipefail
 
 TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+# shellcheck source=tests/lib/isolate-tmux.sh
+source "$TESTS_DIR/lib/isolate-tmux.sh"
 
 tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/atmux-gemini-redaction.XXXXXX")"
 cleanup() { rm -rf "$tmp_dir"; }
@@ -24,18 +26,24 @@ SH
 chmod +x "$tmp_dir/bin/gemini"
 
 capture="$tmp_dir/settings-path"
+captured_tmux="$ATMUX_TMUX_SOCKET,123,0"
 env -i \
   HOME="$tmp_dir/home" \
-  PATH="$tmp_dir/bin:/usr/bin:/bin" \
+  PATH="$tmp_dir/bin:$REPO_ROOT/bin:/usr/bin:/bin" \
   ATMUX_HOME="$tmp_dir/home/.atmux" \
+  ATMUX_ALLOW_REAL_TMUX=1 \
+  ATMUX_REAL_TMUX="$ATMUX_REAL_TMUX" \
+  ATMUX_TMUX_SOCKET="$ATMUX_TMUX_SOCKET" \
   ATMUX_SOURCE_ROOT="$REPO_ROOT" \
   ATMUX_AGENT_NAME=gemini-probe \
   ATMUX_REPO=augmem \
   ATMUX_WORKTREE="$tmp_dir/work" \
-  ATMUX_TMUX=/tmp/atmux-test-tmux \
+  ATMUX_TMUX="$captured_tmux" \
   ATMUX_TMUX_PANE=%1 \
+  ATMUX_GEMINI_SHELL_WRAPPER_DEBUG=1 \
   ATMUX_CAPTURE_PATH="$capture" \
   GEMINI_SYSTEM_MD="$tmp_dir/system.md" \
+  TMUX_TMPDIR="$TMUX_TMPDIR" \
   TMUX=/tmp/atmux-test-tmux \
   TMUX_PANE=%1 \
   BASH_ENV="$tmp_dir/bash-env" \
@@ -48,7 +56,7 @@ settings_path="$(cat "$capture")"
   || { echo "fail: gemini start did not force GEMINI_CLI_NO_RELAUNCH=true" >&2; exit 1; }
 [[ "$(cat "$capture.pty-info")" == "child_process" ]] \
   || { echo "fail: gemini start did not force GEMINI_PTY_INFO=child_process" >&2; exit 1; }
-[[ "$(cat "$capture.atmux-tmux")" == "/tmp/atmux-test-tmux" ]] \
+[[ "$(cat "$capture.atmux-tmux")" == "$captured_tmux" ]] \
   || { echo "fail: gemini start did not preserve ATMUX_TMUX" >&2; exit 1; }
 [[ "$(cat "$capture.atmux-tmux-pane")" == "%1" ]] \
   || { echo "fail: gemini start did not preserve ATMUX_TMUX_PANE" >&2; exit 1; }

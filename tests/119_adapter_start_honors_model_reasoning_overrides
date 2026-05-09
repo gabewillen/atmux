@@ -151,6 +151,7 @@ assert_arg_eq "$af" --model opus claude-precedence
 
 # === codex ============================================================
 af="$(run_start codex int-only ATMUX_INTELLIGENCE=80)"
+assert_arg_eq "$af" --disable apps codex-int-only
 assert_arg_eq "$af" --model gpt-5.5 codex-int-only
 assert_arg_present "$af" 'model_reasoning_effort="high"' codex-int-only
 
@@ -158,6 +159,7 @@ af="$(run_start codex overrides \
         ATMUX_INTELLIGENCE=50 \
         ATMUX_MODEL=gpt-5.4 \
         ATMUX_REASONING_LEVEL=extra-high)"
+assert_arg_eq "$af" --disable apps codex-overrides
 assert_arg_eq "$af" --model gpt-5.4 codex-overrides
 assert_arg_present "$af" 'model_reasoning_effort="xhigh"' codex-overrides
 
@@ -165,6 +167,7 @@ assert_arg_present "$af" 'model_reasoning_effort="xhigh"' codex-overrides
 ln -sf _record "$tmp_dir/bin/codextra"
 
 af="$(run_start codextra int-only ATMUX_INTELLIGENCE=80)"
+assert_arg_eq "$af" --disable apps codextra-int-only
 assert_arg_eq "$af" --model gpt-5.5 codextra-int-only
 assert_arg_present "$af" 'model_reasoning_effort="high"' codextra-int-only
 
@@ -172,6 +175,7 @@ af="$(run_start codextra overrides \
         ATMUX_INTELLIGENCE=50 \
         ATMUX_MODEL=gpt-5.4 \
         ATMUX_REASONING_LEVEL=extra-high)"
+assert_arg_eq "$af" --disable apps codextra-overrides
 assert_arg_eq "$af" --model gpt-5.4 codextra-overrides
 assert_arg_present "$af" 'model_reasoning_effort="xhigh"' codextra-overrides
 

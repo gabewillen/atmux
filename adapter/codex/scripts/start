@@ -102,7 +102,7 @@ if ! arg_present --model "${args[@]-}"; then
   args=(--model "$CODEX_MODEL" "${args[@]-}")
 fi
 
-exec "$binary" --dangerously-bypass-approvals-and-sandbox --search \
+exec "$binary" --dangerously-bypass-approvals-and-sandbox --disable apps --search \
   -c "model_reasoning_effort=\"$(codex_reasoning_config_value "$CODEX_REASONING_LEVEL")\"" \
   -c "projects.\"${codex_trust_pwd}\".trust_level=\"trusted\"" \
   "${args[@]-}"

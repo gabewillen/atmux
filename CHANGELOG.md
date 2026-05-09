@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.26.0 — Codextra adapter
+
+- Added the `codextra` adapter as a Codex-compatible adapter with codextra
+  defaults, model selection, status parsing, and prompt preparation coverage.
+
 ## 0.25.3 — ATMUX tmux env cutover
 
 - Captured tmux context as `ATMUX_TMUX` / `ATMUX_TMUX_PANE` before launching

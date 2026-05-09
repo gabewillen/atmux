@@ -3,6 +3,7 @@ set -euo pipefail
 
 roles_dir="${ATMUX_HOME:-$HOME/.atmux}/roles"
 adapter_name="${ATMUX_CODEX_ADAPTER_NAME:-codex}"
+status_title="${ATMUX_CODEX_STATUS_TITLE:-OpenAI Codex}"
 MODEL=''
 REASONING_LEVEL=''
 
@@ -68,7 +69,7 @@ capture_status_snapshot() {
   tmux send-keys -t "$target" ENTER
 
   if [[ -x "$atmux_bin" ]]; then
-    "$atmux_bin" pane watch "$target" --scope pane --text "OpenAI Codex" --timeout 6 --interval 0.2 --lines 400 >/dev/null 2>&1 || true
+    "$atmux_bin" pane watch "$target" --scope pane --text "$status_title" --timeout 6 --interval 0.2 --lines 400 >/dev/null 2>&1 || true
   else
     sleep 0.8
   fi
@@ -78,9 +79,9 @@ capture_status_snapshot() {
 
 extract_latest_status_block() {
   local snapshot="$1"
-  printf '%s\n' "$snapshot" | awk '
+  printf '%s\n' "$snapshot" | awk -v title="$status_title" '
     { lines[NR]=$0 }
-    /OpenAI Codex/ { start=NR }
+    index($0, title) || (title != "OpenAI Codex" && index($0, "OpenAI Codex")) { start=NR }
     END {
       if (!start) exit
       from=start-3
@@ -90,6 +91,15 @@ extract_latest_status_block() {
       for (i=from; i<=to; i++) print lines[i]
     }
   '
+}
+
+status_block_has_title() {
+  local status_block="$1"
+  if printf '%s\n' "$status_block" | grep -Fq "$status_title"; then
+    return 0
+  fi
+  [[ "$status_title" == "OpenAI Codex" ]] && return 1
+  printf '%s\n' "$status_block" | grep -Fq "OpenAI Codex"
 }
 
 extract_percent_left() {
@@ -136,7 +146,7 @@ infer_state() {
     return
   fi
 
-  if printf '%s\n' "$status_block" | grep -Fq "OpenAI Codex" && printf '%s\n' "$status_block" | grep -Fq "Model:"; then
+  if status_block_has_title "$status_block" && printf '%s\n' "$status_block" | grep -Fq "Model:"; then
     five_left="$(extract_percent_left "$status_block" "5h limit:" || true)"
     weekly_left="$(extract_percent_left "$status_block" "Weekly limit:" || true)"
     credits="$(printf '%s\n' "$status_block" | sed -nE 's/.*Credits:[[:space:]]*([0-9]+).*/\1/p' | tail -n 1)"

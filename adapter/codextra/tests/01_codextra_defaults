@@ -53,4 +53,49 @@ fi
   exit 1
 }
 
+fake_bin="$tmp_home/bin"
+mkdir -p "$fake_bin"
+cat > "$fake_bin/tmux" <<'SH'
+#!/usr/bin/env bash
+case "${1:-}" in
+  capture-pane)
+    cat <<'SNAPSHOT'
+Codextra
+Model: gpt-5.5 (reasoning high)
+5h limit: 99% left
+Weekly limit: 99% left
+Credits: 12
+SNAPSHOT
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+SH
+chmod +x "$fake_bin/tmux"
+
+status_out="$(
+  PATH="$fake_bin:/usr/bin:/bin" \
+  ATMUX_HOME="$tmp_home" \
+  ATMUX_STATUS_PASSIVE=1 \
+  ATMUX_TARGET_PANE="%codextra-test" \
+  "$ADAPTER_DIR/scripts/status"
+)"
+printf '%s\n' "$status_out" | grep -F 'adapter="codextra"' >/dev/null || {
+  echo "expected codextra status adapter name, got $status_out" >&2
+  exit 1
+}
+printf '%s\n' "$status_out" | grep -F 'state="idle"' >/dev/null || {
+  echo "expected codextra-branded status block to infer idle, got $status_out" >&2
+  exit 1
+}
+printf '%s\n' "$status_out" | grep -F 'model="gpt-5.5"' >/dev/null || {
+  echo "expected codextra-branded status block to parse model, got $status_out" >&2
+  exit 1
+}
+printf '%s\n' "$status_out" | grep -F 'reasoning_level="high"' >/dev/null || {
+  echo "expected codextra-branded status block to parse reasoning, got $status_out" >&2
+  exit 1
+}
+
 echo "ok: codextra adapter defaults to gpt-5.5 and manifest is well-formed"

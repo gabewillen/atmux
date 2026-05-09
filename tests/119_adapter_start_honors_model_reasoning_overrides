@@ -151,6 +151,7 @@ assert_arg_eq "$af" --model opus claude-precedence
 
 # === codex ============================================================
 af="$(run_start codex int-only ATMUX_INTELLIGENCE=80)"
+assert_arg_eq "$af" --disable apps codex-int-only
 assert_arg_eq "$af" --model gpt-5.5 codex-int-only
 assert_arg_present "$af" 'model_reasoning_effort="high"' codex-int-only
 
@@ -158,8 +159,25 @@ af="$(run_start codex overrides \
         ATMUX_INTELLIGENCE=50 \
         ATMUX_MODEL=gpt-5.4 \
         ATMUX_REASONING_LEVEL=extra-high)"
+assert_arg_eq "$af" --disable apps codex-overrides
 assert_arg_eq "$af" --model gpt-5.4 codex-overrides
 assert_arg_present "$af" 'model_reasoning_effort="xhigh"' codex-overrides
+
+# === codextra =========================================================
+ln -sf _record "$tmp_dir/bin/codextra"
+
+af="$(run_start codextra int-only ATMUX_INTELLIGENCE=80)"
+assert_arg_eq "$af" --disable apps codextra-int-only
+assert_arg_eq "$af" --model gpt-5.5 codextra-int-only
+assert_arg_present "$af" 'model_reasoning_effort="high"' codextra-int-only
+
+af="$(run_start codextra overrides \
+        ATMUX_INTELLIGENCE=50 \
+        ATMUX_MODEL=gpt-5.4 \
+        ATMUX_REASONING_LEVEL=extra-high)"
+assert_arg_eq "$af" --disable apps codextra-overrides
+assert_arg_eq "$af" --model gpt-5.4 codextra-overrides
+assert_arg_present "$af" 'model_reasoning_effort="xhigh"' codextra-overrides
 
 # === cursor-agent =====================================================
 af="$(run_start cursor-agent int-only ATMUX_INTELLIGENCE=80)"
@@ -211,4 +229,4 @@ af="$(run_start opencode cli-perms ATMUX_INTELLIGENCE=50 -- --dangerously-skip-p
 n_perms="$(grep -c -Fx -- '--dangerously-skip-permissions' "$af" || true)"
 [[ "$n_perms" -eq 1 ]] || { echo "fail: opencode must not duplicate --dangerously-skip-permissions (got $n_perms)" >&2; exit 1; }
 
-echo "ok: gemini/claude-code/codex/cursor-agent/opencode start scripts honor ATMUX_MODEL/ATMUX_REASONING_LEVEL overrides"
+echo "ok: gemini/claude-code/codex/codextra/cursor-agent/opencode start scripts honor ATMUX_MODEL/ATMUX_REASONING_LEVEL overrides"

@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+script_name="${1:-}"
+[[ -n "$script_name" ]] || { echo "usage: _codex-wrapper <script> [args...]" >&2; exit 2; }
+shift
+
+scripts_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+codex_script="$(cd -- "$scripts_dir/../../codex/scripts" && pwd)/$script_name"
+manifest_path="$(cd -- "$scripts_dir/.." && pwd)/manifest"
+
+export ATMUX_CODEX_ADAPTER_NAME="${ATMUX_CODEX_ADAPTER_NAME:-codextra}"
+export ATMUX_CODEX_BINARY="${ATMUX_CODEX_BINARY:-codextra}"
+export ATMUX_CODEX_STATE_NAME="${ATMUX_CODEX_STATE_NAME:-codextra}"
+export ATMUX_CODEX_MANIFEST="${ATMUX_CODEX_MANIFEST:-$manifest_path}"
+export ATMUX_CODEX_STATUS_TITLE="${ATMUX_CODEX_STATUS_TITLE:-Codextra}"
+exec "$codex_script" "$@"

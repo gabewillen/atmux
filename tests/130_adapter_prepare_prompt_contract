@@ -93,6 +93,34 @@ while IFS= read -r -d '' a; do cx_args+=("$a"); done < "$args"
   || { echo "fail: codex should not emit env directives, got: $(cat "$envf")" >&2; exit 1; }
 assert_no_pollution "$worktree"
 
+# === codextra ===============================================================
+worktree="$tmp_root/cxtra-wt"
+mkdir -p "$worktree"
+args="$tmp_root/cxtra.args"; envf="$tmp_root/cxtra.env"
+: > "$args"; : > "$envf"
+printf '%s' "$SAMPLE" \
+  | ATMUX_WORKTREE="$worktree" \
+    ATMUX_PREP_ARGS_FILE="$args" ATMUX_PREP_ENV_FILE="$envf" \
+    "$REPO_ROOT/adapter/codextra/scripts/prepare-prompt"
+
+cxtra_args=()
+while IFS= read -r -d '' a; do cxtra_args+=("$a"); done < "$args"
+[[ "${#cxtra_args[@]}" -eq 2 ]] \
+  || { echo "fail: codextra args count=${#cxtra_args[@]} (want 2)" >&2; exit 1; }
+[[ "${cxtra_args[0]}" == "--config" ]] \
+  || { echo "fail: codextra arg[0]='${cxtra_args[0]}' (want --config)" >&2; exit 1; }
+[[ "${cxtra_args[1]}" == 'developer_instructions="'*'"' ]] \
+  || { echo "fail: codextra arg[1] not TOML-quoted developer_instructions=...; got: ${cxtra_args[1]}" >&2; exit 1; }
+[[ "${cxtra_args[1]}" == *'\\here'* ]] \
+  || { echo "fail: codextra arg[1] missing escaped backslash; got: ${cxtra_args[1]}" >&2; exit 1; }
+[[ "${cxtra_args[1]}" == *'\"quoted\"'* ]] \
+  || { echo "fail: codextra arg[1] missing escaped double-quote; got: ${cxtra_args[1]}" >&2; exit 1; }
+[[ "${cxtra_args[1]}" == *'\n'* ]] \
+  || { echo "fail: codextra arg[1] missing escaped newline; got: ${cxtra_args[1]}" >&2; exit 1; }
+[[ ! -s "$envf" ]] \
+  || { echo "fail: codextra should not emit env directives, got: $(cat "$envf")" >&2; exit 1; }
+assert_no_pollution "$worktree"
+
 # === gemini =================================================================
 worktree="$tmp_root/gm-wt"
 mkdir -p "$worktree"
@@ -201,7 +229,7 @@ grep -Fq 'ROLE: tester' "$expected_md" \
 assert_no_pollution "$worktree"
 
 # === empty stdin: no-op for every adapter ===================================
-for adapter in claude-code codex gemini cursor-agent opencode; do
+for adapter in claude-code codex codextra gemini cursor-agent opencode; do
   noop_args="$tmp_root/${adapter}.noop.args"
   noop_env="$tmp_root/${adapter}.noop.env"
   : > "$noop_args"; : > "$noop_env"
@@ -257,4 +285,4 @@ printf '%s' "$SAMPLE" \
 [[ ! -s "$no_sel_args" && ! -s "$no_sel_env" ]] \
   || { echo "fail: auto with no resolvable adapter should produce no prep output" >&2; exit 1; }
 
-echo "ok: prepare-prompt contract holds for all five first-party adapters (and auto delegates correctly) and never touches AGENTS.md/CLAUDE.md/GEMINI.md"
+echo "ok: prepare-prompt contract holds for all six first-party adapters (and auto delegates correctly) and never touches AGENTS.md/CLAUDE.md/GEMINI.md"

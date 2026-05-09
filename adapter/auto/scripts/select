@@ -101,6 +101,9 @@ adapter_available() {
     codex)
       command -v codex >/dev/null 2>&1
       ;;
+    codextra)
+      command -v codextra >/dev/null 2>&1
+      ;;
     claude-code)
       command -v claude >/dev/null 2>&1
       ;;

@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
-state_dir="${ATMUX_HOME:-$HOME/.atmux}/adapters/codex"
+
+scripts_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=adapter/codex/scripts/_state-name
+source "$scripts_dir/_state-name"
+
+state_name="$(codex_resolve_state_name codex)"
+state_dir="${ATMUX_HOME:-$HOME/.atmux}/adapters/$state_name"
 state_file="$state_dir/state.env"
 mkdir -p "$state_dir"
 [[ -f "$state_file" ]] || printf 'MODEL=%s\nREASONING_LEVEL=%s\n' 'gpt-5.5' 'medium' > "$state_file"

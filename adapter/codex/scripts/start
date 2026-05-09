@@ -6,6 +6,16 @@ binary="${ATMUX_CODEX_BINARY:-codex}"
 state_name="${ATMUX_CODEX_STATE_NAME:-$adapter_name}"
 manifest_path="${ATMUX_CODEX_MANIFEST:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)/manifest}"
 
+validate_state_name() {
+  local name="$1"
+  if [[ ! "$name" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ || "$name" == *..* ]]; then
+    echo "invalid codex adapter state name: $name" >&2
+    exit 2
+  fi
+}
+
+validate_state_name "$state_name"
+
 if ! command -v "$binary" >/dev/null 2>&1; then
   echo "$binary command not found in PATH" >&2
   exit 127
@@ -16,7 +26,7 @@ manifest_lib="${ATMUX_SOURCE_ROOT:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/..
 source "$manifest_lib"
 
 current_session_name() {
-  if [[ -n "${TMUX:-}" ]]; then
+  if [[ -n "${ATMUX_TMUX:-}${TMUX:-}" ]]; then
     tmux display-message -p '#S' 2>/dev/null || true
   fi
 }

@@ -31,7 +31,7 @@ esac
 SH
 chmod +x "$tmp_dir/bin/tmux"
 
-for adapter in claude-code codex cursor-agent gemini opencode; do
+for adapter in claude-code codex codextra cursor-agent gemini opencode; do
   log="$tmp_dir/$adapter.tmux.log"
   env -i \
     HOME="$tmp_dir/home" \

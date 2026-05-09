@@ -44,4 +44,13 @@ adapter_name="$(grep -E '^NAME=' "$MANIFEST" | sed 's/^NAME=//')"
   exit 1
 }
 
+if ATMUX_HOME="$tmp_home" ATMUX_CODEX_STATE_NAME="../escape" "$MODEL_SCRIPT" get >/dev/null 2>&1; then
+  echo "expected codextra model wrapper to reject path-traversing state name" >&2
+  exit 1
+fi
+[[ ! -e "$tmp_home/escape/state.env" ]] || {
+  echo "codextra model wrapper wrote state outside adapters dir" >&2
+  exit 1
+}
+
 echo "ok: codextra adapter defaults to gpt-5.5 and manifest is well-formed"

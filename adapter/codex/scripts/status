@@ -2,6 +2,7 @@
 set -euo pipefail
 
 roles_dir="${ATMUX_HOME:-$HOME/.atmux}/roles"
+adapter_name="${ATMUX_CODEX_ADAPTER_NAME:-codex}"
 MODEL=''
 REASONING_LEVEL=''
 
@@ -26,16 +27,9 @@ xml_escape() {
 }
 
 resolve_target() {
+  local panes sess
   if [[ -n "${ATMUX_TARGET_PANE:-}" ]]; then
     printf '%s\n' "$ATMUX_TARGET_PANE"
-    return
-  fi
-  if [[ -n "${ATMUX_TMUX_PANE:-}" ]]; then
-    printf '%s\n' "$ATMUX_TMUX_PANE"
-    return
-  fi
-  if [[ -n "${TMUX_PANE:-}" ]]; then
-    printf '%s\n' "$TMUX_PANE"
     return
   fi
   if [[ -n "${TMUX:-}" ]]; then
@@ -43,12 +37,14 @@ resolve_target() {
     return
   fi
   if [[ -n "${ATMUX_SESSION_NAME:-}" ]]; then
-    tmux list-panes -t "$ATMUX_SESSION_NAME" -F '#{pane_id}' 2>/dev/null | head -n 1
+    panes="$(tmux list-panes -t "$ATMUX_SESSION_NAME" -F '#{pane_id}' 2>/dev/null || true)"
+    printf '%s\n' "$panes" | sed -n '1p'
     return
   fi
   if [[ -n "${ATMUX_REPO:-}" && -n "${ATMUX_AGENT_NAME:-}" ]]; then
     sess="atmux-${ATMUX_REPO}-${ATMUX_AGENT_NAME}"
-    tmux list-panes -t "$sess" -F '#{pane_id}' 2>/dev/null | head -n 1
+    panes="$(tmux list-panes -t "$sess" -F '#{pane_id}' 2>/dev/null || true)"
+    printf '%s\n' "$panes" | sed -n '1p'
     return
   fi
 }
@@ -188,4 +184,4 @@ fi
 
 state="$(infer_state "$snapshot" "$status_block")"
 printf '<status adapter="%s" owner="%s" state="%s" model="%s" reasoning_level="%s" control_file="AGENTS.md" />\n' \
-  "codex" "$(xml_escape "$owner")" "$(xml_escape "$state")" "$(xml_escape "$output_model")" "$(xml_escape "$output_reasoning")"
+  "$(xml_escape "$adapter_name")" "$(xml_escape "$owner")" "$(xml_escape "$state")" "$(xml_escape "$output_model")" "$(xml_escape "$output_reasoning")"

@@ -3,6 +3,7 @@ set -euo pipefail
 
 root_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 scripts_dir="$root_dir/scripts"
+adapter_name="${ATMUX_CODEX_ADAPTER_NAME:-codex}"
 
 sub="${1:-}"
 shift || true
@@ -12,7 +13,7 @@ case "$sub" in
     exec "$scripts_dir/$sub" "$@"
     ;;
   *)
-    echo "usage: codex/cmd status|model|reasoning-level|control-file|prepare-prompt|start" >&2
+    echo "usage: $adapter_name/cmd status|model|reasoning-level|control-file|prepare-prompt|start" >&2
     exit 2
     ;;
 esac

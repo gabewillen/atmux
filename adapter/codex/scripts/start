@@ -1,8 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if ! command -v codex >/dev/null 2>&1; then
-  echo "codex command not found in PATH" >&2
+adapter_name="${ATMUX_CODEX_ADAPTER_NAME:-codex}"
+binary="${ATMUX_CODEX_BINARY:-codex}"
+state_name="${ATMUX_CODEX_STATE_NAME:-$adapter_name}"
+manifest_path="${ATMUX_CODEX_MANIFEST:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)/manifest}"
+
+if ! command -v "$binary" >/dev/null 2>&1; then
+  echo "$binary command not found in PATH" >&2
   exit 127
 fi
 
@@ -11,7 +16,7 @@ manifest_lib="${ATMUX_SOURCE_ROOT:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/..
 source "$manifest_lib"
 
 current_session_name() {
-  if [[ -n "${ATMUX_TMUX:-}${TMUX:-}" ]]; then
+  if [[ -n "${TMUX:-}" ]]; then
     tmux display-message -p '#S' 2>/dev/null || true
   fi
 }
@@ -36,8 +41,7 @@ arg_present() {
 
 resolve_intelligence_profile() {
   local intelligence="${ATMUX_INTELLIGENCE:-}"
-  local manifest_path profile model="" reasoning=""
-  manifest_path="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)/manifest"
+  local profile model="" reasoning=""
 
   if [[ -n "$intelligence" && "$intelligence" =~ ^[0-9]+$ ]] \
      && (( intelligence >= 0 && intelligence <= 100 )); then
@@ -65,7 +69,7 @@ codex_reasoning_config_value() {
 }
 
 write_state() {
-  local state_dir="${ATMUX_HOME:-$HOME/.atmux}/adapters/codex"
+  local state_dir="${ATMUX_HOME:-$HOME/.atmux}/adapters/$state_name"
   mkdir -p "$state_dir"
   printf 'MODEL=%s\nREASONING_LEVEL=%s\n' "$CODEX_MODEL" "$CODEX_REASONING_LEVEL" > "$state_dir/state.env"
 }
@@ -76,7 +80,7 @@ resolve_intelligence_profile
 write_state
 set_bootstrap_state ready
 
-echo "starting codex in $(pwd)"
+echo "starting $adapter_name in $(pwd)"
 # Pre-trust the worktree so codex doesn't stop at its first-time
 # "Do you trust this directory?" prompt — that prompt requires keyboard
 # input and would otherwise hang any non-interactive boot (scripted
@@ -88,7 +92,7 @@ if ! arg_present --model "${args[@]-}"; then
   args=(--model "$CODEX_MODEL" "${args[@]-}")
 fi
 
-exec codex --dangerously-bypass-approvals-and-sandbox --search \
+exec "$binary" --dangerously-bypass-approvals-and-sandbox --search \
   -c "model_reasoning_effort=\"$(codex_reasoning_config_value "$CODEX_REASONING_LEVEL")\"" \
   -c "projects.\"${codex_trust_pwd}\".trust_level=\"trusted\"" \
   "${args[@]-}"

@@ -105,6 +105,10 @@ The `--intelligence 0–100` flag selects a model and reasoning level via the ad
 | `codex` | 30–59 | `gpt-5.5` | `medium` |
 | `codex` | 60–84 | `gpt-5.5` | `high` |
 | `codex` | 85–100 | `gpt-5.5` | `extra-high` |
+| `codextra` | 0–29 | `gpt-5.5` | `low` |
+| `codextra` | 30–59 | `gpt-5.5` | `medium` |
+| `codextra` | 60–84 | `gpt-5.5` | `high` |
+| `codextra` | 85–100 | `gpt-5.5` | `extra-high` |
 | `cursor-agent` | 0–39 | `composer-2-fast` | `low` |
 | `cursor-agent` | 40–74 | `composer-2` | `medium` |
 | `cursor-agent` | 75–89 | `gpt-5.3-codex-high` | `high` |
@@ -126,6 +130,7 @@ Adapters translate `atmux` commands to a specific AI CLI. The default adapter is
 |---------|-----|
 | `claude-code` | Claude Code |
 | `codex` | OpenAI Codex |
+| `codextra` | Codextra |
 | `cursor-agent` | Cursor AI |
 | `gemini` | Gemini CLI |
 | `opencode` | OpenCode |

@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../.." && pwd)"
+source "$REPO_ROOT/tests/lib/isolate-tmux.sh"
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+ADAPTER_DIR="$(cd -- "$TESTS_DIR/.." && pwd)"
+MODEL_SCRIPT="$ADAPTER_DIR/scripts/model"
+REASONING_SCRIPT="$ADAPTER_DIR/scripts/reasoning-level"
+MANIFEST="$ADAPTER_DIR/manifest"
+
+tmp_home="$(mktemp -d "${TMPDIR:-/tmp}/atmux-codextra-default.XXXXXX")"
+trap 'rm -rf "$tmp_home"' EXIT
+
+model="$(ATMUX_HOME="$tmp_home" "$MODEL_SCRIPT" get)"
+[[ "$model" == "gpt-5.5" ]] || {
+  echo "expected default codextra model gpt-5.5, got $model" >&2
+  exit 1
+}
+
+first_listed_model="$(ATMUX_HOME="$tmp_home" "$MODEL_SCRIPT" list | head -n1)"
+[[ "$first_listed_model" == "gpt-5.5" ]] || {
+  echo "expected first listed codextra model gpt-5.5, got $first_listed_model" >&2
+  exit 1
+}
+
+ATMUX_HOME="$tmp_home" "$REASONING_SCRIPT" set high >/dev/null
+reasoning_model="$(ATMUX_HOME="$tmp_home" "$MODEL_SCRIPT" get)"
+[[ "$reasoning_model" == "gpt-5.5" ]] || {
+  echo "expected reasoning-level default model gpt-5.5, got $reasoning_model" >&2
+  exit 1
+}
+
+model_count="$(grep -Ec '"[0-9]+ [0-9]+ gpt-5\.5 ' "$MANIFEST")"
+[[ "$model_count" -eq 4 ]] || {
+  echo "expected 4 codextra intelligence entries for gpt-5.5, got $model_count" >&2
+  exit 1
+}
+
+adapter_name="$(grep -E '^NAME=' "$MANIFEST" | sed 's/^NAME=//')"
+[[ "$adapter_name" == "codextra" ]] || {
+  echo "expected NAME=codextra in manifest, got $adapter_name" >&2
+  exit 1
+}
+
+echo "ok: codextra adapter defaults to gpt-5.5 and manifest is well-formed"

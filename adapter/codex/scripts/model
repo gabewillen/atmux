@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
-state_dir="${ATMUX_HOME:-$HOME/.atmux}/adapters/codex"
+state_name="${ATMUX_CODEX_STATE_NAME:-${ATMUX_CODEX_ADAPTER_NAME:-codex}}"
+state_dir="${ATMUX_HOME:-$HOME/.atmux}/adapters/$state_name"
 state_file="$state_dir/state.env"
 mkdir -p "$state_dir"
 [[ -f "$state_file" ]] || printf 'MODEL=%s\nREASONING_LEVEL=%s\n' 'gpt-5.5' 'medium' > "$state_file"

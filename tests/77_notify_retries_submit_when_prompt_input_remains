@@ -13,6 +13,8 @@ ATMUX_HOME="${TMPDIR:-/tmp}/atmux-notify-submit-${RANDOM}"
 ATMUX_SOURCE_ROOT="$REPO_ROOT"
 ATMUX_SEND_SUBMIT_RETRY_ATTEMPTS=2
 ATMUX_SEND_SUBMIT_VERIFY_SECONDS=1
+export ATMUX_HOME ATMUX_SOURCE_ROOT ATMUX_SEND_SUBMIT_RETRY_ATTEMPTS ATMUX_SEND_SUBMIT_VERIFY_SECONDS
+# shellcheck disable=SC1090
 source "$NOTIFY_SCRIPT"
 
 prompt_prefix="›"
@@ -38,8 +40,9 @@ tmux() {
   fi
 
   if [[ "$1" == "display-message" ]]; then
-    local fmt="${@: -1}"
+    local fmt="${*: -1}"
     case "$fmt" in
+      "#{pane_id}") printf '%s\n' "%mock" ;;
       "#{cursor_x}") cursor_x_for_input ;;
       "#{cursor_y}") printf '%s\n' "$cursor_y" ;;
       *) return 1 ;;
@@ -48,7 +51,7 @@ tmux() {
   fi
 
   if [[ "$1" == "send-keys" ]]; then
-    local key="${@: -1}"
+    local key="${*: -1}"
     if [[ "$key" == "Enter" ]]; then
       enter_count=$((enter_count + 1))
       if (( enter_count >= 2 )); then

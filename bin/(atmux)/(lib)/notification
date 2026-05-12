@@ -53,6 +53,11 @@ wait_for_pane_ready() {
   fi
 
   while true; do
+    if ! pane_exists "$pane"; then
+      debug_notify "ready:pane_gone pane=$(printf '%q' "$pane")"
+      return 1
+    fi
+
     if [[ -n "$prompt_prefix" ]] && ! pane_has_prompt_line "$pane" "$prompt_prefix"; then
       :
     else
@@ -90,6 +95,11 @@ wait_for_prompt_input_settled() {
     return 0
   fi
 
+  if ! pane_exists "$pane"; then
+    debug_notify "deliver:paste_ready_pane_gone pane=$(printf '%q' "$pane")"
+    return 1
+  fi
+
   if ! pane_has_prompt_line "$pane" "$prompt_prefix"; then
     debug_notify "deliver:paste_ready_no_prompt pane=$(printf '%q' "$pane")"
     sleep "$fallback_wait"
@@ -98,6 +108,11 @@ wait_for_prompt_input_settled() {
 
   deadline=$(( $(date +%s) + timeout ))
   while true; do
+    if ! pane_exists "$pane"; then
+      debug_notify "deliver:paste_ready_pane_gone pane=$(printf '%q' "$pane")"
+      return 1
+    fi
+
     input="$(extract_prompt_input "$pane" "$prompt_prefix" 2>/dev/null || true)"
     cursor_info="$(pane_cursor_position "$pane" 2>/dev/null || true)"
 
@@ -139,6 +154,11 @@ submit_notification_input() {
   [[ "$submit_verify_timeout" =~ ^[0-9]+$ ]] || submit_verify_timeout=2
 
   for (( attempt=1; attempt<=attempts; attempt++ )); do
+    if ! pane_exists "$pane"; then
+      debug_notify "deliver:submit_pane_gone pane=$(printf '%q' "$pane")"
+      return 1
+    fi
+
     before_input=""
     before_cursor=""
     before_y=""
@@ -173,6 +193,11 @@ submit_notification_input() {
 
     deadline=$(( $(date +%s) + submit_verify_timeout ))
     while true; do
+      if ! pane_exists "$pane"; then
+        debug_notify "deliver:submit_pane_gone pane=$(printf '%q' "$pane")"
+        return 1
+      fi
+
       after_input="$(extract_prompt_input "$pane" "$prompt_prefix" 2>/dev/null || true)"
       after_cursor="$(pane_cursor_position "$pane" 2>/dev/null || true)"
       after_y="${after_cursor##* }"
@@ -202,7 +227,7 @@ submit_notification_input() {
 
     if (( attempt < attempts )); then
       debug_notify "deliver:submit_retry pane=$(printf '%q' "$pane") attempt=$attempt before_len=${#before_input} after_len=${#after_input} before_cursor=$(printf '%q' "$before_cursor") after_cursor=$(printf '%q' "$after_cursor")"
-      wait_for_prompt_input_settled "$pane" "$prompt_prefix" "$submit_wait"
+      wait_for_prompt_input_settled "$pane" "$prompt_prefix" "$submit_wait" || return 1
     fi
   done
 
@@ -251,7 +276,7 @@ deliver_notification_to_pane() {
     debug_notify "deliver:payload_failed pane=$(printf '%q' "$pane")"
     return 1
   }
-  wait_for_prompt_input_settled "$pane" "$prompt_prefix" "$paste_submit_wait"
+  wait_for_prompt_input_settled "$pane" "$prompt_prefix" "$paste_submit_wait" || return 1
 
   # Large payloads can fool wait_for_prompt_input_settled: tmux flushes the
   # paste in chunks, so the captured input briefly looks stable while more

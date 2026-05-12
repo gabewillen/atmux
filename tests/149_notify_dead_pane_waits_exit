@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Isolate the tmux socket so this test can never touch the developer's
+# default tmux server. Idempotent if the runner already isolated.
+# shellcheck disable=SC1091
+source "$(dirname "${BASH_SOURCE[0]}")/lib/isolate-tmux.sh"
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+NOTIFY_SCRIPT="$REPO_ROOT/bin/(atmux)/notify"
+
+ATMUX_HOME="$(mktemp -d "${TMPDIR:-/tmp}/atmux-dead-pane-waits.XXXXXX")"
+ATMUX_SOURCE_ROOT="$REPO_ROOT"
+export ATMUX_HOME ATMUX_SOURCE_ROOT
+
+cleanup() {
+  rm -rf "$ATMUX_HOME"
+}
+trap cleanup EXIT
+
+# shellcheck disable=SC1090
+source "$NOTIFY_SCRIPT"
+
+pane_exists() {
+  return 1
+}
+
+SECONDS=0
+if wait_for_pane_ready "%dead" "$ATMUX_SOURCE_ROOT" ">" 5; then
+  echo "wait_for_pane_ready returned success for a dead pane" >&2
+  exit 1
+fi
+if (( SECONDS >= 2 )); then
+  echo "wait_for_pane_ready burned its timeout after pane disappeared" >&2
+  exit 1
+fi
+
+SECONDS=0
+if wait_for_prompt_input_settled "%dead" ">" 5; then
+  echo "wait_for_prompt_input_settled returned success for a dead pane" >&2
+  exit 1
+fi
+if (( SECONDS >= 2 )); then
+  echo "wait_for_prompt_input_settled burned its timeout after pane disappeared" >&2
+  exit 1
+fi
+
+echo "ok: notify waits exit promptly for dead panes"

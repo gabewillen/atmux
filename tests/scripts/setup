@@ -29,7 +29,20 @@ main() {
 
   local repo_name team_name agent1 agent2 team_session pane1 pane2
   repo_name="$(atmux_resolve_normalized_name "$(basename "$REPO_ROOT")")"
-  team_name="${ATMUX_TEST_TEAM_NAME:-teamtest-$RANDOM}"
+  if [[ -n "${ATMUX_TEST_TEAM_NAME:-}" ]]; then
+    team_name="$ATMUX_TEST_TEAM_NAME"
+  else
+    local team_root="${ATMUX_HOME:-$HOME/.atmux}/teams/$repo_name"
+    local attempt
+    for attempt in $(seq 1 20); do
+      team_name="teamtest-$RANDOM"
+      [[ ! -e "$team_root/$team_name" ]] && break
+    done
+    if [[ -e "$team_root/$team_name" ]]; then
+      echo "could not choose an unused test team name under $team_root" >&2
+      exit 1
+    fi
+  fi
   agent1="atmux-${repo_name}-sender"
   agent2="atmux-${repo_name}-receiver"
   team_session="atmux-${repo_name}-team-${team_name}"

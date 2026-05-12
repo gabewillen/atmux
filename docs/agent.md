@@ -11,6 +11,15 @@ lifecycle:
   tmux.
 - `agent list|kill|capture|watch|resolve` — manage running agents.
 
+## Kill Semantics
+- `agent kill <name|pattern>` is lifecycle-only: it stops the tmux session,
+  removes agent idle watchers, and runs the role stop hook while preserving the
+  agent's worktree and branch.
+- Pass `--cleanup` to remove the agent-owned worktree and branch:
+  `agent kill --cleanup <name|pattern>`.
+- `agent kill --all --yes` follows the same rule; add `--cleanup` only when
+  deleting all matching worktrees and branches is intended.
+
 ## Worktree Convention
 - When an agent starts in a repo, it uses a git worktree at:
   `<ATMUX_HOME>/agents/{{repo}}-{{name}}`

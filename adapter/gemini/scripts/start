@@ -140,7 +140,7 @@ set -euo pipefail
 safe_env=()
 copy_if_set() {
   local key="$1"
-  if [[ -v "$key" ]]; then
+  if [[ "${!key+x}" == x ]]; then
     safe_env+=("$key=${!key}")
   fi
 }

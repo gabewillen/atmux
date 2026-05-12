@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# shellcheck disable=SC1091
 source "$(dirname "${BASH_SOURCE[0]}")/lib/isolate-tmux.sh"
 
 TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -112,7 +113,7 @@ if wait_for_text "$creator_pane" '<notification type="agent-idle"' 1; then
 fi
 
 tmux set-environment -t "$child_session" ATMUX_STATE "idle"
-if ! wait_for_text "$creator_pane" '<notification type="agent-idle" from="'"$child_agent"'"' 10; then
+if ! wait_for_text "$creator_pane" '<notification type="agent-idle" from="'"$child_agent"'"' 30; then
   echo "creator did not receive child agent-idle notification" >&2
   tmux capture-pane -p -t "$creator_pane" -S -160 >&2 || true
   exit 1

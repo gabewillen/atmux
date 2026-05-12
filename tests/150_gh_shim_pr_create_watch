@@ -98,19 +98,25 @@ watchers_dir="$atmux_home/watch-pr/gabewillen_atmux_pr_24/watchers"
   exit 1
 }
 
-watcher_list="$tmp/watchers.list"
-find "$watchers_dir" -mindepth 1 -maxdepth 1 -type f ! -name '*.exec' | sort > "$watcher_list"
-watcher_count="$(wc -l < "$watcher_list" | tr -d ' ')"
+watcher_records="$tmp/watchers.records"
+find "$watchers_dir" -mindepth 1 -maxdepth 1 -type f ! -name '*.exec' -exec sh -c '
+  for watcher_file do
+    [ -f "$watcher_file" ] || continue
+    printf "%s\t" "$watcher_file"
+    tr -d "\r\n" < "$watcher_file" 2>/dev/null || true
+    printf "\n"
+  done
+' sh {} + | sort > "$watcher_records"
+watcher_count="$(wc -l < "$watcher_records" | tr -d ' ')"
 [[ "$watcher_count" == "1" ]] || {
   echo "expected one watcher registration, got $watcher_count" >&2
   find "$watchers_dir" -maxdepth 1 -type f -print -exec cat {} \; >&2
   exit 1
 }
 
-watcher_file="$(sed -n '1p' "$watcher_list")"
-grep -Fq '%7|0' "$watcher_file" || {
+grep -Fq $'\t%7|0' "$watcher_records" || {
   echo "watcher registration does not target creating pane" >&2
-  cat "$watcher_file" >&2
+  cat "$watcher_records" >&2
   exit 1
 }
 

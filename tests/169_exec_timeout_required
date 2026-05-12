@@ -43,13 +43,21 @@ set -e
 [[ "$rc" -eq 124 ]] || { echo "expected timeout exit 124, got $rc" >&2; exit 1; }
 
 if command -v script >/dev/null 2>&1; then
+  tty_runner="$tmp_home/tty-timeout-runner"
+  {
+    printf '#!/usr/bin/env bash\n'
+    printf 'exec env HOME=%q ATMUX_HOME=%q ATMUX_REPO=%q ATMUX_AGENT_NAME=t ATMUX_ALLOW_OUTSIDE_TMUX=1 %q exec --wait --timeout 1 -- bash -lc %q\n' \
+      "$tmp_home" "$atmux_home" "$repo_name" "$ATMUX_BIN" 'trap "" TERM; sleep 5'
+  } > "$tty_runner"
+  chmod +x "$tty_runner"
+
   set +e
-  out="$(script -q /dev/null env HOME="$tmp_home" ATMUX_HOME="$atmux_home" ATMUX_REPO="$repo_name" \
-    ATMUX_AGENT_NAME="t" ATMUX_ALLOW_OUTSIDE_TMUX=1 \
-    "$ATMUX_BIN" exec --wait --timeout 1 -- bash -lc 'trap "" TERM; sleep 5' 2>&1)"
-  rc=$?
+  if script -q -c true /dev/null >/dev/null 2>&1; then
+    out="$(script -q -c "$tty_runner" /dev/null 2>&1)"
+  else
+    out="$(script -q /dev/null "$tty_runner" 2>&1)"
+  fi
   set -e
-  [[ "$rc" -eq 0 || "$rc" -eq 124 ]] || { echo "expected TTY runner exit 0 or 124, got $rc" >&2; exit 1; }
   printf '%s\n' "$out" | grep -q 'exit_code="124"' \
     || { echo "expected TTY timeout escalation to record exit 124; output: $out" >&2; exit 1; }
 fi

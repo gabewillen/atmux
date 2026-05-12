@@ -63,7 +63,7 @@ atmux issue create --title "stabilize parser" --assign-to planner \
 
 ### Agents
 
-Each agent is a named worker running an AI CLI in tmux. By default, `atmux agent create` gives it a private worktree under `ATMUX_HOME/agents/`. Pass `--shared-worktree` when an agent should work in the caller's current checkout.
+Each agent is a named worker running an AI CLI in tmux. By default, `atmux agent create` gives it a private worktree under `ATMUX_HOME/agents/`. Pass `--shared-worktree` when an agent should work in the caller's current checkout. `atmux agent kill <name>` stops the lifecycle but preserves the worktree and branch; add `--cleanup` when those should be deleted.
 
 ### Teams
 

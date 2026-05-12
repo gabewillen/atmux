@@ -10,8 +10,8 @@ source "$HERE/../notify"
 usage() {
   cat <<'USAGE'
 Usage:
-  atmux agent kill <name|pattern> [name|pattern...]
-  atmux agent kill --all [--yes]
+  atmux agent kill [--cleanup] <name|pattern> [name|pattern...]
+  atmux agent kill --all [--yes] [--cleanup]
   atmux watcher kill <id> [--timeout <seconds>]
   atmux process kill <pid> [--timeout <seconds>] [--signal <NAME>]
 
@@ -460,6 +460,9 @@ signal_adapter_pane() {
 }
 
 kill_agents() {
+  local cleanup="$1"
+  shift
+
   local repo_root="" repo_name=""
   {
     IFS= read -r repo_root
@@ -546,13 +549,9 @@ kill_agents() {
       removed_session="true"
     fi
 
-    # Team-owned worktree teardown. Mirrors the per-agent worktree removal
-    # below but targets the explicit team worktree path (team worktrees live
-    # under ~/.atmux/teams/<repo>/<team>/worktree, not under
-    # ~/.atmux/agents/<suffix>). Pruning is required afterward so the
-    # subsequent `git branch -D` doesn't think the branch is still checked
-    # out in a stale `.git/worktrees/<name>` entry.
-    if [[ -n "$team_owned_worktree" && -d "$team_owned_worktree" ]]; then
+    # Worktree and branch teardown is destructive, so it only runs when the
+    # caller explicitly asks for cleanup. Plain kill is lifecycle-only.
+    if [[ "$cleanup" -eq 1 && -n "$team_owned_worktree" && -d "$team_owned_worktree" ]]; then
       if git -C "$repo_root" worktree list --porcelain 2>/dev/null \
          | grep -Fqx "worktree $team_owned_worktree"; then
         git -C "$repo_root" worktree remove -f "$team_owned_worktree" >/dev/null 2>&1 || true
@@ -574,7 +573,7 @@ kill_agents() {
 
     local suffix="${session#atmux-}"
     local worktree="$worktree_root/$suffix"
-    if [[ -d "$worktree" ]]; then
+    if [[ "$cleanup" -eq 1 && -d "$worktree" ]]; then
       if git -C "$repo_root" worktree list --porcelain 2>/dev/null | grep -Fqx "worktree $worktree"; then
         git -C "$repo_root" worktree remove -f "$worktree" >/dev/null 2>&1 || true
         if [[ -d "$worktree" ]]; then
@@ -594,7 +593,11 @@ kill_agents() {
       fi
     fi
 
-    if git -C "$repo_root" show-ref --verify --quiet "refs/heads/$session"; then
+    if [[ "$cleanup" -eq 1 ]]; then
+      git -C "$repo_root" worktree prune >/dev/null 2>&1 || true
+    fi
+
+    if [[ "$cleanup" -eq 1 ]] && git -C "$repo_root" show-ref --verify --quiet "refs/heads/$session"; then
       git -C "$repo_root" branch -D "$session" >/dev/null 2>&1 || true
       if git -C "$repo_root" show-ref --verify --quiet "refs/heads/$session"; then
         state="errored"
@@ -636,11 +639,16 @@ inside_atmux_session() {
 
 confirm_kill_all() {
   local repo_name="$1"
+  local cleanup="$2"
   if [[ ! -t 0 ]]; then
     echo "atmux agent kill --all: stdin is not a tty; pass --yes to skip prompt" >&2
     exit 2
   fi
-  printf 'atmux agent kill --all will destroy every session, worktree, and branch for repo "%s".\nContinue? [y/N] ' "$repo_name" >&2
+  if [[ "$cleanup" -eq 1 ]]; then
+    printf 'atmux agent kill --all --cleanup will destroy every session, worktree, and branch for repo "%s".\nContinue? [y/N] ' "$repo_name" >&2
+  else
+    printf 'atmux agent kill --all will stop every session for repo "%s" and leave worktrees and branches intact.\nContinue? [y/N] ' "$repo_name" >&2
+  fi
   local reply=""
   IFS= read -r reply || reply=""
   case "$reply" in
@@ -661,6 +669,7 @@ main() {
   local agent_mode=0
   local all_mode=0
   local assume_yes=0
+  local cleanup=0
   local -a agent_targets=()
 
   while [[ $# -gt 0 ]]; do
@@ -680,12 +689,21 @@ main() {
         # Collect all remaining non-flag args as agent targets
         while [[ $# -gt 0 ]]; do
           case "$1" in
+            --cleanup)
+              cleanup=1
+              shift
+              ;;
             --timeout|--signal)
               break
               ;;
             -h|--help|help)
               usage
               exit 0
+              ;;
+            --*)
+              echo "unknown flag: $1" >&2
+              usage >&2
+              exit 2
               ;;
             *)
               agent_targets+=("$1")
@@ -700,6 +718,10 @@ main() {
         ;;
       --yes|-y)
         assume_yes=1
+        shift
+        ;;
+      --cleanup)
+        cleanup=1
         shift
         ;;
       --timeout)
@@ -737,9 +759,9 @@ main() {
       IFS= read -r repo_name
     } < <(atmux_resolve_repo_context)
     if [[ "$assume_yes" -ne 1 ]]; then
-      confirm_kill_all "$repo_name"
+      confirm_kill_all "$repo_name" "$cleanup"
     fi
-    kill_agents '*'
+    kill_agents "$cleanup" '*'
     exit $?
   fi
 
@@ -763,7 +785,7 @@ main() {
       usage >&2
       exit 2
     fi
-    kill_agents "${agent_targets[@]}"
+    kill_agents "$cleanup" "${agent_targets[@]}"
     exit $?
   fi
 

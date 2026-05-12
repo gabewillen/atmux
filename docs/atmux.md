@@ -39,6 +39,12 @@ For project installs, `ATMUX_HOME` defaults to `<project>/.atmux`. For system in
 ### `atmux agent attach <name|session>`
 - Attaches to an existing agent session. Must run outside tmux.
 
+### `atmux agent kill [--cleanup] <name|pattern> [...]`
+- Stops matching agent sessions and runs role stop hooks.
+- Leaves agent-owned worktrees and branches intact by default.
+- Pass `--cleanup` to delete agent-owned worktrees and branches after the
+  lifecycle shutdown.
+
 Current built-in mapping:
 
 | Adapter | Intelligence | Model | Reasoning |

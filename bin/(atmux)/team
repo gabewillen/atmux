@@ -187,8 +187,8 @@ epoch_to_utc() {
 
 teardown_team() {
   # Best-effort cleanup when team create fails partway through. Kills any
-  # already-spawned members via `atmux agent kill` (so their worktrees and
-  # branches get cleaned up too), then removes any optional team view,
+  # already-spawned members via `atmux agent kill --cleanup` (so their
+  # worktrees and branches get cleaned up too), then removes any optional team view,
   # the role state dir, and the team's owned worktree (if create_team made one).
   # Args: <repo_name> <team_name> <session> <role_state_dir> [<owned_worktree>]
   local repo="$1" team="$2" session="$3" state_dir="${4:-}" owned_wt="${5:-}"
@@ -205,7 +205,7 @@ teardown_team() {
     member_shorts+=("$member_short")
   done < <(atmux_resolve_repo_sessions "$repo")
   if [[ "${#member_shorts[@]}" -gt 0 && -n "$atmux_bin" ]]; then
-    "$atmux_bin" agent kill "${member_shorts[@]}" >/dev/null 2>&1 || true
+    "$atmux_bin" agent kill --cleanup "${member_shorts[@]}" >/dev/null 2>&1 || true
   fi
   tmux kill-session -t "$session" >/dev/null 2>&1 || true
   if [[ -n "$state_dir" && -d "$state_dir" ]]; then

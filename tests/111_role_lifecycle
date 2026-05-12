@@ -9,7 +9,8 @@
 #   - role.start fires after inject_control_file, before the adapter execs,
 #     and sees the expected env.
 #   - atmux agent kill runs role.stop while the session env is still
-#     readable, then tears the session/worktree/branch down.
+#     readable and leaves the worktree/branch intact by default.
+#   - atmux agent kill --cleanup removes the worktree/branch explicitly.
 #
 # Mocks the adapter the same way 99_start_adapters_allowlist does so this
 # can run in CI without claude/codex/gemini installed.
@@ -176,8 +177,9 @@ for var in ATMUX_ROLE ATMUX_ROLE_DIR ATMUX_ROLE_START ATMUX_ROLE_STOP ATMUX_ROLE
   [[ -n "$val" ]] || { echo "fail: $var not on session env" >&2; exit 1; }
 done
 
-# Kill and verify stop fired
-ATMUX_ALLOW_OUTSIDE_TMUX=1 "$ATMUX_BIN" agent kill "$agent_name" >/dev/null 2>&1 || true
+# Kill and verify stop fired. Plain kill is lifecycle-only: it stops the
+# session and runs role.stop, but it must not remove the worktree or branch.
+ATMUX_ALLOW_OUTSIDE_TMUX=1 "$ATMUX_BIN" agent kill "$agent_name" >/dev/null
 
 for i in $(seq 1 80); do
   [[ -f "$MARKERS/stopped" ]] && break
@@ -190,9 +192,19 @@ grep -Fxq "STATE_HAS_MARKER=yes" "$MARKERS/stop.env" || {
   exit 1
 }
 
-# Final cleanup checks
+# Lifecycle-only kill checks.
 [[ ! -d "$state_dir" ]] || { echo "fail: state dir not cleaned" >&2; exit 1; }
 tmux has-session -t "$session" 2>/dev/null && { echo "fail: session still alive" >&2; exit 1; }
-[[ ! -d "$worktree" ]] || { echo "fail: worktree not cleaned" >&2; exit 1; }
+[[ -d "$worktree" ]] || { echo "fail: lifecycle-only kill removed worktree" >&2; exit 1; }
+git -C "$REPO_ROOT" show-ref --verify --quiet "refs/heads/$session" \
+  || { echo "fail: lifecycle-only kill removed branch $session" >&2; exit 1; }
 
-echo "ok: full role lifecycle (start hook, env round-trip, role.md, kill, stop hook, cleanup)"
+# Explicit cleanup removes the agent-owned worktree and branch.
+ATMUX_ALLOW_OUTSIDE_TMUX=1 "$ATMUX_BIN" agent kill --cleanup "$agent_name" >/dev/null
+[[ ! -d "$worktree" ]] || { echo "fail: worktree not cleaned" >&2; exit 1; }
+if git -C "$REPO_ROOT" show-ref --verify --quiet "refs/heads/$session"; then
+  echo "fail: branch $session not cleaned" >&2
+  exit 1
+fi
+
+echo "ok: full role lifecycle (start hook, env round-trip, role.md, lifecycle kill, explicit cleanup)"

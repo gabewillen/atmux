@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+source "$(dirname "${BASH_SOURCE[0]}")/lib/isolate-tmux.sh"
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+ATMUX_BIN="$REPO_ROOT/bin/atmux"
+
+tmp_home="$(mktemp -d "${TMPDIR:-/tmp}/atmux-exec-timeout.XXXXXX")"
+cleanup() {
+  rm -rf "$tmp_home"
+}
+trap cleanup EXIT
+
+repo_name="exec_timeout_$RANDOM"
+atmux_home="$tmp_home/.atmux"
+
+set +e
+out="$(HOME="$tmp_home" ATMUX_HOME="$atmux_home" ATMUX_REPO="$repo_name" \
+  ATMUX_AGENT_NAME="t" ATMUX_ALLOW_OUTSIDE_TMUX=1 \
+  "$ATMUX_BIN" exec --wait -- bash -lc 'exit 0' 2>&1)"
+rc=$?
+set -e
+[[ "$rc" -eq 2 ]] || { echo "expected missing timeout exit 2, got $rc" >&2; exit 1; }
+printf '%s\n' "$out" | grep -q -- "--timeout is required" \
+  || { echo "missing timeout error did not mention --timeout; output: $out" >&2; exit 1; }
+
+HOME="$tmp_home" ATMUX_HOME="$atmux_home" ATMUX_REPO="$repo_name" \
+  ATMUX_AGENT_NAME="t" ATMUX_ALLOW_OUTSIDE_TMUX=1 \
+  "$ATMUX_BIN" exec --wait --timeout -1 -- bash -lc 'exit 0' >/dev/null
+
+set +e
+HOME="$tmp_home" ATMUX_HOME="$atmux_home" ATMUX_REPO="$repo_name" \
+  ATMUX_AGENT_NAME="t" ATMUX_ALLOW_OUTSIDE_TMUX=1 \
+  "$ATMUX_BIN" exec --wait --timeout 1 -- bash -lc 'sleep 5' >/dev/null
+rc=$?
+set -e
+[[ "$rc" -eq 124 ]] || { echo "expected timeout exit 124, got $rc" >&2; exit 1; }
+
+echo "ok: exec requires explicit timeout and enforces finite --timeout"

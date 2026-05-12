@@ -108,8 +108,13 @@ Current built-in mapping:
 - Duration suffixes:
   `ms`, `s`, `m`, `h`, `d`
 
-### `atmux exec [--] <command> [args...]`
-- Executes a command with passthrough stdio and the wrapped command's original exit code.
+### `atmux exec --timeout <duration|0|-1> [--wait] [--] <command> [args...]`
+- Executes a command detached in a tmux window by default and returns
+  immediately with tracked process XML.
+- Requires `--timeout`; pass `--timeout 0` or `--timeout -1` only when an
+  unbounded command is intentional.
+- Pass `--wait` to run in the current process with passthrough stdio and the
+  wrapped command's original exit code.
 - After the command exits or is interrupted, sends an ATMUX notification back to the current agent pane:
   `<notification type="exec" from="..." cmd="..." exit_code="..." />`
 - Tracks each launched child process under `<ATMUX_HOME>/exec/<repo>/<pid>/`.

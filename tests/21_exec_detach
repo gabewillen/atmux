@@ -47,9 +47,9 @@ tmux new-session -d -s "$session" -n "$session" -x 160 -y 40 -c "$REPO_ROOT" "/b
 pane="$(tmux list-panes -t "$session" -F '#{pane_id}' 2>/dev/null | head -n1)"
 [[ -n "$pane" ]] || { echo "agent pane missing" >&2; exit 1; }
 
-# Run exec --detach — should return immediately with XML
+# Run exec without --wait — should return immediately with XML
 marker="detach-marker-$RANDOM"
-tmux send-keys -t "$pane" "ATMUX_HOME=\"$atmux_home\" ATMUX_REPO=\"$repo_name\" ATMUX_AGENT_NAME=\"agent\" ATMUX_SESSION_NAME=\"$session\" \"$ATMUX_BIN\" exec --detach -- bash -lc 'sleep 1; echo $marker; sleep 1'" C-m
+tmux send-keys -t "$pane" "ATMUX_HOME=\"$atmux_home\" ATMUX_REPO=\"$repo_name\" ATMUX_AGENT_NAME=\"agent\" ATMUX_SESSION_NAME=\"$session\" \"$ATMUX_BIN\" exec --timeout 30 -- bash -lc 'sleep 1; echo $marker; sleep 1'" C-m
 
 # Should see detached XML response quickly (agent not blocked)
 if ! wait_for_text "$pane" 'detached="true"' 10; then
@@ -109,4 +109,4 @@ st="$(tr -d '\r\n' < "$exec_dir/state")"
 ec="$(tr -d '\r\n' < "$exec_dir/exit_code")"
 [[ "$ec" == "0" ]] || { echo "expected exit code 0, got: $ec" >&2; exit 1; }
 
-echo "ok: exec --detach returns immediately, runs in separate pane, notifies on exit"
+echo "ok: exec returns immediately, runs in separate pane, notifies on exit"

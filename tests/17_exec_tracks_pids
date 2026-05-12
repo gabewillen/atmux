@@ -17,7 +17,7 @@ trap cleanup EXIT
 
 repo_name="exec_track_test"
 set +e
-HOME="$tmp_home" ATMUX_HOME="$tmp_home/.atmux" ATMUX_REPO="$repo_name" ATMUX_AGENT_NAME="sender" ATMUX_SESSION_NAME="atmux-${repo_name}-sender" "$ATMUX_BIN" exec bash -lc 'exit 7'
+HOME="$tmp_home" ATMUX_HOME="$tmp_home/.atmux" ATMUX_REPO="$repo_name" ATMUX_AGENT_NAME="sender" ATMUX_SESSION_NAME="atmux-${repo_name}-sender" "$ATMUX_BIN" exec --wait --timeout 30 -- bash -lc 'exit 7'
 rc=$?
 set -e
 

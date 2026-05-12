@@ -10,29 +10,76 @@ source "$HERE/notify"
 usage() {
   cat <<'USAGE'
 Usage:
-  atmux exec [--detach | --shared] [--] <command> [args...]
+  atmux exec --timeout <duration|0|-1> [--wait | --shared] [--] <command> [args...]
 
 Description:
-  Execute a command with passthrough stdio and unchanged exit behavior.
-  After the command exits or is interrupted, send an ATMUX notification back
-  to the current agent pane with the exit code.
+  Execute a command in a new tmux window inside the current agent's session.
+  Returns immediately with XML for the tracked process. Tmux ties the window
+  to the session — when the session is killed, the window (and the command)
+  die with it. No nohup, no orphans. After the command exits or is
+  interrupted, send an ATMUX notification back to the current agent pane with
+  the exit code.
 
-  --detach   Run the command in a new tmux window inside the current
-             agent's session. Returns immediately. Tmux ties the window
-             to the session — when the session is killed, the window
-             (and the command) die with it. No nohup, no orphans.
+  --timeout  Required. Stop the command after this duration. Pass 0 or -1 to
+             explicitly allow a long-running command with no timeout.
+             Supports suffixes: ms, s, m, h, d. Bare values are seconds.
+  --wait     Run in the current process with passthrough stdio and unchanged
+             exit behavior. This is the old foreground behavior.
   --shared   Run in a new tmux window inside the per-repo
              `atmux-<repo>-workers` session (lazy-created if missing).
              Use for long-running workers that aren't owned by any
              single agent (e.g. PR/issue feed watchers fanning events
-             out to multiple subscribers). Implies --detach.
+             out to multiple subscribers).
+  --detach   Deprecated no-op; detached execution is the default.
 
 Examples:
-  atmux exec sleep 30
-  atmux exec -- make test
-  atmux exec --detach -- make test
-  atmux exec --shared -- atmux pr watch 123
+  atmux exec --timeout 30s -- sleep 30
+  atmux exec --timeout 10m -- make test
+  atmux exec --timeout 10m --wait -- make test
+  atmux exec --timeout 0 --shared -- atmux pr watch 123
 USAGE
+}
+
+parse_timeout_seconds() {
+  local raw="${1:-}"
+  local value unit multiplier
+
+  case "$raw" in
+    0|-1)
+      printf '0\n'
+      return 0
+      ;;
+  esac
+
+  if [[ ! "$raw" =~ ^([0-9]+)(ms|s|m|h|d)?$ ]]; then
+    echo "invalid --timeout: $raw" >&2
+    exit 2
+  fi
+
+  value="${BASH_REMATCH[1]}"
+  unit="${BASH_REMATCH[2]:-s}"
+
+  case "$unit" in
+    ms) multiplier="0.001" ;;
+    s) multiplier="1" ;;
+    m) multiplier="60" ;;
+    h) multiplier="3600" ;;
+    d) multiplier="86400" ;;
+    *)
+      echo "invalid --timeout unit: $unit" >&2
+      exit 2
+      ;;
+  esac
+
+  awk -v value="$value" -v multiplier="$multiplier" '
+    BEGIN {
+      seconds = value * multiplier
+      if (seconds > 0 && seconds != int(seconds)) {
+        seconds = int(seconds) + 1
+      }
+      printf "%d\n", seconds
+    }
+  '
 }
 
 display_command_text() {
@@ -176,8 +223,24 @@ exec_foreground() {
     foreground_finished=0
     child_pid="$$"
     record_exec_start "$child_pid" "$repo_name" "$command_text" "$(timestamp_utc)" "$notify_pane"
+    atmux_fs_write_field "$exec_dir/timeout" "$exec_timeout_raw"
 
     interrupted=0
+    timeout_pid=""
+    timeout_flag=""
+    if (( exec_timeout_sec > 0 )); then
+      timeout_flag="$exec_dir/timed_out"
+      (
+        trap - INT TERM HUP QUIT EXIT
+        sleep "$exec_timeout_sec"
+        : > "$timeout_flag"
+        pkill -TERM -P "$child_pid" >/dev/null 2>&1 || true
+        sleep 2
+        pkill -KILL -P "$child_pid" >/dev/null 2>&1 || true
+      ) &
+      timeout_pid=$!
+    fi
+
     trap 'direct_foreground_exit_trap "$?"' EXIT
     trap 'interrupted=1' INT
     trap 'handle_direct_foreground_signal 143' TERM
@@ -188,7 +251,13 @@ exec_foreground() {
     exit_code=$?
     set -e
     trap - INT TERM HUP QUIT
-    if [[ "${interrupted:-0}" -eq 1 && "$exit_code" -eq 0 ]]; then
+    if [[ -n "$timeout_pid" ]]; then
+      kill -KILL "$timeout_pid" >/dev/null 2>&1 || true
+      wait "$timeout_pid" >/dev/null 2>&1 || true
+    fi
+    if [[ -n "$timeout_flag" && -f "$timeout_flag" ]]; then
+      exit_code=124
+    elif [[ "${interrupted:-0}" -eq 1 && "$exit_code" -eq 0 ]]; then
       exit_code=130
     fi
 
@@ -208,12 +277,37 @@ exec_foreground() {
   child_pid=$!
   exec_dir=""
   record_exec_start "$child_pid" "$repo_name" "$command_text" "$(timestamp_utc)" "$notify_pane"
+  atmux_fs_write_field "$exec_dir/timeout" "$exec_timeout_raw"
+
+  timeout_pid=""
+  timeout_flag=""
+  if (( exec_timeout_sec > 0 )); then
+    timeout_flag="$exec_dir/timed_out"
+    (
+      trap - INT TERM HUP QUIT EXIT
+      sleep "$exec_timeout_sec"
+      if kill -0 "$child_pid" >/dev/null 2>&1; then
+        : > "$timeout_flag"
+        kill -TERM "$child_pid" >/dev/null 2>&1 || true
+        sleep 2
+        kill -KILL "$child_pid" >/dev/null 2>&1 || true
+      fi
+    ) &
+    timeout_pid=$!
+  fi
 
   set +e
   wait "$child_pid"
   exit_code=$?
   set -e
   trap - INT TERM HUP QUIT
+  if [[ -n "$timeout_pid" ]]; then
+    kill -KILL "$timeout_pid" >/dev/null 2>&1 || true
+    wait "$timeout_pid" >/dev/null 2>&1 || true
+  fi
+  if [[ -n "$timeout_flag" && -f "$timeout_flag" ]]; then
+    exit_code=124
+  fi
 
   finish_foreground_exec "$exit_code"
   trap - EXIT
@@ -276,9 +370,17 @@ exec_detached() {
 
   # Pre-create exec_dir with a temp key; _run will update with real PID
   local detach_id="detach-$$-$RANDOM"
-  exec_dir=""
-  record_exec_start "$detach_id" "$repo_name" "$command_text" "$(timestamp_utc)" "$notify_pane"
+  exec_dir="$(exec_dir_for_repo_pid "$repo_name" "$detach_id")"
+  mkdir -p "$exec_dir"
+  atmux_fs_write_field "$exec_dir/repo" "$repo_name"
+  atmux_fs_write_field "$exec_dir/command" "$command_text"
+  atmux_fs_write_field "$exec_dir/started_at" "$(timestamp_utc)"
+  atmux_fs_write_field "$exec_dir/session_name" "${ATMUX_SESSION_NAME:-}"
+  atmux_fs_write_field "$exec_dir/agent_name" "${ATMUX_AGENT_NAME:-}"
+  atmux_fs_write_field "$exec_dir/executor_pane" "$notify_pane"
+  atmux_fs_write_field "$exec_dir/state" "starting"
   atmux_fs_write_field "$exec_dir/detached" "1"
+  atmux_fs_write_field "$exec_dir/timeout" "$exec_timeout_raw"
 
   # Write a runner script to avoid quoting issues across tmux's default
   # shell. Forward every exported env var from the caller so the
@@ -305,8 +407,8 @@ exec_detached() {
       esac
       printf 'export %s=%q\n' "$__exec_env_name" "${!__exec_env_name-}"
     done < <(compgen -e)
-    printf "exec %q _run %q %q %q %q %q\n" \
-      "$self" "$argv_file" "$notify_pane" "$repo_name" "$exec_dir" "$pid_fifo"
+    printf "exec %q _run %q %q %q %q %q %q\n" \
+      "$self" "$argv_file" "$notify_pane" "$repo_name" "$exec_dir" "$pid_fifo" "$exec_timeout_sec"
   } > "$runner"
   chmod +x "$runner"
 
@@ -349,9 +451,11 @@ _run_detached() {
   local repo_name="$3"
   exec_dir="$4"
   local pid_fifo="${5:-}"
+  local timeout_sec="${6:-0}"
 
   # Write our real PID (parent polls for this)
   atmux_fs_write_field "$exec_dir/pid" "$$"
+  atmux_fs_write_field "$exec_dir/state" "running"
   if [[ -n "$pid_fifo" && -p "$pid_fifo" ]]; then
     printf '%s\n' "$$" > "$pid_fifo" 2>/dev/null || true
   fi
@@ -363,10 +467,54 @@ _run_detached() {
   done < "$argv_file"
   rm -f "$argv_file" "$argv_file.run"
 
+  local run_pid="" timeout_pid="" timeout_flag="" exit_code=0 signal_exit_code=""
+  cleanup_detached_child() {
+    if [[ -n "$run_pid" ]] && kill -0 "$run_pid" >/dev/null 2>&1; then
+      kill -TERM "$run_pid" >/dev/null 2>&1 || true
+      sleep 2
+      kill -KILL "$run_pid" >/dev/null 2>&1 || true
+    fi
+  }
+  handle_detached_signal() {
+    signal_exit_code="$1"
+    cleanup_detached_child
+  }
+  trap 'handle_detached_signal 130' INT
+  trap 'handle_detached_signal 143' TERM
+  trap 'handle_detached_signal 129' HUP
+  trap 'handle_detached_signal 131' QUIT
+
+  "${run_cmd[@]}" &
+  run_pid=$!
+  if (( timeout_sec > 0 )); then
+    timeout_flag="$exec_dir/timed_out"
+    (
+      trap - INT TERM HUP QUIT EXIT
+      sleep "$timeout_sec"
+      if kill -0 "$run_pid" >/dev/null 2>&1; then
+        : > "$timeout_flag"
+        kill -TERM "$run_pid" >/dev/null 2>&1 || true
+        sleep 2
+        kill -KILL "$run_pid" >/dev/null 2>&1 || true
+      fi
+    ) &
+    timeout_pid=$!
+  fi
+
   set +e
-  "${run_cmd[@]}"
-  local exit_code=$?
+  wait "$run_pid"
+  exit_code=$?
   set -e
+  trap - INT TERM HUP QUIT
+  if [[ -n "$timeout_pid" ]]; then
+    kill -KILL "$timeout_pid" >/dev/null 2>&1 || true
+    wait "$timeout_pid" >/dev/null 2>&1 || true
+  fi
+  if [[ -n "$timeout_flag" && -f "$timeout_flag" ]]; then
+    exit_code=124
+  elif [[ -n "$signal_exit_code" ]]; then
+    exit_code="$signal_exit_code"
+  fi
 
   atmux_fs_write_field "$exec_dir/finished_at" "$(timestamp_utc)"
   atmux_fs_write_field "$exec_dir/exit_code" "$exit_code"
@@ -391,7 +539,9 @@ _run_detached() {
   exit "$exit_code"
 }
 
-detach=0
+detach=1
+exec_timeout_raw=""
+exec_timeout_sec=""
 
 if [[ $# -eq 0 ]]; then
   usage
@@ -417,10 +567,32 @@ while [[ $# -gt 0 ]]; do
       detach=1
       shift
       ;;
-    --shared)
-      shared=1
-      detach=1
+    --wait)
+      if [[ "$shared" -eq 1 ]]; then
+        echo "--wait cannot be combined with --shared" >&2
+        exit 2
+      fi
+      detach=0
       shift
+      ;;
+    --shared)
+      if [[ "$detach" -eq 0 ]]; then
+        echo "--shared cannot be combined with --wait" >&2
+        exit 2
+      fi
+      detach=1
+      shared=1
+      shift
+      ;;
+    --timeout)
+      exec_timeout_raw="${2:-}"
+      [[ -n "$exec_timeout_raw" ]] || { echo "missing --timeout value" >&2; exit 2; }
+      exec_timeout_sec="$(parse_timeout_seconds "$exec_timeout_raw")"
+      shift 2
+      ;;
+    --no-detach)
+      echo "--no-detach has been replaced by --wait" >&2
+      exit 2
       ;;
     --)
       shift
@@ -434,6 +606,11 @@ done
 
 if [[ $# -eq 0 ]]; then
   echo "missing command" >&2
+  exit 2
+fi
+
+if [[ -z "$exec_timeout_raw" ]]; then
+  echo "atmux exec: --timeout is required (pass --timeout 0 or --timeout -1 to allow a long-running command)" >&2
   exit 2
 fi
 

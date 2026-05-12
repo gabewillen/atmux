@@ -68,11 +68,13 @@ kill_pid() {
   repo_name="$(atmux_resolve_repo_name)"
   local exec_dir
   exec_dir="$(exec_dir_for_repo_pid "$repo_name" "$pid")"
+  local resolved_exec_dir=""
 
   if ! validate_exec_ownership "$exec_dir" "$pid" "$repo_name"; then
     echo "atmux process kill: not an atmux-owned exec PID for this repo: $pid" >&2
     exit 2
   fi
+  resolved_exec_dir="$(cd -P -- "$exec_dir" 2>/dev/null && pwd || true)"
 
   local st
   st="$(read_state_field "$exec_dir/state")"
@@ -103,6 +105,9 @@ kill_pid() {
 
   if [[ -d "$exec_dir" ]]; then
     rm -rf "$exec_dir"
+  fi
+  if [[ -n "$resolved_exec_dir" && "$resolved_exec_dir" != "$exec_dir" && -d "$resolved_exec_dir" ]]; then
+    rm -rf "$resolved_exec_dir"
   fi
   exit 0
 }

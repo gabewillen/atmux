@@ -457,7 +457,7 @@ ensure_pr_watch_worker() {
   ATMUX_SOURCE_ROOT="${ATMUX_SOURCE_ROOT:-${ATMUX_HOME}/src/atmux}" \
     ATMUX_GH_BIN="${ATMUX_GH_BIN:-}" \
     ATMUX_EXEC_SUPPRESS_NOTIFY=1 \
-    "$atmux_bin" exec --shared -- \
+    "$atmux_bin" exec --timeout 0 --shared -- \
       "$0" __serve-pr-watch \
         --key "$key" \
         --pr "$pr_url" \

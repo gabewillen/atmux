@@ -29,7 +29,7 @@ cleanup() {
 trap cleanup EXIT
 
 ATMUX_HOME="$atmux_home" ATMUX_REPO="$repo_name" ATMUX_ALLOW_OUTSIDE_TMUX=1 \
-  "$ATMUX_BIN" exec -- sleep 1 > "$tmp_home/exec.out" 2> "$tmp_home/exec.err" &
+  "$ATMUX_BIN" exec --wait --timeout 30 -- sleep 1 > "$tmp_home/exec.out" 2> "$tmp_home/exec.err" &
 exec_cmd_pid=$!
 
 pid=""

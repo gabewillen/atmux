@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.26.1 — Explicit agent cleanup
+
+- Changed `atmux agent kill` to be lifecycle-only by default, preserving
+  agent-owned worktrees and branches unless `--cleanup` is passed.
+- Added explicit cleanup semantics for `atmux agent kill --cleanup` and
+  `atmux agent kill --all --cleanup`.
+
 ## 0.26.0 — Codextra adapter
 
 - Added the `codextra` (Codextra) adapter with adapter defaults, model

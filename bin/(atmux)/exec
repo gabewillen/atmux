@@ -134,8 +134,13 @@ notify_exec_completion() {
   local exec_dir="$1"
   local notify_pane="$2"
   local notification_xml="$3"
+  local expected_session current_session
 
-  send_notification "$notify_pane" "$notification_xml" || true
+  expected_session="$(read_state_field "$exec_dir/session_name")"
+  current_session="$(tmux display-message -t "$notify_pane" -p '#{session_name}' 2>/dev/null || true)"
+  if [[ -n "$current_session" && ( -z "$expected_session" || "$current_session" == "$expected_session" ) ]]; then
+    send_notification "$notify_pane" "$notification_xml" || true
+  fi
   notify_exec_watchers "$exec_dir" "$notify_pane" "$notification_xml" || true
   atmux_fs_write_field "$exec_dir/notified" "$(timestamp_utc)"
 }

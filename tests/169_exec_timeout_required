@@ -30,6 +30,10 @@ HOME="$tmp_home" ATMUX_HOME="$atmux_home" ATMUX_REPO="$repo_name" \
   ATMUX_AGENT_NAME="t" ATMUX_ALLOW_OUTSIDE_TMUX=1 \
   "$ATMUX_BIN" exec --wait --timeout -1 -- bash -lc 'exit 0' >/dev/null
 
+HOME="$tmp_home" ATMUX_HOME="$atmux_home" ATMUX_REPO="$repo_name" \
+  ATMUX_AGENT_NAME="t" ATMUX_ALLOW_OUTSIDE_TMUX=1 \
+  "$ATMUX_BIN" exec --wait --detach --timeout 1 -- bash -lc 'exit 0' >/dev/null
+
 set +e
 HOME="$tmp_home" ATMUX_HOME="$atmux_home" ATMUX_REPO="$repo_name" \
   ATMUX_AGENT_NAME="t" ATMUX_ALLOW_OUTSIDE_TMUX=1 \
@@ -37,5 +41,17 @@ HOME="$tmp_home" ATMUX_HOME="$atmux_home" ATMUX_REPO="$repo_name" \
 rc=$?
 set -e
 [[ "$rc" -eq 124 ]] || { echo "expected timeout exit 124, got $rc" >&2; exit 1; }
+
+if command -v script >/dev/null 2>&1; then
+  set +e
+  out="$(script -q /dev/null env HOME="$tmp_home" ATMUX_HOME="$atmux_home" ATMUX_REPO="$repo_name" \
+    ATMUX_AGENT_NAME="t" ATMUX_ALLOW_OUTSIDE_TMUX=1 \
+    "$ATMUX_BIN" exec --wait --timeout 1 -- bash -lc 'trap "" TERM; sleep 5' 2>&1)"
+  rc=$?
+  set -e
+  [[ "$rc" -eq 0 || "$rc" -eq 124 ]] || { echo "expected TTY runner exit 0 or 124, got $rc" >&2; exit 1; }
+  printf '%s\n' "$out" | grep -q 'exit_code="124"' \
+    || { echo "expected TTY timeout escalation to record exit 124; output: $out" >&2; exit 1; }
+fi
 
 echo "ok: exec requires explicit timeout and enforces finite --timeout"

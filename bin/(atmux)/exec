@@ -157,6 +157,19 @@ terminate_child_with_signal() {
   fi
 }
 
+terminate_child_processes_except() {
+  local parent_pid="$1"
+  local signal="$2"
+  local skip_pid="${3:-}"
+  local target_pid
+
+  while IFS= read -r target_pid; do
+    [[ -n "$target_pid" ]] || continue
+    [[ -n "$skip_pid" && "$target_pid" == "$skip_pid" ]] && continue
+    kill "-$signal" "$target_pid" >/dev/null 2>&1 || true
+  done < <(pgrep -P "$parent_pid" 2>/dev/null || true)
+}
+
 finish_foreground_exec() {
   local exit_code="$1"
 
@@ -231,12 +244,13 @@ exec_foreground() {
     if (( exec_timeout_sec > 0 )); then
       timeout_flag="$exec_dir/timed_out"
       (
+        watchdog_pid="$(sh -c 'printf "%s\n" "$PPID"')"
         trap - INT TERM HUP QUIT EXIT
         sleep "$exec_timeout_sec"
         : > "$timeout_flag"
-        pkill -TERM -P "$child_pid" >/dev/null 2>&1 || true
+        terminate_child_processes_except "$child_pid" TERM "$watchdog_pid"
         sleep 2
-        pkill -KILL -P "$child_pid" >/dev/null 2>&1 || true
+        terminate_child_processes_except "$child_pid" KILL "$watchdog_pid"
       ) &
       timeout_pid=$!
     fi
@@ -564,7 +578,6 @@ while [[ $# -gt 0 ]]; do
       exit 0
       ;;
     --detach)
-      detach=1
       shift
       ;;
     --wait)

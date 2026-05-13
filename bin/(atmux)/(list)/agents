@@ -76,6 +76,22 @@ is_team_session() {
   [[ "$session" == "atmux-${repo_name}-team-"* ]]
 }
 
+is_worker_session() {
+  local repo_name="$1"
+  local session="$2"
+  [[ "$session" == "atmux-${repo_name}-workers" ]]
+}
+
+is_listable_agent_session() {
+  local repo_name="$1"
+  local session="$2"
+  local prefix="atmux-${repo_name}-"
+
+  [[ "$session" == "$prefix"* ]] || return 1
+  ! is_team_session "$repo_name" "$session" || return 1
+  ! is_worker_session "$repo_name" "$session" || return 1
+}
+
 agent_local_name() {
   local repo_name="$1"
   local session="$2"
@@ -120,13 +136,12 @@ USAGE
     exit 2
   fi
 
-  local repo_root repo_name prefix
+  local repo_root repo_name
   {
     IFS= read -r repo_root
     IFS= read -r repo_name
   } < <(atmux_resolve_repo_context)
 
-  prefix="atmux-${repo_name}-"
   local mode
   mode="$(reporter_mode)"
 
@@ -135,10 +150,7 @@ USAGE
     printf '<agents repo="%s">\n' "$(atmux_xml_escape "$repo_name")"
     while IFS= read -r session; do
       [[ -z "$session" ]] && continue
-      [[ "$session" == "$prefix"* ]] || continue
-      if is_team_session "$repo_name" "$session"; then
-        continue
-      fi
+      is_listable_agent_session "$repo_name" "$session" || continue
       local aname
       aname="$(agent_local_name "$repo_name" "$session")"
       if [[ "$status" -eq 1 ]]; then
@@ -158,10 +170,7 @@ USAGE
   report_open agents repo="$repo_name"
   while IFS= read -r session; do
     [[ -z "$session" ]] && continue
-    [[ "$session" == "$prefix"* ]] || continue
-    if is_team_session "$repo_name" "$session"; then
-      continue
-    fi
+    is_listable_agent_session "$repo_name" "$session" || continue
     local aname
     aname="$(agent_local_name "$repo_name" "$session")"
     if [[ "$status" -eq 1 ]]; then

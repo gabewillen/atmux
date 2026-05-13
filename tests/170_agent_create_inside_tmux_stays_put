@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+source "$(dirname "${BASH_SOURCE[0]}")/lib/isolate-tmux.sh"
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+ATMUX_BIN="$REPO_ROOT/bin/atmux"
+
+wait_for_text() {
+  local target="$1"
+  local needle="$2"
+  local timeout="${3:-10}"
+  local deadline now snap compact
+  deadline=$(( $(date +%s) + timeout ))
+  while true; do
+    snap="$(tmux capture-pane -p -t "$target" -S -300 2>/dev/null || true)"
+    compact="$(printf '%s' "$snap" | tr -d '\r\n')"
+    if printf '%s' "$compact" | grep -Fq "$needle"; then
+      return 0
+    fi
+    now="$(date +%s)"
+    (( now < deadline )) || return 1
+    sleep 0.1
+  done
+}
+
+tmp_root="$(mktemp -d "${TMPDIR:-/tmp}/atmux-agent-create-tmux.XXXXXX")"
+atmux_home="$tmp_root/.atmux"
+repo_name="createintmux${RANDOM}"
+creator_session="atmux-${repo_name}-creator"
+child_agent="child${RANDOM}"
+child_session="atmux-${repo_name}-${child_agent}"
+
+cleanup() {
+  tmux kill-session -t "$creator_session" >/dev/null 2>&1 || true
+  tmux kill-session -t "$child_session" >/dev/null 2>&1 || true
+  rm -rf "$tmp_root"
+}
+trap cleanup EXIT
+
+mkdir -p "$atmux_home/adapters/mockagent"
+cat > "$atmux_home/adapters/mockagent/cmd" <<'ADAPTER'
+#!/usr/bin/env bash
+set -euo pipefail
+case "${1:-}" in
+  control-file) printf 'AGENTS.md\n' ;;
+  prepare-prompt) : ;;
+  start) sleep 600 ;;
+  status) printf '<status adapter="mockagent" owner="agent" state="busy" model="" reasoning_level="" control_file="AGENTS.md" />\n' ;;
+  model) printf 'mock\n' ;;
+  reasoning-level) printf 'medium\n' ;;
+  *) exit 2 ;;
+esac
+ADAPTER
+chmod +x "$atmux_home/adapters/mockagent/cmd"
+
+tmux new-session -d -s "$creator_session" -n "$creator_session" -c "$REPO_ROOT" "/bin/bash" -l
+tmux set-environment -t "$creator_session" ATMUX_HOME "$atmux_home"
+tmux set-environment -t "$creator_session" ATMUX_REPO "$repo_name"
+tmux set-environment -t "$creator_session" ATMUX_SOURCE_ROOT "$REPO_ROOT"
+tmux set-environment -t "$creator_session" ATMUX_AGENT_NAME "creator"
+tmux set-environment -t "$creator_session" ATMUX_SESSION_NAME "$creator_session"
+
+creator_pane="$(tmux list-panes -t "$creator_session" -F '#{pane_id}' 2>/dev/null | head -n1)"
+[[ -n "$creator_pane" ]] || { echo "creator pane missing" >&2; exit 1; }
+
+tmux send-keys -t "$creator_pane" \
+  "ATMUX_HOME=\"$atmux_home\" ATMUX_REPO=\"$repo_name\" ATMUX_SOURCE_ROOT=\"$REPO_ROOT\" ATMUX_AGENT_NAME=\"creator\" ATMUX_SESSION_NAME=\"$creator_session\" \"$ATMUX_BIN\" agent create \"$child_agent\" --role worker --intelligence 20 --adapter mockagent --shared-worktree" \
+  C-m
+
+if ! wait_for_text "$creator_pane" "$child_session" 15; then
+  echo "creator pane did not print created child session" >&2
+  tmux capture-pane -p -t "$creator_pane" -S -120 >&2 || true
+  exit 1
+fi
+
+tmux has-session -t "$child_session" 2>/dev/null || {
+  echo "child session was not created" >&2
+  exit 1
+}
+
+echo "ok: agent create inside tmux leaves caller session active"

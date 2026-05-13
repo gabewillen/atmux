@@ -65,7 +65,7 @@ tmux set-environment -t "$session" ATMUX_SESSION_NAME "$session"
 pane="$(tmux list-panes -t "$session" -F '#{pane_id}' 2>/dev/null | head -n1)"
 [[ -n "$pane" ]] || { echo "exec interrupt pane missing" >&2; exit 1; }
 
-tmux send-keys -t "$pane" "ATMUX_REPO=\"$repo_name\" ATMUX_AGENT_NAME=\"sender\" ATMUX_SESSION_NAME=\"$session\" \"$ATMUX_BIN\" exec -- sleep 30" C-m
+tmux send-keys -t "$pane" "ATMUX_REPO=\"$repo_name\" ATMUX_AGENT_NAME=\"sender\" ATMUX_SESSION_NAME=\"$session\" \"$ATMUX_BIN\" exec --wait --timeout 60 -- sleep 30" C-m
 if ! wait_for_exec_running "$repo_name" 15; then
   echo "exec did not start before interrupt" >&2
   tmux capture-pane -p -t "$pane" -S -220 >&2 || true

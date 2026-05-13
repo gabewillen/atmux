@@ -39,7 +39,7 @@ pane_watch="$(tmux list-panes -t "$session_watch" -F '#{pane_id}' 2>/dev/null | 
 [[ -n "$pane_exec" && -n "$pane_watch" ]] || { echo "missing panes" >&2; exit 1; }
 
 # Launch a long-running detached exec that produces no output after startup
-tmux send-keys -t "$pane_exec" "ATMUX_HOME=\"$atmux_home\" ATMUX_REPO=\"$repo_name\" ATMUX_AGENT_NAME=\"exec\" ATMUX_SESSION_NAME=\"$session_exec\" \"$ATMUX_BIN\" exec --detach -- bash -c 'echo starting; sleep 60'" C-m
+tmux send-keys -t "$pane_exec" "ATMUX_HOME=\"$atmux_home\" ATMUX_REPO=\"$repo_name\" ATMUX_AGENT_NAME=\"exec\" ATMUX_SESSION_NAME=\"$session_exec\" \"$ATMUX_BIN\" exec --timeout 120 -- bash -c 'echo starting; sleep 60'" C-m
 
 # Wait for exec metadata
 deadline=$(( $(date +%s) + 10 ))

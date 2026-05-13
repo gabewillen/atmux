@@ -56,7 +56,7 @@ pane_w2="$(tmux list-panes -t "$session_w2" -F '#{pane_id}' 2>/dev/null | head -
 [[ -n "$pane_exec" && -n "$pane_w1" && -n "$pane_w2" ]] || { echo "missing panes" >&2; exit 1; }
 
 # Start a slow exec (long enough for both watchers to register before it finishes)
-tmux send-keys -t "$pane_exec" "ATMUX_HOME=\"$atmux_home\" ATMUX_REPO=\"$repo_name\" ATMUX_AGENT_NAME=\"exec\" ATMUX_SESSION_NAME=\"$session_exec\" \"$ATMUX_BIN\" exec sleep 12" C-m
+tmux send-keys -t "$pane_exec" "ATMUX_HOME=\"$atmux_home\" ATMUX_REPO=\"$repo_name\" ATMUX_AGENT_NAME=\"exec\" ATMUX_SESSION_NAME=\"$session_exec\" \"$ATMUX_BIN\" exec --timeout 30 -- sleep 12" C-m
 
 # Wait for exec metadata
 deadline=$(( $(date +%s) + 12 ))

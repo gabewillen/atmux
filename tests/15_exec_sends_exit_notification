@@ -47,7 +47,7 @@ pane="$(tmux list-panes -t "$session" -F '#{pane_id}' 2>/dev/null | head -n1)"
 [[ -n "$pane" ]] || { echo "exec test pane missing" >&2; exit 1; }
 
 marker="exec-exit-$RANDOM-$(date +%s)"
-tmux send-keys -t "$pane" "ATMUX_REPO=\"$repo_name\" ATMUX_AGENT_NAME=\"sender\" ATMUX_SESSION_NAME=\"$session\" \"$ATMUX_BIN\" exec -- bash -lc 'echo $marker'" C-m
+tmux send-keys -t "$pane" "ATMUX_REPO=\"$repo_name\" ATMUX_AGENT_NAME=\"sender\" ATMUX_SESSION_NAME=\"$session\" \"$ATMUX_BIN\" exec --wait --timeout 30 -- bash -lc 'echo $marker'" C-m
 
 if ! wait_for_text "$pane" "$marker" 10; then
   echo "wrapped command output not found in exec pane: $marker" >&2

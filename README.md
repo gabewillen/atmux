@@ -12,7 +12,7 @@ The default install is project-local: atmux lives in `<project>/.atmux`, its sou
 - **Role and team aware.** Roles define reusable prompts/hooks; teams spawn coordinated member agents.
 - **Agent-editable.** A project install keeps atmux source next to your code, so missing workflow glue can be patched locally.
 
-> **Experimental** — this project is under active development (current version: `0.26.1`). APIs, commands, and behavior may change without notice. Use at your own risk.
+> **Experimental** — this project is under active development (current version: `0.26.2`). APIs, commands, and behavior may change without notice. Use at your own risk.
 
 ## Install
 
@@ -165,7 +165,7 @@ Commands:
   agent      Manage repo-scoped AI agents running under tmux.
   config     Read and write atmux configuration values.
   env        Inspect ATMUX_* environment variables in the current process.
-  exec       Execute a command with passthrough stdio and unchanged exit behavior.
+  exec       Execute a command in a new tmux window inside the current agent's session.
   install    Install atmux for a project by default, or system-wide when requested.
   issue      Repo-scoped issue tickets on filesystem.
   message    Read, list, or subscribe to filesystem-backed messages.
@@ -193,7 +193,7 @@ Run:
 | `atmux agent create [name] --role <role> --intelligence <0-100>` | Manage repo-scoped AI agents running under tmux. |
 | `atmux config get <key> [--global]` | Read and write atmux configuration values. |
 | `atmux env` | Inspect ATMUX_* environment variables in the current process. |
-| `atmux exec [--detach \| --shared] [--] <command> [args...]` | Execute a command with passthrough stdio and unchanged exit behavior. |
+| `atmux exec --timeout <duration\|0\|-1> [--wait \| --shared] [--] <command> [args...]` | Execute a command in a new tmux window inside the current agent's session. |
 | `atmux install [--project\|--system] [--project-root <dir>] [--no-slash-commands]` | Install atmux for a project by default, or system-wide when requested. |
 | `atmux issue create --title <title> [--description <description>]` | Repo-scoped issue tickets on filesystem. |
 | `atmux message read <id> [--repo <repo>] [--team <team>]` | Read, list, or subscribe to filesystem-backed messages. |

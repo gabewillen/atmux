@@ -22,7 +22,7 @@ trap cleanup EXIT
 set +e
 HOME="$tmp_home" ATMUX_HOME="$atmux_home" ATMUX_REPO="$repo_name" \
   ATMUX_AGENT_NAME="t" ATMUX_ALLOW_OUTSIDE_TMUX=1 \
-  "$ATMUX_BIN" exec bash -lc 'exit 0'
+  "$ATMUX_BIN" exec --wait --timeout 30 -- bash -lc 'exit 0'
 set -e
 
 # Find the PID from metadata

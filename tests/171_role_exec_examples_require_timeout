@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+
+fail=0
+while IFS= read -r line; do
+  if [[ "$line" == *"atmux exec --"* && "$line" != *"--timeout"* ]]; then
+    echo "role exec example missing required --timeout: $line" >&2
+    fail=1
+  fi
+done < <(find "$REPO_ROOT/roles" -name 'role.md' -type f -print0 | xargs -0 grep -h 'atmux exec' || true)
+
+if [[ "$fail" -ne 0 ]]; then
+  exit 1
+fi
+
+echo "ok: role exec examples include required timeout"

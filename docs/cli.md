@@ -55,9 +55,14 @@ agent or team:
 atmux schedule --once 10m -- atmux send --to worker "status check"
 ```
 
-### `atmux exec [--detach] -- <command> [args...]`
+### `atmux exec --timeout <duration|0|-1> [--wait | --shared] -- <command> [args...]`
 
-Runs a command and sends an exec notification when it exits. Detached execs run in a tmux window and are tracked under `<ATMUX_HOME>/exec/<repo>/<pid>/`.
+Runs a command detached in a tmux window by default and sends an exec
+notification when it exits. Execs are tracked under
+`<ATMUX_HOME>/exec/<repo>/<pid>/`. `--timeout` is required; pass `0` or `-1`
+only when an unbounded command is intentional. Pass `--wait` to run in the
+current process with passthrough stdio and the wrapped command's exit code, or
+`--shared` to run in the per-repo workers tmux session.
 
 ### Watch (per-resource)
 

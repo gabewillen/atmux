@@ -21,7 +21,7 @@ set +e
 HOME="$tmp_home" ATMUX_HOME="$tmp_home/.atmux" ATMUX_REPO="$repo_name" \
   ATMUX_AGENT_NAME="worker" ATMUX_SESSION_NAME="atmux-${repo_name}-worker" \
   ATMUX_ALLOW_OUTSIDE_TMUX=1 \
-  "$ATMUX_BIN" exec -- bash -lc 'echo hello; exit 0'
+  "$ATMUX_BIN" exec --wait --timeout 30 -- bash -lc 'echo hello; exit 0'
 rc=$?
 set -e
 

@@ -1,0 +1,125 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+source "$(dirname "${BASH_SOURCE[0]}")/lib/isolate-tmux.sh"
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+ATMUX_BIN="$REPO_ROOT/bin/atmux"
+
+tmp_home="$(mktemp -d "${TMPDIR:-/tmp}/atmux-exec-timeout.XXXXXX")"
+cleanup() {
+  rm -rf "$tmp_home"
+}
+trap cleanup EXIT
+
+repo_name="exec_timeout_$RANDOM"
+atmux_home="$tmp_home/.atmux"
+
+set +e
+out="$(HOME="$tmp_home" ATMUX_HOME="$atmux_home" ATMUX_REPO="$repo_name" \
+  ATMUX_AGENT_NAME="t" ATMUX_ALLOW_OUTSIDE_TMUX=1 \
+  "$ATMUX_BIN" exec --wait -- bash -lc 'exit 0' 2>&1)"
+rc=$?
+set -e
+[[ "$rc" -eq 2 ]] || { echo "expected missing timeout exit 2, got $rc" >&2; exit 1; }
+printf '%s\n' "$out" | grep -q -- "--timeout is required" \
+  || { echo "missing timeout error did not mention --timeout; output: $out" >&2; exit 1; }
+
+set +e
+out="$(HOME="$tmp_home" ATMUX_HOME="$atmux_home" ATMUX_REPO="$repo_name" \
+  ATMUX_AGENT_NAME="t" ATMUX_ALLOW_OUTSIDE_TMUX=1 \
+  "$ATMUX_BIN" exec --wait --timeout 5min -- bash -lc 'exit 0' 2>&1)"
+rc=$?
+set -e
+[[ "$rc" -eq 2 ]] || { echo "expected invalid timeout exit 2, got $rc" >&2; exit 1; }
+printf '%s\n' "$out" | grep -q -- "invalid --timeout: 5min" \
+  || { echo "invalid timeout error did not mention value; output: $out" >&2; exit 1; }
+
+set +e
+out="$(HOME="$tmp_home" ATMUX_HOME="$atmux_home" ATMUX_REPO="$repo_name" \
+  ATMUX_AGENT_NAME="t" ATMUX_ALLOW_OUTSIDE_TMUX=1 \
+  "$ATMUX_BIN" exec --timeout 1 -- bash -lc 'exit 0' 2>&1)"
+rc=$?
+set -e
+[[ "$rc" -eq 2 ]] || { echo "expected missing session exit 2, got $rc" >&2; exit 1; }
+printf '%s\n' "$out" | grep -q -- "atmux exec requires an atmux session" \
+  || { echo "missing session error did not mention atmux exec; output: $out" >&2; exit 1; }
+if printf '%s\n' "$out" | grep -q -- "--detach"; then
+  echo "missing session error should not blame deprecated --detach; output: $out" >&2
+  exit 1
+fi
+
+set +e
+out="$(HOME="$tmp_home" ATMUX_HOME="$atmux_home" ATMUX_REPO="$repo_name" \
+  ATMUX_AGENT_NAME="t" ATMUX_SESSION_NAME="does-not-exist" ATMUX_ALLOW_OUTSIDE_TMUX=1 \
+  "$ATMUX_BIN" exec --timeout 1 -- bash -lc 'exit 0' 2>&1)"
+rc=$?
+set -e
+[[ "$rc" -eq 2 ]] || { echo "expected missing tmux session exit 2, got $rc" >&2; exit 1; }
+printf '%s\n' "$out" | grep -q -- "atmux exec: session not found: does-not-exist" \
+  || { echo "session-not-found error did not mention atmux exec; output: $out" >&2; exit 1; }
+if printf '%s\n' "$out" | grep -q -- "--detach"; then
+  echo "session-not-found error should not blame deprecated --detach; output: $out" >&2
+  exit 1
+fi
+
+HOME="$tmp_home" ATMUX_HOME="$atmux_home" ATMUX_REPO="$repo_name" \
+  ATMUX_AGENT_NAME="t" ATMUX_ALLOW_OUTSIDE_TMUX=1 \
+  "$ATMUX_BIN" exec --wait --timeout -1 -- bash -lc 'exit 0' >/dev/null
+
+HOME="$tmp_home" ATMUX_HOME="$atmux_home" ATMUX_REPO="$repo_name" \
+  ATMUX_AGENT_NAME="t" ATMUX_ALLOW_OUTSIDE_TMUX=1 \
+  "$ATMUX_BIN" exec --wait --detach --timeout 1 -- bash -lc 'exit 0' >/dev/null
+
+set +e
+HOME="$tmp_home" ATMUX_HOME="$atmux_home" ATMUX_REPO="$repo_name" \
+  ATMUX_AGENT_NAME="t" ATMUX_ALLOW_OUTSIDE_TMUX=1 \
+  "$ATMUX_BIN" exec --wait --timeout 1 -- bash -lc 'sleep 5' >/dev/null
+rc=$?
+set -e
+[[ "$rc" -eq 124 ]] || { echo "expected timeout exit 124, got $rc" >&2; exit 1; }
+
+if command -v script >/dev/null 2>&1; then
+  tty_runner="$tmp_home/tty-timeout-runner"
+  {
+    printf '#!/usr/bin/env bash\n'
+    printf 'exec env HOME=%q ATMUX_HOME=%q ATMUX_REPO=%q ATMUX_AGENT_NAME=t ATMUX_ALLOW_OUTSIDE_TMUX=1 %q exec --wait --timeout 1 -- bash -lc %q\n' \
+      "$tmp_home" "$atmux_home" "$repo_name" "$ATMUX_BIN" 'trap "" TERM; sleep 5'
+  } > "$tty_runner"
+  chmod +x "$tty_runner"
+
+  set +e
+  if script -q -c true /dev/null >/dev/null 2>&1; then
+    out="$(script -q -c "$tty_runner" /dev/null 2>&1)"
+  else
+    out="$(script -q /dev/null "$tty_runner" 2>&1)"
+  fi
+  set -e
+  printf '%s\n' "$out" | grep -q 'exit_code="124"' \
+    || { echo "expected TTY timeout escalation to record exit 124; output: $out" >&2; exit 1; }
+fi
+
+HOME="$tmp_home" ATMUX_HOME="$atmux_home" ATMUX_REPO="$repo_name" \
+  ATMUX_AGENT_NAME="t" ATMUX_ALLOW_OUTSIDE_TMUX=1 \
+  "$ATMUX_BIN" exec --wait --timeout 47 -- bash -lc 'trap "exit 0" TERM; while :; do sleep 1; done' >/dev/null 2>&1 &
+exec_pid=$!
+sleep 1
+kill -TERM "$exec_pid" >/dev/null 2>&1 || true
+set +e
+wait "$exec_pid"
+rc=$?
+set -e
+[[ "$rc" -eq 143 ]] || { echo "expected signal exit 143, got $rc" >&2; exit 1; }
+sleep 0.2
+leaked_watchdogs="$(pgrep -fx 'sleep 47' || true)"
+if [[ -n "$leaked_watchdogs" ]]; then
+  while IFS= read -r watchdog_pid; do
+    [[ -n "$watchdog_pid" ]] || continue
+    kill -KILL "$watchdog_pid" >/dev/null 2>&1 || true
+  done <<< "$leaked_watchdogs"
+  echo "timeout watchdog sleep leaked after foreground signal: $leaked_watchdogs" >&2
+  exit 1
+fi
+
+echo "ok: exec requires explicit timeout and enforces finite --timeout"

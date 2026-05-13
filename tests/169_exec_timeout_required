@@ -36,6 +36,34 @@ set -e
 printf '%s\n' "$out" | grep -q -- "invalid --timeout: 5min" \
   || { echo "invalid timeout error did not mention value; output: $out" >&2; exit 1; }
 
+set +e
+out="$(HOME="$tmp_home" ATMUX_HOME="$atmux_home" ATMUX_REPO="$repo_name" \
+  ATMUX_AGENT_NAME="t" ATMUX_ALLOW_OUTSIDE_TMUX=1 \
+  "$ATMUX_BIN" exec --timeout 1 -- bash -lc 'exit 0' 2>&1)"
+rc=$?
+set -e
+[[ "$rc" -eq 2 ]] || { echo "expected missing session exit 2, got $rc" >&2; exit 1; }
+printf '%s\n' "$out" | grep -q -- "atmux exec requires an atmux session" \
+  || { echo "missing session error did not mention atmux exec; output: $out" >&2; exit 1; }
+if printf '%s\n' "$out" | grep -q -- "--detach"; then
+  echo "missing session error should not blame deprecated --detach; output: $out" >&2
+  exit 1
+fi
+
+set +e
+out="$(HOME="$tmp_home" ATMUX_HOME="$atmux_home" ATMUX_REPO="$repo_name" \
+  ATMUX_AGENT_NAME="t" ATMUX_SESSION_NAME="does-not-exist" ATMUX_ALLOW_OUTSIDE_TMUX=1 \
+  "$ATMUX_BIN" exec --timeout 1 -- bash -lc 'exit 0' 2>&1)"
+rc=$?
+set -e
+[[ "$rc" -eq 2 ]] || { echo "expected missing tmux session exit 2, got $rc" >&2; exit 1; }
+printf '%s\n' "$out" | grep -q -- "atmux exec: session not found: does-not-exist" \
+  || { echo "session-not-found error did not mention atmux exec; output: $out" >&2; exit 1; }
+if printf '%s\n' "$out" | grep -q -- "--detach"; then
+  echo "session-not-found error should not blame deprecated --detach; output: $out" >&2
+  exit 1
+fi
+
 HOME="$tmp_home" ATMUX_HOME="$atmux_home" ATMUX_REPO="$repo_name" \
   ATMUX_AGENT_NAME="t" ATMUX_ALLOW_OUTSIDE_TMUX=1 \
   "$ATMUX_BIN" exec --wait --timeout -1 -- bash -lc 'exit 0' >/dev/null

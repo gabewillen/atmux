@@ -383,11 +383,11 @@ exec_detached() {
   else
     session="${ATMUX_SESSION_NAME:-}"
     if [[ -z "$session" ]]; then
-      echo "--detach requires an atmux session (ATMUX_SESSION_NAME not set; use --shared for a repo-scoped workers session)" >&2
+      echo "atmux exec requires an atmux session (ATMUX_SESSION_NAME not set; use --shared for a repo-scoped workers session)" >&2
       exit 2
     fi
     if ! tmux has-session -t "$session" 2>/dev/null; then
-      echo "--detach: session not found: $session" >&2
+      echo "atmux exec: session not found: $session" >&2
       exit 2
     fi
   fi

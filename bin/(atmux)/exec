@@ -53,7 +53,7 @@ parse_timeout_seconds() {
 
   if [[ ! "$raw" =~ ^([0-9]+)(ms|s|m|h|d)?$ ]]; then
     echo "invalid --timeout: $raw" >&2
-    exit 2
+    return 2
   fi
 
   value="${BASH_REMATCH[1]}"
@@ -67,7 +67,7 @@ parse_timeout_seconds() {
     d) multiplier="86400" ;;
     *)
       echo "invalid --timeout unit: $unit" >&2
-      exit 2
+      return 2
       ;;
   esac
 
@@ -605,7 +605,9 @@ while [[ $# -gt 0 ]]; do
     --timeout)
       exec_timeout_raw="${2:-}"
       [[ -n "$exec_timeout_raw" ]] || { echo "missing --timeout value" >&2; exit 2; }
-      exec_timeout_sec="$(parse_timeout_seconds "$exec_timeout_raw")"
+      if ! exec_timeout_sec="$(parse_timeout_seconds "$exec_timeout_raw")"; then
+        exit 2
+      fi
       shift 2
       ;;
     --no-detach)

@@ -26,6 +26,16 @@ set -e
 printf '%s\n' "$out" | grep -q -- "--timeout is required" \
   || { echo "missing timeout error did not mention --timeout; output: $out" >&2; exit 1; }
 
+set +e
+out="$(HOME="$tmp_home" ATMUX_HOME="$atmux_home" ATMUX_REPO="$repo_name" \
+  ATMUX_AGENT_NAME="t" ATMUX_ALLOW_OUTSIDE_TMUX=1 \
+  "$ATMUX_BIN" exec --wait --timeout 5min -- bash -lc 'exit 0' 2>&1)"
+rc=$?
+set -e
+[[ "$rc" -eq 2 ]] || { echo "expected invalid timeout exit 2, got $rc" >&2; exit 1; }
+printf '%s\n' "$out" | grep -q -- "invalid --timeout: 5min" \
+  || { echo "invalid timeout error did not mention value; output: $out" >&2; exit 1; }
+
 HOME="$tmp_home" ATMUX_HOME="$atmux_home" ATMUX_REPO="$repo_name" \
   ATMUX_AGENT_NAME="t" ATMUX_ALLOW_OUTSIDE_TMUX=1 \
   "$ATMUX_BIN" exec --wait --timeout -1 -- bash -lc 'exit 0' >/dev/null

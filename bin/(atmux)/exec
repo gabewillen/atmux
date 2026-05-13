@@ -184,6 +184,14 @@ cleanup_timeout_watchdog() {
   fi
 }
 
+write_exec_state_if_present() {
+  local dir="$1"
+  local state="$2"
+
+  [[ -d "$dir" ]] || return 0
+  printf '%s\n' "$state" > "$dir/state" 2>/dev/null || true
+}
+
 finish_foreground_exec() {
   local exit_code="$1"
 
@@ -195,7 +203,7 @@ finish_foreground_exec() {
     notify_exec_completion_inline "$exec_dir" "$notify_pane" "$notification_xml"
   fi
   signal_exec_watchers "$exec_dir" || true
-  atmux_fs_write_field "$exec_dir/state" "exited"
+  write_exec_state_if_present "$exec_dir" "exited"
   signal_exec_watchers "$exec_dir" || true
 }
 
@@ -556,7 +564,7 @@ _run_detached() {
   fi
 
   signal_exec_watchers "$exec_dir" || true
-  atmux_fs_write_field "$exec_dir/state" "exited"
+  write_exec_state_if_present "$exec_dir" "exited"
   signal_exec_watchers "$exec_dir" || true
 
   exit "$exit_code"

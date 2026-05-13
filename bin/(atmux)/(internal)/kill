@@ -87,6 +87,9 @@ kill_pid() {
       local deadline now
       deadline=$(( $(date +%s) + timeout_sec ))
       while kill -0 "$pid" 2>/dev/null; do
+        if [[ -f "$exec_dir/notified" || "$(read_state_field "$exec_dir/state")" == "exited" ]]; then
+          break
+        fi
         now="$(date +%s)"
         if (( now >= deadline )); then
           kill -KILL "$signal_target" 2>/dev/null || true

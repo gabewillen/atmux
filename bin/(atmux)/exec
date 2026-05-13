@@ -138,7 +138,7 @@ notify_exec_completion() {
 
   expected_session="$(read_state_field "$exec_dir/session_name")"
   current_session="$(tmux display-message -t "$notify_pane" -p '#{session_name}' 2>/dev/null || true)"
-  if [[ -n "$current_session" && ( -z "$expected_session" || "$current_session" == "$expected_session" ) ]]; then
+  if [[ -n "$expected_session" && -n "$current_session" && "$current_session" == "$expected_session" ]]; then
     send_notification "$notify_pane" "$notification_xml" || true
   fi
   notify_exec_watchers "$exec_dir" "$notify_pane" "$notification_xml" || true

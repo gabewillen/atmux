@@ -6,6 +6,15 @@
   `atmux agent list --all` so shared exec watcher infrastructure does not
   appear as an agent.
 
+## 0.26.2 — Detached exec timeouts
+
+- Made `atmux exec` detached by default, with `--wait` preserving foreground
+  execution.
+- Required an explicit `--timeout`, with `--timeout 0` or `--timeout -1`
+  documenting intentional long-running commands.
+- Kept detached exec processes owned by tmux sessions instead of nohup-style
+  shell wrappers.
+
 ## 0.26.1 — Explicit agent cleanup
 
 - Changed `atmux agent kill` to be lifecycle-only by default, preserving

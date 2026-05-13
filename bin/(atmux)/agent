@@ -496,6 +496,11 @@ attach_or_switch() {
     return
   fi
 
+  if [[ -n "${ATMUX_TMUX:-}${TMUX:-}" ]]; then
+    printf '%s\n' "$session"
+    return
+  fi
+
   if atmux_tmux_current_client_is_project_server; then
     tmux switch-client -t "$session"
   else

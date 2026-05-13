@@ -37,14 +37,14 @@ Do **not** burn your foreground session on naive polling loops. Avoid patterns s
 
 Treat **notifications and scheduled reminders** as the cues to pull state; run lightweight one-shot checks *after* something wakes you, not on an unprompted timer loop inside the CLI.
 
-Prefer **process** exits (`atmux process watch` on exec-tracked children), **agent** idle boundaries (`atmux agent watch`), **team** readiness via automatic **`team-idle` notifications** plus **`atmux team status`** for one-shot rollups—rather than hand-rolled sleep/`ps`/`message list` loops.
+Prefer **process** exits (`atmux process watch` on exec-tracked children), automatic **`agent-idle` notifications** for directly created agents, and automatic **`team-idle` notifications** plus **`atmux team status`** for team readiness—rather than hand-rolled sleep/`ps`/`message list` loops.
 
 Prefer:
 
 - **`atmux schedule --notification "<text>"`** with **`--once <duration>`** or **`--interval <duration>`** for self ticks and follow-ups (“recheck QA agent”, “read inbox”, “summarize blocker”). Scheduled notifications arrive at **your** session—do not misuse `atmux schedule` to ping yourself via `send` to the same agent.
 - **`atmux exec --timeout <duration>`** / **`--shared`** when you kick off repo commands (`make`, tests, scripted batch work) so completion surfaces as an ATMUX exec notification instead of trapping you in foreground output until the shell returns. `--timeout` is required; use a finite timeout for normal work, and use `--timeout 0` only when you are explicitly starting a long-running watcher.
 - **`atmux process watch <pid>`** for **exec-tracked** children when you specifically need exit/reason fidelity beyond the notifier (per `atmux exec` bookkeeping under `ATMUX_HOME/exec/...`).
-- **`atmux agent watch <name>`** when you need to block until **that agent** sits idle or a **`--timeout`** fires—use as an intentional single wait with sensible **`--idle`** / **`--timeout`**, not stitched into tight repeated loops. Prefer **automatic team-idle notifications** (`team-idle`) for whole-team waits instead of multiplexing watches yourself.
+- **Automatic `agent-idle` notifications** from `atmux agent create` for directly delegated agents created outside a team; team members are covered by `team-idle` instead. Do not launch your own `atmux agent watch` for a newly created agent unless the automatic watcher is missing and you have confirmed that with `atmux watcher list`.
 - **Existing watcher notifications** (`atmux pr watch …`, `atmux issue watch …`, feed watchers) and delegate replies—react when they arrive rather than probing the same sinks on a periodic sleep cadence.
 
 Examples:
@@ -59,10 +59,6 @@ atmux exec --timeout 30m -- make test-all
 
 ```sh
 atmux process watch 12345 --timeout 7200
-```
-
-```sh
-atmux agent watch implementer --idle 180 --timeout 7200 --lines 200
 ```
 
 ## Adapter Selection

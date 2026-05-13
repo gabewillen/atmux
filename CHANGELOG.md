@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.26.4 — Manager idle notification guidance
+
+- Updated the manager role to rely on automatic `agent-idle` notifications for
+  directly created agents outside a team, and `team-idle` for team members,
+  instead of launching duplicate manual `atmux agent watch` commands.
+
 ## 0.26.3 — Hide worker sessions from agent list
 
 - Hid the repo-scoped `atmux-<repo>-workers` session from

@@ -9,7 +9,17 @@ TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPTS_DIR="$TESTS_DIR/scripts"
 
 eval "$("$SCRIPTS_DIR/setup")"
-trap "$SCRIPTS_DIR/teardown --team-session \"$TEAM_SESSION\" --agent1-session \"$AGENT1_SESSION\" --agent2-session \"$AGENT2_SESSION\"" EXIT
+WORKERS_SESSION="atmux-${REPO_NAME}-workers"
+cleanup() {
+  tmux kill-session -t "$WORKERS_SESSION" >/dev/null 2>&1 || true
+  "$SCRIPTS_DIR/teardown" --team-session "$TEAM_SESSION" --agent1-session "$AGENT1_SESSION" --agent2-session "$AGENT2_SESSION"
+}
+trap cleanup EXIT
+
+tmux kill-session -t "$WORKERS_SESSION" >/dev/null 2>&1 || true
+tmux new-session -d -s "$WORKERS_SESSION" -n holder -c "$REPO_ROOT" "cat"
+tmux set-environment -t "$WORKERS_SESSION" ATMUX_REPO "$REPO_NAME"
+tmux set-environment -t "$WORKERS_SESSION" ATMUX_SESSION_NAME "$WORKERS_SESSION"
 
 teams_out="$(ATMUX_REPO="$REPO_NAME" ATMUX_REPORTER=xml "$ATMUX_BIN" team list)"
 printf '%s\n' "$teams_out" | grep -Fq "<teams repo=\"$REPO_NAME\">"
@@ -22,6 +32,20 @@ printf '%s\n' "$agents_out" | grep -Fq "session=\"$AGENT2_SESSION\""
 if printf '%s\n' "$agents_out" | grep -Fq "session=\"$TEAM_SESSION\""; then
   echo "team view/session id should not appear in agent list output" >&2
   printf '%s\n' "$agents_out" >&2
+  exit 1
+fi
+if printf '%s\n' "$agents_out" | grep -Fq "session=\"$WORKERS_SESSION\""; then
+  echo "workers session should not appear in XML agent list output" >&2
+  printf '%s\n' "$agents_out" >&2
+  exit 1
+fi
+
+agents_cli_out="$(ATMUX_REPO="$REPO_NAME" ATMUX_REPORTER=cli "$ATMUX_BIN" agent list --all)"
+printf '%s\n' "$agents_cli_out" | grep -Fq "$AGENT1_SESSION"
+printf '%s\n' "$agents_cli_out" | grep -Fq "$AGENT2_SESSION"
+if printf '%s\n' "$agents_cli_out" | grep -Fq "$WORKERS_SESSION"; then
+  echo "workers session should not appear in CLI agent list output" >&2
+  printf '%s\n' "$agents_cli_out" >&2
   exit 1
 fi
 

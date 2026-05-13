@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.26.3 — Hide worker sessions from agent list
+
+- Hid the repo-scoped `atmux-<repo>-workers` session from
+  `atmux agent list --all` so shared exec watcher infrastructure does not
+  appear as an agent.
+
 ## 0.26.1 — Explicit agent cleanup
 
 - Changed `atmux agent kill` to be lifecycle-only by default, preserving

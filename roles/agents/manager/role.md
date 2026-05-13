@@ -42,7 +42,7 @@ Prefer **process** exits (`atmux process watch` on exec-tracked children), **age
 Prefer:
 
 - **`atmux schedule --notification "<text>"`** with **`--once <duration>`** or **`--interval <duration>`** for self ticks and follow-ups (“recheck QA agent”, “read inbox”, “summarize blocker”). Scheduled notifications arrive at **your** session—do not misuse `atmux schedule` to ping yourself via `send` to the same agent.
-- **`atmux exec --detach`** / **`--shared`** when you kick off repo commands (`make`, tests, scripted batch work) so completion surfaces as an ATMUX exec notification instead of trapping you in foreground output until the shell returns.
+- **`atmux exec --timeout <duration>`** / **`--shared`** when you kick off repo commands (`make`, tests, scripted batch work) so completion surfaces as an ATMUX exec notification instead of trapping you in foreground output until the shell returns. `--timeout` is required; use a finite timeout for normal work, and use `--timeout 0` only when you are explicitly starting a long-running watcher.
 - **`atmux process watch <pid>`** for **exec-tracked** children when you specifically need exit/reason fidelity beyond the notifier (per `atmux exec` bookkeeping under `ATMUX_HOME/exec/...`).
 - **`atmux agent watch <name>`** when you need to block until **that agent** sits idle or a **`--timeout`** fires—use as an intentional single wait with sensible **`--idle`** / **`--timeout`**, not stitched into tight repeated loops. Prefer **automatic team-idle notifications** (`team-idle`) for whole-team waits instead of multiplexing watches yourself.
 - **Existing watcher notifications** (`atmux pr watch …`, `atmux issue watch …`, feed watchers) and delegate replies—react when they arrive rather than probing the same sinks on a periodic sleep cadence.
@@ -54,7 +54,7 @@ atmux schedule --once 45m --notification "triage unanswered delegate messages on
 ```
 
 ```sh
-atmux exec --detach -- make test-all
+atmux exec --timeout 30m -- make test-all
 ```
 
 ```sh

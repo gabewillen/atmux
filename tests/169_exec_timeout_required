@@ -72,4 +72,26 @@ if command -v script >/dev/null 2>&1; then
     || { echo "expected TTY timeout escalation to record exit 124; output: $out" >&2; exit 1; }
 fi
 
+HOME="$tmp_home" ATMUX_HOME="$atmux_home" ATMUX_REPO="$repo_name" \
+  ATMUX_AGENT_NAME="t" ATMUX_ALLOW_OUTSIDE_TMUX=1 \
+  "$ATMUX_BIN" exec --wait --timeout 47 -- bash -lc 'trap "exit 0" TERM; while :; do sleep 1; done' >/dev/null 2>&1 &
+exec_pid=$!
+sleep 1
+kill -TERM "$exec_pid" >/dev/null 2>&1 || true
+set +e
+wait "$exec_pid"
+rc=$?
+set -e
+[[ "$rc" -eq 143 ]] || { echo "expected signal exit 143, got $rc" >&2; exit 1; }
+sleep 0.2
+leaked_watchdogs="$(pgrep -fx 'sleep 47' || true)"
+if [[ -n "$leaked_watchdogs" ]]; then
+  while IFS= read -r watchdog_pid; do
+    [[ -n "$watchdog_pid" ]] || continue
+    kill -KILL "$watchdog_pid" >/dev/null 2>&1 || true
+  done <<< "$leaked_watchdogs"
+  echo "timeout watchdog sleep leaked after foreground signal: $leaked_watchdogs" >&2
+  exit 1
+fi
+
 echo "ok: exec requires explicit timeout and enforces finite --timeout"

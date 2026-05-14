@@ -16,6 +16,7 @@ Usage:
                            [--worktree <path>] [--shared-worktree]
                            [--time-limit <duration>]
                            [--adapter <adapter>] [--intelligence <0-100>]
+                           [--adapters <a,b,...>]
                            [--model <id>] [--reasoning <level>]
                            [--set <key>=<value>]...
                            [--set <member>.<key>=<value>]...
@@ -64,6 +65,9 @@ Description:
                       last `-`-segment of the member's first token, e.g.
                       `${ATMUX_TEAM}-driver` matches on `driver`).
 
+  --adapters <list>   Restrict adapter auto-selection for every spawned
+                      member. Inherited adapter restrictions cannot be widened.
+
   --set <key>=<value> Known agent fields apply to every member. Unknown
                       undotted keys are role-level configuration exposed to
                       team manifests as ATMUX_TEAM_SET_<KEY>; repeated keys
@@ -79,6 +83,7 @@ Usage:
                            [--worktree <path>] [--shared-worktree]
                            [--time-limit <duration>]
                            [--adapter <adapter>] [--intelligence <0-100>]
+                           [--adapters <a,b,...>]
                            [--model <id>] [--reasoning <level>]
                            [--set <key>=<value>]...
                            [--set <member>.<key>=<value>]...
@@ -308,6 +313,7 @@ spawn_team_members() {
   # (later flag wins in agent's parser).
   local -a team_overrides=()
   [[ -n "${team_adapter:-}"      ]] && team_overrides+=(--adapter "$team_adapter")
+  [[ -n "${team_adapters:-}"     ]] && team_overrides+=(--adapters "$team_adapters")
   [[ -n "${team_intelligence:-}" ]] && team_overrides+=(--intelligence "$team_intelligence")
   [[ -n "${team_model:-}"        ]] && team_overrides+=(--model "$team_model")
   [[ -n "${team_reasoning:-}"    ]] && team_overrides+=(--reasoning "$team_reasoning")
@@ -582,6 +588,7 @@ create_team() {
   # `--set <member>.<field>=<value>` overrides win, since spawn_team_members
   # appends per-member overrides after these.
   local team_adapter=""
+  local team_adapters=""
   local team_intelligence=""
   local team_model=""
   local team_reasoning=""
@@ -600,6 +607,8 @@ create_team() {
       --stop=*)  stop_cmd="${1#--stop=}"; shift ;;
       --adapter)        team_adapter="${2:-}"; shift 2 ;;
       --adapter=*)      team_adapter="${1#--adapter=}"; shift ;;
+      --adapters)       team_adapters="${2:-}"; shift 2 ;;
+      --adapters=*)     team_adapters="${1#--adapters=}"; shift ;;
       --intelligence)   team_intelligence="${2:-}"; shift 2 ;;
       --intelligence=*) team_intelligence="${1#--intelligence=}"; shift ;;
       --model)          team_model="${2:-}"; shift 2 ;;

@@ -20,12 +20,29 @@ repo_name_raw="$(basename "$REPO_ROOT")"
 repo_name="$(printf '%s' "$repo_name_raw" | sed -E 's/[^A-Za-z0-9_-]+/_/g; s/_+/_/g; s/^_+//; s/_+$//')"
 agent="allowlist-${RANDOM}"
 bad_agent="disallowed-${RANDOM}"
+inherited_bad_agent="inherited-disallowed-${RANDOM}"
+inherited_bad_list_agent="inherited-list-${RANDOM}"
+inherited_set_agent="inherited-set-${RANDOM}"
+role_pref_agent="role-pref-${RANDOM}"
+team_pref="team-pref-${RANDOM}"
+team_pref_member="${team_pref}-member"
 session="atmux-${repo_name}-${agent}"
 bad_session="atmux-${repo_name}-${bad_agent}"
+inherited_bad_session="atmux-${repo_name}-${inherited_bad_agent}"
+inherited_bad_list_session="atmux-${repo_name}-${inherited_bad_list_agent}"
+inherited_set_session="atmux-${repo_name}-${inherited_set_agent}"
+role_pref_session="atmux-${repo_name}-${role_pref_agent}"
+team_pref_session="atmux-${repo_name}-${team_pref_member}"
 
 cleanup() {
   tmux kill-session -t "$session" >/dev/null 2>&1 || true
   tmux kill-session -t "$bad_session" >/dev/null 2>&1 || true
+  tmux kill-session -t "$inherited_bad_session" >/dev/null 2>&1 || true
+  tmux kill-session -t "$inherited_bad_list_session" >/dev/null 2>&1 || true
+  tmux kill-session -t "$inherited_set_session" >/dev/null 2>&1 || true
+  tmux kill-session -t "$role_pref_session" >/dev/null 2>&1 || true
+  "$ATMUX_BIN" team kill "$team_pref" >/dev/null 2>&1 || true
+  tmux kill-session -t "$team_pref_session" >/dev/null 2>&1 || true
   rm -rf "$tmp_root"
 }
 trap cleanup EXIT
@@ -57,9 +74,35 @@ ADAPTER
 mkdir -p "$tmp_home" "$atmux_home/adapters"
 make_adapter alpha
 make_adapter beta
+role_dir="$atmux_home/roles/agents/role-pref"
+mkdir -p "$role_dir"
+cat > "$role_dir/role.md" <<'EOF'
+# Role preference probe
+EOF
+cat > "$role_dir/manifest" <<'EOF'
+KIND=agent
+INTELLIGENCE=50
+ADAPTERS=(alpha)
+EOF
+team_role_dir="$atmux_home/roles/teams/team-pref"
+mkdir -p "$team_role_dir"
+cat > "$team_role_dir/role.md" <<'EOF'
+# Team preference probe
+EOF
+cat > "$team_role_dir/manifest" <<EOF
+KIND=team
+MEMBERS=(
+  "$team_pref_member --role role-pref --intelligence 50 --shared-worktree"
+)
+EOF
 
 tmux kill-session -t "$session" >/dev/null 2>&1 || true
 tmux kill-session -t "$bad_session" >/dev/null 2>&1 || true
+tmux kill-session -t "$inherited_bad_session" >/dev/null 2>&1 || true
+tmux kill-session -t "$inherited_bad_list_session" >/dev/null 2>&1 || true
+tmux kill-session -t "$inherited_set_session" >/dev/null 2>&1 || true
+tmux kill-session -t "$role_pref_session" >/dev/null 2>&1 || true
+tmux kill-session -t "$team_pref_session" >/dev/null 2>&1 || true
 
 (
   cd "$REPO_ROOT"
@@ -118,5 +161,108 @@ if tmux has-session -t "$bad_session" 2>/dev/null; then
   echo "disallowed adapter should not create a session" >&2
   exit 1
 fi
+
+set +e
+(
+  cd "$REPO_ROOT"
+  HOME="$tmp_home" \
+    ATMUX_HOME="$atmux_home" \
+    ATMUX_SOURCE_ROOT="$REPO_ROOT" \
+    ATMUX_ADAPTERS_ALLOWED=beta \
+    ATMUX_ALLOW_OUTSIDE_TMUX=1 \
+    "$ATMUX_BIN" agent create --name "$inherited_bad_agent" --role worker --intelligence 50 --shared-worktree --adapter alpha >/dev/null 2>&1
+)
+rc=$?
+set -e
+
+[[ "$rc" -eq 2 ]] || { echo "expected inherited disallowed adapter to exit 2, got $rc" >&2; exit 1; }
+if tmux has-session -t "$inherited_bad_session" 2>/dev/null; then
+  echo "inherited disallowed adapter should not create a session" >&2
+  exit 1
+fi
+
+set +e
+(
+  cd "$REPO_ROOT"
+  HOME="$tmp_home" \
+    ATMUX_HOME="$atmux_home" \
+    ATMUX_SOURCE_ROOT="$REPO_ROOT" \
+    ATMUX_ADAPTERS_ALLOWED=beta \
+    ATMUX_ALLOW_OUTSIDE_TMUX=1 \
+    "$ATMUX_BIN" agent create --name "$inherited_bad_list_agent" --role worker --intelligence 50 --shared-worktree --adapters alpha >/dev/null 2>&1
+)
+rc=$?
+set -e
+
+[[ "$rc" -eq 2 ]] || { echo "expected inherited disallowed --adapters to exit 2, got $rc" >&2; exit 1; }
+if tmux has-session -t "$inherited_bad_list_session" 2>/dev/null; then
+  echo "inherited disallowed --adapters should not create a session" >&2
+  exit 1
+fi
+
+set +e
+(
+  cd "$REPO_ROOT"
+  HOME="$tmp_home" \
+    ATMUX_HOME="$atmux_home" \
+    ATMUX_SOURCE_ROOT="$REPO_ROOT" \
+    ATMUX_ADAPTERS_ALLOWED=beta \
+    ATMUX_ALLOW_OUTSIDE_TMUX=1 \
+    "$ATMUX_BIN" agent create --name "$inherited_set_agent" --role worker --intelligence 50 --shared-worktree --set adapter=alpha >/dev/null 2>&1
+)
+rc=$?
+set -e
+
+[[ "$rc" -eq 2 ]] || { echo "expected inherited disallowed --set adapter to exit 2, got $rc" >&2; exit 1; }
+if tmux has-session -t "$inherited_set_session" 2>/dev/null; then
+  echo "inherited disallowed --set adapter should not create a session" >&2
+  exit 1
+fi
+
+rm -f "$atmux_home/selected-adapter"
+(
+  cd "$REPO_ROOT"
+  HOME="$tmp_home" \
+    ATMUX_HOME="$atmux_home" \
+    ATMUX_SOURCE_ROOT="$REPO_ROOT" \
+    ATMUX_ADAPTERS_ALLOWED=alpha,beta \
+    ATMUX_ALLOW_OUTSIDE_TMUX=1 \
+    "$ATMUX_BIN" agent create --name "$role_pref_agent" --role role-pref --intelligence 50 --shared-worktree >/dev/null
+)
+
+deadline=$(( $(date +%s) + 10 ))
+while [[ ! -f "$atmux_home/selected-adapter" ]]; do
+  if (( $(date +%s) >= deadline )); then
+    echo "timed out waiting for role-preferred adapter start" >&2
+    exit 1
+  fi
+  sleep 0.1
+done
+
+selected="$(tr -d '\r\n' < "$atmux_home/selected-adapter")"
+[[ "$selected" == "alpha" ]] || { echo "expected role-preferred alpha adapter, got ${selected:-missing}" >&2; exit 1; }
+
+rm -f "$atmux_home/selected-adapter"
+(
+  cd "$REPO_ROOT"
+  HOME="$tmp_home" \
+    ATMUX_HOME="$atmux_home" \
+    ATMUX_SOURCE_ROOT="$REPO_ROOT" \
+    ATMUX_ADAPTERS_ALLOWED=alpha,beta \
+    ATMUX_ALLOW_OUTSIDE_TMUX=1 \
+    "$ATMUX_BIN" team create "$team_pref" --role team-pref --shared-worktree >/dev/null
+)
+
+deadline=$(( $(date +%s) + 10 ))
+while [[ ! -f "$atmux_home/selected-adapter" ]]; do
+  if (( $(date +%s) >= deadline )); then
+    echo "timed out waiting for team member role-preferred adapter start" >&2
+    exit 1
+  fi
+  sleep 0.1
+done
+
+selected="$(tr -d '\r\n' < "$atmux_home/selected-adapter")"
+[[ "$selected" == "alpha" ]] || { echo "expected team member role-preferred alpha adapter, got ${selected:-missing}" >&2; exit 1; }
 
 echo "ok: atmux agent create --adapters restricts adapter selection"

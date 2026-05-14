@@ -475,6 +475,43 @@ adapter_in_list() {
   return 1
 }
 
+adapter_allowed_by_list() {
+  local needle="$1" list="$2" item
+  while IFS= read -r item; do
+    [[ -n "$item" ]] || continue
+    [[ "$item" == "$needle" ]] && return 0
+  done < <(split_adapter_list "$list")
+  return 1
+}
+
+validate_adapter_list_nonempty() {
+  local list="$1" item count=0
+  while IFS= read -r item; do
+    [[ -n "$item" ]] || continue
+    count=$((count + 1))
+  done < <(split_adapter_list "$list")
+  (( count > 0 ))
+}
+
+enforce_inherited_adapters_allowed() {
+  local adapter="$1" adapters_list="$2" inherited_list="${ATMUX_ADAPTERS_ALLOWED:-}"
+  local candidate
+  [[ -n "$inherited_list" ]] || return 0
+
+  if [[ "$adapter" != "auto" ]] && ! adapter_allowed_by_list "$adapter" "$inherited_list"; then
+    echo "adapter not allowed by inherited --adapters: $adapter" >&2
+    return 2
+  fi
+
+  while IFS= read -r candidate; do
+    [[ -n "$candidate" ]] || continue
+    if ! adapter_allowed_by_list "$candidate" "$inherited_list"; then
+      echo "adapter not allowed by inherited --adapters: $candidate" >&2
+      return 2
+    fi
+  done < <(split_adapter_list "$adapters_list")
+}
+
 # === Misc utilities =========================================================
 
 build_notification() {
@@ -986,7 +1023,7 @@ spawn_agent_session() {
   local name=""
   local adapter="codex"
   local adapter_explicit=0
-  local adapters_list=""
+  local adapters_list="${ATMUX_ADAPTERS_ALLOWED:-}"
   local team="${ATMUX_TEAM:-}"
   local intelligence="${ATMUX_INTELLIGENCE:-20}"
   local name_explicit=0
@@ -1428,6 +1465,7 @@ do_create() {
   fi
   local adapter="auto"
   local adapters_list=""
+  local adapters_explicit=0
   local intelligence=""
   local model=""
   local reasoning=""
@@ -1455,6 +1493,7 @@ do_create() {
         ;;
       --adapters)
         adapters_list="${2:-}"
+        adapters_explicit=1
         shift 2
         ;;
       --role)
@@ -1601,7 +1640,7 @@ do_create() {
       model) model="$set_val" ;;
       reasoning|reasoning_level) reasoning="$set_val" ;;
       adapter) adapter="$set_val" ;;
-      adapters) adapters_list="$set_val" ;;
+      adapters) adapters_list="$set_val"; adapters_explicit=1 ;;
       intelligence) intelligence="$set_val" ;;
       name) name="$set_val" ;;
       team) team="$set_val" ;;
@@ -1648,6 +1687,10 @@ do_create() {
     echo "--task requires --description and/or --todos" >&2
     exit 2
   fi
+  if [[ "$adapters_explicit" -eq 1 ]] && ! validate_adapter_list_nonempty "$adapters_list"; then
+    echo "--adapters requires at least one adapter" >&2
+    exit 2
+  fi
 
   local repo_root="" repo_name=""
   {
@@ -1659,7 +1702,14 @@ do_create() {
     echo "adapter start not found: $adapter" >&2
     exit 127
   fi
-  if [[ -n "$adapters_list" ]]; then
+  # Combine role-derived adapters with user-supplied --adapters (user wins).
+  # An inherited ATMUX_ADAPTERS_ALLOWED value is a ceiling, not a preference:
+  # it restricts the effective list but must not replace a role's narrower
+  # ADAPTERS declaration.
+  local effective_adapters="${adapters_list:-$role_adapters}"
+  enforce_inherited_adapters_allowed "$adapter" "$effective_adapters" || exit $?
+
+  if [[ -n "$effective_adapters" ]]; then
     local adapter_candidate
     while IFS= read -r adapter_candidate; do
       [[ -n "$adapter_candidate" ]] || continue
@@ -1667,15 +1717,12 @@ do_create() {
         echo "adapter start not found: $adapter_candidate" >&2
         exit 127
       fi
-    done < <(split_adapter_list "$adapters_list")
+    done < <(split_adapter_list "$effective_adapters")
   fi
 
   if [[ -n "$team" ]]; then
     ensure_team_has_capacity "$repo_name" "$team"
   fi
-
-  # Combine role-derived adapters with user-supplied --adapters (user wins).
-  local effective_adapters="${adapters_list:-$role_adapters}"
 
   # Build the spawn args and call spawn_agent_session inline. This replaces
   # the old `session start` re-exec — agent owns its lifecycle now.

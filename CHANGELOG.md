@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.26.5 — Adapter allow-list inheritance
+
+- Fixed `--adapters` restrictions so child agents cannot widen an inherited
+  adapter allow-list through `--adapter`, `--adapters`, or `--set adapter=...`.
+- Added `team create --adapters` to pass adapter allow-lists to role-spawned
+  team members.
+
 ## 0.26.4 — Manager idle notification guidance
 
 - Updated the manager role to rely on automatic `agent-idle` notifications for

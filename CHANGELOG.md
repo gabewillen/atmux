@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.26.11 — Notification restore guard
+
+- Prevented lingering `<notification ...>` prompt text from being saved and
+  restored as user input during queued notification delivery.
+
 ## 0.26.10 — Self-kill guard and CPU fixes
 
 - Prevented agents from killing their own tmux session via `atmux agent kill`.

@@ -789,7 +789,7 @@ serve_notification_queue() {
     if (( batch_active == 0 )); then
       if [[ -n "$prompt_prefix" ]]; then
         extract_rc=0
-        saved_input="$(extract_prompt_input "$pane" "$prompt_prefix")" || extract_rc=$?
+        saved_input="$(prompt_input_for_restore "$pane" "$prompt_prefix")" || extract_rc=$?
         if (( extract_rc != 0 )); then
           debug_notify "worker:prompt_extract_failed pane=$(printf '%q' "$pane") rc=$extract_rc"
           if (( wake_fd_open == 1 )); then

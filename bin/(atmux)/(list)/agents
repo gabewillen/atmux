@@ -76,12 +76,6 @@ is_team_session() {
   [[ "$session" == "atmux-${repo_name}-team-"* ]]
 }
 
-is_worker_session() {
-  local repo_name="$1"
-  local session="$2"
-  [[ "$session" == "atmux-${repo_name}-workers" ]]
-}
-
 is_listable_agent_session() {
   local repo_name="$1"
   local session="$2"
@@ -89,7 +83,7 @@ is_listable_agent_session() {
 
   [[ "$session" == "$prefix"* ]] || return 1
   ! is_team_session "$repo_name" "$session" || return 1
-  ! is_worker_session "$repo_name" "$session" || return 1
+  ! atmux_session_is_worker "$session" "$repo_name" || return 1
 }
 
 agent_local_name() {

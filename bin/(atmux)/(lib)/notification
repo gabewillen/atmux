@@ -585,6 +585,27 @@ open_notification_wake_fifo() {
   fi
 }
 
+open_notification_wake_fds() {
+  local qdir="$1"
+  local fifo opener_pid
+
+  fifo="$(notification_wake_fifo "$qdir")"
+  open_notification_wake_fifo "$qdir" || return 1
+
+  { : > "$fifo"; } >/dev/null 2>&1 &
+  opener_pid="$!"
+  if ! exec 8< "$fifo"; then
+    wait "$opener_pid" >/dev/null 2>&1 || true
+    return 1
+  fi
+  if ! exec 9> "$fifo"; then
+    exec 8<&- || true
+    wait "$opener_pid" >/dev/null 2>&1 || true
+    return 1
+  fi
+  wait "$opener_pid" >/dev/null 2>&1 || true
+}
+
 signal_notification_worker() {
   local pane="$1"
   local qdir fifo
@@ -641,14 +662,14 @@ serve_notification_queue() {
     if (( mode_hook_installed == 1 )) && pane_exists "$pane"; then
       tmux set-hook -p -t "$pane" -u "pane-mode-changed[$mode_hook_index]" >/dev/null 2>&1 || true
     fi
-    exec 8>&- 8<&- || true
+    exec 9>&- 8<&- || true
     cleanup_notification_worker "$qdir"
   }
 
   trap cleanup_worker_runtime EXIT
   debug_notify "worker:start pane=$(printf '%q' "$pane") qdir=$(printf '%q' "$qdir") source_root=$(printf '%q' "$source_root")"
   last_activity="$(date +%s)"
-  if open_notification_wake_fifo "$qdir" && exec 8<>"$(notification_wake_fifo "$qdir")"; then
+  if open_notification_wake_fds "$qdir"; then
     wake_fd_open=1
     debug_notify "worker:wake_fifo_ready pane=$(printf '%q' "$pane") fifo=$(printf '%q' "$(notification_wake_fifo "$qdir")")"
     local wake_fifo_q
@@ -726,7 +747,11 @@ serve_notification_queue() {
     fi
     if [[ "$adapter_state" == "auto" || ( "$bootstrap_state" == "pending" && -z "$prompt_prefix" ) ]]; then
       debug_notify "worker:bootstrap_pending pane=$(printf '%q' "$pane") session=$(printf '%q' "$pane_session") command=$(printf '%q' "$pane_command") adapter=$(printf '%q' "$adapter_state") bootstrap=$(printf '%q' "$bootstrap_state")"
-      sleep "$mode_poll_interval"
+      if (( wake_fd_open == 1 )); then
+        wait_for_notification_wake_fd "$wake_timeout"
+      else
+        sleep "$mode_poll_interval"
+      fi
       continue
     fi
     # If any due item has bypass_idle=1 (--steer / --interrupt), skip the
@@ -745,7 +770,11 @@ serve_notification_queue() {
     done
     if (( _has_bypass_due == 0 )) && [[ -n "$prompt_prefix" ]] && ! wait_for_pane_ready "$pane" "$source_root" "$prompt_prefix"; then
       debug_notify "worker:not_ready pane=$(printf '%q' "$pane") prompt_prefix=$(printf '%q' "$prompt_prefix")"
-      sleep "$mode_poll_interval"
+      if (( wake_fd_open == 1 )); then
+        wait_for_notification_wake_fd "$wake_timeout"
+      else
+        sleep "$mode_poll_interval"
+      fi
       continue
     fi
 
@@ -755,7 +784,11 @@ serve_notification_queue() {
         saved_input="$(extract_prompt_input "$pane" "$prompt_prefix")" || extract_rc=$?
         if (( extract_rc != 0 )); then
           debug_notify "worker:prompt_extract_failed pane=$(printf '%q' "$pane") rc=$extract_rc"
-          sleep "$mode_poll_interval"
+          if (( wake_fd_open == 1 )); then
+            wait_for_notification_wake_fd "$wake_timeout"
+          else
+            sleep "$mode_poll_interval"
+          fi
           continue
         fi
       else
@@ -767,6 +800,7 @@ serve_notification_queue() {
     last_activity="$(date +%s)"
 
     local due_item_count=0
+    local batch_deferred=0
     for item_dir in "${items[@]}"; do
       [[ -d "$item_dir" ]] || continue
       if ! notification_item_due "$item_dir"; then
@@ -774,6 +808,7 @@ serve_notification_queue() {
       fi
       due_item_count=$((due_item_count + 1))
       if pane_notification_blocked "$pane"; then
+        batch_deferred=1
         break
       fi
       prompt_prefix="$(resolve_prompt_prefix_for_pane "$pane" "$source_root" 2>/dev/null || true)"
@@ -787,6 +822,7 @@ serve_notification_queue() {
       fi
       if [[ "$adapter_state" == "auto" || ( "$bootstrap_state" == "pending" && -z "$prompt_prefix" ) ]]; then
         debug_notify "worker:item_bootstrap_pending pane=$(printf '%q' "$pane") session=$(printf '%q' "$pane_session") command=$(printf '%q' "$pane_command") adapter=$(printf '%q' "$adapter_state") bootstrap=$(printf '%q' "$bootstrap_state")"
+        batch_deferred=1
         break
       fi
       # Outer loop already ran wait_for_pane_ready when batch_active was set,
@@ -823,6 +859,15 @@ serve_notification_queue() {
       fi
       last_activity="$(date +%s)"
     done
+
+    if (( batch_deferred == 1 )); then
+      if (( wake_fd_open == 1 )); then
+        wait_for_notification_wake_fd "$wake_timeout"
+      else
+        sleep "$mode_poll_interval"
+      fi
+      continue
+    fi
 
     if (( due_item_count == 0 )); then
       if (( batch_active == 1 )); then
@@ -932,6 +977,10 @@ send_notification() {
   }
   if ! pane_exists "$pane"; then
     debug_notify "send_notification:invalid_pane pane=$(printf '%q' "$pane") $(payload_debug_summary "$payload")"
+    return 1
+  fi
+  if atmux_pane_is_worker "$pane"; then
+    debug_notify "send_notification:worker_pane_blocked pane=$(printf '%q' "$pane") $(payload_debug_summary "$payload")"
     return 1
   fi
 

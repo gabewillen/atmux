@@ -172,3 +172,23 @@ atmux_resolve_repo_sessions() {
 atmux_resolve_all_atmux_sessions() {
   tmux list-sessions -F '#{session_name}' 2>/dev/null | awk '/^atmux-/ { print }'
 }
+
+atmux_session_is_worker() {
+  local session="$1"
+  local repo_name="${2:-}"
+  [[ -n "$repo_name" ]] || return 1
+  [[ "$session" == "atmux-${repo_name}-workers" ]]
+}
+
+atmux_pane_is_worker() {
+  local pane="$1" repo_name="${2:-}" session=""
+  session="$(tmux display-message -t "$pane" -p '#{session_name}' 2>/dev/null || true)"
+  [[ -n "$session" ]] || return 1
+  if [[ -z "$repo_name" ]]; then
+    repo_name="$(atmux_resolve_session_env "$session" ATMUX_REPO)"
+  fi
+  if [[ -z "$repo_name" ]]; then
+    repo_name="${ATMUX_REPO:-}"
+  fi
+  atmux_session_is_worker "$session" "$repo_name"
+}

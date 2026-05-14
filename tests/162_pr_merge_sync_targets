@@ -28,6 +28,7 @@ case "${1:-}" in
   list-sessions)
     printf '%s\n' \
       atmux-demo-standalone \
+      atmux-demo-workers \
       atmux-demo-alpha-a \
       atmux-demo-alpha-b \
       atmux-demo-team-alpha
@@ -35,6 +36,7 @@ case "${1:-}" in
   list-panes)
     printf '%s\n' \
       'atmux-demo-standalone %1' \
+      'atmux-demo-workers %9' \
       'atmux-demo-alpha-a %2' \
       'atmux-demo-alpha-b %3' \
       'atmux-demo-team-alpha %4'

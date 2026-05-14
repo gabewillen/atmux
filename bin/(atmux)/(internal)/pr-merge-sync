@@ -127,6 +127,7 @@ while IFS= read -r session; do
   case "$session" in
     atmux-"$repo_name"-team-*) continue ;;
   esac
+  atmux_session_is_worker "$session" "$repo_name" && continue
   team="$(atmux_resolve_session_env "$session" ATMUX_TEAM)"
   [[ -z "$team" ]] || continue
   if notify_session "$session" "agent" "$(atmux_resolve_session_short_name "$session" "$repo_name")"; then

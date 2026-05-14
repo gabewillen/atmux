@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.26.8 — Pane-activity idle watch
+
+- Changed `agent watch` idle detection to ignore adapter status scripts and
+  use pane activity as the source of truth for `agent-idle` notifications.
+
 ## 0.26.6 — Installer shell trampoline
 
 - Fixed the documented `curl ... | sh` install path by re-executing

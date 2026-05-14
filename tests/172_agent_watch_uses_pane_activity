@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Isolate the tmux socket so this test can never touch the developer's
+# default tmux server. Idempotent if the runner already isolated.
+source "$(dirname "${BASH_SOURCE[0]}")/lib/isolate-tmux.sh"
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+ATMUX_BIN="$REPO_ROOT/bin/atmux"
+
+tmp_home="$(mktemp -d "${TMPDIR:-/tmp}/atmux-agent-watch-pane.XXXXXX")"
+repo_name="watchpane${RANDOM}"
+session="atmux-${repo_name}-worker"
+rc_file="$tmp_home/watch.rc"
+out_file="$tmp_home/watch.out"
+err_file="$tmp_home/watch.err"
+trigger_file="$tmp_home/start-output"
+
+cleanup() {
+  tmux kill-session -t "$session" >/dev/null 2>&1 || true
+  rm -rf "$tmp_home"
+}
+trap cleanup EXIT
+
+mkdir -p "$tmp_home/.atmux/adapters/mockidle/scripts"
+cat > "$tmp_home/.atmux/adapters/mockidle/scripts/status" <<'STATUS'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '<status adapter="mockidle" state="idle" />\n'
+STATUS
+chmod +x "$tmp_home/.atmux/adapters/mockidle/scripts/status"
+
+tmux new-session -d -s "$session" -n "$session" -x 120 -y 30 -c "$REPO_ROOT" \
+  "/bin/bash -lc 'while [[ ! -f \"$trigger_file\" ]]; do sleep 0.05; done; while true; do echo active-\$RANDOM; sleep 0.1; done'"
+tmux set-environment -t "$session" ATMUX_REPO "$repo_name"
+tmux set-environment -t "$session" ATMUX_AGENT_NAME "worker"
+tmux set-environment -t "$session" ATMUX_SESSION_NAME "$session"
+tmux set-environment -t "$session" ATMUX_ADAPTER "mockidle"
+pane="$(tmux list-panes -t "$session" -F '#{pane_id}' 2>/dev/null | head -n1)"
+[[ -n "$pane" ]] || { echo "pane missing" >&2; exit 1; }
+
+(
+  set +e
+  ATMUX_HOME="$tmp_home/.atmux" ATMUX_REPO="$repo_name" ATMUX_ALLOW_OUTSIDE_TMUX=1 \
+    "$ATMUX_BIN" agent watch "$session" --idle 2 --timeout 5 --interval 1 --once \
+    >"$out_file" 2>"$err_file"
+  printf '%s\n' "$?" > "$rc_file"
+) &
+watch_pid=$!
+
+sleep 1.5
+if [[ -f "$rc_file" ]]; then
+  echo "agent watch exited before pane activity was driven" >&2
+  cat "$out_file" >&2 2>/dev/null || true
+  cat "$err_file" >&2 2>/dev/null || true
+  exit 1
+fi
+
+touch "$trigger_file"
+
+wait "$watch_pid" || true
+rc="$(tr -d '\r\n' < "$rc_file" 2>/dev/null || true)"
+
+if [[ "$rc" -ne 124 ]]; then
+  echo "agent watch should ignore idle adapter status while pane is active; rc=$rc" >&2
+  cat "$out_file" >&2 2>/dev/null || true
+  cat "$err_file" >&2 2>/dev/null || true
+  exit 1
+fi
+
+echo "ok: agent watch uses pane activity over adapter idle status"

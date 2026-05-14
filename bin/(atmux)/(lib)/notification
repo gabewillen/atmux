@@ -625,14 +625,21 @@ wait_for_notification_wake() {
   fifo="$(notification_wake_fifo "$qdir")"
   [[ -p "$fifo" ]] || return 0
 
-  if [[ "$timeout" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+  if [[ "$timeout" =~ ^[0-9]+([.][0-9]+)?$ && "$timeout" != "0" ]]; then
     sleep "$timeout"
+  else
+    sleep 0.5
   fi
 }
 
 wait_for_notification_wake_fd() {
   local timeout="$1"
-  read -r -t "$timeout" _ <&8 || true
+  if [[ -z "$timeout" || "$timeout" == "0" ]]; then
+    timeout=0.5
+  fi
+  if ! read -r -t "$timeout" _ <&8 2>/dev/null; then
+    sleep 0.2
+  fi
 }
 
 serve_notification_queue() {

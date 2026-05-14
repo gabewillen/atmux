@@ -1,10 +1,14 @@
 # Changelog
 
-## 0.26.10 — Self-kill guard and adapter hints
+## 0.26.10 — Self-kill guard and CPU fixes
 
 - Prevented agents from killing their own tmux session via `atmux agent kill`.
 - Added the allowed adapter list to `--adapters` rejection errors so agents
   can self-correct when they request a disallowed adapter.
+- Fixed notification queue worker busy-loop when FIFO write end is closed
+  (enforces minimum wake timeout and fallback sleep).
+- Debounced `capture-pane` in agent idle watcher to avoid expensive tmux
+  captures on every keystroke.
 
 ## 0.26.9 — Max intelligence policy
 

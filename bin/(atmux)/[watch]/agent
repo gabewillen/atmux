@@ -238,13 +238,15 @@ main() {
     fi
     last_change_ts="$(date +%s)"
     idle_notified=0
-    snap="$(tmux capture-pane -p -t "$pane" -S "-$lines" 2>/dev/null | tr -d '\r' || true)"
-    recent="$(printf '%s\n' "$snap" | tail -n 30)"
-    if detect_stuck_prompt "$recent"; then
-      emit_idle_notification "$agent" "$idle_seconds" "$exec_cmd"
-      (( repeat == 1 )) || exit 0
-      idle_notified=1
-      continue
+    if (( last_change_ts - now >= idle_seconds )); then
+      snap="$(tmux capture-pane -p -t "$pane" -S "-$lines" 2>/dev/null | tr -d '\r' || true)"
+      recent="$(printf '%s\n' "$snap" | tail -n 30)"
+      if detect_stuck_prompt "$recent"; then
+        emit_idle_notification "$agent" "$idle_seconds" "$exec_cmd"
+        (( repeat == 1 )) || exit 0
+        idle_notified=1
+        continue
+      fi
     fi
   done
 }

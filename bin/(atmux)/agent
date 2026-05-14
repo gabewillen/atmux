@@ -9,6 +9,8 @@ source "$HERE/notify"
 source "$HERE/(lib)/tmux"
 # shellcheck source=bin/(atmux)/(lib)/resolver
 source "$HERE/(lib)/resolver"
+# shellcheck source=bin/(atmux)/(lib)/intelligence
+source "$HERE/(lib)/intelligence"
 
 usage() {
   cat <<'USAGE'
@@ -520,53 +522,6 @@ enforce_inherited_adapters_allowed() {
 
 build_notification() {
   "${ATMUX_SOURCE_ROOT:-$ATMUX_HOME/src/atmux}/bin/(atmux)/notify" build "$@"
-}
-
-valid_intelligence() {
-  local value="${1:-}"
-  [[ "$value" =~ ^[0-9]+$ ]] || return 1
-  (( value >= 0 && value <= 100 ))
-}
-
-resolve_inherited_max_intelligence() {
-  local inherited="${ATMUX_MAX_INTELLIGENCE:-}"
-  if [[ -z "$inherited" && -n "${ATMUX_TMUX:-}${TMUX:-}" ]]; then
-    local current_session=""
-    if [[ -n "${ATMUX_TMUX_PANE:-}${TMUX_PANE:-}" ]]; then
-      current_session="$(tmux display-message -t "${ATMUX_TMUX_PANE:-$TMUX_PANE}" -p '#S' 2>/dev/null || true)"
-    else
-      current_session="$(tmux display-message -p '#S' 2>/dev/null || true)"
-    fi
-    if [[ -n "$current_session" ]]; then
-      inherited="$(tmux show-environment -t "$current_session" ATMUX_MAX_INTELLIGENCE 2>/dev/null | sed -n 's/^ATMUX_MAX_INTELLIGENCE=//p' || true)"
-    fi
-  fi
-  printf '%s\n' "$inherited"
-}
-
-effective_max_intelligence() {
-  local requested="${1:-}" inherited
-  inherited="$(resolve_inherited_max_intelligence)"
-
-  if [[ -n "$inherited" ]] && ! valid_intelligence "$inherited"; then
-    echo "invalid inherited max intelligence: $inherited" >&2
-    return 2
-  fi
-  if [[ -n "$requested" ]] && ! valid_intelligence "$requested"; then
-    echo "invalid max intelligence: $requested" >&2
-    echo "expected integer range: 0-100" >&2
-    return 2
-  fi
-  if [[ -n "$requested" && -n "$inherited" && "$requested" -gt "$inherited" ]]; then
-    echo "max intelligence exceeds inherited max: $requested > $inherited" >&2
-    return 2
-  fi
-
-  if [[ -n "$requested" ]]; then
-    printf '%s\n' "$requested"
-  else
-    printf '%s\n' "$inherited"
-  fi
 }
 
 # === Attach / bootstrap helpers (from old session) ==========================
@@ -1170,6 +1125,28 @@ spawn_agent_session() {
     existing_team="$(tmux show-environment -t "$session" ATMUX_TEAM 2>/dev/null | sed -n 's/^ATMUX_TEAM=//p' || true)"
     existing_intelligence="$(tmux show-environment -t "$session" ATMUX_INTELLIGENCE 2>/dev/null | sed -n 's/^ATMUX_INTELLIGENCE=//p' || true)"
     existing_max_intelligence="$(tmux show-environment -t "$session" ATMUX_MAX_INTELLIGENCE 2>/dev/null | sed -n 's/^ATMUX_MAX_INTELLIGENCE=//p' || true)"
+    if [[ -n "$existing_max_intelligence" ]] && ! atmux_valid_intelligence "$existing_max_intelligence"; then
+      echo "existing agent has invalid max intelligence: $existing_max_intelligence" >&2
+      exit 2
+    fi
+    if [[ -n "$existing_intelligence" ]] && ! atmux_valid_intelligence "$existing_intelligence"; then
+      echo "existing agent has invalid intelligence: $existing_intelligence" >&2
+      exit 2
+    fi
+    if [[ -n "$max_intelligence" ]]; then
+      if [[ -z "$existing_max_intelligence" ]]; then
+        echo "existing agent is not constrained by inherited max intelligence: $session" >&2
+        exit 2
+      fi
+      if (( existing_max_intelligence > max_intelligence )); then
+        echo "existing agent max intelligence exceeds inherited max: $existing_max_intelligence > $max_intelligence" >&2
+        exit 2
+      fi
+      if [[ -n "$existing_intelligence" ]] && (( existing_intelligence > max_intelligence )); then
+        echo "existing agent intelligence exceeds inherited max: $existing_intelligence > $max_intelligence" >&2
+        exit 2
+      fi
+    fi
     if [[ -n "$existing_adapter" ]]; then
       export ATMUX_ADAPTER="$existing_adapter"
     else
@@ -1726,7 +1703,7 @@ do_create() {
     *$'\n'*) echo "--stop must be a single line; use a script file for multi-line commands" >&2; exit 2 ;;
   esac
 
-  if [[ -n "$intelligence" ]] && ! valid_intelligence "$intelligence"; then
+  if [[ -n "$intelligence" ]] && ! atmux_valid_intelligence "$intelligence"; then
     echo "invalid intelligence: $intelligence" >&2
     echo "expected integer range: 0-100" >&2
     exit 2
@@ -1736,7 +1713,7 @@ do_create() {
     exit 2
   fi
   local effective_max=""
-  effective_max="$(effective_max_intelligence "$max_intelligence")" || exit $?
+  effective_max="$(atmux_effective_max_intelligence "$max_intelligence")" || exit $?
   if [[ -n "$effective_max" ]]; then
     if (( intelligence > effective_max )); then
       echo "intelligence exceeds max intelligence: $intelligence > $effective_max" >&2

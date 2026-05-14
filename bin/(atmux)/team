@@ -6,6 +6,8 @@ HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 source "$HERE/notify"
 # shellcheck source=bin/(atmux)/(lib)/tmux
 source "$HERE/(lib)/tmux"
+# shellcheck source=bin/(atmux)/(lib)/intelligence
+source "$HERE/(lib)/intelligence"
 # shellcheck source=bin/(atmux)/(internal)/reporter
 source "$HERE/(internal)/reporter"
 
@@ -259,53 +261,6 @@ team_set_is_agent_field() {
       ;;
   esac
   return 1
-}
-
-valid_intelligence() {
-  local value="${1:-}"
-  [[ "$value" =~ ^[0-9]+$ ]] || return 1
-  (( value >= 0 && value <= 100 ))
-}
-
-resolve_inherited_max_intelligence() {
-  local inherited="${ATMUX_MAX_INTELLIGENCE:-}"
-  if [[ -z "$inherited" && -n "${ATMUX_TMUX:-}${TMUX:-}" ]]; then
-    local current_session=""
-    if [[ -n "${ATMUX_TMUX_PANE:-}${TMUX_PANE:-}" ]]; then
-      current_session="$(tmux display-message -t "${ATMUX_TMUX_PANE:-$TMUX_PANE}" -p '#S' 2>/dev/null || true)"
-    else
-      current_session="$(tmux display-message -p '#S' 2>/dev/null || true)"
-    fi
-    if [[ -n "$current_session" ]]; then
-      inherited="$(tmux show-environment -t "$current_session" ATMUX_MAX_INTELLIGENCE 2>/dev/null | sed -n 's/^ATMUX_MAX_INTELLIGENCE=//p' || true)"
-    fi
-  fi
-  printf '%s\n' "$inherited"
-}
-
-effective_max_intelligence() {
-  local requested="${1:-}" inherited
-  inherited="$(resolve_inherited_max_intelligence)"
-
-  if [[ -n "$inherited" ]] && ! valid_intelligence "$inherited"; then
-    echo "atmux team create: invalid inherited max intelligence: $inherited" >&2
-    return 2
-  fi
-  if [[ -n "$requested" ]] && ! valid_intelligence "$requested"; then
-    echo "atmux team create: invalid max intelligence: $requested" >&2
-    echo "expected integer range: 0-100" >&2
-    return 2
-  fi
-  if [[ -n "$requested" && -n "$inherited" && "$requested" -gt "$inherited" ]]; then
-    echo "atmux team create: max intelligence exceeds inherited max: $requested > $inherited" >&2
-    return 2
-  fi
-
-  if [[ -n "$requested" ]]; then
-    printf '%s\n' "$requested"
-  else
-    printf '%s\n' "$inherited"
-  fi
 }
 
 write_team_session_manifest() {
@@ -757,12 +712,12 @@ create_team() {
     *$'\n'*) echo "atmux team create: --stop must be a single line; use a script file for multi-line commands" >&2; exit 2 ;;
   esac
 
-  if [[ -n "$team_intelligence" ]] && ! valid_intelligence "$team_intelligence"; then
+  if [[ -n "$team_intelligence" ]] && ! atmux_valid_intelligence "$team_intelligence"; then
     echo "atmux team create: invalid intelligence: $team_intelligence" >&2
     echo "expected integer range: 0-100" >&2
     exit 2
   fi
-  team_max_intelligence="$(effective_max_intelligence "$team_max_intelligence")" || exit $?
+  team_max_intelligence="$(atmux_effective_max_intelligence "$team_max_intelligence" "atmux team create: ")" || exit $?
   if [[ -n "$team_max_intelligence" ]]; then
     if [[ -n "$team_intelligence" ]] && (( team_intelligence > team_max_intelligence )); then
       echo "atmux team create: intelligence exceeds max intelligence: $team_intelligence > $team_max_intelligence" >&2

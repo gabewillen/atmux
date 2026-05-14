@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+
+atmux_valid_intelligence() {
+  local value="${1:-}"
+  [[ "$value" =~ ^[0-9]+$ ]] || return 1
+  (( value >= 0 && value <= 100 ))
+}
+
+atmux_resolve_inherited_max_intelligence() {
+  local inherited="${ATMUX_MAX_INTELLIGENCE:-}"
+  if [[ -z "$inherited" && -n "${ATMUX_TMUX:-}${TMUX:-}" ]]; then
+    local current_session=""
+    if [[ -n "${ATMUX_TMUX_PANE:-}${TMUX_PANE:-}" ]]; then
+      current_session="$(tmux display-message -t "${ATMUX_TMUX_PANE:-$TMUX_PANE}" -p '#S' 2>/dev/null || true)"
+    else
+      current_session="$(tmux display-message -p '#S' 2>/dev/null || true)"
+    fi
+    if [[ -n "$current_session" ]]; then
+      inherited="$(tmux show-environment -t "$current_session" ATMUX_MAX_INTELLIGENCE 2>/dev/null | sed -n 's/^ATMUX_MAX_INTELLIGENCE=//p' || true)"
+    fi
+  fi
+  printf '%s\n' "$inherited"
+}
+
+atmux_effective_max_intelligence() {
+  local requested="${1:-}" prefix="${2:-}"
+  local inherited
+  inherited="$(atmux_resolve_inherited_max_intelligence)"
+
+  if [[ -n "$inherited" ]] && ! atmux_valid_intelligence "$inherited"; then
+    echo "${prefix}invalid inherited max intelligence: $inherited" >&2
+    return 2
+  fi
+  if [[ -n "$requested" ]] && ! atmux_valid_intelligence "$requested"; then
+    echo "${prefix}invalid max intelligence: $requested" >&2
+    echo "expected integer range: 0-100" >&2
+    return 2
+  fi
+  if [[ -n "$requested" && -n "$inherited" && "$requested" -gt "$inherited" ]]; then
+    echo "${prefix}max intelligence exceeds inherited max: $requested > $inherited" >&2
+    return 2
+  fi
+
+  if [[ -n "$requested" ]]; then
+    printf '%s\n' "$requested"
+  else
+    printf '%s\n' "$inherited"
+  fi
+}

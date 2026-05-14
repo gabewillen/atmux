@@ -97,6 +97,23 @@ rc=$?
 set -e
 [[ "$rc" -eq 2 ]] || { echo "fail: expected model override under max policy to exit 2, got $rc" >&2; exit 1; }
 
+existing_high_cap="existing-high-cap-$$"
+create_agent "$existing_high_cap" --intelligence 40 --max-intelligence 70 >/dev/null
+set +e
+(
+  cd "$REPO_ROOT"
+  HOME="$tmp_home" \
+    ATMUX_HOME="$atmux_home" \
+    ATMUX_SOURCE_ROOT="$REPO_ROOT" \
+    ATMUX_MAX_INTELLIGENCE=50 \
+    ATMUX_ALLOW_OUTSIDE_TMUX=1 \
+    "$ATMUX_BIN" agent create --name "$existing_high_cap" --role probe-agent \
+      --intelligence 40 --adapter mock --shared-worktree >/dev/null 2>&1
+)
+rc=$?
+set -e
+[[ "$rc" -eq 2 ]] || { echo "fail: expected existing agent above inherited cap to exit 2, got $rc" >&2; exit 1; }
+
 set +e
 (
   cd "$REPO_ROOT"

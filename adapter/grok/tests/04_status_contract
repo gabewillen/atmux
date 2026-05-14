@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+ADAPTER_DIR="$(cd -- "$TESTS_DIR/.." && pwd)"
+
+atmux_home="$(mktemp -d "${TMPDIR:-/tmp}/atmux-grok-status-test.XXXXXX")"
+cleanup() { rm -rf "$atmux_home"; }
+trap cleanup EXIT
+
+# Test that status script produces valid XML even with no target pane (fallback path)
+output="$(ATMUX_HOME="$atmux_home" "$ADAPTER_DIR/scripts/status" 2>/dev/null || true)"
+
+# Must contain the status XML element
+if ! printf '%s\n' "$output" | grep -q '<status adapter="grok"'; then
+  echo "status script did not emit expected <status adapter=\"grok\" ...>" >&2
+  echo "output was: $output" >&2
+  exit 1
+fi
+
+# Must have a valid state attribute
+if ! printf '%s\n' "$output" | grep -Eq 'state="(idle|busy|errored|usage-limit)"'; then
+  echo "status script did not emit a recognized state" >&2
+  exit 1
+fi
+
+echo "PASS 04_status_contract"

@@ -1,6 +1,6 @@
 # atmux
 
-**atmux** is a tmux-first toolkit for running multiple AI coding agents in one repo. It manages agents, isolated worktrees, messaging, work assignment, output capture, and notifications across Claude Code, Gemini, Codex, and Cursor.
+**atmux** is a tmux-first toolkit for running multiple AI coding agents in one repo. It manages agents, isolated worktrees, messaging, work assignment, output capture, and notifications across Claude Code, Gemini, Codex, Cursor, Grok, and OpenCode.
 
 The default install is project-local: atmux lives in `<project>/.atmux`, its source is plain shell, and agents can patch the tool in the same repo they are working on. There is no daemon, server, database, build step, or language runtime beyond ordinary Unix tools (`bash`, `git`, `tmux`).
 
@@ -8,11 +8,11 @@ The default install is project-local: atmux lives in `<project>/.atmux`, its sou
 
 - **Visible agents.** Every agent runs in tmux, so you can attach, inspect, and kill it with familiar tools.
 - **Isolated work.** Agents get their own git worktree by default, so parallel edits do not collide.
-- **Adapter portable.** The same workflow can run Claude Code, Gemini, Codex, Cursor, or a third-party adapter.
+- **Adapter portable.** The same workflow can run Claude Code, Gemini, Codex, Cursor, Grok, OpenCode, or a third-party adapter.
 - **Role and team aware.** Roles define reusable prompts/hooks; teams spawn coordinated member agents.
 - **Agent-editable.** A project install keeps atmux source next to your code, so missing workflow glue can be patched locally.
 
-Current version: `0.26.11`.
+Current version: `0.27.0`.
 
 ## Install
 
@@ -117,6 +117,10 @@ The `--intelligence 0–100` flag selects a model and reasoning level via the ad
 | `gemini` | 40–74 | `gemini-3-flash-preview` | `medium` |
 | `gemini` | 75–89 | `gemini-3.1-pro-preview` | `medium` |
 | `gemini` | 90–100 | `gemini-3.1-pro-preview` | `high` |
+| `grok` | 0–39 | `grok-4.3-non-reasoning` | `low` |
+| `grok` | 40–69 | `grok-4.3` | `medium` |
+| `grok` | 70–89 | `grok-4.3` | `high` |
+| `grok` | 90–100 | `grok-4-heavy` | `high` |
 | `opencode` | 0–29 | `openai/gpt-5.5` | `low` |
 | `opencode` | 30–59 | `openai/gpt-5.5` | `medium` |
 | `opencode` | 60–84 | `openai/gpt-5.5` | `high` |
@@ -133,6 +137,7 @@ Adapters translate `atmux` commands to a specific AI CLI. The default adapter is
 | `codextra` | Codextra |
 | `cursor-agent` | Cursor AI |
 | `gemini` | Gemini CLI |
+| `grok` | Grok |
 | `opencode` | OpenCode |
 
 ```sh

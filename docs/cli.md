@@ -1,6 +1,6 @@
 # atmux CLI
 
-`atmux` is a bash CLI for managing repo-scoped tmux agent sessions, routing messages, and coordinating work between adapters such as Codex, Claude Code, Gemini CLI, Cursor Agent, and OpenCode.
+`atmux` is a bash CLI for managing repo-scoped tmux agent sessions, routing messages, and coordinating work between adapters such as Codex, Claude Code, Gemini CLI, Cursor Agent, Grok, and OpenCode.
 
 ## Common Commands
 
@@ -123,6 +123,10 @@ The `--intelligence 0-100` flag selects a model and reasoning level through the 
 | `gemini` | 40-74 | `gemini-3-flash-preview` | `medium` |
 | `gemini` | 75-89 | `gemini-3.1-pro-preview` | `medium` |
 | `gemini` | 90-100 | `gemini-3.1-pro-preview` | `high` |
+| `grok` | 0-39 | `grok-3-mini` | `low` |
+| `grok` | 40-69 | `grok-4.20-non-reasoning` | `medium` |
+| `grok` | 70-89 | `grok-4.3` | `medium` |
+| `grok` | 90-100 | `grok-4.3` | `high` |
 | `opencode` | 0-29 | `openai/gpt-5.5` | `low` |
 | `opencode` | 30-59 | `openai/gpt-5.5` | `medium` |
 | `opencode` | 60-84 | `openai/gpt-5.5` | `high` |

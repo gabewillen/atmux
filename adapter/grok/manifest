@@ -1,0 +1,11 @@
+NAME=grok
+VERSION=1
+SUBMIT_KEYS_STEER=(Enter)
+SUBMIT_KEYS_INTERRUPT=(C-c)
+INTELLIGENCE_MAP=(
+  "0 39 grok-4.3-non-reasoning low"
+  "40 69 grok-4.3 medium"
+  "70 89 grok-4.3 high"
+  "90 100 grok-4-heavy high"
+)
+INPUT_START="❯"

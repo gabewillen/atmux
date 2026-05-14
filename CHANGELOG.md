@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.26.10 — Self-kill guard
+
+- Prevented agents from killing their own tmux session via `atmux agent kill`.
+
 ## 0.26.9 — Max intelligence policy
 
 - Added `--max-intelligence` to `agent create` and `team create` so agents can

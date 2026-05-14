@@ -467,6 +467,18 @@ signal_adapter_pane() {
   return 0
 }
 
+resolve_current_session_name() {
+  if [[ -n "${ATMUX_SESSION_NAME:-}" ]]; then
+    printf '%s\n' "$ATMUX_SESSION_NAME"
+    return 0
+  fi
+  if [[ -n "${ATMUX_TMUX:-}${TMUX:-}" ]]; then
+    tmux display-message -p '#{session_name}' 2>/dev/null || true
+    return 0
+  fi
+  return 1
+}
+
 kill_agents() {
   local cleanup="$1"
   shift
@@ -476,6 +488,9 @@ kill_agents() {
     IFS= read -r repo_root
     IFS= read -r repo_name
   } < <(atmux_resolve_repo_context)
+
+  local current_session=""
+  current_session="$(resolve_current_session_name || true)"
 
   local atmux_home="${ATMUX_HOME:-$HOME/.atmux}"
   local worktree_root="$atmux_home/agents"
@@ -497,6 +512,13 @@ kill_agents() {
   local session
   while IFS= read -r session; do
     [[ -z "$session" ]] && continue
+
+    if [[ -n "$current_session" && "$session" == "$current_session" ]]; then
+      if [[ "$cleanup" -eq 0 ]]; then
+        echo "atmux agent kill: refusing self-kill of current session $session" >&2
+      fi
+      continue
+    fi
 
     # Match against full session name, short name (without atmux-repo- prefix), or agent name
     local short_name="${session#"$prefix"}"

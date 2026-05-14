@@ -29,7 +29,9 @@ pane="$(tmux list-panes -t "$session" -F '#{pane_id}' 2>/dev/null | head -n1)"
 tmux send-keys -t "$pane" "echo 'agent started'" C-m
 sleep 1
 
-# Watch with short idle — pane will become stable quickly
+# Watch with short idle. Idle now starts after the watcher observes pane
+# activity, so emit one line after attaching and then let the pane settle.
+( sleep 1; tmux send-keys -t "$pane" "echo 'agent settled'" C-m ) &
 set +e
 ATMUX_REPO="$repo_name" ATMUX_ALLOW_OUTSIDE_TMUX=1 \
   "$ATMUX_BIN" agent watch "$session" --idle 2 --timeout 15 --interval 1 --once

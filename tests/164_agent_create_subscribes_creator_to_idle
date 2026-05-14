@@ -113,6 +113,9 @@ if wait_for_text "$creator_pane" '<notification type="agent-idle"' 1; then
 fi
 
 tmux set-environment -t "$child_session" ATMUX_STATE "idle"
+child_pane="$(tmux list-panes -t "$child_session" -F '#{pane_id}' 2>/dev/null | head -n1)"
+[[ -n "$child_pane" ]] || { echo "child pane missing" >&2; exit 1; }
+tmux send-keys -t "$child_pane" "echo child-idle" C-m
 if ! wait_for_text "$creator_pane" '<notification type="agent-idle" from="'"$child_agent"'"' 30; then
   echo "creator did not receive child agent-idle notification" >&2
   tmux capture-pane -p -t "$creator_pane" -S -160 >&2 || true

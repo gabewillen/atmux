@@ -26,13 +26,9 @@ tmux set-environment -t "$session" ATMUX_SESSION_NAME "$session"
 pane="$(tmux list-panes -t "$session" -F '#{pane_id}' 2>/dev/null | head -n1)"
 [[ -n "$pane" ]] || { echo "pane missing" >&2; exit 1; }
 
-# Simulate a stuck interactive prompt (the pattern watch --agent detects)
-tmux send-keys -t "$pane" "echo 'Enter to select'" C-m
-sleep 0.3
-tmux send-keys -t "$pane" "echo 'Esc to cancel'" C-m
-sleep 0.5
-
-# Watch with long idle — should detect stuck prompt immediately and exit 0
+# Simulate a stuck interactive prompt after the watcher attaches. Stuck prompts
+# still fire immediately once represented by pane activity.
+( sleep 1; tmux send-keys -t "$pane" "echo 'Enter to select'" C-m; sleep 0.3; tmux send-keys -t "$pane" "echo 'Esc to cancel'" C-m ) &
 set +e
 ATMUX_REPO="$repo_name" ATMUX_ALLOW_OUTSIDE_TMUX=1 \
   "$ATMUX_BIN" agent watch "$session" --idle 60 --timeout 10 --interval 1 --once

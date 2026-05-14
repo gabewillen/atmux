@@ -161,7 +161,7 @@ main() {
     exit 1
   fi
 
-  local deadline last_change_ts snap recent
+  local deadline last_change_ts idle_notified=0 snap recent
   if (( timeout_sec == 0 )); then
     deadline=$(( $(date +%s) + 365 * 24 * 3600 ))
   else
@@ -192,7 +192,12 @@ main() {
     exec 8>&- 8<&- || true
     stop_pane_event_stream "$pane" "$stream_dir" "$bridge_pid"
   }
-  trap cleanup_stream EXIT INT TERM HUP
+  exit_after_signal() {
+    cleanup_stream
+    exit 130
+  }
+  trap cleanup_stream EXIT
+  trap exit_after_signal INT TERM HUP
 
   while true; do
     local now idle_for next_deadline wait_for
@@ -209,24 +214,15 @@ main() {
       fi
     fi
 
-    if (( last_change_ts > 0 && idle_for >= idle_seconds )); then
+    if (( last_change_ts > 0 && idle_notified == 0 && idle_for >= idle_seconds )); then
       emit_idle_notification "$agent" "$idle_seconds" "$exec_cmd"
       (( repeat == 1 )) || exit 0
-      # Re-arm: wait for the next pane change (active again), then loop
-      # back into the idle wait. Blocks on the same event fifo.
-      while read -r -t 1 _ <&8; do :; done   # drain
-      read -r _ <&8 || true                  # block for next event
-      last_change_ts="$(date +%s)"
-      if (( timeout_sec == 0 )); then
-        deadline=$(( last_change_ts + 365 * 24 * 3600 ))
-      else
-        deadline=$(( last_change_ts + timeout_sec ))
-      fi
+      idle_notified=1
       continue
     fi
 
     next_deadline="$deadline"
-    if (( last_change_ts > 0 )); then
+    if (( last_change_ts > 0 && idle_notified == 0 )); then
       local idle_deadline=$(( last_change_ts + idle_seconds ))
       if (( idle_deadline < next_deadline )); then
         next_deadline="$idle_deadline"
@@ -241,23 +237,13 @@ main() {
       continue
     fi
     last_change_ts="$(date +%s)"
+    idle_notified=0
     snap="$(tmux capture-pane -p -t "$pane" -S "-$lines" 2>/dev/null | tr -d '\r' || true)"
     recent="$(printf '%s\n' "$snap" | tail -n 30)"
     if detect_stuck_prompt "$recent"; then
       emit_idle_notification "$agent" "$idle_seconds" "$exec_cmd"
       (( repeat == 1 )) || exit 0
-      # Drain to next active event before re-entering the loop, so the
-      # idle countdown only starts after the agent moves off the stuck
-      # prompt (otherwise idle_seconds elapse with the same prompt
-      # still on screen and we'd fire a duplicate notification).
-      while read -r -t 1 _ <&8; do :; done   # drain
-      read -r _ <&8 || true                  # block for next event
-      last_change_ts="$(date +%s)"
-      if (( timeout_sec == 0 )); then
-        deadline=$(( last_change_ts + 365 * 24 * 3600 ))
-      else
-        deadline=$(( last_change_ts + timeout_sec ))
-      fi
+      idle_notified=1
       continue
     fi
   done

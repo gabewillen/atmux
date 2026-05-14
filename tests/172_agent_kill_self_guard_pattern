@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Isolate the tmux socket so this test can never touch the developer's
+# default tmux server. Idempotent if the runner already isolated.
+source "$(dirname "${BASH_SOURCE[0]}")/lib/isolate-tmux.sh"
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPTS_DIR="$TESTS_DIR/scripts"
+
+eval "$("$SCRIPTS_DIR/setup")"
+cleanup() {
+  "$SCRIPTS_DIR/teardown" --team-session "$TEAM_SESSION" --agent1-session "$AGENT1_SESSION" --agent2-session "$AGENT2_SESSION"
+}
+trap cleanup EXIT
+
+set +e
+out="$(ATMUX_REPO="$REPO_NAME" ATMUX_AGENT_NAME="sender" ATMUX_SESSION_NAME="$AGENT1_SESSION" "$ATMUX_BIN" agent kill receiver-no-match 2>&1)"
+rc=$?
+set -e
+[[ "$rc" -eq 1 ]] || {
+  echo "expected no-match kill to exit 1, got $rc" >&2
+  printf '%s\n' "$out" >&2
+  exit 1
+}
+printf '%s\n' "$out" | grep -Fq 'no agents matched'
+if printf '%s\n' "$out" | grep -Fq 'refusing self-kill'; then
+  echo "self-kill guard should not fire when the current session does not match the kill pattern" >&2
+  printf '%s\n' "$out" >&2
+  exit 1
+fi
+
+set +e
+self_out="$(ATMUX_REPO="$REPO_NAME" ATMUX_AGENT_NAME="sender" ATMUX_SESSION_NAME="$AGENT1_SESSION" "$ATMUX_BIN" agent kill sender 2>&1)"
+self_rc=$?
+set -e
+[[ "$self_rc" -eq 1 ]] || {
+  echo "expected self-target kill to exit 1, got $self_rc" >&2
+  printf '%s\n' "$self_out" >&2
+  exit 1
+}
+printf '%s\n' "$self_out" | grep -Fq "refusing self-kill of current session $AGENT1_SESSION"
+
+echo "ok: agent kill self guard only reports for matching current session"

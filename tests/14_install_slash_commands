@@ -22,6 +22,8 @@ tmp_project="$(mktemp -d "${TMPDIR:-/tmp}/atmux-install-test-project.XXXXXX")"
 tmp_project_no_slash="$(mktemp -d "${TMPDIR:-/tmp}/atmux-install-test-project-noslash.XXXXXX")"
 tmp_project_real="$(cd "$tmp_project" && pwd)"
 
+cat "$REPO_ROOT/install.sh" | sh -s -- --help >/dev/null
+
 cleanup() {
   rm -rf "$tmp_home" "$tmp_home_system" "$tmp_home_system_from_project" "$tmp_home_no_slash" "$tmp_project" "$tmp_project_no_slash"
 }

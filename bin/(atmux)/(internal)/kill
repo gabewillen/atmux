@@ -508,6 +508,7 @@ kill_agents() {
   )"
 
   local removed_any=0
+  local matched_any=0
   local results_xml=""
   local session
   while IFS= read -r session; do
@@ -520,10 +521,9 @@ kill_agents() {
       continue
     fi
 
+    matched_any=1
     if [[ -n "$current_session" && "$session" == "$current_session" ]]; then
-      if [[ "$cleanup" -eq 0 ]]; then
-        echo "atmux agent kill: refusing self-kill of current session $session" >&2
-      fi
+      echo "atmux agent kill: refusing self-kill of current session $session" >&2
       continue
     fi
 
@@ -646,7 +646,9 @@ kill_agents() {
   done <<< "$candidates"
 
   if [[ "$removed_any" -eq 0 ]]; then
-    echo "no agents matched: $*" >&2
+    if [[ "${matched_any:-0}" -eq 0 ]]; then
+      echo "no agents matched: $*" >&2
+    fi
     exit 1
   fi
 

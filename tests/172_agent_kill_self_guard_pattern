@@ -40,5 +40,10 @@ set -e
   exit 1
 }
 printf '%s\n' "$self_out" | grep -Fq "refusing self-kill of current session $AGENT1_SESSION"
+if printf '%s\n' "$self_out" | grep -Fq 'no agents matched'; then
+  echo "self-kill guard should not emit contradictory 'no agents matched' message" >&2
+  printf '%s\n' "$self_out" >&2
+  exit 1
+fi
 
 echo "ok: agent kill self guard only reports for matching current session"

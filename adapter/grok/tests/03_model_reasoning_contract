@@ -10,7 +10,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-expected_list=$'grok-3-mini\ngrok-4.20-non-reasoning\ngrok-4.3\ngrok-4.20-multi-agent-0309'
+expected_list=$'grok-4.3-non-reasoning\ngrok-4.3\ngrok-4-heavy'
 model_list="$(ATMUX_HOME="$atmux_home" "$ADAPTER_DIR/scripts/model" list)"
 [[ "$model_list" == "$expected_list" ]] || { echo "unexpected model list: $model_list" >&2; exit 1; }
 

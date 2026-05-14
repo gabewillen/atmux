@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# tmux / non-login shells often omit ~/.local/bin (where the grok install script
-# places the binary) and common Homebrew / npm-global locations.
-export PATH="${HOME}/.local/bin:${HOME}/.bun/bin:/opt/homebrew/bin:/usr/local/bin:${PATH}"
+# tmux / non-login shells often omit ~/.grok/bin (official xAI Grok Build installer)
+# and ~/.local/bin (symlinks created by installer) plus common brew locations.
+export PATH="${HOME}/.grok/bin:${HOME}/.local/bin:/opt/homebrew/bin:/usr/local/bin:${PATH}"
 if [[ -n "${ATMUX_SHIM_PROXY_DIR:-}" ]]; then
   shim_safe_entries=()
   IFS=: read -r -a path_entries <<< "$PATH"
@@ -21,7 +21,7 @@ if [[ -n "${ATMUX_SHIM_PROXY_DIR:-}" ]]; then
 fi
 
 if ! command -v grok >/dev/null 2>&1; then
-  echo "grok command not found in PATH (install via: curl -fsSL https://raw.githubusercontent.com/superagent-ai/grok-cli/main/install.sh | bash)" >&2
+  echo "grok command not found in PATH (install official Grok Build: curl -fsSL https://x.ai/cli/install.sh | bash)" >&2
   exit 127
 fi
 
@@ -68,7 +68,7 @@ normalize_model() {
 normalize_reasoning() {
   case "${1:-}" in
     low|medium|high) printf '%s\n' "$1" ;;
-    extra-high|extra_high|extrahigh) printf '%s\n' 'extra-high' ;;
+    extra_high|extra-high|extra\ high|extrahigh) printf '%s\n' 'extra-high' ;;
     *) return 1 ;;
   esac
 }

@@ -1,9 +1,10 @@
 # Changelog
 
-## 0.27.0 — Grok adapter
+## 0.27.0 — Grok Build adapter
 
-- Added built-in `grok` adapter for the [grok-cli](https://github.com/superagent-ai/grok-cli) (xAI Grok coding agent). Supports `grok` in `auto` selection when the binary is on PATH, full `--adapter grok`, intelligence mapping (grok-3-mini through grok-4.3), model/reasoning commands, status parsing, and AGENTS.override.md injection so the adapter prompt integrates cleanly with grok's Codex-style instruction loading.
-- Updated `adapter auto` discovery and `adapter_available` checks to recognize the `grok` command.
+- Added built-in `grok` adapter for the official [Grok Build](https://x.ai/news/grok-build-cli) CLI (xAI). The adapter supports `grok` (and `agent`) in `auto` selection when the binary is on PATH, full `--adapter grok`, intelligence mapping to current Grok-4 series models, model/reasoning commands, status parsing, and `AGENTS.override.md` injection for clean integration with Grok Build's AGENTS.md merging.
+- Updated `adapter auto` discovery and `adapter_available` checks to recognize the `grok` command (installed by the official `https://x.ai/cli/install.sh`).
+- Note: adapter name is `grok`; the binary `grok-build` label in some TUI chrome is internal.
 
 ## 0.26.11 — Notification restore guard
 

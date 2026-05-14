@@ -19,7 +19,7 @@ normalize_model() {
 normalize_reasoning() {
   case "${1:-}" in
     low|medium|high) printf '%s\n' "$1" ;;
-    extra-high|extra_high|extrahigh) printf '%s\n' 'extra-high' ;;
+    extra_high|extra-high|extra\ high|extrahigh) printf '%s\n' 'extra-high' ;;
     *) return 1 ;;
   esac
 }
@@ -27,10 +27,9 @@ normalize_reasoning() {
 case "${1:-}" in
   list)
     printf '%s\n' \
-      grok-3-mini \
-      grok-4.20-non-reasoning \
+      grok-4.3-non-reasoning \
       grok-4.3 \
-      grok-4.20-multi-agent-0309
+      grok-4-heavy
     ;;
   get) printf '%s\n' "$MODEL" ;;
   set)

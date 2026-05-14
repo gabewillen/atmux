@@ -2,9 +2,9 @@
 set -euo pipefail
 
 # Writes atmux prompt content to AGENTS.override.md in the worktree root.
-# Grok (grok-cli) discovers and merges AGENTS.md + AGENTS.override.md from
-# git root down to cwd (Codex-style). Using .override gives atmux instructions
-# precedence while still loading any project AGENTS.md files deeper in the tree.
+# Official Grok Build (xAI) discovers and merges AGENTS.md + AGENTS.override.md
+# from git root down to cwd. Using .override gives atmux instructions precedence
+# while still loading any project AGENTS.md files deeper in the tree.
 # The override file lives only in the agent's private worktree.
 
 content="$(cat)"

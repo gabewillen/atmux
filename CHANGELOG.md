@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.26.6 — Installer shell trampoline
+
+- Fixed the documented `curl ... | sh` install path by re-executing
+  `install.sh` under Bash before Bash-only syntax is parsed.
+
 ## 0.26.5 — Adapter allow-list inheritance
 
 - Fixed `--adapters` restrictions so child agents cannot widen an inherited

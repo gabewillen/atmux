@@ -1,4 +1,20 @@
 #!/usr/bin/env bash
+if [ -z "${BASH_VERSION:-}" ]; then
+  if ! command -v bash >/dev/null 2>&1; then
+    echo "atmux install requires bash" >&2
+    exit 1
+  fi
+
+  case "${0##*/}" in
+    sh|dash|ash)
+      exec bash -s -- "$@"
+      ;;
+    *)
+      exec bash "$0" "$@"
+      ;;
+  esac
+fi
+
 set -euo pipefail
 
 ATMUX_REPO_URL="${ATMUX_REPO_URL:-https://github.com/gabewillen/atmux.git}"
@@ -138,7 +154,7 @@ install_shipped_shims() {
   local src name dst
   [[ -d "$src_shims" ]] || return 0
   mkdir -p "$dst_shims"
-  while IFS= read -r src; do
+  find "$src_shims" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort | while IFS= read -r src; do
     [[ -d "$src" ]] || continue
     name="$(basename "$src")"
     dst="$dst_shims/$name"
@@ -149,7 +165,7 @@ install_shipped_shims() {
     rm -rf "$dst"
     cp -R "$src" "$dst"
     find "$dst" -type f -perm -u+x -exec chmod +x {} \;
-  done < <(find "$src_shims" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort)
+  done
 }
 
 add_path_hint() {
@@ -366,11 +382,14 @@ USAGE
   write_install_metadata
   write_project_gitignore
 
-  local script_dir src_root
-  script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-  src_root="$script_dir"
+  local script_dir="" script_source src_root=""
+  script_source="${BASH_SOURCE[0]-}"
+  if [[ -n "$script_source" && -f "$script_source" ]]; then
+    script_dir="$(cd -- "$(dirname -- "$script_source")" && pwd)"
+    src_root="$script_dir"
+  fi
 
-  if [[ -x "$src_root/bin/atmux" && -d "$src_root/bin/(atmux)" ]]; then
+  if [[ -n "$src_root" && -x "$src_root/bin/atmux" && -d "$src_root/bin/(atmux)" ]]; then
     say "Installing atmux from local checkout: $src_root"
     install_from_local "$src_root"
   else

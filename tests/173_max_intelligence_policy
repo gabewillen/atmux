@@ -1,0 +1,227 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+source "$(dirname "${BASH_SOURCE[0]}")/lib/isolate-tmux.sh"
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+ATMUX_BIN="$REPO_ROOT/bin/atmux"
+
+tmp_root="$(mktemp -d "${TMPDIR:-/tmp}/atmux-max-intelligence.XXXXXX")"
+tmp_home="$tmp_root/home"
+atmux_home="$tmp_home/.atmux"
+repo_name_raw="$(basename "$REPO_ROOT")"
+repo_name="$(printf '%s' "$repo_name_raw" | sed -E 's/[^A-Za-z0-9_-]+/_/g; s/_+/_/g; s/^_+//; s/_+$//')"
+
+cleanup() {
+  set +e
+  TMUX_TMPDIR="$ATMUX_TESTS_TMUX_TMPDIR" tmux kill-server >/dev/null 2>&1 || true
+  rm -rf "$tmp_root"
+}
+trap cleanup EXIT
+
+mkdir -p "$tmp_home" "$atmux_home/adapters/mock"
+cat > "$atmux_home/adapters/mock/cmd" <<'ADAPTER'
+#!/usr/bin/env bash
+set -euo pipefail
+case "${1:-}" in
+  control-file) printf 'AGENTS.md\n' ;;
+  prepare-prompt) : ;;
+  start) sleep 600 ;;
+  status) printf '<status adapter="mock" owner="agent" state="idle" model="" reasoning_level="" control_file="AGENTS.md" />\n' ;;
+  model) printf 'mock\n' ;;
+  reasoning-level) printf 'medium\n' ;;
+  *) exit 2 ;;
+esac
+ADAPTER
+chmod +x "$atmux_home/adapters/mock/cmd"
+
+agent_role_dir="$atmux_home/roles/agents/probe-agent"
+mkdir -p "$agent_role_dir"
+cat > "$agent_role_dir/role.md" <<'EOF'
+# Probe agent
+EOF
+cat > "$agent_role_dir/manifest" <<'EOF'
+KIND=agent
+INTELLIGENCE=80
+ADAPTERS=(mock)
+EOF
+
+team_role_dir="$atmux_home/roles/teams/probe-team"
+mkdir -p "$team_role_dir"
+cat > "$team_role_dir/role.md" <<'EOF'
+# Probe team
+EOF
+cat > "$team_role_dir/manifest" <<'EOF'
+KIND=team
+MEMBERS=(
+  "${ATMUX_TEAM}-member --role probe-agent --intelligence 80 --adapter mock --shared-worktree"
+)
+EOF
+
+create_agent() {
+  local agent="$1"
+  shift
+  (
+    cd "$REPO_ROOT"
+    HOME="$tmp_home" \
+      ATMUX_HOME="$atmux_home" \
+      ATMUX_SOURCE_ROOT="$REPO_ROOT" \
+      ATMUX_ALLOW_OUTSIDE_TMUX=1 \
+      "$ATMUX_BIN" agent create --name "$agent" --role probe-agent --adapter mock --shared-worktree "$@"
+  )
+}
+
+show_env() {
+  local session="$1" key="$2"
+  tmux show-environment -t "$session" "$key" 2>/dev/null | sed -n "s/^${key}=//p"
+}
+
+agent_ok="max-ok-$$"
+create_agent "$agent_ok" --intelligence 40 --max-intelligence 60 >/dev/null
+session_ok="atmux-${repo_name}-${agent_ok}"
+[[ "$(show_env "$session_ok" ATMUX_INTELLIGENCE)" == "40" ]] \
+  || { echo "fail: capped agent intelligence not recorded" >&2; exit 1; }
+[[ "$(show_env "$session_ok" ATMUX_MAX_INTELLIGENCE)" == "60" ]] \
+  || { echo "fail: capped agent max intelligence not recorded" >&2; exit 1; }
+
+set +e
+create_agent "too-smart-$$" --intelligence 70 --max-intelligence 60 >/dev/null 2>&1
+rc=$?
+set -e
+[[ "$rc" -eq 2 ]] || { echo "fail: expected intelligence above max to exit 2, got $rc" >&2; exit 1; }
+
+set +e
+create_agent "model-bypass-$$" --intelligence 40 --max-intelligence 60 --model high-model >/dev/null 2>&1
+rc=$?
+set -e
+[[ "$rc" -eq 2 ]] || { echo "fail: expected model override under max policy to exit 2, got $rc" >&2; exit 1; }
+
+set +e
+create_agent "set-raises-cap-$$" --intelligence 40 --max-intelligence 50 \
+  --set max_intelligence=70 >/dev/null 2>&1
+rc=$?
+set -e
+[[ "$rc" -eq 2 ]] || { echo "fail: expected --set max_intelligence above explicit max to exit 2, got $rc" >&2; exit 1; }
+
+existing_high_cap="existing-high-cap-$$"
+create_agent "$existing_high_cap" --intelligence 40 --max-intelligence 70 >/dev/null
+set +e
+(
+  cd "$REPO_ROOT"
+  HOME="$tmp_home" \
+    ATMUX_HOME="$atmux_home" \
+    ATMUX_SOURCE_ROOT="$REPO_ROOT" \
+    ATMUX_MAX_INTELLIGENCE=50 \
+    ATMUX_ALLOW_OUTSIDE_TMUX=1 \
+    "$ATMUX_BIN" agent create --name "$existing_high_cap" --role probe-agent \
+      --intelligence 40 --adapter mock --shared-worktree >/dev/null 2>&1
+)
+rc=$?
+set -e
+[[ "$rc" -eq 2 ]] || { echo "fail: expected existing agent above inherited cap to exit 2, got $rc" >&2; exit 1; }
+
+set +e
+(
+  cd "$REPO_ROOT"
+  HOME="$tmp_home" \
+    ATMUX_HOME="$atmux_home" \
+    ATMUX_SOURCE_ROOT="$REPO_ROOT" \
+    ATMUX_MAX_INTELLIGENCE=50 \
+    ATMUX_ALLOW_OUTSIDE_TMUX=1 \
+    "$ATMUX_BIN" agent create --name "inherited-too-smart-$$" --role probe-agent \
+      --intelligence 60 --adapter mock --shared-worktree >/dev/null 2>&1
+)
+rc=$?
+set -e
+[[ "$rc" -eq 2 ]] || { echo "fail: expected inherited cap violation to exit 2, got $rc" >&2; exit 1; }
+
+set +e
+(
+  cd "$REPO_ROOT"
+  HOME="$tmp_home" \
+    ATMUX_HOME="$atmux_home" \
+    ATMUX_SOURCE_ROOT="$REPO_ROOT" \
+    ATMUX_MAX_INTELLIGENCE=50 \
+    ATMUX_ALLOW_OUTSIDE_TMUX=1 \
+    "$ATMUX_BIN" agent create --name "raised-cap-$$" --role probe-agent \
+      --intelligence 40 --max-intelligence 70 --adapter mock --shared-worktree >/dev/null 2>&1
+)
+rc=$?
+set -e
+[[ "$rc" -eq 2 ]] || { echo "fail: expected inherited cap raise to exit 2, got $rc" >&2; exit 1; }
+
+team_bad="max-team-bad-$$"
+set +e
+(
+  cd "$REPO_ROOT"
+  HOME="$tmp_home" \
+    ATMUX_HOME="$atmux_home" \
+    ATMUX_SOURCE_ROOT="$REPO_ROOT" \
+    ATMUX_ALLOW_OUTSIDE_TMUX=1 \
+    "$ATMUX_BIN" team create "$team_bad" --role probe-team --shared-worktree \
+      --max-intelligence 50 >/dev/null 2>&1
+)
+rc=$?
+set -e
+[[ "$rc" -eq 1 ]] || { echo "fail: expected capped team member spawn failure to exit 1, got $rc" >&2; exit 1; }
+if tmux has-session -t "atmux-${repo_name}-${team_bad}-member" 2>/dev/null; then
+  echo "fail: capped team should not leave a too-smart member session" >&2
+  exit 1
+fi
+
+team_set_raise="max-team-set-raise-$$"
+set +e
+(
+  cd "$REPO_ROOT"
+  HOME="$tmp_home" \
+    ATMUX_HOME="$atmux_home" \
+    ATMUX_SOURCE_ROOT="$REPO_ROOT" \
+    ATMUX_ALLOW_OUTSIDE_TMUX=1 \
+    "$ATMUX_BIN" team create "$team_set_raise" --role probe-team --shared-worktree \
+      --max-intelligence 50 --intelligence 40 --set max_intelligence=70 >/dev/null 2>&1
+)
+rc=$?
+set -e
+[[ "$rc" -eq 1 ]] || { echo "fail: expected team --set max_intelligence above max to exit 1, got $rc" >&2; exit 1; }
+if tmux has-session -t "atmux-${repo_name}-${team_set_raise}-member" 2>/dev/null; then
+  echo "fail: team --set max_intelligence above max should not leave a member session" >&2
+  exit 1
+fi
+
+team_dotted_raise="max-team-dotted-raise-$$"
+set +e
+(
+  cd "$REPO_ROOT"
+  HOME="$tmp_home" \
+    ATMUX_HOME="$atmux_home" \
+    ATMUX_SOURCE_ROOT="$REPO_ROOT" \
+    ATMUX_ALLOW_OUTSIDE_TMUX=1 \
+    "$ATMUX_BIN" team create "$team_dotted_raise" --role probe-team --shared-worktree \
+      --max-intelligence 50 --intelligence 40 --set member.max_intelligence=70 >/dev/null 2>&1
+)
+rc=$?
+set -e
+[[ "$rc" -eq 1 ]] || { echo "fail: expected member --set max_intelligence above max to exit 1, got $rc" >&2; exit 1; }
+if tmux has-session -t "atmux-${repo_name}-${team_dotted_raise}-member" 2>/dev/null; then
+  echo "fail: member --set max_intelligence above max should not leave a member session" >&2
+  exit 1
+fi
+
+team_ok="max-team-ok-$$"
+(
+  cd "$REPO_ROOT"
+  HOME="$tmp_home" \
+    ATMUX_HOME="$atmux_home" \
+    ATMUX_SOURCE_ROOT="$REPO_ROOT" \
+    ATMUX_ALLOW_OUTSIDE_TMUX=1 \
+    "$ATMUX_BIN" team create "$team_ok" --role probe-team --shared-worktree \
+      --max-intelligence 50 --intelligence 40 >/dev/null
+)
+member_session="atmux-${repo_name}-${team_ok}-member"
+[[ "$(show_env "$member_session" ATMUX_INTELLIGENCE)" == "40" ]] \
+  || { echo "fail: team member intelligence override not recorded" >&2; exit 1; }
+[[ "$(show_env "$member_session" ATMUX_MAX_INTELLIGENCE)" == "50" ]] \
+  || { echo "fail: team member max intelligence not inherited" >&2; exit 1; }
+
+echo "ok: max intelligence policy restricts agents and team-spawned descendants"

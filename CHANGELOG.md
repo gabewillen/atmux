@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.26.9 — Max intelligence policy
+
+- Added `--max-intelligence` to `agent create` and `team create` so agents can
+  inherit a numeric ceiling that descendants cannot raise or bypass with
+  explicit model/reasoning overrides.
+
 ## 0.26.8 — Pane-activity idle watch
 
 - Changed `agent watch` idle detection to ignore adapter status scripts and

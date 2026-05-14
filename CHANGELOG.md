@@ -6,9 +6,7 @@
 - Added the allowed adapter list to `--adapters` rejection errors so agents
   can self-correct when they request a disallowed adapter.
 - Fixed notification queue worker busy-loop when FIFO write end is closed
-  (enforces minimum wake timeout and fallback sleep).
-- Debounced `capture-pane` in agent idle watcher to avoid expensive tmux
-  captures on every keystroke.
+  (worker now exits immediately instead of busy-looping).
 
 ## 0.26.9 — Max intelligence policy
 

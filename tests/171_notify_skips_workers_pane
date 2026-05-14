@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Isolate the tmux socket so this test can never touch the developer's
+# default tmux server. Idempotent if the runner already isolated.
+source "$(dirname "${BASH_SOURCE[0]}")/lib/isolate-tmux.sh"
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+NOTIFY_BIN="$REPO_ROOT/bin/(atmux)/notify"
+
+tmp_home="$(mktemp -d "${TMPDIR:-/tmp}/atmux-workers-notify.XXXXXX")"
+repo_name="workers_notify_$RANDOM"
+worker_session="atmux-${repo_name}-workers"
+agent_session="atmux-${repo_name}-bg-workers"
+out_file="$tmp_home/notify.out"
+err_file="$tmp_home/notify.err"
+
+cleanup() {
+  tmux kill-session -t "$worker_session" >/dev/null 2>&1 || true
+  tmux kill-session -t "$agent_session" >/dev/null 2>&1 || true
+  rm -rf "$tmp_home"
+}
+trap cleanup EXIT
+
+tmux new-session -d -s "$worker_session" -n holder "cat"
+tmux set-environment -t "$worker_session" ATMUX_REPO "$repo_name"
+worker_pane="$(tmux list-panes -t "$worker_session" -F '#{pane_id}' | head -n1)"
+[[ -n "$worker_pane" ]] || { echo "workers pane missing" >&2; exit 1; }
+
+set +e
+ATMUX_HOME="$tmp_home/.atmux" ATMUX_REPO="$repo_name" "$NOTIFY_BIN" \
+  --pane "$worker_pane" \
+  --xml '<notification type="test" from="test" cmd="noop" />' \
+  >"$out_file" 2>"$err_file"
+rc=$?
+set -e
+
+if [[ "$rc" -eq 0 ]]; then
+  echo "notify unexpectedly accepted workers pane target" >&2
+  exit 1
+fi
+
+if [[ -d "$tmp_home/.atmux/notify-queue" ]]; then
+  echo "workers pane should not receive a notify queue" >&2
+  find "$tmp_home/.atmux/notify-queue" -maxdepth 4 -type f -print >&2
+  exit 1
+fi
+
+tmux new-session -d -s "$agent_session" -n holder "cat"
+tmux set-environment -t "$agent_session" ATMUX_REPO "$repo_name"
+agent_pane="$(tmux list-panes -t "$agent_session" -F '#{pane_id}' | head -n1)"
+[[ -n "$agent_pane" ]] || { echo "agent pane missing" >&2; exit 1; }
+
+ATMUX_HOME="$tmp_home/.atmux" ATMUX_REPO="$repo_name" "$NOTIFY_BIN" \
+  --pane "$agent_pane" \
+  --xml '<notification type="test" from="test" cmd="noop" />' \
+  >"$out_file" 2>"$err_file"
+
+echo "ok: notify refuses repo workers pane targets"

@@ -5,6 +5,11 @@
 - Changed `agent watch` idle detection to ignore adapter status scripts and
   use pane activity as the source of truth for `agent-idle` notifications.
 
+## 0.26.7 — Worker pane notification guard
+
+- Blocked notifications from targeting the repo-scoped workers session so
+  GitHub shim and PR merge fan-out events only reach real agent panes.
+
 ## 0.26.6 — Installer shell trampoline
 
 - Fixed the documented `curl ... | sh` install path by re-executing

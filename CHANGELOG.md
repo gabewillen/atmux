@@ -1,8 +1,10 @@
 # Changelog
 
-## 0.26.10 — Self-kill guard
+## 0.26.10 — Self-kill guard and adapter hints
 
 - Prevented agents from killing their own tmux session via `atmux agent kill`.
+- Added the allowed adapter list to `--adapters` rejection errors so agents
+  can self-correct when they request a disallowed adapter.
 
 ## 0.26.9 — Max intelligence policy
 

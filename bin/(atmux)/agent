@@ -1500,6 +1500,7 @@ do_create() {
   local adapters_explicit=0
   local intelligence=""
   local max_intelligence=""
+  local max_intelligence_ceiling=""
   local model=""
   local reasoning=""
   local shared_worktree=0
@@ -1543,10 +1544,12 @@ do_create() {
         ;;
       --max-intelligence)
         max_intelligence="${2:-}"
+        max_intelligence_ceiling="$max_intelligence"
         shift 2
         ;;
       --max-intelligence=*)
         max_intelligence="${1#--max-intelligence=}"
+        max_intelligence_ceiling="$max_intelligence"
         shift
         ;;
       --model)
@@ -1702,6 +1705,19 @@ do_create() {
   case "$stop_cmd" in
     *$'\n'*) echo "--stop must be a single line; use a script file for multi-line commands" >&2; exit 2 ;;
   esac
+
+  if [[ -n "$max_intelligence_ceiling" ]]; then
+    if ! atmux_valid_intelligence "$max_intelligence_ceiling"; then
+      echo "invalid max intelligence: $max_intelligence_ceiling" >&2
+      echo "expected integer range: 0-100" >&2
+      exit 2
+    fi
+    if [[ -n "$max_intelligence" ]] && atmux_valid_intelligence "$max_intelligence" \
+      && (( max_intelligence > max_intelligence_ceiling )); then
+      echo "max intelligence exceeds explicit max: $max_intelligence > $max_intelligence_ceiling" >&2
+      exit 2
+    fi
+  fi
 
   if [[ -n "$intelligence" ]] && ! atmux_valid_intelligence "$intelligence"; then
     echo "invalid intelligence: $intelligence" >&2

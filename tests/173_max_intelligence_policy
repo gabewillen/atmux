@@ -97,6 +97,13 @@ rc=$?
 set -e
 [[ "$rc" -eq 2 ]] || { echo "fail: expected model override under max policy to exit 2, got $rc" >&2; exit 1; }
 
+set +e
+create_agent "set-raises-cap-$$" --intelligence 40 --max-intelligence 50 \
+  --set max_intelligence=70 >/dev/null 2>&1
+rc=$?
+set -e
+[[ "$rc" -eq 2 ]] || { echo "fail: expected --set max_intelligence above explicit max to exit 2, got $rc" >&2; exit 1; }
+
 existing_high_cap="existing-high-cap-$$"
 create_agent "$existing_high_cap" --intelligence 40 --max-intelligence 70 >/dev/null
 set +e
@@ -160,6 +167,44 @@ set -e
 [[ "$rc" -eq 1 ]] || { echo "fail: expected capped team member spawn failure to exit 1, got $rc" >&2; exit 1; }
 if tmux has-session -t "atmux-${repo_name}-${team_bad}-member" 2>/dev/null; then
   echo "fail: capped team should not leave a too-smart member session" >&2
+  exit 1
+fi
+
+team_set_raise="max-team-set-raise-$$"
+set +e
+(
+  cd "$REPO_ROOT"
+  HOME="$tmp_home" \
+    ATMUX_HOME="$atmux_home" \
+    ATMUX_SOURCE_ROOT="$REPO_ROOT" \
+    ATMUX_ALLOW_OUTSIDE_TMUX=1 \
+    "$ATMUX_BIN" team create "$team_set_raise" --role probe-team --shared-worktree \
+      --max-intelligence 50 --intelligence 40 --set max_intelligence=70 >/dev/null 2>&1
+)
+rc=$?
+set -e
+[[ "$rc" -eq 1 ]] || { echo "fail: expected team --set max_intelligence above max to exit 1, got $rc" >&2; exit 1; }
+if tmux has-session -t "atmux-${repo_name}-${team_set_raise}-member" 2>/dev/null; then
+  echo "fail: team --set max_intelligence above max should not leave a member session" >&2
+  exit 1
+fi
+
+team_dotted_raise="max-team-dotted-raise-$$"
+set +e
+(
+  cd "$REPO_ROOT"
+  HOME="$tmp_home" \
+    ATMUX_HOME="$atmux_home" \
+    ATMUX_SOURCE_ROOT="$REPO_ROOT" \
+    ATMUX_ALLOW_OUTSIDE_TMUX=1 \
+    "$ATMUX_BIN" team create "$team_dotted_raise" --role probe-team --shared-worktree \
+      --max-intelligence 50 --intelligence 40 --set member.max_intelligence=70 >/dev/null 2>&1
+)
+rc=$?
+set -e
+[[ "$rc" -eq 1 ]] || { echo "fail: expected member --set max_intelligence above max to exit 1, got $rc" >&2; exit 1; }
+if tmux has-session -t "atmux-${repo_name}-${team_dotted_raise}-member" 2>/dev/null; then
+  echo "fail: member --set max_intelligence above max should not leave a member session" >&2
   exit 1
 fi
 

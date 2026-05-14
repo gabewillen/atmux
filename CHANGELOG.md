@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.27.0 — Grok adapter
+
+- Added built-in `grok` adapter for the [grok-cli](https://github.com/superagent-ai/grok-cli) (xAI Grok coding agent). Supports `grok` in `auto` selection when the binary is on PATH, full `--adapter grok`, intelligence mapping (grok-3-mini through grok-4.3), model/reasoning commands, status parsing, and AGENTS.override.md injection so the adapter prompt integrates cleanly with grok's Codex-style instruction loading.
+- Updated `adapter auto` discovery and `adapter_available` checks to recognize the `grok` command.
+
 ## 0.26.11 — Notification restore guard
 
 - Prevented lingering `<notification ...>` prompt text from being saved and

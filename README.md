@@ -1,6 +1,6 @@
 # atmux
 
-**atmux** is a tmux-first toolkit for running multiple AI coding agents in one repo. It manages agents, isolated worktrees, messaging, work assignment, output capture, and notifications across Claude Code, Gemini, Codex, and Cursor.
+**atmux** is a tmux-first toolkit for running multiple AI coding agents in one repo. It manages agents, isolated worktrees, messaging, work assignment, output capture, and notifications across Claude Code, Gemini, Codex, Cursor, Grok, and OpenCode.
 
 The default install is project-local: atmux lives in `<project>/.atmux`, its source is plain shell, and agents can patch the tool in the same repo they are working on. There is no daemon, server, database, build step, or language runtime beyond ordinary Unix tools (`bash`, `git`, `tmux`).
 
@@ -8,7 +8,7 @@ The default install is project-local: atmux lives in `<project>/.atmux`, its sou
 
 - **Visible agents.** Every agent runs in tmux, so you can attach, inspect, and kill it with familiar tools.
 - **Isolated work.** Agents get their own git worktree by default, so parallel edits do not collide.
-- **Adapter portable.** The same workflow can run Claude Code, Gemini, Codex, Cursor, or a third-party adapter.
+- **Adapter portable.** The same workflow can run Claude Code, Gemini, Codex, Cursor, Grok, OpenCode, or a third-party adapter.
 - **Role and team aware.** Roles define reusable prompts/hooks; teams spawn coordinated member agents.
 - **Agent-editable.** A project install keeps atmux source next to your code, so missing workflow glue can be patched locally.
 

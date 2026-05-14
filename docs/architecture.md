@@ -71,6 +71,7 @@ Built-in adapters:
 - `codex`
 - `cursor-agent`
 - `gemini`
+- `grok`
 - `opencode`
 
 Each adapter owns its CLI-specific startup arguments, status parsing, model validation, and input submit keys.

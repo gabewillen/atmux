@@ -161,7 +161,7 @@ main() {
     exit 1
   fi
 
-  local deadline last_change_ts idle_notified=0 snap recent
+  local deadline last_change_ts idle_notified=0 last_stuck_check=0 snap recent
   if (( timeout_sec == 0 )); then
     deadline=$(( $(date +%s) + 365 * 24 * 3600 ))
   else
@@ -238,7 +238,10 @@ main() {
     fi
     last_change_ts="$(date +%s)"
     idle_notified=0
-    if (( last_change_ts - now >= idle_seconds )); then
+    local stuck_check_interval=$(( idle_seconds / 2 ))
+    (( stuck_check_interval > 0 )) || stuck_check_interval=5
+    if (( last_change_ts - last_stuck_check >= stuck_check_interval )); then
+      last_stuck_check="$last_change_ts"
       snap="$(tmux capture-pane -p -t "$pane" -S "-$lines" 2>/dev/null | tr -d '\r' || true)"
       recent="$(printf '%s\n' "$snap" | tail -n 30)"
       if detect_stuck_prompt "$recent"; then

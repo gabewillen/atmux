@@ -634,11 +634,12 @@ wait_for_notification_wake() {
 
 wait_for_notification_wake_fd() {
   local timeout="$1"
-  if [[ -z "$timeout" || "$timeout" == "0" ]]; then
-    timeout=0.5
-  fi
+  [[ -z "$timeout" || "$timeout" == "0" ]] && timeout=0.5
   if ! read -r -t "$timeout" _ <&8 2>/dev/null; then
-    sleep 0.2
+    if ! { true >&9; } 2>/dev/null; then
+      debug_notify "worker:wake_fifo_write_end_gone"
+      exit 1
+    fi
   fi
 }
 

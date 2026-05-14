@@ -467,6 +467,18 @@ signal_adapter_pane() {
   return 0
 }
 
+resolve_current_session_name() {
+  if [[ -n "${ATMUX_SESSION_NAME:-}" ]]; then
+    printf '%s\n' "$ATMUX_SESSION_NAME"
+    return 0
+  fi
+  if [[ -n "${ATMUX_TMUX:-}${TMUX:-}" ]]; then
+    tmux display-message -p '#{session_name}' 2>/dev/null || true
+    return 0
+  fi
+  return 1
+}
+
 kill_agents() {
   local cleanup="$1"
   shift
@@ -476,6 +488,9 @@ kill_agents() {
     IFS= read -r repo_root
     IFS= read -r repo_name
   } < <(atmux_resolve_repo_context)
+
+  local current_session=""
+  current_session="$(resolve_current_session_name || true)"
 
   local atmux_home="${ATMUX_HOME:-$HOME/.atmux}"
   local worktree_root="$atmux_home/agents"
@@ -493,6 +508,7 @@ kill_agents() {
   )"
 
   local removed_any=0
+  local matched_any=0
   local results_xml=""
   local session
   while IFS= read -r session; do
@@ -502,6 +518,12 @@ kill_agents() {
     local short_name="${session#"$prefix"}"
     if ! atmux_match_any_pattern "$session" "$@" && \
        ! atmux_match_any_pattern "$short_name" "$@"; then
+      continue
+    fi
+
+    matched_any=1
+    if [[ -n "$current_session" && "$session" == "$current_session" ]]; then
+      echo "atmux agent kill: refusing self-kill of current session $session" >&2
       continue
     fi
 
@@ -624,7 +646,9 @@ kill_agents() {
   done <<< "$candidates"
 
   if [[ "$removed_any" -eq 0 ]]; then
-    echo "no agents matched: $*" >&2
+    if [[ "${matched_any:-0}" -eq 0 ]]; then
+      echo "no agents matched: $*" >&2
+    fi
     exit 1
   fi
 

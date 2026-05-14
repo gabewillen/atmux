@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.26.11 — Notification restore guard
+
+- Prevented lingering `<notification ...>` prompt text from being saved and
+  restored as user input during queued notification delivery.
+
+## 0.26.10 — Self-kill guard and CPU fixes
+
+- Prevented agents from killing their own tmux session via `atmux agent kill`.
+- Added the allowed adapter list to `--adapters` rejection errors so agents
+  can self-correct when they request a disallowed adapter.
+- Fixed notification queue worker busy-loop when FIFO write end is closed
+  (worker now exits immediately instead of busy-looping).
+
 ## 0.26.9 — Max intelligence policy
 
 - Added `--max-intelligence` to `agent create` and `team create` so agents can

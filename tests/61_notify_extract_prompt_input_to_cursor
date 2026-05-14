@@ -198,4 +198,23 @@ if printf '%s' "$saved_input" | grep -Fq 'Type your message'; then
   exit 1
 fi
 
+mock_adapter=""
+mock_snapshot=$'╭────────────────────────────╮\n│ >_ OpenAI Codex            │\n╰────────────────────────────╯\n› <notification type="message" from="old">stuck</notification>\n'
+mock_cursor_x="$(copied_char_count '› <notification type="message" from="old">stuck</notification>')"
+mock_cursor_y="3"
+
+saved_input="$(extract_prompt_input "%mock" "›")"
+[[ "$saved_input" == '<notification type="message" from="old">stuck</notification>' ]] || {
+  echo "expected raw extraction to see lingering notification markup before restore filtering" >&2
+  echo "got: $saved_input" >&2
+  exit 1
+}
+
+saved_input="$(prompt_input_for_restore "%mock" "›")"
+[[ -z "$saved_input" ]] || {
+  echo "notification markup must not be preserved as user input for restore" >&2
+  echo "got: $saved_input" >&2
+  exit 1
+}
+
 echo "ok: extract_prompt_input copies only between prompt symbol and cursor"

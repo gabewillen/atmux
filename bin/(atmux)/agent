@@ -505,14 +505,14 @@ enforce_inherited_adapters_allowed() {
   [[ -n "$inherited_list" ]] || return 0
 
   if [[ "$adapter" != "auto" ]] && ! adapter_allowed_by_list "$adapter" "$inherited_list"; then
-    echo "adapter not allowed by inherited --adapters: $adapter" >&2
+    echo "adapter not allowed by inherited --adapters: $adapter (allowed: $inherited_list)" >&2
     return 2
   fi
 
   while IFS= read -r candidate; do
     [[ -n "$candidate" ]] || continue
     if ! adapter_allowed_by_list "$candidate" "$inherited_list"; then
-      echo "adapter not allowed by inherited --adapters: $candidate" >&2
+      echo "adapter not allowed by inherited --adapters: $candidate (allowed: $inherited_list)" >&2
       return 2
     fi
   done < <(split_adapter_list "$adapters_list")
@@ -780,7 +780,7 @@ run_adapter() {
   requested_adapter="$adapter"
   if [[ "$requested_adapter" != "auto" && ${#allowed_adapters[@]} -gt 0 ]]; then
     if ! adapter_in_list "$requested_adapter" "${allowed_adapters[@]}"; then
-      echo "adapter not allowed by --adapters: $requested_adapter" >&2
+      echo "adapter not allowed by --adapters: $requested_adapter (allowed: $adapters_list)" >&2
       exit 2
     fi
   fi
@@ -1088,7 +1088,7 @@ spawn_agent_session() {
       exit 2
     fi
     if [[ "$adapter" != "auto" ]] && ! adapter_in_list "$adapter" "${allowed_adapters[@]}"; then
-      echo "adapter not allowed by --adapters: $adapter" >&2
+      echo "adapter not allowed by --adapters: $adapter (allowed: $adapters_list)" >&2
       exit 2
     fi
   fi

@@ -796,6 +796,27 @@ extract_prompt_input_with_end_marker() {
   ' <<< "$snap"
 }
 
+prompt_input_is_notification_markup() {
+  local input="${1:-}"
+
+  [[ "$input" =~ ^[[:space:]]*\<notification([[:space:]>]|$) ]]
+}
+
+prompt_input_for_restore() {
+  local pane="$1"
+  local prompt_prefix="$2"
+  local input
+
+  input="$(extract_prompt_input "$pane" "$prompt_prefix")" || return $?
+  if prompt_input_is_notification_markup "$input"; then
+    debug_notify "prompt_extract:discard_notification_markup input_len=${#input}"
+    printf ''
+    return 0
+  fi
+
+  printf '%s' "$input"
+}
+
 pane_has_prompt_line() {
   local pane="$1"
   local prompt_prefix="$2"
@@ -838,6 +859,10 @@ restore_prompt_input() {
   local attempt
 
   [[ -n "$saved_input" ]] || return 0
+  if prompt_input_is_notification_markup "$saved_input"; then
+    debug_notify "restore:discard_notification_markup pane=$(printf '%q' "$pane") saved_input_len=${#saved_input}"
+    return 0
+  fi
 
   settle="${ATMUX_SEND_SETTLE_SECONDS:-0.4}"
   submit_wait="${ATMUX_SEND_SUBMIT_WAIT_SECONDS:-0.3}"

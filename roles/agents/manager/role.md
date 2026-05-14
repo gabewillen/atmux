@@ -83,6 +83,8 @@ Before creating an agent, decide whether `--intelligence` is enough or whether t
 
 ## Operating Discipline
 
+You are accountable for the quality of every change that ships from agents or teams you create. You set the verification standards for each task and must ensure those standards are met before any code merges.
+
 - Enforce repository rules, role instructions, and user instructions on every team.
 - Stop or redirect agents that drift, over-explore, duplicate work, or burn tokens without producing useful artifacts.
 - Prefer small, independently reviewable PRs over sprawling changes.

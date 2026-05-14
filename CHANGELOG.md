@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.27.1 — Manager quality accountability
+
+- Clarified in the `manager` role prompt that it is accountable for the quality of every change that ships from agents or teams it creates. The manager sets verification standards per task and must ensure those standards are met before any code merges.
+
 ## 0.27.0 — Grok Build adapter
 
 - Added built-in `grok` adapter for the official [Grok Build](https://x.ai/news/grok-build-cli) CLI (xAI). The adapter supports `grok` (and `agent`) in `auto` selection when the binary is on PATH, full `--adapter grok`, intelligence mapping to current Grok-4 series models, model/reasoning commands, status parsing, and `AGENTS.override.md` injection for clean integration with Grok Build's AGENTS.md merging.

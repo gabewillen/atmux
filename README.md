@@ -12,7 +12,7 @@ The default install is project-local: atmux lives in `<project>/.atmux`, its sou
 - **Role and team aware.** Roles define reusable prompts/hooks; teams spawn coordinated member agents.
 - **Agent-editable.** A project install keeps atmux source next to your code, so missing workflow glue can be patched locally.
 
-Current version: `0.26.8`.
+Current version: `0.26.9`.
 
 ## Install
 
@@ -93,7 +93,7 @@ atmux agent create tester   --role tester   --team platform --intelligence 55
 
 ### Intelligence scale
 
-The `--intelligence 0–100` flag selects a model and reasoning level via the adapter manifest. Higher values use more capable and usually slower/costlier settings.
+The `--intelligence 0–100` flag selects a model and reasoning level via the adapter manifest. Higher values use more capable and usually slower/costlier settings. Use `--max-intelligence <0-100>` on `agent create` or `team create` to cap an agent and its descendants; capped creation rejects higher `--intelligence` values and explicit model/reasoning overrides.
 
 | Adapter | Intelligence | Model | Reasoning level |
 |---------|--------------|-------|-----------------|

@@ -16,6 +16,7 @@ Usage:
                            [--worktree <path>] [--shared-worktree]
                            [--time-limit <duration>]
                            [--adapter <adapter>] [--intelligence <0-100>]
+                           [--max-intelligence <0-100>]
                            [--adapters <a,b,...>]
                            [--model <id>] [--reasoning <level>]
                            [--set <key>=<value>]...
@@ -65,6 +66,10 @@ Description:
                       last `-`-segment of the member's first token, e.g.
                       `${ATMUX_TEAM}-driver` matches on `driver`).
 
+  --max-intelligence <0-100>
+                      Cap team members and any agents they create. Inherited
+                      caps cannot be raised.
+
   --adapters <list>   Restrict adapter auto-selection for every spawned
                       member. Inherited adapter restrictions cannot be widened.
 
@@ -83,6 +88,7 @@ Usage:
                            [--worktree <path>] [--shared-worktree]
                            [--time-limit <duration>]
                            [--adapter <adapter>] [--intelligence <0-100>]
+                           [--max-intelligence <0-100>]
                            [--adapters <a,b,...>]
                            [--model <id>] [--reasoning <level>]
                            [--set <key>=<value>]...
@@ -248,11 +254,58 @@ team_role_set_env_name() {
 
 team_set_is_agent_field() {
   case "$1" in
-    model|reasoning|reasoning_level|adapter|adapters|intelligence|name|team|start|start_command|stop|stop_command)
+    model|reasoning|reasoning_level|adapter|adapters|intelligence|max_intelligence|max-intelligence|name|team|start|start_command|stop|stop_command)
       return 0
       ;;
   esac
   return 1
+}
+
+valid_intelligence() {
+  local value="${1:-}"
+  [[ "$value" =~ ^[0-9]+$ ]] || return 1
+  (( value >= 0 && value <= 100 ))
+}
+
+resolve_inherited_max_intelligence() {
+  local inherited="${ATMUX_MAX_INTELLIGENCE:-}"
+  if [[ -z "$inherited" && -n "${ATMUX_TMUX:-}${TMUX:-}" ]]; then
+    local current_session=""
+    if [[ -n "${ATMUX_TMUX_PANE:-}${TMUX_PANE:-}" ]]; then
+      current_session="$(tmux display-message -t "${ATMUX_TMUX_PANE:-$TMUX_PANE}" -p '#S' 2>/dev/null || true)"
+    else
+      current_session="$(tmux display-message -p '#S' 2>/dev/null || true)"
+    fi
+    if [[ -n "$current_session" ]]; then
+      inherited="$(tmux show-environment -t "$current_session" ATMUX_MAX_INTELLIGENCE 2>/dev/null | sed -n 's/^ATMUX_MAX_INTELLIGENCE=//p' || true)"
+    fi
+  fi
+  printf '%s\n' "$inherited"
+}
+
+effective_max_intelligence() {
+  local requested="${1:-}" inherited
+  inherited="$(resolve_inherited_max_intelligence)"
+
+  if [[ -n "$inherited" ]] && ! valid_intelligence "$inherited"; then
+    echo "atmux team create: invalid inherited max intelligence: $inherited" >&2
+    return 2
+  fi
+  if [[ -n "$requested" ]] && ! valid_intelligence "$requested"; then
+    echo "atmux team create: invalid max intelligence: $requested" >&2
+    echo "expected integer range: 0-100" >&2
+    return 2
+  fi
+  if [[ -n "$requested" && -n "$inherited" && "$requested" -gt "$inherited" ]]; then
+    echo "atmux team create: max intelligence exceeds inherited max: $requested > $inherited" >&2
+    return 2
+  fi
+
+  if [[ -n "$requested" ]]; then
+    printf '%s\n' "$requested"
+  else
+    printf '%s\n' "$inherited"
+  fi
 }
 
 write_team_session_manifest() {
@@ -295,7 +348,7 @@ spawn_team_members() {
   #
   # Reads the following caller-scope variables (set by create_team) for
   # per-spawn overrides:
-  #   team_adapter, team_intelligence, team_model, team_reasoning
+  #   team_adapter, team_intelligence, team_max_intelligence, team_model, team_reasoning
   #   team_sets[]         — known undotted agent --set key=val (apply to every member)
   #   team_dotted_sets[]  — `<member>.<key>=<val>` (apply only to that member)
   local _repo="$1" team="$2" lines="$3" team_work_dir="${4:-}"
@@ -315,6 +368,7 @@ spawn_team_members() {
   [[ -n "${team_adapter:-}"      ]] && team_overrides+=(--adapter "$team_adapter")
   [[ -n "${team_adapters:-}"     ]] && team_overrides+=(--adapters "$team_adapters")
   [[ -n "${team_intelligence:-}" ]] && team_overrides+=(--intelligence "$team_intelligence")
+  [[ -n "${team_max_intelligence:-}" ]] && team_overrides+=(--max-intelligence "$team_max_intelligence")
   [[ -n "${team_model:-}"        ]] && team_overrides+=(--model "$team_model")
   [[ -n "${team_reasoning:-}"    ]] && team_overrides+=(--reasoning "$team_reasoning")
   local set_kv
@@ -590,6 +644,8 @@ create_team() {
   local team_adapter=""
   local team_adapters=""
   local team_intelligence=""
+  local team_max_intelligence=""
+  local team_max_intelligence_explicit=0
   local team_model=""
   local team_reasoning=""
   local set_key=""
@@ -611,6 +667,8 @@ create_team() {
       --adapters=*)     team_adapters="${1#--adapters=}"; shift ;;
       --intelligence)   team_intelligence="${2:-}"; shift 2 ;;
       --intelligence=*) team_intelligence="${1#--intelligence=}"; shift ;;
+      --max-intelligence)   team_max_intelligence="${2:-}"; team_max_intelligence_explicit=1; shift 2 ;;
+      --max-intelligence=*) team_max_intelligence="${1#--max-intelligence=}"; team_max_intelligence_explicit=1; shift ;;
       --model)          team_model="${2:-}"; shift 2 ;;
       --model=*)        team_model="${1#--model=}"; shift ;;
       --reasoning)      team_reasoning="${2:-}"; shift 2 ;;
@@ -699,6 +757,23 @@ create_team() {
     *$'\n'*) echo "atmux team create: --stop must be a single line; use a script file for multi-line commands" >&2; exit 2 ;;
   esac
 
+  if [[ -n "$team_intelligence" ]] && ! valid_intelligence "$team_intelligence"; then
+    echo "atmux team create: invalid intelligence: $team_intelligence" >&2
+    echo "expected integer range: 0-100" >&2
+    exit 2
+  fi
+  team_max_intelligence="$(effective_max_intelligence "$team_max_intelligence")" || exit $?
+  if [[ -n "$team_max_intelligence" ]]; then
+    if [[ -n "$team_intelligence" ]] && (( team_intelligence > team_max_intelligence )); then
+      echo "atmux team create: intelligence exceeds max intelligence: $team_intelligence > $team_max_intelligence" >&2
+      exit 2
+    fi
+    if [[ -n "$team_model" || -n "$team_reasoning" ]]; then
+      echo "atmux team create: --model/--reasoning cannot be combined with --max-intelligence policy" >&2
+      exit 2
+    fi
+  fi
+
   local repo_root repo_name team_name session state_dir doc_dir
   {
     IFS= read -r repo_root
@@ -755,9 +830,9 @@ create_team() {
   fi
 
   if [[ "$team_exists" -eq 1 ]]; then
-    if [[ -n "$role" || -n "$start_cmd" || -n "$stop_cmd" \
+    if [[ -n "$role" || -n "$start_cmd" || -n "$stop_cmd" || "$team_max_intelligence_explicit" -eq 1 \
           || "$worktree_explicit" -eq 1 || "$shared_worktree" -eq 1 || -n "$time_limit" ]]; then
-      echo "atmux team create: team '$team_name' already exists; --role/--start/--stop/--worktree/--shared-worktree/--time-limit only apply to fresh teams" >&2
+      echo "atmux team create: team '$team_name' already exists; --role/--start/--stop/--worktree/--shared-worktree/--time-limit/--max-intelligence only apply to fresh teams" >&2
       exit 1
     fi
     local existing_session existing_doc_dir existing_role existing_deadline
@@ -841,6 +916,7 @@ create_team() {
   [[ -n "$start_cmd" ]] && atmux_fs_write_field "$state_dir/role_start" "$start_cmd"
   [[ -n "$stop_cmd" ]] && atmux_fs_write_field "$state_dir/role_stop" "$stop_cmd"
   [[ -n "$time_limit" ]] && atmux_fs_write_field "$state_dir/time_limit" "$time_limit"
+  [[ -n "$team_max_intelligence" ]] && atmux_fs_write_field "$state_dir/max_intelligence" "$team_max_intelligence"
   [[ -n "$deadline_epoch" ]] && atmux_fs_write_field "$state_dir/deadline_epoch" "$deadline_epoch"
   [[ -n "$deadline_at" ]] && atmux_fs_write_field "$state_dir/deadline_at" "$deadline_at"
   if [[ "$team_worktree_owned" -eq 1 ]]; then
@@ -888,6 +964,7 @@ create_team() {
       ATMUX_TEAM_DEADLINE_AT="$team_deadline_at" \
       ATMUX_TEAM_DEADLINE_EPOCH="$team_deadline_epoch" \
       ATMUX_TEAM_DOC_DIR="$team_doc_dir" \
+      ATMUX_MAX_INTELLIGENCE="$team_max_intelligence" \
         run_team_role_hook_bounded "$start_cmd" "${ATMUX_ROLE_START_TIMEOUT:-60}" || role_start_rc=$?
       if [[ "$role_start_rc" -ne 0 ]]; then
         if [[ "$role_start_rc" -eq 124 ]]; then

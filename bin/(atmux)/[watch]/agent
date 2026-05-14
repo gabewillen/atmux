@@ -225,10 +225,6 @@ main() {
       continue
     fi
 
-    if (( now >= deadline )); then
-      exit 124
-    fi
-
     next_deadline="$deadline"
     if (( last_change_ts > 0 )); then
       local idle_deadline=$(( last_change_ts + idle_seconds ))
@@ -257,6 +253,11 @@ main() {
       while read -r -t 1 _ <&8; do :; done   # drain
       read -r _ <&8 || true                  # block for next event
       last_change_ts="$(date +%s)"
+      if (( timeout_sec == 0 )); then
+        deadline=$(( last_change_ts + 365 * 24 * 3600 ))
+      else
+        deadline=$(( last_change_ts + timeout_sec ))
+      fi
       continue
     fi
   done

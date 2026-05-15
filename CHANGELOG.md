@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.27.3 — Scheduled notification cancellation hints
+
+- Added a cancellation hint to scheduled notifications so recurring reminders show the `atmux process kill <pid>` command that stops the scheduler.
+
 ## 0.27.2 — Grok Build live matrix fixes
 
 - Updated the built-in `grok` adapter for the live Grok Build CLI model (`grok-build`) and mapped atmux reasoning levels to Grok's `--effort` flag.

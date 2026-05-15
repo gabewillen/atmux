@@ -43,6 +43,7 @@ require_adapter_command() {
     claude-code) command -v claude >/dev/null 2>&1 ;;
     gemini) command -v gemini >/dev/null 2>&1 ;;
     cursor-agent) command -v agent >/dev/null 2>&1 || command -v cursor-agent >/dev/null 2>&1 ;;
+    grok) command -v grok >/dev/null 2>&1 ;;
     *) return 1 ;;
   esac
 }
@@ -82,6 +83,9 @@ wait_for_adapter_ready() {
     cursor-agent)
       wait_for_text "$pane" 'Cursor Agent' 120
       ;;
+    grok)
+      wait_for_text "$pane" 'Grok Build' 120
+      ;;
     *)
       echo "unknown adapter: $adapter" >&2
       exit 2
@@ -97,6 +101,16 @@ session_pane() {
 extract_xml_attr() {
   local attr="$1"
   sed -n "s/.*${attr}=\"\\([^\"]*\\)\".*/\\1/p" | head -n1
+}
+
+extract_session_name() {
+  local out="$1" parsed
+  parsed="$(printf '%s\n' "$out" | extract_xml_attr session)"
+  if [[ -n "$parsed" ]]; then
+    printf '%s\n' "$parsed"
+    return
+  fi
+  printf '%s\n' "$out" | awk 'NF { value=$0 } END { print value }'
 }
 
 run_adapter_case() {
@@ -124,7 +138,7 @@ run_adapter_case() {
   member_session="$(ATMUX_ALLOW_OUTSIDE_TMUX=1 ATMUX_HOME="$atmux_home" ATMUX_SOURCE_ROOT="$REPO_ROOT" ATMUX_REPO="$repo" \
     ATMUX_AGENT_NAME="sender" ATMUX_SESSION_NAME="atmux-${repo}-sender" \
     "$ATMUX_BIN" agent create member --team "$team" --role implementer --adapter "$adapter" --intelligence 50 --shared-worktree)"
-  member_session="$(printf '%s\n' "$member_session" | extract_xml_attr session)"
+  member_session="$(extract_session_name "$member_session")"
   [[ -n "$member_session" ]] || { echo "failed to parse member session for $adapter" >&2; exit 1; }
   SESSIONS+=("$member_session")
 
@@ -183,7 +197,7 @@ trap cleanup EXIT
 
 snapshot_control_files
 
-for adapter in ${ATMUX_TEST_ADAPTERS:-codex claude-code gemini cursor-agent}; do
+for adapter in ${ATMUX_TEST_ADAPTERS:-codex claude-code gemini cursor-agent grok}; do
   run_adapter_case "$adapter"
 done
 

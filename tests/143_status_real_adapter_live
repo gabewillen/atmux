@@ -59,6 +59,7 @@ require_adapter_command() {
     claude-code)  command -v claude >/dev/null 2>&1 ;;
     gemini)       command -v gemini >/dev/null 2>&1 ;;
     cursor-agent) command -v agent >/dev/null 2>&1 || command -v cursor-agent >/dev/null 2>&1 ;;
+    grok)         command -v grok >/dev/null 2>&1 ;;
     *)            return 2 ;;
   esac
 }
@@ -247,7 +248,7 @@ trap cleanup EXIT
 
 snapshot_control_files
 
-for adapter in ${ATMUX_TEST_ADAPTERS:-codex claude-code gemini cursor-agent}; do
+for adapter in ${ATMUX_TEST_ADAPTERS:-codex claude-code gemini cursor-agent grok}; do
   run_adapter_case "$adapter"
 done
 

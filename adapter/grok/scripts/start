@@ -42,7 +42,7 @@ set_bootstrap_state() {
 state_dir="${ATMUX_HOME:-$HOME/.atmux}/adapters/grok"
 state_file="$state_dir/state.env"
 mkdir -p "$state_dir"
-[[ -f "$state_file" ]] || printf 'MODEL=%s\nREASONING_LEVEL=%s\n' 'grok-4.3' 'medium' > "$state_file"
+[[ -f "$state_file" ]] || printf 'MODEL=%s\nREASONING_LEVEL=%s\n' 'grok-build' 'medium' > "$state_file"
 # shellcheck disable=SC1090
 source "$state_file"
 
@@ -68,8 +68,18 @@ normalize_model() {
 normalize_reasoning() {
   case "${1:-}" in
     low|medium|high) printf '%s\n' "$1" ;;
-    extra_high|extra-high|extra\ high|extrahigh) printf '%s\n' 'extra-high' ;;
+    extra_high|extra-high|extra\ high|extrahigh|xhigh|xh) printf '%s\n' 'extra-high' ;;
     *) return 1 ;;
+  esac
+}
+
+reasoning_to_effort() {
+  case "${1:-medium}" in
+    low) printf '%s\n' low ;;
+    medium) printf '%s\n' medium ;;
+    high) printf '%s\n' high ;;
+    extra-high|xhigh|xh) printf '%s\n' xhigh ;;
+    *) printf '%s\n' medium ;;
   esac
 }
 
@@ -97,14 +107,17 @@ if [[ -n "${ATMUX_MODEL:-}" ]]; then
   MODEL="$ATMUX_MODEL"
 fi
 if [[ -n "${ATMUX_REASONING_LEVEL:-}" ]]; then
-  REASONING_LEVEL="$ATMUX_REASONING_LEVEL"
+  REASONING_LEVEL="$(normalize_reasoning "$ATMUX_REASONING_LEVEL" || printf '%s\n' "$ATMUX_REASONING_LEVEL")"
 fi
 
 printf 'MODEL=%s\nREASONING_LEVEL=%s\n' "$MODEL" "$REASONING_LEVEL" > "$state_file"
 
 args=("$@")
-if ! arg_present --model "${args[@]-}"; then
-  args=(--model "$MODEL" "${args[@]-}")
+if ! arg_present --model "${args[@]+"${args[@]}"}" && ! arg_present -m "${args[@]+"${args[@]}"}"; then
+  args=(--model "$MODEL" "${args[@]+"${args[@]}"}")
+fi
+if ! arg_present --effort "${args[@]+"${args[@]}"}" && ! arg_present --reasoning-effort "${args[@]+"${args[@]}"}"; then
+  args=(--effort "$(reasoning_to_effort "$REASONING_LEVEL")" "${args[@]+"${args[@]}"}")
 fi
 
 # Export GROK_MODEL as a backup for grok-cli (it reads from settings but env helps some flows).
@@ -112,4 +125,4 @@ export GROK_MODEL="$MODEL"
 
 set_bootstrap_state ready
 echo "starting grok in $(pwd)"
-exec grok "${args[@]-}"
+exec grok "${args[@]+"${args[@]}"}"

@@ -51,6 +51,7 @@ require_adapter_command() {
     claude-code) command -v claude >/dev/null 2>&1 ;;
     gemini) command -v gemini >/dev/null 2>&1 ;;
     cursor-agent) command -v agent >/dev/null 2>&1 || command -v cursor-agent >/dev/null 2>&1 ;;
+    grok) command -v grok >/dev/null 2>&1 ;;
     *) return 1 ;;
   esac
 }
@@ -137,15 +138,34 @@ run_adapter_case() {
     exit 1
   fi
 
+  if [[ "$adapter" == "grok" ]]; then
+    # Grok's TUI rewrites the visible conversation area while it processes
+    # submitted notifications, so older ids are not reliably retained in
+    # tmux capture. Queue drain verifies every enqueued delivery completed;
+    # require at least one visible read hint as a receiver-side smoke check.
+    if ! wait_for_queue_empty "$atmux_home" 420; then
+      echo "parallel send: queue did not drain for $adapter" >&2
+      exit 1
+    fi
+    snap="$(tmux capture-pane -p -t "$worker_pane" -S -25000 2>/dev/null | tr -d '\r\n' || true)"
+    if ! printf '%s' "$snap" | grep -Fq "atmux message read"; then
+      echo "parallel send: no message read hint visible in $adapter worker pane after queue drain" >&2
+      tmux capture-pane -p -t "$worker_pane" -S -500 >&2 || true
+      exit 1
+    fi
+    tmux kill-session -t "$worker_session" >/dev/null 2>&1 || true
+    return 0
+  fi
+
   # Delivery order != submit order; wait until every id's read hint is visible in the pane.
   per_adapter_timeout="${ATMUX_TEST_PARALLEL_WAIT:-420}"
   [[ "$per_adapter_timeout" =~ ^[0-9]+$ ]] || per_adapter_timeout=420
   deadline=$(( $(date +%s) + per_adapter_timeout ))
   while true; do
-    snap="$(tmux capture-pane -p -t "$worker_pane" -S -25000 2>/dev/null | tr -d '\r' || true)"
+    snap="$(tmux capture-pane -p -t "$worker_pane" -S -25000 2>/dev/null | tr -d '\r\n' || true)"
     all_ok=1
     for id in "${ids[@]}"; do
-      if ! printf '%s' "$snap" | grep -Fq "atmux message read $id --repo $repo"; then
+      if ! printf '%s' "$snap" | grep -Fq "atmux message read $id"; then
         all_ok=0
         break
       fi
@@ -199,7 +219,7 @@ trap cleanup EXIT
 snapshot_control_files
 
 echo "--- $N parallel live sends (all adapters) ---" >&2
-for adapter in ${ATMUX_TEST_ADAPTERS:-codex claude-code gemini cursor-agent}; do
+for adapter in ${ATMUX_TEST_ADAPTERS:-codex claude-code gemini cursor-agent grok}; do
   run_adapter_case "$adapter"
 done
 

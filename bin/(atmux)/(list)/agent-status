@@ -48,7 +48,7 @@ agent_local_name() {
 agent_status_fields() {
   local session="$1"
   local pane qdir worker_pid worker queue oldest_age last_error_short
-  local adapter team pane_alive
+  local adapter selected_adapter team pane_alive
 
   if tmux has-session -t "$session" 2>/dev/null; then
     pane="$(atmux_resolve_primary_pane "$session")"
@@ -63,7 +63,11 @@ agent_status_fields() {
   fi
 
   adapter="$(atmux_resolve_session_env "$session" ATMUX_ADAPTER)"
+  selected_adapter="$(atmux_resolve_session_env "$session" ATMUX_ADAPTER_SELECTED)"
   team="$(atmux_resolve_session_env "$session" ATMUX_TEAM)"
+  if [[ "$adapter" == "auto" && -n "$selected_adapter" && "$selected_adapter" != "auto" ]]; then
+    adapter="$selected_adapter"
+  fi
   [[ -n "$adapter" ]] || adapter=""
   [[ -n "$team" ]] || team=""
 

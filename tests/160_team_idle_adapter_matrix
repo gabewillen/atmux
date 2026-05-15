@@ -9,7 +9,7 @@ ATMUX_BIN="$REPO_ROOT/bin/atmux"
 # shellcheck source=bin/(atmux)/(lib)/resolver
 source "$REPO_ROOT/bin/(atmux)/(lib)/resolver"
 
-adapters=(codex gemini claude-code cursor-agent opencode auto)
+adapters=(codex gemini claude-code cursor-agent opencode grok auto)
 
 wait_for_text() {
   local target="$1"
@@ -70,6 +70,7 @@ busy_text_for_adapter() {
     claude-code) printf 'working\n' ;;
     cursor-agent) printf 'running command\n' ;;
     opencode) printf 'thinking...\n' ;;
+    grok) printf 'Connecting MCPs\n' ;;
     auto) printf 'auto selected\n' ;;
     *) printf 'working\n' ;;
   esac
@@ -80,6 +81,7 @@ idle_text_for_adapter() {
     gemini) printf '{"type":"result","status":"success"}\n' ;;
     cursor-agent) printf '{"type":"result","status":"success"}\n' ;;
     opencode) printf '{"type":"result","status":"success"}\n' ;;
+    grok) printf 'Grok Build\n' ;;
     *) printf 'ready\n' ;;
   esac
 }

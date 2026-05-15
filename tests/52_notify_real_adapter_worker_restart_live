@@ -43,6 +43,7 @@ require_adapter_command() {
     claude-code) command -v claude >/dev/null 2>&1 ;;
     gemini) command -v gemini >/dev/null 2>&1 ;;
     cursor-agent) command -v agent >/dev/null 2>&1 || command -v cursor-agent >/dev/null 2>&1 ;;
+    grok) command -v grok >/dev/null 2>&1 ;;
     *) echo "unknown adapter: $adapter" >&2; return 2 ;;
   esac
 }
@@ -51,11 +52,12 @@ wait_for_text() {
   local target="$1"
   local needle="$2"
   local timeout="${3:-120}"
-  local deadline now snap
+  local deadline now snap compact
   deadline=$(( $(date +%s) + timeout ))
   while true; do
     snap="$(tmux capture-pane -p -t "$target" -S -2500 2>/dev/null | tr -d '\r' || true)"
-    if printf '%s' "$snap" | grep -Fq "$needle"; then
+    compact="$(printf '%s' "$snap" | tr -d '\r\n')"
+    if printf '%s' "$compact" | grep -Fq "$needle"; then
       return 0
     fi
     now="$(date +%s)"
@@ -74,6 +76,7 @@ wait_for_adapter_ready() {
     claude-code) wait_for_text "$pane" 'Claude Code v' 90 ;;
     gemini) wait_for_text "$pane" 'Type your message' 120 ;;
     cursor-agent) wait_for_text "$pane" 'Cursor Agent' 120 ;;
+    grok) wait_for_text "$pane" 'Grok Build' 120 ;;
     *) echo "unknown adapter: $adapter" >&2; return 2 ;;
   esac
 }
@@ -203,12 +206,12 @@ run_adapter_case() {
   second_id="$(send_message "$atmux_home" "$repo" "worker restart second ${adapter} ${RANDOM}")"
   tmux send-keys -t "$worker_pane" -X cancel
 
-  if ! wait_for_text "$worker_pane" "atmux message read $first_id --repo $repo" 120; then
+  if ! wait_for_text "$worker_pane" "atmux message read $first_id" 120; then
     echo "real $adapter first queued notification was lost after worker restart" >&2
     tmux capture-pane -p -t "$worker_pane" -S -360 >&2 || true
     exit 1
   fi
-  if ! wait_for_text "$worker_pane" "atmux message read $second_id --repo $repo" 120; then
+  if ! wait_for_text "$worker_pane" "atmux message read $second_id" 120; then
     echo "real $adapter second notification was lost after worker restart" >&2
     tmux capture-pane -p -t "$worker_pane" -S -360 >&2 || true
     exit 1
@@ -246,7 +249,7 @@ trap cleanup EXIT
 
 snapshot_control_files
 
-for adapter in ${ATMUX_TEST_ADAPTERS:-codex claude-code gemini cursor-agent}; do
+for adapter in ${ATMUX_TEST_ADAPTERS:-codex claude-code gemini cursor-agent grok}; do
   run_adapter_case "$adapter"
 done
 

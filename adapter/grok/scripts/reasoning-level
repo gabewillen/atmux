@@ -3,14 +3,14 @@ set -euo pipefail
 state_dir="${ATMUX_HOME:-$HOME/.atmux}/adapters/grok"
 state_file="$state_dir/state.env"
 mkdir -p "$state_dir"
-[[ -f "$state_file" ]] || printf 'MODEL=%s\nREASONING_LEVEL=%s\n' 'grok-4.3' 'medium' > "$state_file"
+[[ -f "$state_file" ]] || printf 'MODEL=%s\nREASONING_LEVEL=%s\n' 'grok-build' 'medium' > "$state_file"
 # shellcheck disable=SC1090
 source "$state_file"
 
 normalize_reasoning() {
   case "${1:-}" in
     low|medium|high) printf '%s\n' "$1" ;;
-    extra_high|extra-high|extra\ high|extrahigh) printf '%s\n' 'extra-high' ;;
+    extra_high|extra-high|extra\ high|extrahigh|xhigh|xh) printf '%s\n' 'extra-high' ;;
     *) return 1 ;;
   esac
 }

@@ -150,7 +150,11 @@ for pid in "${pids[@]}"; do
 done
 
 # cat harness: each line echoed twice; expect 2 appearances per marker.
-if ! wait_for_all_markers "$pane" 2 30; then
+# Parallel delivery can be slow on hosted CI because every payload is
+# serialized through one pane and submit verification waits for prompt churn.
+marker_timeout="${ATMUX_TEST_PARALLEL_ENQUEUE_WAIT:-90}"
+[[ "$marker_timeout" =~ ^[0-9]+$ ]] || marker_timeout=90
+if ! wait_for_all_markers "$pane" 2 "$marker_timeout"; then
   echo "not all markers appeared twice in time" >&2
   tmux capture-pane -p -t "$pane" -S -400 >&2 || true
   exit 1

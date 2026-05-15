@@ -1116,6 +1116,10 @@ spawn_agent_session() {
   local session="atmux-${repo_name}-${name}"
   local worktree="$ATMUX_HOME/agents/${repo_name}-${name}"
   local branch="atmux-${repo_name}-${name}"
+  local selected_adapter_env="$adapter"
+  if [[ "$adapter" == "auto" && ${#allowed_adapters[@]} -eq 1 ]]; then
+    selected_adapter_env="${allowed_adapters[0]}"
+  fi
 
   if tmux has-session -t "$session" 2>/dev/null; then
     local existing_adapter existing_source_root existing_role existing_team existing_intelligence existing_max_intelligence
@@ -1238,7 +1242,7 @@ spawn_agent_session() {
   tmux set-environment -t "$session" ATMUX_AGENT_NAME "$name"
   tmux set-environment -t "$session" ATMUX_ADAPTER "$adapter"
   tmux set-environment -t "$session" ATMUX_ADAPTER_REQUESTED "$adapter"
-  tmux set-environment -t "$session" ATMUX_ADAPTER_SELECTED "$adapter"
+  tmux set-environment -t "$session" ATMUX_ADAPTER_SELECTED "$selected_adapter_env"
   if [[ -n "$adapters_list" ]]; then
     tmux set-environment -t "$session" ATMUX_ADAPTERS_ALLOWED "$adapters_list"
   fi
@@ -1281,7 +1285,7 @@ spawn_agent_session() {
   fi
 
   if [[ -n "${ATMUX_TEAM:-}" ]]; then
-    record_team_member_state "$repo_name" "$ATMUX_TEAM" "$session" "$name" "${ATMUX_ROLE:-}" "$adapter"
+    record_team_member_state "$repo_name" "$ATMUX_TEAM" "$session" "$name" "${ATMUX_ROLE:-}" "$selected_adapter_env"
     subscribe_caller_to_team_idle \
       "$repo_name" "$ATMUX_TEAM" \
       "${ATMUX_TEAM_IDLE_SECONDS:-${ATMUX_AGENT_IDLE_SECONDS:-30}}" \

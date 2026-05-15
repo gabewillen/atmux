@@ -53,6 +53,7 @@ require_adapter_command() {
     claude-code)  command -v claude >/dev/null 2>&1 ;;
     gemini)       command -v gemini >/dev/null 2>&1 ;;
     cursor-agent) command -v agent >/dev/null 2>&1 || command -v cursor-agent >/dev/null 2>&1 ;;
+    grok)         command -v grok >/dev/null 2>&1 ;;
     *)            return 2 ;;
   esac
 }
@@ -103,7 +104,7 @@ wait_for_text() {
 # Pick two adapters from ATMUX_TEST_ADAPTERS that have CLIs installed.
 pick_two_adapters() {
   local picks=() a
-  for a in ${ATMUX_TEST_ADAPTERS:-codex claude-code gemini cursor-agent}; do
+  for a in ${ATMUX_TEST_ADAPTERS:-codex claude-code gemini cursor-agent grok}; do
     if require_adapter_command "$a"; then
       picks+=("$a")
       (( ${#picks[@]} == 2 )) && break

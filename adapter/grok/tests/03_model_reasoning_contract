@@ -10,13 +10,16 @@ cleanup() {
 }
 trap cleanup EXIT
 
-expected_list=$'grok-4.3-non-reasoning\ngrok-4.3\ngrok-4-heavy'
+expected_list=$'grok-build'
 model_list="$(ATMUX_HOME="$atmux_home" "$ADAPTER_DIR/scripts/model" list)"
 [[ "$model_list" == "$expected_list" ]] || { echo "unexpected model list: $model_list" >&2; exit 1; }
 
-ATMUX_HOME="$atmux_home" "$ADAPTER_DIR/scripts/model" set grok-4.3 high >/dev/null
-[[ "$(ATMUX_HOME="$atmux_home" "$ADAPTER_DIR/scripts/model" get)" == "grok-4.3" ]] || { echo "unexpected model get" >&2; exit 1; }
+ATMUX_HOME="$atmux_home" "$ADAPTER_DIR/scripts/model" set grok-build high >/dev/null
+[[ "$(ATMUX_HOME="$atmux_home" "$ADAPTER_DIR/scripts/model" get)" == "grok-build" ]] || { echo "unexpected model get" >&2; exit 1; }
 [[ "$(ATMUX_HOME="$atmux_home" "$ADAPTER_DIR/scripts/reasoning-level" get)" == "high" ]] || { echo "unexpected reasoning get after model set" >&2; exit 1; }
+
+ATMUX_HOME="$atmux_home" "$ADAPTER_DIR/scripts/model" set grok-build xhigh >/dev/null
+[[ "$(ATMUX_HOME="$atmux_home" "$ADAPTER_DIR/scripts/reasoning-level" get)" == "extra-high" ]] || { echo "unexpected reasoning get after model set xhigh" >&2; exit 1; }
 
 ATMUX_HOME="$atmux_home" "$ADAPTER_DIR/scripts/reasoning-level" set medium >/dev/null
 [[ "$(ATMUX_HOME="$atmux_home" "$ADAPTER_DIR/scripts/reasoning-level" get)" == "medium" ]] || { echo "unexpected reasoning-level get" >&2; exit 1; }

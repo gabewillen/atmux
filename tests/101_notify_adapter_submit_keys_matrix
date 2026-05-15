@@ -38,7 +38,7 @@ check() {
 
 want_steer_for() {
   case "$1" in
-    claude-code|codex|cursor-agent|gemini|opencode) printf 'Enter' ;;
+    claude-code|codex|cursor-agent|gemini|opencode|grok) printf 'Enter' ;;
     *) return 1 ;;
   esac
 }
@@ -50,13 +50,14 @@ want_interrupt_for() {
     cursor-agent) printf 'C-c' ;;
     gemini)      printf 'C-c' ;;
     opencode)    printf 'C-c' ;;
+    grok)        printf 'C-c' ;;
     *) return 1 ;;
   esac
 }
 
 echo "matrix: every adapter manifest resolves to expected submit_keys" >&2
 
-for adapter in claude-code codex cursor-agent gemini opencode; do
+for adapter in claude-code codex cursor-agent gemini opencode grok; do
   s="$(resolve_submit_keys "$adapter" steer | normalize_keys)"
   i="$(resolve_submit_keys "$adapter" interrupt | normalize_keys)"
   check "$adapter steer"     "$s" "$(want_steer_for "$adapter")"

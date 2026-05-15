@@ -36,6 +36,7 @@ ln -sf _record "$tmp_dir/bin/gemini"
 ln -sf _record "$tmp_dir/bin/claude"
 ln -sf _record "$tmp_dir/bin/codex"
 ln -sf _record "$tmp_dir/bin/opencode"
+ln -sf _record "$tmp_dir/bin/grok"
 ln -sf _record "$tmp_dir/bin/cursor-agent"
 ln -sf _record "$tmp_dir/bin/agent"
 # Same stub at the paths cursor-agent injects.
@@ -229,4 +230,25 @@ af="$(run_start opencode cli-perms ATMUX_INTELLIGENCE=50 -- --dangerously-skip-p
 n_perms="$(grep -c -Fx -- '--dangerously-skip-permissions' "$af" || true)"
 [[ "$n_perms" -eq 1 ]] || { echo "fail: opencode must not duplicate --dangerously-skip-permissions (got $n_perms)" >&2; exit 1; }
 
-echo "ok: gemini/claude-code/codex/codextra/cursor-agent/opencode start scripts honor ATMUX_MODEL/ATMUX_REASONING_LEVEL overrides"
+# === grok =============================================================
+af="$(run_start grok int-only ATMUX_INTELLIGENCE=50)"
+assert_arg_eq "$af" --model grok-build grok-int-only
+assert_arg_eq "$af" --effort medium grok-int-only
+
+af="$(run_start grok reasoning-xhigh \
+        ATMUX_INTELLIGENCE=50 \
+        ATMUX_REASONING_LEVEL=extra-high)"
+assert_arg_eq "$af" --model grok-build grok-reasoning-xhigh
+assert_arg_eq "$af" --effort xhigh grok-reasoning-xhigh
+
+af="$(run_start grok override \
+        ATMUX_INTELLIGENCE=50 \
+        ATMUX_MODEL=probe-grok-model)"
+assert_arg_eq "$af" --model probe-grok-model grok-override
+assert_arg_eq "$af" --effort medium grok-override
+
+af="$(run_start grok cli-effort ATMUX_INTELLIGENCE=50 -- --effort user-effort)"
+assert_arg_eq "$af" --effort user-effort grok-cli-effort
+assert_arg_eq "$af" --model grok-build grok-cli-effort
+
+echo "ok: gemini/claude-code/codex/codextra/cursor-agent/opencode/grok start scripts honor ATMUX_MODEL/ATMUX_REASONING_LEVEL overrides"

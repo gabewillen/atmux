@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.27.2 — Grok Build live matrix fixes
+
+- Updated the built-in `grok` adapter for the live Grok Build CLI model (`grok-build`) and mapped atmux reasoning levels to Grok's `--effort` flag.
+- Fixed notification delivery into Grok's boxed prompt by matching the rendered input line and added Grok to the adapter delivery, status, team-idle, and live notification matrices.
+- Fixed single-candidate `--adapter auto --adapters grok` sessions so status and team membership report the selected adapter (`grok`) instead of the request label (`auto`).
+
 ## 0.27.1 — Manager quality accountability
 
 - Clarified in the `manager` role prompt that it is accountable for the quality of every change that ships from agents or teams it creates. The manager sets verification standards per task and must ensure those standards are met before any code merges.

@@ -3,7 +3,7 @@ set -euo pipefail
 state_dir="${ATMUX_HOME:-$HOME/.atmux}/adapters/grok"
 state_file="$state_dir/state.env"
 mkdir -p "$state_dir"
-[[ -f "$state_file" ]] || printf 'MODEL=%s\nREASONING_LEVEL=%s\n' 'grok-4.3' 'medium' > "$state_file"
+[[ -f "$state_file" ]] || printf 'MODEL=%s\nREASONING_LEVEL=%s\n' 'grok-build' 'medium' > "$state_file"
 # shellcheck disable=SC1090
 source "$state_file"
 
@@ -47,7 +47,7 @@ resolve_target() {
 
 parse_model_and_reasoning() {
   local snapshot="$1"
-  local line parsed_model
+  local line parsed_model parsed_reasoning
 
   # Look for --model on the command line in captured history
   line="$(printf '%s\n' "$snapshot" | awk '/--model[[:space:]]/ { l=$0 } END { print l }')"
@@ -56,6 +56,16 @@ parse_model_and_reasoning() {
     if [[ -n "$parsed_model" ]] && [[ "$parsed_model" =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]*$ ]]; then
       MODEL="$parsed_model"
     fi
+  fi
+
+  # Look for --effort on the command line in captured history
+  line="$(printf '%s\n' "$snapshot" | awk '/--effort[[:space:]]/ { l=$0 } END { print l }')"
+  if [[ -n "$line" ]]; then
+    parsed_reasoning="$(printf '%s\n' "$line" | sed -nE 's/.*--effort[[:space:]]+([^[:space:]]+).*/\1/p')"
+    case "$parsed_reasoning" in
+      low|medium|high) REASONING_LEVEL="$parsed_reasoning" ;;
+      xhigh|xh) REASONING_LEVEL="extra-high" ;;
+    esac
   fi
 
   # Look for model: or Model: in output
@@ -81,7 +91,7 @@ infer_state() {
     return
   fi
 
-  if printf '%s\n' "$snapshot" | grep -Eqi 'thinking|running|executing|searching|tool|using |generating|working|delegat|verif'; then
+  if printf '%s\n' "$snapshot" | grep -Eqi 'thinking|running|executing|searching|connecting|tool|using |generating|working|delegat|verif'; then
     printf '%s\n' 'busy'
     return
   fi

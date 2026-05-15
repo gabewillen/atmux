@@ -6,7 +6,7 @@ set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/isolate-tmux.sh"
 
 # Full matrix: every shipped adapter (claude-code, codex, cursor-agent,
-# gemini, opencode) x {steer, interrupt} mode, delivered against a mock `cat` pane
+# gemini, opencode, grok) x {steer, interrupt} mode, delivered against a mock `cat` pane
 # primed with the adapter's real input.start. Verifies:
 #   1. Payload text reaches the pane (notification was "entered").
 #   2. Submit happens (cursor advances past the prompt line == "submitted").
@@ -61,6 +61,7 @@ prompt_for() {
     cursor-agent) printf '%s' '→' ;;
     gemini)      printf '%s' '*' ;;
     opencode)    printf '%s' '┃' ;;
+    grok)        printf '%s' '│ ❯' ;;
     *) return 1 ;;
   esac
 }
@@ -179,10 +180,10 @@ probe() {
   return 0
 }
 
-echo "matrix: 5 adapters x 2 modes -> 10 mock-pane deliveries" >&2
+echo "matrix: 6 adapters x 2 modes -> 12 mock-pane deliveries" >&2
 
 failures=0
-for adapter in claude-code codex cursor-agent gemini opencode; do
+for adapter in claude-code codex cursor-agent gemini opencode grok; do
   for mode in steer interrupt; do
     if ! probe "$adapter" "$mode"; then
       failures=$((failures + 1))

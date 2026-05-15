@@ -1817,7 +1817,7 @@ do_create() {
     spawn_args+=(-- "${forward[@]}")
   fi
 
-  if [[ -n "$start_cmd" && ( ! -t 0 || ! -t 1 ) ]]; then
+  if [[ "$task_mode" -eq 1 || ( -n "$start_cmd" && ( ! -t 0 || ! -t 1 ) ) ]]; then
     local create_out create_rc created_session
     set +e
     create_out="$(
@@ -1840,6 +1840,9 @@ do_create() {
     fi
     created_session="$(printf '%s\n' "$create_out" | awk 'NF { last=$0 } END { print last }')"
     wait_for_role_start_if_needed "$created_session" "$start_cmd" || exit 1
+    if [[ "$task_mode" -eq 1 ]]; then
+      send_task_to_agent "$created_session" "$task_description" "$task_todos_blob" || exit 1
+    fi
     return 0
   fi
 

@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Isolate the tmux socket so this test can never touch the developer's
+# default tmux server. Idempotent if the runner already isolated.
+source "$(dirname "${BASH_SOURCE[0]}")/lib/isolate-tmux.sh"
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+ATMUX_BIN="$REPO_ROOT/bin/atmux"
+NOTIFY_SCRIPT="$REPO_ROOT/bin/(atmux)/notify"
+
+ATMUX_HOME="$(mktemp -d "${TMPDIR:-/tmp}/atmux-agent-kill-notify.XXXXXX")"
+ATMUX_SOURCE_ROOT="$REPO_ROOT"
+export ATMUX_HOME ATMUX_SOURCE_ROOT
+
+# shellcheck source=bin/(atmux)/notify
+source "$NOTIFY_SCRIPT"
+
+repo_name="kill_notify_${RANDOM}"
+agent_name="receiver"
+session="atmux-${repo_name}-${agent_name}"
+worker_pid=""
+
+cleanup() {
+  tmux kill-session -t "$session" >/dev/null 2>&1 || true
+  if [[ -n "$worker_pid" ]] && kill -0 "$worker_pid" >/dev/null 2>&1; then
+    kill -KILL "$worker_pid" >/dev/null 2>&1 || true
+  fi
+  rm -rf "$ATMUX_HOME"
+}
+trap cleanup EXIT
+
+tmux new-session -d -s "$session" -n "$session" -x 120 -y 30 "cat"
+tmux set-environment -t "$session" ATMUX_REPO "$repo_name"
+tmux set-environment -t "$session" ATMUX_AGENT_NAME "$agent_name"
+tmux set-environment -t "$session" ATMUX_SESSION_NAME "$session"
+
+pane="$(tmux list-panes -t "$session" -F '#{pane_id}' 2>/dev/null | head -n1)"
+[[ -n "$pane" ]] || { echo "pane missing" >&2; exit 1; }
+
+qdir="$(notify_queue_dir "$pane")"
+mkdir -p "$qdir/payloads" "$qdir/lock"
+
+worker_pane="$(
+  tmux new-window -d -P -F '#{pane_id}' \
+    -t "$session:" \
+    -n "notify-${pane#%}" \
+    "bash -c 'trap \"\" TERM; while :; do sleep 60; done'"
+)"
+worker_pid="$(tmux display-message -t "$worker_pane" -p '#{pane_pid}' 2>/dev/null || true)"
+[[ -n "$worker_pid" ]] || { echo "notify worker pane pid missing" >&2; exit 1; }
+printf '%s\n' "$worker_pid" > "$qdir/worker.pid"
+
+ATMUX_REPO="$repo_name" "$ATMUX_BIN" agent kill "$agent_name" >/dev/null
+
+deadline=$(( $(date +%s) + 5 ))
+while kill -0 "$worker_pid" >/dev/null 2>&1; do
+  if (( $(date +%s) >= deadline )); then
+    echo "agent kill left notify worker pid running: $worker_pid" >&2
+    exit 1
+  fi
+  sleep 0.1
+done
+worker_pid=""
+
+if [[ -e "$qdir/worker.pid" || -e "$qdir/lock" || -p "$qdir/wake.fifo" ]]; then
+  echo "agent kill did not clear notify worker runtime files" >&2
+  find "$qdir" -maxdepth 1 -print >&2
+  exit 1
+fi
+
+echo "ok: agent kill cleans notify worker processes and runtime files"

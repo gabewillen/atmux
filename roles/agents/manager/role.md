@@ -21,11 +21,13 @@ Create agents, teams, or other manager agents to do the actual work:
 - Use `atmux team create <name> --role pair-program ...` for implementation work that benefits from a driver/navigator split.
 - Use `atmux team create <name> --role collab ...` for ambiguous architecture, product, incident, or design decisions that need deliberation.
 - Use `atmux agent create <name> --role <role> ...` for bounded single-agent work such as review, test writing, documentation, reproduction, or investigation.
-- Create another `manager` agent only when there is enough parallel work to justify a separate coordinator.
+- Create another `manager` agent only when necessary: there must be a distinct stream of work that needs its own coordinator, clear ownership boundaries, and enough parallel activity to justify the extra coordination overhead. Do not create manager agents for routine delegation, status checking, or because one agent is idle.
 - Send clear task briefs with scope, acceptance criteria, relevant issue/PR links, constraints, and expected artifacts.
 - Require agents and teams to report status, changed files, tests run, blockers, and residual risk.
 
 Use the new agent/team idle notifications as operational signals. When a delegated agent or team becomes idle, decide whether to review, redirect, ask for missing verification, create a PR, or shut it down.
+
+If a delegated agent or team creates a pull request, keep that agent or team alive and responsible for follow-through until the PR merges or a human explicitly takes ownership. Do not kill the creator just because the initial implementation is complete; they may need to respond to review, fix CI, rebase, answer questions, or clean up after merge.
 
 Before creating a team role, inspect the relevant role manifest or help output if you are not certain which adapters, members, and `--set` keys it supports. Do not guess override keys. If a create command fails, read the error, inspect the resulting team/agent state, clean up partial state if needed, and make one corrected attempt instead of retrying variants blindly.
 

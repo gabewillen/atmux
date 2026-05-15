@@ -1,0 +1,97 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Isolate the tmux socket so this test can never touch the developer's
+# default tmux server. Idempotent if the runner already isolated.
+source "$(dirname "${BASH_SOURCE[0]}")/lib/isolate-tmux.sh"
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+ATMUX_BIN="$REPO_ROOT/bin/atmux"
+
+tmp_root="$(mktemp -d "${TMPDIR:-/tmp}/atmux-create-task.XXXXXX")"
+atmux_home="$tmp_root/.atmux"
+agent_name="taskowner${RANDOM}"
+session=""
+
+cleanup() {
+  if [[ -n "$session" ]]; then
+    tmux kill-session -t "$session" >/dev/null 2>&1 || true
+  fi
+  rm -rf "$tmp_root"
+}
+trap cleanup EXIT
+
+mkdir -p "$atmux_home/adapters/mocktask"
+cat > "$atmux_home/adapters/mocktask/cmd" <<'ADAPTER'
+#!/usr/bin/env bash
+set -euo pipefail
+case "${1:-}" in
+  control-file) printf 'AGENTS.md\n' ;;
+  prepare-prompt) : ;;
+  start) sleep 600 ;;
+  status) printf '<status adapter="mocktask" owner="agent" state="idle" model="" reasoning_level="" control_file="AGENTS.md" />\n' ;;
+  model) printf 'mock\n' ;;
+  reasoning-level) printf 'medium\n' ;;
+  *) exit 2 ;;
+esac
+ADAPTER
+chmod +x "$atmux_home/adapters/mocktask/cmd"
+
+repo_name="$(basename "$REPO_ROOT" | sed -E 's/[^A-Za-z0-9_-]+/_/g; s/_+/_/g; s/^_+//; s/_+$//')"
+description="Own PR lifecycle for create-task regression ${RANDOM}"
+todo_one="inspect the assigned issue"
+todo_two="report completion"
+
+out="$(
+  ATMUX_ALLOW_OUTSIDE_TMUX=1 \
+  ATMUX_HOME="$atmux_home" \
+  ATMUX_SOURCE_ROOT="$REPO_ROOT" \
+  ATMUX_REPO="$repo_name" \
+    "$ATMUX_BIN" agent create "$agent_name" \
+      --role worker \
+      --intelligence 20 \
+      --adapter mocktask \
+      --shared-worktree \
+      --task \
+      --description "$description" \
+      --todo "$todo_one" \
+      --todo "$todo_two"
+)"
+session="$(printf '%s\n' "$out" | awk 'NF { last=$0 } END { print last }')"
+[[ -n "$session" ]] || { echo "agent create did not print a session" >&2; exit 1; }
+
+issue_root="$atmux_home/issues/$repo_name"
+deadline=$(( $(date +%s) + 5 ))
+while true; do
+  issue_dir="$(find "$issue_root" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | head -n1 || true)"
+  [[ -n "$issue_dir" ]] && break
+  if (( $(date +%s) >= deadline )); then
+    echo "agent create --task did not create an assigned issue" >&2
+    exit 1
+  fi
+  sleep 0.1
+done
+
+[[ "$(cat "$issue_dir/title")" == "$description" ]] || {
+  echo "task issue title did not match description" >&2
+  cat "$issue_dir/title" >&2
+  exit 1
+}
+[[ "$(cat "$issue_dir/assigned_to")" == "$session" ]] || {
+  echo "task issue was not assigned to created session" >&2
+  cat "$issue_dir/assigned_to" >&2
+  exit 1
+}
+grep -Fq -- "- $todo_one" "$issue_dir/description" || {
+  echo "task issue missing first todo" >&2
+  cat "$issue_dir/description" >&2
+  exit 1
+}
+grep -Fq -- "- $todo_two" "$issue_dir/description" || {
+  echo "task issue missing second todo" >&2
+  cat "$issue_dir/description" >&2
+  exit 1
+}
+
+echo "ok: agent create --task assigns task immediately"

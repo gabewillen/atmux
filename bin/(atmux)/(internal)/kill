@@ -445,6 +445,50 @@ remove_agent_idle_watchers() {
   rm -rf -- "$watch_dir"
 }
 
+terminate_pid_bounded() {
+  local pid="$1"
+  local wait_secs="${2:-2}"
+  local i
+
+  [[ -n "$pid" ]] || return 0
+  kill -0 "$pid" 2>/dev/null || return 0
+
+  kill -TERM "$pid" 2>/dev/null || true
+  i=0
+  while (( i < wait_secs * 10 )); do
+    kill -0 "$pid" 2>/dev/null || return 0
+    sleep 0.1
+    i=$((i + 1))
+  done
+
+  kill -KILL "$pid" 2>/dev/null || true
+  return 0
+}
+
+remove_session_notification_workers() {
+  local session="$1"
+  local pane qdir worker_pid worker_window_id
+  [[ -n "$session" ]] || return 0
+
+  while IFS= read -r pane; do
+    [[ -n "$pane" ]] || continue
+    qdir="$(notify_queue_dir "$pane")"
+    worker_pid="$(atmux_fs_read_trimmed "$qdir/worker.pid")"
+    if [[ -n "$worker_pid" ]]; then
+      worker_window_id="$(
+        tmux list-panes -s -t "$session" -F '#{pane_pid}\t#{window_id}\t#{window_name}' 2>/dev/null \
+          | awk -F '\t' -v pid="$worker_pid" '$1 == pid && $3 ~ /^notify-/ { print $2; exit }'
+      )"
+      if [[ -n "$worker_window_id" ]]; then
+        terminate_pid_bounded "$worker_pid" 2
+        tmux kill-window -t "$worker_window_id" >/dev/null 2>&1 || true
+      fi
+    fi
+    rm -f "$qdir/wake.fifo" "$qdir/worker.pid" 2>/dev/null || true
+    rm -rf "$qdir/lock" 2>/dev/null || true
+  done < <(tmux list-panes -s -t "$session" -F '#{pane_id}' 2>/dev/null || true)
+}
+
 signal_adapter_pane() {
   # Sends TERM to the adapter process running in a session's primary pane and
   # waits up to wait_secs seconds for it to exit. Best-effort: returns 0 even
@@ -545,6 +589,7 @@ kill_agents() {
     local team_owned_worktree=""
     if tmux has-session -t "$session" 2>/dev/null; then
       session_kind="$(atmux_resolve_session_env "$session" ATMUX_SESSION_KIND)"
+      remove_session_notification_workers "$session"
       # Wind the adapter down first so the role.stop hook below sees the
       # adapter process gone but the session env still readable. Team
       # sessions don't run an adapter — skip the wind-down so we don't
@@ -575,7 +620,7 @@ kill_agents() {
         ATMUX_WORKTREE="$worktree" \
         run_role_hook_bounded "$role_stop" "${ATMUX_ROLE_STOP_TIMEOUT:-30}" || true
       fi
-      tmux kill-session -t "$session"
+      tmux kill-session -t "$session" >/dev/null 2>&1 || true
       removed_session="true"
     fi
 

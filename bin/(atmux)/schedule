@@ -138,10 +138,11 @@ notification_sender() {
 
 send_scheduled_notification() {
   local notification_text="$1"
-  local from_session="" payload="" target_session="" target_pane=""
+  local from_session="" payload="" target_session="" target_pane="" hint_cmd=""
 
   from_session="$(notification_sender)"
-  payload="$(build_notification "scheduled" "$from_session" "" "text=$notification_text")"
+  hint_cmd="$(scheduled_notification_cancel_hint || true)"
+  payload="$(build_notification "scheduled" "$from_session" "$hint_cmd" "text=$notification_text")"
   target_session="$(default_notification_target)"
   target_pane="$(atmux_resolve_primary_pane "$target_session")"
   if [[ -z "$target_pane" ]]; then
@@ -149,6 +150,24 @@ send_scheduled_notification() {
     exit 1
   fi
   send_payload_to_pane "$target_pane" "$payload"
+}
+
+scheduled_notification_cancel_hint() {
+  local repo_name="" candidate_pid="" exec_dir=""
+
+  repo_name="$(atmux_resolve_repo_name --allow-empty)"
+  [[ -n "$repo_name" ]] || return 1
+
+  for candidate_pid in "${ATMUX_SCHEDULE_CANCEL_PID:-}" "${ATMUX_EXEC_PID:-}" "${PPID:-}" "$$"; do
+    [[ "$candidate_pid" =~ ^[0-9]+$ ]] || continue
+    exec_dir="$(exec_dir_for_repo_pid "$repo_name" "$candidate_pid")"
+    if [[ -e "$exec_dir" ]]; then
+      printf 'atmux process kill %s\n' "$candidate_pid"
+      return 0
+    fi
+  done
+
+  return 1
 }
 
 describe_command() {

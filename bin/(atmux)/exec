@@ -490,6 +490,7 @@ _run_detached() {
   # Write our real PID (parent polls for this)
   atmux_fs_write_field "$exec_dir/pid" "$$"
   atmux_fs_write_field "$exec_dir/state" "running"
+  export ATMUX_EXEC_PID="$$"
   if [[ -n "$pid_fifo" && -p "$pid_fifo" ]]; then
     printf '%s\n' "$$" > "$pid_fifo" 2>/dev/null || true
   fi

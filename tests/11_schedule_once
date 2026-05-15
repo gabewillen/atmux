@@ -49,6 +49,8 @@ printf '%s\n' "$out" | grep -Fq '<schedule'
 printf '%s\n' "$out" | grep -Fq 'kind="notification"'
 printf '%s\n' "$out" | grep -Fq 'mode="once"'
 printf '%s\n' "$out" | grep -Fq 'pid="'
+schedule_pid="$(printf '%s\n' "$out" | sed -n 's/.*pid="\([^"]*\)".*/\1/p' | head -n1)"
+[[ -n "$schedule_pid" ]] || { echo "schedule did not return pid" >&2; exit 1; }
 
 if ! wait_for_text "$sender_pane" 'type="scheduled"' 15; then
   echo "scheduled notification not found in sender pane" >&2
@@ -57,6 +59,11 @@ if ! wait_for_text "$sender_pane" 'type="scheduled"' 15; then
 fi
 if ! wait_for_text "$sender_pane" '>hello there</notification>' 15; then
   echo "scheduled notification text not found in sender pane" >&2
+  tmux capture-pane -p -t "$sender_pane" -S -120 >&2 || true
+  exit 1
+fi
+if ! wait_for_text "$sender_pane" "atmux process kill $schedule_pid" 15; then
+  echo "scheduled notification missing cancellation hint" >&2
   tmux capture-pane -p -t "$sender_pane" -S -120 >&2 || true
   exit 1
 fi

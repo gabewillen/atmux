@@ -57,9 +57,15 @@ printf '%s\n' "$out" | grep -Fq '<schedule'
 printf '%s\n' "$out" | grep -Fq 'kind="notification"'
 printf '%s\n' "$out" | grep -Fq 'mode="interval"'
 schedule_pid="$(printf '%s\n' "$out" | sed -n 's/.*pid="\([^"]*\)".*/\1/p' | head -n1)"
+[[ -n "$schedule_pid" ]] || { echo "schedule did not return pid" >&2; exit 1; }
 
 if ! wait_for_count "$sender_pane" 'type="scheduled"' 2 12; then
   echo "scheduled notifications not repeated in sender pane" >&2
+  tmux capture-pane -p -t "$sender_pane" -S -160 >&2 || true
+  exit 1
+fi
+if ! wait_for_count "$sender_pane" "atmux process kill $schedule_pid" 2 12; then
+  echo "scheduled interval notifications missing cancellation hint" >&2
   tmux capture-pane -p -t "$sender_pane" -S -160 >&2 || true
   exit 1
 fi

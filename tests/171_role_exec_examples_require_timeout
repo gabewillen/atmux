@@ -6,6 +6,9 @@ REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
 
 fail=0
 while IFS= read -r line; do
+  if [[ "$line" == *"Do **not** launch adapter CLIs through"* || "$line" == *"Never run commands such as"* ]]; then
+    continue
+  fi
   if [[ "$line" == *"atmux exec --"* && "$line" != *"--timeout"* ]]; then
     echo "role exec example missing required --timeout: $line" >&2
     fail=1

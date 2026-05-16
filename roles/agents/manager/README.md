@@ -22,4 +22,6 @@ when issue/PR feed subscription is desired. If `gh` is unavailable, the
 manager still runs with prompt-only behavior.
 
 The manager should not edit code directly. It delegates implementation,
-test, review, and research work to other agents or teams.
+test, review, and research work to other agents or teams. It should create
+AI workers with `atmux agent create`; `atmux exec` is only for non-agent repo
+commands such as tests, builds, and scripted maintenance.

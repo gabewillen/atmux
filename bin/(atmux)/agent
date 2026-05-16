@@ -662,6 +662,7 @@ render_atmux_prompt_block() {
     echo "- Do not sleep in a foreground loop waiting on peers, managers, or humans, and avoid \`sleep\`-paced polling shells that repeatedly invoke \`atmux message list\`, \`atmux agent status\`, or \`atmux team status\` instead of reacting to pushes."
     echo "- Prefer outbound coordination via \`atmux send --reply-required\`, \`atmux message subscribe\`, watchers and idle/delivery notifications, plus self reminders with \`atmux schedule --notification\` / \`atmux schedule --once\` / \`atmux schedule --interval\`."
     echo "- Prefer long-running work via \`atmux exec --timeout <duration>\` with \`atmux process watch\` over brittle manual polling; use \`--timeout 0\` only when an unbounded command is intentional."
+    echo "- Do not use \`atmux exec\` or shell commands to launch AI adapters as workers; use \`atmux agent create ... --adapter <adapter> --task ...\` so the worker has a managed session, task, watcher, and lifecycle."
     echo "- Mention only verbs that appear in advertised \`atmux <command> --help\` output."
     echo "- Do not describe or imply a git noun under atmux."
     echo

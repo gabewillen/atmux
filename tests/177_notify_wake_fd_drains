@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+NOTIFY_SCRIPT="$REPO_ROOT/bin/(atmux)/notify"
+
+ATMUX_HOME="$(mktemp -d "${TMPDIR:-/tmp}/atmux-notify-wake-drain.XXXXXX")"
+ATMUX_SOURCE_ROOT="$REPO_ROOT"
+export ATMUX_HOME ATMUX_SOURCE_ROOT
+
+cleanup() {
+  exec 9>&- 8<&- || true
+  rm -rf "$ATMUX_HOME"
+}
+trap cleanup EXIT
+
+# shellcheck source=bin/(atmux)/notify
+source "$NOTIFY_SCRIPT"
+
+qdir="$ATMUX_HOME/queue"
+mkdir -p "$qdir"
+open_notification_wake_fds "$qdir"
+
+for _ in 1 2 3 4 5; do
+  printf 'wake\n' >&9
+done
+
+wait_for_notification_wake_fd 1
+
+if read -r -t 0 _ <&8 2>/dev/null; then
+  echo "wake fifo still had queued bytes after wait" >&2
+  exit 1
+fi
+
+echo "ok: notify wake fd drains coalesced wake signals"

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.27.4 — Message reply hints
+
+- Added a reply hint to `atmux message read` XML output so direct and team messages include the `atmux send --to ... "<reply>"` command needed to respond.
+- Limited scheduled notification cancellation hints to interval notifications and clarified the hint wording.
+- Wait for live adapter panes to become prompt-ready before assigning `agent create --task` issues, so startup tasks are delivered reliably.
+- Launch Grok with `--permission-mode bypassPermissions` by default.
+
 ## 0.27.3 — Scheduled notification cancellation hints
 
 - Added a cancellation hint to scheduled notifications so recurring reminders show the `atmux process kill <pid>` command that stops the scheduler.

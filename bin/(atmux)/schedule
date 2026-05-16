@@ -138,11 +138,20 @@ notification_sender() {
 
 send_scheduled_notification() {
   local notification_text="$1"
-  local from_session="" payload="" target_session="" target_pane="" hint_cmd=""
+  local schedule_mode="${2:-once}"
+  local from_session="" payload="" target_session="" target_pane="" hint_cmd="" hint_attr=""
 
   from_session="$(notification_sender)"
-  hint_cmd="$(scheduled_notification_cancel_hint || true)"
-  payload="$(build_notification "scheduled" "$from_session" "$hint_cmd" "text=$notification_text")"
+  if [[ "$schedule_mode" == "interval" ]]; then
+    hint_cmd="$(scheduled_notification_cancel_hint || true)"
+    if [[ -n "$hint_cmd" ]]; then
+      hint_attr=" hint=\"$(atmux_xml_escape "to cancel this notification, run \`$hint_cmd\`")\""
+    fi
+  fi
+  payload="$(printf '<notification type="scheduled" from="%s"%s>%s</notification>' \
+    "$(atmux_xml_escape "$from_session")" \
+    "$hint_attr" \
+    "$(atmux_xml_escape "$notification_text")")"
   target_session="$(default_notification_target)"
   target_pane="$(atmux_resolve_primary_pane "$target_session")"
   if [[ -z "$target_pane" ]]; then
@@ -387,7 +396,7 @@ if [[ -n "$once_raw" ]]; then
   once_seconds="$(parse_duration_seconds "$once_raw")"
   sleep_for_duration "$once_seconds"
   if [[ "$mode_kind" == "notification" ]]; then
-    send_scheduled_notification "$notification_text"
+    send_scheduled_notification "$notification_text" "once"
     exit 0
   fi
   exec "${command_args[@]}"
@@ -399,7 +408,7 @@ count=0
 while true; do
   sleep_for_duration "$interval_seconds"
   if [[ "$mode_kind" == "notification" ]]; then
-    send_scheduled_notification "$notification_text"
+    send_scheduled_notification "$notification_text" "interval"
     count=$((count + 1))
     printf '<schedule kind="notification" to="%s" mode="interval" duration="%s" iteration="%s" />\n' \
       "$(atmux_xml_escape "$(default_notification_target)")" \

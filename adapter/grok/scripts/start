@@ -119,6 +119,9 @@ fi
 if ! arg_present --effort "${args[@]+"${args[@]}"}" && ! arg_present --reasoning-effort "${args[@]+"${args[@]}"}"; then
   args=(--effort "$(reasoning_to_effort "$REASONING_LEVEL")" "${args[@]+"${args[@]}"}")
 fi
+if ! arg_present --permission-mode "${args[@]+"${args[@]}"}"; then
+  args=(--permission-mode bypassPermissions "${args[@]+"${args[@]}"}")
+fi
 
 # Export GROK_MODEL as a backup for grok-cli (it reads from settings but env helps some flows).
 export GROK_MODEL="$MODEL"

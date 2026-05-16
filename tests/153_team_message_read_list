@@ -38,6 +38,7 @@ receiver_read="$(ATMUX_HOME="$atmux_home" ATMUX_REPO="$REPO_NAME" ATMUX_AGENT_NA
   "$ATMUX_BIN" message read "$message_id" --team "$TEAM_NAME")"
 printf '%s\n' "$receiver_read" | grep -Fq 'type="team"'
 printf '%s\n' "$receiver_read" | grep -Fq "team=\"$TEAM_NAME\""
+printf '%s\n' "$receiver_read" | grep -Fq "hint=\"run \`atmux send --to $TEAM_NAME &quot;&lt;reply&gt;&quot;\`\""
 printf '%s\n' "$receiver_read" | grep -Fq 'team-read-list-'
 
 sender_read="$(ATMUX_HOME="$atmux_home" ATMUX_REPO="$REPO_NAME" ATMUX_AGENT_NAME="sender" ATMUX_SESSION_NAME="$AGENT1_SESSION" \

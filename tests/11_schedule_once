@@ -62,8 +62,14 @@ if ! wait_for_text "$sender_pane" '>hello there</notification>' 15; then
   tmux capture-pane -p -t "$sender_pane" -S -120 >&2 || true
   exit 1
 fi
-if ! wait_for_text "$sender_pane" "atmux process kill $schedule_pid" 15; then
-  echo "scheduled notification missing cancellation hint" >&2
+sender_snap="$(tmux capture-pane -p -t "$sender_pane" -S -200 2>/dev/null | tr -d '\r\n' || true)"
+if ! printf '%s' "$sender_snap" | grep -Eq '<notification type="scheduled" from="[^"]*">hello there</notification>'; then
+  echo "one-shot scheduled notification should not include a hint" >&2
+  printf '%s\n' "$sender_snap" >&2
+  exit 1
+fi
+if wait_for_text "$sender_pane" "atmux process kill $schedule_pid" 2; then
+  echo "one-shot scheduled notification should not include a cancellation command" >&2
   tmux capture-pane -p -t "$sender_pane" -S -120 >&2 || true
   exit 1
 fi

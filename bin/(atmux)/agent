@@ -1430,6 +1430,17 @@ send_task_to_agent() {
     return 1
   fi
 
+  local source_root prompt_prefix ready_timeout
+  source_root="${ATMUX_SOURCE_ROOT:-$ATMUX_HOME/src/atmux}"
+  prompt_prefix="$(resolve_prompt_prefix_for_pane "$target_pane" "$source_root" 2>/dev/null || true)"
+  if [[ -n "$prompt_prefix" ]]; then
+    ready_timeout="${ATMUX_TASK_READY_TIMEOUT_SECONDS:-90}"
+    if ! wait_for_pane_ready "$target_pane" "$source_root" "$prompt_prefix" "$ready_timeout"; then
+      echo "agent pane was not ready for task delivery: $target_session" >&2
+      return 1
+    fi
+  fi
+
   local from_session
   from_session="${ATMUX_SESSION_NAME:-}"
   if [[ -z "$from_session" ]]; then

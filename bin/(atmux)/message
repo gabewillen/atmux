@@ -221,6 +221,13 @@ team_message_read_at_file() {
   printf '%s/read/%s\n' "$dir" "$reader_key"
 }
 
+message_reply_hint_attr() {
+  local target="$1"
+  local reply_cmd=""
+  printf -v reply_cmd 'atmux send --to %q "<reply>"' "$target"
+  printf ' hint="%s"' "$(atmux_xml_escape "run \`$reply_cmd\`")"
+}
+
 read_message() {
   local id="${1:-}"
   shift || true
@@ -285,13 +292,14 @@ read_message() {
     stopped="$(cat "$dir/stopped" 2>/dev/null || true)"
     [[ -n "$stopped" ]] && stopped_attr=" stopped=\"$(atmux_xml_escape "$stopped")\""
 
-    printf '<message id="%s" type="team" from="%s" team="%s" reply_required="%s" timestamp="%s"%s>\n' \
+    printf '<message id="%s" type="team" from="%s" team="%s" reply_required="%s" timestamp="%s"%s%s>\n' \
       "$(atmux_xml_escape "$id")" \
       "$(atmux_xml_escape "$from")" \
       "$(atmux_xml_escape "$team_name")" \
       "$(atmux_xml_escape "$reply_required")" \
       "$(atmux_xml_escape "$timestamp")" \
-      "$stopped_attr"
+      "$stopped_attr" \
+      "$(message_reply_hint_attr "$team_name")"
     printf '  <body>%s</body>\n' "$body"
     printf '</message>\n'
 
@@ -324,13 +332,14 @@ read_message() {
   local stopped_attr=""
   [[ -n "$stopped" ]] && stopped_attr=" stopped=\"$(atmux_xml_escape "$stopped")\""
 
-  printf '<message id="%s" from="%s" to="%s" reply_required="%s" timestamp="%s"%s>\n' \
+  printf '<message id="%s" from="%s" to="%s" reply_required="%s" timestamp="%s"%s%s>\n' \
     "$(atmux_xml_escape "$id")" \
     "$(atmux_xml_escape "$from")" \
     "$(atmux_xml_escape "$to")" \
     "$(atmux_xml_escape "$reply_required")" \
     "$(atmux_xml_escape "$timestamp")" \
-    "$stopped_attr"
+    "$stopped_attr" \
+    "$(message_reply_hint_attr "$from")"
   printf '  <body>%s</body>\n' "$body"
   printf '</message>\n'
 

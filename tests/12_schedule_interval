@@ -69,5 +69,10 @@ if ! wait_for_count "$sender_pane" "atmux process kill $schedule_pid" 2 12; then
   tmux capture-pane -p -t "$sender_pane" -S -160 >&2 || true
   exit 1
 fi
+if ! wait_for_count "$sender_pane" "to cancel this notification" 2 12; then
+  echo "scheduled interval notifications missing cancellation hint wording" >&2
+  tmux capture-pane -p -t "$sender_pane" -S -160 >&2 || true
+  exit 1
+fi
 
 echo "ok: schedule --interval notification repeatedly delivered to self"

@@ -20,6 +20,7 @@ receiver_out="$(ATMUX_REPO="$REPO_NAME" ATMUX_AGENT_NAME="receiver" ATMUX_SESSIO
   "$ATMUX_BIN" message read "$message_id")"
 printf '%s\n' "$receiver_out" | grep -Fq '<message '
 printf '%s\n' "$receiver_out" | grep -Fq 'to="receiver"'
+printf '%s\n' "$receiver_out" | grep -Fq "hint=\"run \`atmux send --to $AGENT1_SESSION &quot;&lt;reply&gt;&quot;\`\""
 
 if sender_read_out="$(
   ATMUX_REPO="$REPO_NAME" ATMUX_AGENT_NAME="sender" ATMUX_SESSION_NAME="$AGENT1_SESSION" \

@@ -634,9 +634,11 @@ wait_for_notification_wake() {
 
 wait_for_notification_wake_fd() {
   local timeout="$1"
+  local drain_timeout="${ATMUX_NOTIFY_WORKER_WAKE_DRAIN_SECONDS:-0.001}"
   [[ -z "$timeout" || "$timeout" == "0" ]] && timeout=0.5
+  [[ "$drain_timeout" =~ ^[0-9]+([.][0-9]+)?$ ]] || drain_timeout=0.001
   if read -r -t "$timeout" _ <&8 2>/dev/null; then
-    while read -r -t 0 _ <&8 2>/dev/null; do
+    while read -r -t "$drain_timeout" _ <&8 2>/dev/null; do
       :
     done
   else

@@ -28,7 +28,7 @@ done
 
 wait_for_notification_wake_fd 1
 
-if read -r -t 0 _ <&8 2>/dev/null; then
+if read -r -t 0.001 _ <&8 2>/dev/null; then
   echo "wake fifo still had queued bytes after wait" >&2
   exit 1
 fi

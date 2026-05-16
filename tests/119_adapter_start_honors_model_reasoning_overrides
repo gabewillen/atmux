@@ -234,21 +234,30 @@ n_perms="$(grep -c -Fx -- '--dangerously-skip-permissions' "$af" || true)"
 af="$(run_start grok int-only ATMUX_INTELLIGENCE=50)"
 assert_arg_eq "$af" --model grok-build grok-int-only
 assert_arg_eq "$af" --effort medium grok-int-only
+assert_arg_eq "$af" --permission-mode bypassPermissions grok-int-only
 
 af="$(run_start grok reasoning-xhigh \
         ATMUX_INTELLIGENCE=50 \
         ATMUX_REASONING_LEVEL=extra-high)"
 assert_arg_eq "$af" --model grok-build grok-reasoning-xhigh
 assert_arg_eq "$af" --effort xhigh grok-reasoning-xhigh
+assert_arg_eq "$af" --permission-mode bypassPermissions grok-reasoning-xhigh
 
 af="$(run_start grok override \
         ATMUX_INTELLIGENCE=50 \
         ATMUX_MODEL=probe-grok-model)"
 assert_arg_eq "$af" --model probe-grok-model grok-override
 assert_arg_eq "$af" --effort medium grok-override
+assert_arg_eq "$af" --permission-mode bypassPermissions grok-override
 
 af="$(run_start grok cli-effort ATMUX_INTELLIGENCE=50 -- --effort user-effort)"
 assert_arg_eq "$af" --effort user-effort grok-cli-effort
 assert_arg_eq "$af" --model grok-build grok-cli-effort
+assert_arg_eq "$af" --permission-mode bypassPermissions grok-cli-effort
+
+af="$(run_start grok cli-permission-mode ATMUX_INTELLIGENCE=50 -- --permission-mode user-mode)"
+assert_arg_eq "$af" --permission-mode user-mode grok-cli-permission-mode
+n_permission_mode="$(grep -c -Fx -- '--permission-mode' "$af" || true)"
+[[ "$n_permission_mode" -eq 1 ]] || { echo "fail: grok must not duplicate --permission-mode (got $n_permission_mode)" >&2; exit 1; }
 
 echo "ok: gemini/claude-code/codex/codextra/cursor-agent/opencode/grok start scripts honor ATMUX_MODEL/ATMUX_REASONING_LEVEL overrides"

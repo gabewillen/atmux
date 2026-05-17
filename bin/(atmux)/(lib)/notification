@@ -634,8 +634,14 @@ wait_for_notification_wake() {
 
 wait_for_notification_wake_fd() {
   local timeout="$1"
+  local drain_timeout="${ATMUX_NOTIFY_WORKER_WAKE_DRAIN_SECONDS:-0.001}"
   [[ -z "$timeout" || "$timeout" == "0" ]] && timeout=0.5
-  if ! read -r -t "$timeout" _ <&8 2>/dev/null; then
+  [[ "$drain_timeout" =~ ^[0-9]+([.][0-9]+)?$ ]] || drain_timeout=0.001
+  if read -r -t "$timeout" _ <&8 2>/dev/null; then
+    while read -r -t "$drain_timeout" _ <&8 2>/dev/null; do
+      :
+    done
+  else
     if ! { true >&9; } 2>/dev/null; then
       debug_notify "worker:wake_fifo_write_end_gone"
       exit 1
@@ -657,6 +663,7 @@ serve_notification_queue() {
   local wake_fd_open=0
   local mode_hook_index="$(( ($$ + RANDOM) % 1000000 ))"
   local mode_hook_installed=0
+  local cleanup_started=0
   local pane_session="" pane_command="" bootstrap_state="" adapter_state=""
   local -a items=()
 
@@ -667,6 +674,11 @@ serve_notification_queue() {
   acquire_notification_worker_lock "$qdir" || return 0
 
   cleanup_worker_runtime() {
+    trap - EXIT TERM INT HUP
+    if (( cleanup_started == 1 )); then
+      return 0
+    fi
+    cleanup_started=1
     if (( mode_hook_installed == 1 )) && pane_exists "$pane"; then
       tmux set-hook -p -t "$pane" -u "pane-mode-changed[$mode_hook_index]" >/dev/null 2>&1 || true
     fi
@@ -675,6 +687,9 @@ serve_notification_queue() {
   }
 
   trap cleanup_worker_runtime EXIT
+  trap 'cleanup_worker_runtime; exit 143' TERM
+  trap 'cleanup_worker_runtime; exit 130' INT
+  trap 'cleanup_worker_runtime; exit 129' HUP
   debug_notify "worker:start pane=$(printf '%q' "$pane") qdir=$(printf '%q' "$qdir") source_root=$(printf '%q' "$source_root")"
   last_activity="$(date +%s)"
   if open_notification_wake_fds "$qdir"; then

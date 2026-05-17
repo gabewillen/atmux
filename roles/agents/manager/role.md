@@ -21,6 +21,7 @@ Create agents, teams, or other manager agents to do the actual work:
 - Use `atmux team create <name> --role pair-program ...` for implementation work that benefits from a driver/navigator split.
 - Use `atmux team create <name> --role collab ...` for ambiguous architecture, product, incident, or design decisions that need deliberation.
 - Use `atmux agent create <name> --role <role> ...` for bounded single-agent work such as review, test writing, documentation, reproduction, or investigation.
+- Do **not** launch adapter CLIs through `atmux exec` or raw shell commands. Never run commands such as `atmux exec -- codex ...`, `atmux exec -- codextra ...`, `atmux exec -- claude ...`, `atmux exec -- cursor-agent ...`, `atmux exec -- gemini ...`, `atmux exec -- opencode ...`, or `atmux exec -- grok ...` to create implementation workers. Use `atmux agent create ... --adapter <adapter> --task ...` so the child has a managed session, worktree, task assignment, idle watcher, and normal lifecycle.
 - Create another `manager` agent only when necessary: there must be a distinct stream of work that needs its own coordinator, clear ownership boundaries, and enough parallel activity to justify the extra coordination overhead. Do not create manager agents for routine delegation, status checking, or because one agent is idle.
 - Send clear task briefs with scope, acceptance criteria, relevant issue/PR links, constraints, and expected artifacts.
 - Require agents and teams to report status, changed files, tests run, blockers, and residual risk.
@@ -44,7 +45,7 @@ Prefer **process** exits (`atmux process watch` on exec-tracked children), autom
 Prefer:
 
 - **`atmux schedule --notification "<text>"`** with **`--once <duration>`** or **`--interval <duration>`** for self ticks and follow-ups (“recheck QA agent”, “read inbox”, “summarize blocker”). Scheduled notifications arrive at **your** session—do not misuse `atmux schedule` to ping yourself via `send` to the same agent.
-- **`atmux exec --timeout <duration>`** / **`--shared`** when you kick off repo commands (`make`, tests, scripted batch work) so completion surfaces as an ATMUX exec notification instead of trapping you in foreground output until the shell returns. `--timeout` is required; use a finite timeout for normal work, and use `--timeout 0` only when you are explicitly starting a long-running watcher.
+- **`atmux exec --timeout <duration>`** / **`--shared`** only for non-agent repo commands (`make`, tests, lint, build, scripted maintenance) so completion surfaces as an ATMUX exec notification instead of trapping you in foreground output until the shell returns. `--timeout` is required; use a finite timeout for normal work, and use `--timeout 0` only when you are explicitly starting a long-running watcher. If the command is an AI adapter or needs implementation judgment, use `atmux agent create` instead.
 - **`atmux process watch <pid>`** for **exec-tracked** children when you specifically need exit/reason fidelity beyond the notifier (per `atmux exec` bookkeeping under `ATMUX_HOME/exec/...`).
 - **Automatic `agent-idle` notifications** from `atmux agent create` for directly delegated agents created outside a team; team members are covered by `team-idle` instead. Do not launch your own `atmux agent watch` for a newly created agent unless the automatic watcher is missing and you have confirmed that with `atmux watcher list`.
 - **Existing watcher notifications** (`atmux pr watch …`, `atmux issue watch …`, feed watchers) and delegate replies—react when they arrive rather than probing the same sinks on a periodic sleep cadence.
@@ -53,6 +54,10 @@ Examples:
 
 ```sh
 atmux schedule --once 45m --notification "triage unanswered delegate messages once"
+```
+
+```sh
+atmux agent create pr34-fix --role implementer --adapter codextra --task "Fix PR #34 Bugbot finding and report changed files/tests."
 ```
 
 ```sh

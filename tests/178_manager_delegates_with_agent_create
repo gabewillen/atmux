@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+ROLE_MD="$REPO_ROOT/roles/agents/manager/role.md"
+README="$REPO_ROOT/roles/agents/manager/README.md"
+AGENT_BIN="$REPO_ROOT/bin/(atmux)/agent"
+
+grep -Fq 'Use `atmux agent create <name> --role <role> ...`' "$ROLE_MD" \
+  || { echo "manager role does not direct delegation through agent create" >&2; exit 1; }
+
+grep -Fq 'Do **not** launch adapter CLIs through `atmux exec`' "$ROLE_MD" \
+  || { echo "manager role does not forbid adapter launch via exec" >&2; exit 1; }
+
+grep -Fq 'If the command is an AI adapter or needs implementation judgment, use `atmux agent create` instead.' "$ROLE_MD" \
+  || { echo "manager exec guidance does not route AI work to agent create" >&2; exit 1; }
+
+grep -Fq 'atmux agent create pr34-fix --role implementer --adapter codextra --task' "$ROLE_MD" \
+  || { echo "manager role lacks a concrete agent-create delegation example" >&2; exit 1; }
+
+grep -Fq 'AI workers with `atmux agent create`' "$README" \
+  || { echo "manager README does not document agent-create delegation" >&2; exit 1; }
+
+grep -Fq 'launch AI adapters as workers' "$AGENT_BIN" \
+  || { echo "shared atmux prompt rules do not forbid adapter launch via exec" >&2; exit 1; }
+
+echo "ok: manager role delegates AI workers with agent create, not exec"

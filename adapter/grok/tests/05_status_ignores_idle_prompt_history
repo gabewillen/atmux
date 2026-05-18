@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+source "$(dirname "${BASH_SOURCE[0]}")/../../../tests/lib/isolate-tmux.sh"
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+ADAPTER_DIR="$(cd -- "$TESTS_DIR/.." && pwd)"
+REPO_ROOT="$(cd -- "$ADAPTER_DIR/../.." && pwd)"
+
+atmux_home="$(mktemp -d "${TMPDIR:-/tmp}/atmux-grok-status-idle.XXXXXX")"
+session="atmux-grok-status-idle-${RANDOM}"
+
+cleanup() {
+  tmux kill-session -t "$session" >/dev/null 2>&1 || true
+  rm -rf "$atmux_home"
+}
+trap cleanup EXIT
+
+tmux new-session -d -s "$session" -x 120 -y 30 \
+  "bash -c 'printf \"%s\n\" \"Grok Build\" \"│ ❯ previous reminder: check on long-running jobs\"; stty -isig 2>/dev/null; cat'"
+tmux set-environment -t "$session" ATMUX_ADAPTER "grok"
+tmux set-environment -t "$session" ATMUX_SOURCE_ROOT "$REPO_ROOT"
+
+pane="$(tmux list-panes -t "$session" -F '#{pane_id}' 2>/dev/null | head -n1)"
+[[ -n "$pane" ]] || { echo "pane missing" >&2; exit 1; }
+
+output="$(ATMUX_HOME="$atmux_home" ATMUX_SOURCE_ROOT="$REPO_ROOT" ATMUX_TARGET_PANE="$pane" "$ADAPTER_DIR/scripts/status")"
+
+if ! printf '%s\n' "$output" | grep -Fq 'state="busy"'; then
+  echo "grok prompt marker in history should not report idle when it is not on the cursor row" >&2
+  echo "output was: $output" >&2
+  tmux capture-pane -p -t "$pane" -S -80 >&2 || true
+  exit 1
+fi
+
+tmux send-keys -t "$pane" -l "❯ "
+
+output="$(ATMUX_HOME="$atmux_home" ATMUX_SOURCE_ROOT="$REPO_ROOT" ATMUX_TARGET_PANE="$pane" "$ADAPTER_DIR/scripts/status")"
+
+if ! printf '%s\n' "$output" | grep -Fq 'state="idle"'; then
+  echo "grok idle prompt history should not report busy" >&2
+  echo "output was: $output" >&2
+  tmux capture-pane -p -t "$pane" -S -80 >&2 || true
+  exit 1
+fi
+
+echo "PASS 05_status_ignores_idle_prompt_history"

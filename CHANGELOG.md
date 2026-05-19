@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.27.6 — Grok scheduled notification delivery
+
+- Fixed Grok status detection so a visible `❯` prompt with the cursor to its
+  right reports idle even when previous scheduled reminder text contains words
+  such as "long-running" that otherwise look busy.
+- Added a Grok regression test for scheduled-reminder text in prompt history.
+
 ## 0.27.4 — Message reply hints
 
 - Added a reply hint to `atmux message read` XML output so direct and team messages include the `atmux send --to ... "<reply>"` command needed to respond.

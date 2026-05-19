@@ -78,8 +78,25 @@ parse_model_and_reasoning() {
   fi
 }
 
+prompt_cursor_is_right_of_start() {
+  local line="${1:-}"
+  local cursor_x="${2:-}"
+  local prompt_col=""
+  local before_prompt=""
+
+  [[ "$cursor_x" =~ ^[0-9]+$ ]] || return 1
+
+  [[ "$line" == *"❯"* ]] || return 1
+  before_prompt="${line%%❯*}"
+  prompt_col=${#before_prompt}
+
+  (( cursor_x > prompt_col ))
+}
+
 infer_state() {
   local snapshot="$1"
+  local prompt_line="${2:-}"
+  local cursor_x="${3:-}"
 
   if printf '%s\n' "$snapshot" | grep -Eqi 'usage.?limit|rate.?limit|quota.*(exceeded|reached)|429|insufficient.?credits|api.?key.*(invalid|missing)'; then
     printf '%s\n' 'usage-limit'
@@ -88,6 +105,11 @@ infer_state() {
 
   if printf '%s\n' "$snapshot" | grep -Eqi 'error|failed|exception|traceback'; then
     printf '%s\n' 'errored'
+    return
+  fi
+
+  if prompt_cursor_is_right_of_start "$prompt_line" "$cursor_x"; then
+    printf '%s\n' 'idle'
     return
   fi
 
@@ -111,12 +133,19 @@ owner="agent"
 
 snapshot=""
 target="$(resolve_target)"
+prompt_line=""
+cursor_x=""
 if [[ -n "$target" ]]; then
   snapshot="$(tmux capture-pane -p -t "$target" -S -400 2>/dev/null | tr -d '\r' || true)"
+  cursor_x="$(tmux display-message -t "$target" -p '#{cursor_x}' 2>/dev/null || true)"
+  cursor_y="$(tmux display-message -t "$target" -p '#{cursor_y}' 2>/dev/null || true)"
+  if [[ "$cursor_y" =~ ^[0-9]+$ ]]; then
+    prompt_line="$(tmux capture-pane -p -t "$target" -S 0 2>/dev/null | sed -n "$((cursor_y + 1))p" | tr -d '\r' || true)"
+  fi
   parse_model_and_reasoning "$snapshot" || true
 fi
 
-state="$(infer_state "$snapshot")"
+state="$(infer_state "$snapshot" "$prompt_line" "$cursor_x")"
 printf 'MODEL=%s\nREASONING_LEVEL=%s\n' "$MODEL" "$REASONING_LEVEL" > "$state_file"
 
 printf '<status adapter="%s" owner="%s" state="%s" model="%s" reasoning_level="%s" control_file="AGENTS.md" />\n' \

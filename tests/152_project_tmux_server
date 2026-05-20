@@ -65,4 +65,9 @@ global_history_limit="$(tmux -S "$project_socket" show-options -gwqv history-lim
 [[ "$global_history_limit" == "200000" ]] \
   || { echo "expected project tmux server global history-limit=200000, got ${global_history_limit:-missing}" >&2; exit 1; }
 
-echo "ok: atmux agent uses project tmux server with mouse off and high scrollback"
+tmux -S "$project_socket" list-keys -T prefix n 2>/dev/null | grep -Fq 'switch-client -n' \
+  || { echo "expected prefix n to switch to next client" >&2; exit 1; }
+tmux -S "$project_socket" list-keys -T prefix p 2>/dev/null | grep -Fq 'switch-client -p' \
+  || { echo "expected prefix p to switch to previous client" >&2; exit 1; }
+
+echo "ok: atmux agent uses project tmux server with mouse off, high scrollback, and client switch keys"

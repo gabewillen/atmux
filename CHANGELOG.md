@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.27.7 — Tmux client switch keys
+
+- Bound tmux prefix `n` to `switch-client -n` and prefix `p` to
+  `switch-client -p` by default for atmux-managed tmux sessions.
+- Shortened the normal notification paste-to-Enter delay by requiring one
+  stable prompt-input poll by default and lowering the no-prompt fallback wait.
+
 ## 0.27.6 — Grok scheduled notification delivery
 
 - Fixed Grok status detection so a visible `❯` prompt with the cursor to its

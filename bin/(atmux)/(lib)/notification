@@ -87,8 +87,12 @@ wait_for_prompt_input_settled() {
   local prompt_prefix="$2"
   local fallback_wait="$3"
   local timeout="${ATMUX_SEND_PASTE_READY_TIMEOUT_SECONDS:-12}"
+  local stable_required="${ATMUX_SEND_PASTE_STABLE_POLLS:-1}"
   local deadline now input cursor_info
   local last_input="" last_cursor="" stable_count=0
+
+  [[ "$stable_required" =~ ^[0-9]+$ ]] || stable_required=1
+  (( stable_required > 0 )) || stable_required=1
 
   if [[ -z "$prompt_prefix" ]]; then
     sleep "$fallback_wait"
@@ -118,7 +122,7 @@ wait_for_prompt_input_settled() {
 
     if [[ -n "$input" && "$input" == "$last_input" && "$cursor_info" == "$last_cursor" ]]; then
       stable_count=$((stable_count + 1))
-      if (( stable_count >= 2 )); then
+      if (( stable_count >= stable_required )); then
         debug_notify "deliver:paste_ready pane=$(printf '%q' "$pane") input_len=${#input} cursor=$(printf '%q' "$cursor_info")"
         return 0
       fi
@@ -246,7 +250,7 @@ deliver_notification_to_pane() {
   local interrupt_settle
 
   settle="${ATMUX_SEND_SETTLE_SECONDS:-0.4}"
-  paste_submit_wait="${ATMUX_SEND_PASTE_TO_SUBMIT_WAIT_SECONDS:-0.8}"
+  paste_submit_wait="${ATMUX_SEND_PASTE_TO_SUBMIT_WAIT_SECONDS:-0.4}"
   submit_wait="${ATMUX_SEND_SUBMIT_WAIT_SECONDS:-0.3}"
   no_prompt_ready_wait="${ATMUX_SEND_NO_PROMPT_READY_SECONDS:-0.6}"
   interrupt_settle="${ATMUX_SEND_INTERRUPT_SETTLE_SECONDS:-0.6}"

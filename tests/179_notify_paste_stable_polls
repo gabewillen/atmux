@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+source "$(dirname "${BASH_SOURCE[0]}")/lib/isolate-tmux.sh"
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+NOTIFY_SCRIPT="$REPO_ROOT/bin/(atmux)/notify"
+
+ATMUX_HOME="$(mktemp -d "${TMPDIR:-/tmp}/atmux-paste-stable.XXXXXX")"
+ATMUX_SOURCE_ROOT="$REPO_ROOT"
+export ATMUX_HOME ATMUX_SOURCE_ROOT
+
+cleanup() { rm -rf "$ATMUX_HOME"; }
+trap cleanup EXIT
+
+source "$NOTIFY_SCRIPT"
+
+sleep_count=0
+pane_exists() { return 0; }
+pane_has_prompt_line() { return 0; }
+extract_prompt_input() { printf 'payload'; }
+pane_cursor_position() { printf '8 0\n'; }
+sleep() {
+  sleep_count=$((sleep_count + 1))
+  return 0
+}
+
+sleep_count=0
+wait_for_prompt_input_settled "%mock" ">" "9"
+[[ "$sleep_count" == "1" ]] || {
+  echo "expected default paste stable wait to use one sleep, got $sleep_count" >&2
+  exit 1
+}
+
+sleep_count=0
+ATMUX_SEND_PASTE_STABLE_POLLS=2 wait_for_prompt_input_settled "%mock" ">" "9"
+[[ "$sleep_count" == "2" ]] || {
+  echo "expected ATMUX_SEND_PASTE_STABLE_POLLS=2 to use two sleeps, got $sleep_count" >&2
+  exit 1
+}
+
+echo "ok: notify paste stable poll default is shortened and configurable"

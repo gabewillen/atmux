@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.27.9 — CI fixes
+
+- Patch release for CI fixes after the notification idle-status change.
+
 ## 0.27.8 — Notifications skip idle status
 
 - Changed notification delivery so queued notifications no longer wait for

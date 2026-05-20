@@ -22,28 +22,28 @@ tmux set-environment -t "$WORKERS_SESSION" ATMUX_REPO "$REPO_NAME"
 tmux set-environment -t "$WORKERS_SESSION" ATMUX_SESSION_NAME "$WORKERS_SESSION"
 
 teams_out="$(ATMUX_REPO="$REPO_NAME" ATMUX_REPORTER=xml "$ATMUX_BIN" team list)"
-printf '%s\n' "$teams_out" | grep -Fq "<teams repo=\"$REPO_NAME\">"
-printf '%s\n' "$teams_out" | grep -Fq "session=\"$TEAM_SESSION\""
+grep -Fq "<teams repo=\"$REPO_NAME\">" <<< "$teams_out"
+grep -Fq "session=\"$TEAM_SESSION\"" <<< "$teams_out"
 
 agents_out="$(ATMUX_REPO="$REPO_NAME" ATMUX_REPORTER=xml "$ATMUX_BIN" agent list --all)"
-printf '%s\n' "$agents_out" | grep -Fq "<agents repo=\"$REPO_NAME\">"
-printf '%s\n' "$agents_out" | grep -Fq "session=\"$AGENT1_SESSION\""
-printf '%s\n' "$agents_out" | grep -Fq "session=\"$AGENT2_SESSION\""
-if printf '%s\n' "$agents_out" | grep -Fq "session=\"$TEAM_SESSION\""; then
+grep -Fq "<agents repo=\"$REPO_NAME\">" <<< "$agents_out"
+grep -Fq "session=\"$AGENT1_SESSION\"" <<< "$agents_out"
+grep -Fq "session=\"$AGENT2_SESSION\"" <<< "$agents_out"
+if grep -Fq "session=\"$TEAM_SESSION\"" <<< "$agents_out"; then
   echo "team view/session id should not appear in agent list output" >&2
   printf '%s\n' "$agents_out" >&2
   exit 1
 fi
-if printf '%s\n' "$agents_out" | grep -Fq "session=\"$WORKERS_SESSION\""; then
+if grep -Fq "session=\"$WORKERS_SESSION\"" <<< "$agents_out"; then
   echo "workers session should not appear in XML agent list output" >&2
   printf '%s\n' "$agents_out" >&2
   exit 1
 fi
 
 agents_cli_out="$(ATMUX_REPO="$REPO_NAME" ATMUX_REPORTER=cli "$ATMUX_BIN" agent list --all)"
-printf '%s\n' "$agents_cli_out" | grep -Fq "$AGENT1_SESSION"
-printf '%s\n' "$agents_cli_out" | grep -Fq "$AGENT2_SESSION"
-if printf '%s\n' "$agents_cli_out" | grep -Fq "$WORKERS_SESSION"; then
+grep -Fq "$AGENT1_SESSION" <<< "$agents_cli_out"
+grep -Fq "$AGENT2_SESSION" <<< "$agents_cli_out"
+if grep -Fq "$WORKERS_SESSION" <<< "$agents_cli_out"; then
   echo "workers session should not appear in CLI agent list output" >&2
   printf '%s\n' "$agents_cli_out" >&2
   exit 1

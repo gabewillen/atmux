@@ -1141,7 +1141,10 @@ signal_watcher_event_file() {
   signal_path="$(watcher_record_signal_path "$file")"
   [[ -n "$signal_path" && -p "$signal_path" ]] || return 0
 
-  printf 'event\n' > "$signal_path" 2>/dev/null || true
+  # Open the FIFO read-write so notification/exec completion never blocks if a
+  # watcher record exists before the watcher has reached its read loop, or just
+  # after it has gone away.
+  printf 'event\n' 1<> "$signal_path" 2>/dev/null || true
 }
 
 signal_exec_watchers() {

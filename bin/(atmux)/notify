@@ -1171,9 +1171,9 @@ Usage:
   atmux notify --pane <tmux-pane-id> --xml <payload> [--interrupt]
 
 Description:
-  Send an ATMUX XML notification to a tmux pane. Without --interrupt, the
-  notification is queued and delivered when the pane's adapter is at its
-  idle prompt.
+  Send an ATMUX XML notification to a tmux pane. The notification is queued
+  per target pane and delivered as soon as prompt input can be saved and
+  restored; delivery does not wait for adapter idle status.
   --interrupt  Hard interrupt: send the adapter's abort key sequence
                (`SUBMIT_KEYS_INTERRUPT` in the manifest) before the message,
                then submit. Resolves adapter from the pane's session, or from

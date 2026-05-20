@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.27.8 — Notifications skip idle status
+
+- Changed notification delivery so queued notifications no longer wait for
+  adapter idle status; they deliver as soon as prompt input can be saved and
+  restored.
+
 ## 0.27.7 — Tmux client switch keys
 
 - Bound tmux prefix `n` to `switch-client -n` and prefix `p` to

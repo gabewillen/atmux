@@ -170,7 +170,7 @@ build_team_message_payload() {
 text_has_line() {
   local text="$1" needle="$2"
   [[ -n "$needle" ]] || return 1
-  grep -Fxq "$needle" <<< "$text"
+  [[ $'\n'"$text"$'\n' == *$'\n'"$needle"$'\n'* ]]
 }
 
 send_to_session() {
@@ -326,6 +326,7 @@ if [[ -n "$team_session" ]]; then
 
   subscribers_dir="$(team_message_watchers_dir "$repo_name" "$team_name")"
   if [[ -d "$subscribers_dir" ]]; then
+    live_panes="$(tmux list-panes -a -F '#{pane_id}' 2>/dev/null || true)"
     while IFS= read -r subscriber; do
       [[ -e "$subscriber" ]] || continue
       subscriber_name="$(basename "$subscriber")"
@@ -333,7 +334,10 @@ if [[ -n "$team_session" ]]; then
       subscriber_session="$(cat "$subscriber/session" 2>/dev/null || true)"
       subscriber_repo="$(cat "$subscriber/repo" 2>/dev/null || true)"
       subscriber_team="$(cat "$subscriber/team" 2>/dev/null || true)"
-      [[ -n "$subscriber_pane" ]] || continue
+      if ! watcher_pane_is_live "$subscriber_pane" "$live_panes"; then
+        rm -rf "$subscriber"
+        continue
+      fi
       [[ "$subscriber_repo" == "$repo_name" && "$subscriber_team" == "$team_name" ]] || continue
       if text_has_line "$notified_sessions" "$subscriber_session" || text_has_line "$notified_panes" "$subscriber_pane"; then
         continue

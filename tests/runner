@@ -50,6 +50,8 @@ Usage: tests/runner [--shard N/TOTAL]
 
 Live tests (suffix "_live") are skipped unless
 ATMUX_RUN_LIVE_ADAPTER_TESTS=1 is exported.
+Stress tests (suffix "_stress") are skipped unless
+ATMUX_RUN_STRESS_TESTS=1 is exported.
 USAGE
 }
 
@@ -81,6 +83,14 @@ done
 
 should_skip_test() {
   local test_name="$1"
+  case "$test_name" in
+    *_stress)
+      case "${ATMUX_RUN_STRESS_TESTS:-0}" in
+        1|true|TRUE|yes|YES) return 1 ;;
+      esac
+      return 0
+      ;;
+  esac
   case "${ATMUX_RUN_LIVE_ADAPTER_TESTS:-0}" in
     1|true|TRUE|yes|YES) return 1 ;;
   esac

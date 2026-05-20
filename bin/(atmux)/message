@@ -108,6 +108,21 @@ message_is_for_current_agent() {
   return 1
 }
 
+message_matches_recipients_text() {
+  local to="$1"
+  local recipients_text="$2"
+  local candidate
+
+  if [[ -z "$recipients_text" ]]; then
+    return 0
+  fi
+  while IFS= read -r candidate; do
+    [[ -n "$candidate" ]] || continue
+    [[ "$to" == "$candidate" ]] && return 0
+  done <<< "$recipients_text"
+  return 1
+}
+
 team_session_for_name() {
   local team="$1" repo="$2"
   if team_state_exists "$repo" "$team"; then
@@ -420,18 +435,19 @@ list_messages() {
 
   report_open messages repo="$repo"
   if [[ -d "$root" ]]; then
-    local dir id from to reply_required timestamp
+    local dir id from to reply_required timestamp recipients_text
+    recipients_text="$(current_message_recipients "$repo")"
     while IFS= read -r dir; do
       [[ -d "$dir" ]] || continue
       id="$(basename "$dir")"
-      from="$(cat "$dir/from" 2>/dev/null || true)"
       to="$(cat "$dir/to" 2>/dev/null || true)"
-      if ! message_is_for_current_agent "$to" "$repo"; then
+      if ! message_matches_recipients_text "$to" "$recipients_text"; then
         continue
       fi
       if [[ "$unread_only" -eq 1 && -f "$dir/read_at" ]]; then
         continue
       fi
+      from="$(cat "$dir/from" 2>/dev/null || true)"
       reply_required="$(cat "$dir/reply_required" 2>/dev/null || true)"
       timestamp="$(cat "$dir/timestamp" 2>/dev/null || true)"
       report_record message \
@@ -574,10 +590,11 @@ list_team_message_subscriptions() {
     esac
   done
 
-  local repo root watcher_dir watcher_name key file pane session agent sub_team sub_repo
+  local repo root watcher_dir watcher_name key file pane session agent sub_team sub_repo live_panes
   repo="$(resolve_repo_name "$explicit_repo")"
   report_open subscriptions repo="$repo" type="team-message"
   root="$ATMUX_HOME/watch-team-message"
+  live_panes="$(tmux list-panes -a -F '#{pane_id}' 2>/dev/null || true)"
   if [[ -d "$root" ]]; then
     while IFS= read -r watcher_dir; do
       [[ -d "$watcher_dir" ]] || continue
@@ -590,6 +607,10 @@ list_team_message_subscriptions() {
         agent="$(cat "$file/agent" 2>/dev/null || true)"
         sub_repo="$(cat "$file/repo" 2>/dev/null || true)"
         sub_team="$(cat "$file/team" 2>/dev/null || true)"
+        if ! watcher_pane_is_live "$pane" "$live_panes"; then
+          rm -rf "$file"
+          continue
+        fi
         [[ "$sub_repo" == "$repo" ]] || continue
         [[ -z "$team_name" || "$sub_team" == "$team_name" ]] || continue
         report_record subscription \

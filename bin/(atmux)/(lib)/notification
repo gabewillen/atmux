@@ -177,7 +177,7 @@ submit_notification_input() {
   local attempts="${ATMUX_SEND_SUBMIT_RETRY_ATTEMPTS:-3}"
   local attempt sk
   local before_input before_cursor before_y
-  local after_input after_cursor after_y
+  local after_input after_cursor after_x after_y
   local deadline now
   local submit_verify_timeout="${ATMUX_SEND_SUBMIT_VERIFY_SECONDS:-2}"
 
@@ -232,11 +232,17 @@ submit_notification_input() {
 
       after_input="$(extract_prompt_input "$pane" "$prompt_prefix" 2>/dev/null || true)"
       after_cursor="$(pane_cursor_position "$pane" 2>/dev/null || true)"
+      after_x="${after_cursor%% *}"
       after_y="${after_cursor##* }"
 
       if [[ -n "$before_y" && -n "$after_y" && "$before_y" =~ ^[0-9]+$ && "$after_y" =~ ^[0-9]+$ && "$after_y" -gt "$before_y" ]]; then
         sleep "$submit_wait"
         debug_notify "deliver:submit_accepted pane=$(printf '%q' "$pane") attempt=$attempt reason=cursor_advanced before=$(printf '%q' "$before_cursor") after=$(printf '%q' "$after_cursor")"
+        return 0
+      fi
+      if prompt_input_is_notification_markup "$before_input" && [[ "$after_x" =~ ^[0-9]+$ ]] && (( after_x == 0 )); then
+        sleep "$submit_wait"
+        debug_notify "deliver:submit_accepted pane=$(printf '%q' "$pane") attempt=$attempt reason=cursor_returned before=$(printf '%q' "$before_cursor") after=$(printf '%q' "$after_cursor")"
         return 0
       fi
       if [[ -n "$before_input" && -z "$after_input" ]]; then

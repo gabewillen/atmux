@@ -12,9 +12,9 @@ Usage:
   atmux send --to <agent|team> [--reply-required] [--interrupt] "message"
 
 Description:
-  Send XML messages to a single agent or every agent in a team. Without
-  --interrupt, the message is queued and delivered when the receiving agent
-  is at its idle prompt.
+  Send XML messages to a single agent or every agent in a team. Messages are
+  queued per target pane and delivered as soon as prompt input can be saved
+  and restored; delivery does not wait for adapter idle status.
   Resolution order for --to:
     1) Team name
     2) Agent name

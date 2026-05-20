@@ -82,6 +82,34 @@ wait_for_pane_ready() {
   done
 }
 
+wait_for_prompt_ready() {
+  local pane="$1"
+  local prompt_prefix="$2"
+  local timeout="${3:-${ATMUX_SEND_READY_TIMEOUT_SECONDS:-45}}"
+  local deadline now
+
+  [[ -n "$prompt_prefix" ]] || return 0
+  [[ "$timeout" =~ ^[0-9]+$ ]] || timeout=45
+  deadline=$(( $(date +%s) + timeout ))
+
+  while true; do
+    if ! pane_exists "$pane"; then
+      debug_notify "prompt_ready:pane_gone pane=$(printf '%q' "$pane")"
+      return 1
+    fi
+    if pane_has_prompt_line "$pane" "$prompt_prefix"; then
+      return 0
+    fi
+
+    now="$(date +%s)"
+    if (( now >= deadline )); then
+      debug_notify "prompt_ready:timeout pane=$(printf '%q' "$pane") prompt_prefix=$(printf '%q' "$prompt_prefix")"
+      return 1
+    fi
+    sleep 0.2
+  done
+}
+
 wait_for_prompt_input_settled() {
   local pane="$1"
   local prompt_prefix="$2"
@@ -781,8 +809,10 @@ serve_notification_queue() {
       fi
       continue
     fi
-    # If any due item has bypass_idle=1 (--steer / --interrupt), skip the
-    # wait-for-pane-ready gate so the message goes through even mid-tool.
+    # Normal notifications do not wait for adapter idle/busy status, but they
+    # still need a prompt surface so C-u/paste/Enter targets input instead of
+    # startup output. Interrupt deliveries intentionally bypass this so their
+    # pre_keys can stop a busy adapter first.
     local _has_bypass_due=0
     local _scan_item
     for _scan_item in "${items[@]}"; do
@@ -795,8 +825,8 @@ serve_notification_queue() {
         break
       fi
     done
-    if (( _has_bypass_due == 0 )) && [[ -n "$prompt_prefix" ]] && ! wait_for_pane_ready "$pane" "$source_root" "$prompt_prefix"; then
-      debug_notify "worker:not_ready pane=$(printf '%q' "$pane") prompt_prefix=$(printf '%q' "$prompt_prefix")"
+    if (( _has_bypass_due == 0 )) && [[ -n "$prompt_prefix" ]] && ! wait_for_prompt_ready "$pane" "$prompt_prefix"; then
+      debug_notify "worker:prompt_not_ready pane=$(printf '%q' "$pane") prompt_prefix=$(printf '%q' "$prompt_prefix")"
       if (( wake_fd_open == 1 )); then
         wait_for_notification_wake_fd "$wake_timeout"
       else
@@ -852,11 +882,10 @@ serve_notification_queue() {
         batch_deferred=1
         break
       fi
-      # Outer loop already ran wait_for_pane_ready when batch_active was set,
-      # and submit_input_with_keys falls back to unverified delivery when the
-      # prompt has scrolled out of view. Skipping a redundant 45s ready-poll
-      # here keeps a long burst from stalling on every item once the cursor
-      # rolls past the viewport.
+      # submit_input_with_keys falls back to unverified delivery when the
+      # prompt has scrolled out of view. Avoid polling adapter idle status
+      # here: notifications should be injected as soon as prompt input can be
+      # saved and restored.
       payload="$(cat "$item_dir/payload" 2>/dev/null || true)"
       submit_keys="$(cat "$item_dir/submit_keys" 2>/dev/null || printf 'Enter')"
       local pre_keys=""

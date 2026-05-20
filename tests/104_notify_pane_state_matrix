@@ -13,8 +13,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/isolate-tmux.sh"
 #
 # Uses tests/lib/mock-adapter as the pane command for the burst case so
 # the prompt re-renders between deliveries (a plain `cat` pane does not,
-# which causes wait_for_pane_ready to stall on subsequent items — a
-# worthwhile finding in its own right but not what we are testing here).
+# which can make prompt-input extraction ambiguous across subsequent items).
 #
 # Cases per adapter:
 #   burst        : 5 sends queued back-to-back, all must drain

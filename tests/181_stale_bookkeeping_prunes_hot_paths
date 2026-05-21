@@ -103,4 +103,29 @@ notify_issue_watchers "$issue_dir" "" "$payload"
 [[ ! -e "$issue_watchers/dead" ]] || { echo "stale issue watcher was not pruned" >&2; exit 1; }
 [[ -e "$victim_path" ]] || { echo "non-fifo watcher payload field was incorrectly removed" >&2; exit 1; }
 
+unknown_pr_watchers="$ATMUX_HOME/watch-pr/unknown-pr/watchers"
+unknown_exec_watchers="$ATMUX_HOME/exec/$repo/789/watchers"
+unknown_sub="$team_watchers/unknown-sub"
+mkdir -p "$unknown_pr_watchers" "$unknown_exec_watchers" "$unknown_sub"
+atmux_fs_write_field "$unknown_pr_watchers/unknown" "%999999|0"
+atmux_fs_write_field "$unknown_exec_watchers/unknown" "%999999|$tmp_root/unknown.fifo"
+mkfifo "$tmp_root/unknown.fifo"
+atmux_fs_write_field "$unknown_sub/pane" "%999999"
+atmux_fs_write_field "$unknown_sub/session" "atmux-${repo}-unknown"
+atmux_fs_write_field "$unknown_sub/repo" "$repo"
+atmux_fs_write_field "$unknown_sub/team" "$team"
+
+missing_socket="$tmp_root/missing-tmux.sock"
+unknown_watchers="$(ATMUX_TMUX_SOCKET="$missing_socket" ATMUX_HOME="$ATMUX_HOME" ATMUX_REPO="$repo" "$ATMUX_BIN" watcher list)"
+printf '%s\n' "$unknown_watchers" | grep -Fq "pr:unknown-pr:unknown"
+[[ -e "$unknown_pr_watchers/unknown" ]] || { echo "watcher list pruned when pane snapshot was unavailable" >&2; exit 1; }
+
+unknown_subscriptions="$(ATMUX_TMUX_SOCKET="$missing_socket" ATMUX_HOME="$ATMUX_HOME" ATMUX_REPO="$repo" "$ATMUX_BIN" message subscriptions --team "$team")"
+printf '%s\n' "$unknown_subscriptions" | grep -Fq "team-message:${repo}--team--${team}:unknown-sub"
+[[ -e "$unknown_sub" ]] || { echo "message list pruned when pane snapshot was unavailable" >&2; exit 1; }
+
+( ATMUX_TMUX_SOCKET="$missing_socket"; notify_exec_watchers "$ATMUX_HOME/exec/$repo/789" "" "$payload" )
+[[ -e "$unknown_exec_watchers/unknown" ]] || { echo "notify fan-out pruned when pane snapshot was unavailable" >&2; exit 1; }
+[[ -e "$tmp_root/unknown.fifo" ]] || { echo "notify fan-out removed fifo when pane snapshot was unavailable" >&2; exit 1; }
+
 echo "ok: stale watcher/subscriber bookkeeping prunes on listing and delivery hot paths"

@@ -590,11 +590,13 @@ list_team_message_subscriptions() {
     esac
   done
 
-  local repo root watcher_dir watcher_name key file pane session agent sub_team sub_repo live_panes
+  local repo root watcher_dir watcher_name key file pane session agent sub_team sub_repo live_panes live_panes_known
   repo="$(resolve_repo_name "$explicit_repo")"
   report_open subscriptions repo="$repo" type="team-message"
   root="$ATMUX_HOME/watch-team-message"
   live_panes="$(tmux list-panes -a -F '#{pane_id}' 2>/dev/null || true)"
+  live_panes_known=0
+  [[ -n "$live_panes" ]] && live_panes_known=1
   if [[ -d "$root" ]]; then
     while IFS= read -r watcher_dir; do
       [[ -d "$watcher_dir" ]] || continue
@@ -607,7 +609,7 @@ list_team_message_subscriptions() {
         agent="$(cat "$file/agent" 2>/dev/null || true)"
         sub_repo="$(cat "$file/repo" 2>/dev/null || true)"
         sub_team="$(cat "$file/team" 2>/dev/null || true)"
-        if ! watcher_pane_is_live "$pane" "$live_panes"; then
+        if (( live_panes_known )) && ! watcher_pane_is_live "$pane" "$live_panes"; then
           rm -rf "$file"
           continue
         fi

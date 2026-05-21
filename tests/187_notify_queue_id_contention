@@ -62,6 +62,19 @@ expected_after_ownerless="$(printf '%010d' "$(( stale_count + 2 ))")"
   exit 1
 }
 
+mkdir -p "$qdir/seq.lock"
+printf '%s\n' "$$" > "$qdir/seq.lock/pid"
+printf '%s\n' "$(date +%s)" > "$qdir/seq.lock/acquired_at"
+(
+  # shellcheck source=bin/(atmux)/notify
+  source "$NOTIFY_SCRIPT"
+  ATMUX_NOTIFY_SEQ_LOCK_STALE_SECONDS=30 ATMUX_NOTIFY_SEQ_LOCK_MAX_ATTEMPTS=3 next_notification_queue_id "$qdir" > "$ids_dir/live-lock-timeout"
+) && {
+  echo "expected live sequence lock to time out" >&2
+  exit 1
+}
+rm -rf "$qdir/seq.lock"
+
 deadline=$(( $(date +%s) + wait_seconds ))
 for (( i=1; i<=scale; i++ )); do
   (
@@ -89,17 +102,17 @@ while true; do
 done
 wait
 
-allocated="$(find "$ids_dir" -maxdepth 1 -type f ! -name stale-recovery ! -name ownerless-recovery 2>/dev/null | wc -l | tr -d ' ')"
+allocated="$(find "$ids_dir" -maxdepth 1 -type f ! -name stale-recovery ! -name ownerless-recovery ! -name live-lock-timeout 2>/dev/null | wc -l | tr -d ' ')"
 [[ "$allocated" == "$scale" ]] || { echo "expected $scale ids, got $allocated" >&2; exit 1; }
 
-duplicate_count="$(find "$ids_dir" -maxdepth 1 -type f ! -name stale-recovery ! -name ownerless-recovery -exec cat {} + | sort | uniq -d | wc -l | tr -d ' ')"
+duplicate_count="$(find "$ids_dir" -maxdepth 1 -type f ! -name stale-recovery ! -name ownerless-recovery ! -name live-lock-timeout -exec cat {} + | sort | uniq -d | wc -l | tr -d ' ')"
 [[ "$duplicate_count" == "0" ]] || {
   echo "duplicate queue ids allocated" >&2
-  find "$ids_dir" -maxdepth 1 -type f ! -name stale-recovery ! -name ownerless-recovery -exec cat {} + | sort | uniq -d >&2
+  find "$ids_dir" -maxdepth 1 -type f ! -name stale-recovery ! -name ownerless-recovery ! -name live-lock-timeout -exec cat {} + | sort | uniq -d >&2
   exit 1
 }
 
-min_id="$(find "$ids_dir" -maxdepth 1 -type f ! -name stale-recovery ! -name ownerless-recovery -exec cat {} + | sort | head -n1)"
+min_id="$(find "$ids_dir" -maxdepth 1 -type f ! -name stale-recovery ! -name ownerless-recovery ! -name live-lock-timeout -exec cat {} + | sort | head -n1)"
 expected_min="$(printf '%010d' "$(( stale_count + 3 ))")"
 [[ "$min_id" == "$expected_min" ]] || {
   echo "expected first allocated id $expected_min, got $min_id" >&2
@@ -109,5 +122,5 @@ expected_min="$(printf '%010d' "$(( stale_count + 3 ))")"
 [[ ! -e "$qdir/seq.lock" ]] || { echo "sequence lock was not released" >&2; exit 1; }
 
 printf 'stale=%s concurrent=%s first=%s last=%s\n' \
-  "$stale_count" "$scale" "$min_id" "$(find "$ids_dir" -maxdepth 1 -type f ! -name stale-recovery ! -name ownerless-recovery -exec cat {} + | sort | tail -n1)"
+  "$stale_count" "$scale" "$min_id" "$(find "$ids_dir" -maxdepth 1 -type f ! -name stale-recovery ! -name ownerless-recovery ! -name live-lock-timeout -exec cat {} + | sort | tail -n1)"
 echo "ok: notify queue id allocation survives stale locks and contention"

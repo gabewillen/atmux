@@ -45,16 +45,24 @@ tmux() {
 }
 
 payload="$(build_notification "test" "sender" "")"
+qdir="$(notify_queue_dir "$pane")"
+mkdir -p "$qdir/payloads/0000000001"
+printf '<notification type="existing" />\n' > "$qdir/payloads/0000000001/payload"
+printf 'queued\n' > "$qdir/payloads/0000000001/state"
 if send_notification "$pane" "$payload"; then
   echo "expected send_notification to fail when worker spawn fails" >&2
   exit 1
 fi
 
-qdir="$(notify_queue_dir "$pane")"
-if [[ -d "$qdir/payloads" ]] && find "$qdir/payloads" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | grep -q .; then
-  echo "expected worker-spawn failure to clear queued payloads" >&2
+if [[ ! -d "$qdir/payloads/0000000001" ]]; then
+  echo "expected worker-spawn failure to preserve other queued payloads" >&2
+  find "$qdir" -maxdepth 3 -print >&2
+  exit 1
+fi
+if find "$qdir/payloads" -mindepth 1 -maxdepth 1 -type d ! -name 0000000001 2>/dev/null | grep -q .; then
+  echo "expected worker-spawn failure to clear only its queued payload" >&2
   find "$qdir" -maxdepth 3 -print >&2
   exit 1
 fi
 
-echo "ok: worker spawn failure clears queued notification payloads"
+echo "ok: worker spawn failure clears only its queued notification payload"

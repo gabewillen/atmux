@@ -372,7 +372,7 @@ next_notification_queue_id() {
   local next=1
 
   mkdir -p "$payload_dir"
-  lock_dir="$(acquire_notification_sequence_lock "$qdir")"
+  lock_dir="$(acquire_notification_sequence_lock "$qdir")" || return 1
 
   if [[ -f "$qdir/next_id" ]]; then
     current="$(tr -d '\r\n' < "$qdir/next_id" 2>/dev/null || printf '0')"
@@ -444,14 +444,23 @@ acquire_notification_sequence_lock() {
   local qdir="$1"
   local lock_dir="$qdir/seq.lock"
   local waited=0
+  local max_attempts="${ATMUX_NOTIFY_SEQ_LOCK_MAX_ATTEMPTS:-1000}"
+  local attempts=0
+
+  [[ "$max_attempts" =~ ^[0-9]+$ ]] || max_attempts=1000
+  (( max_attempts > 0 )) || max_attempts=1000
 
   mkdir -p "$qdir"
   while ! mkdir "$lock_dir" 2>/dev/null; do
+    attempts=$(( attempts + 1 ))
+    if (( attempts > max_attempts )); then
+      debug_notify "queue:seq_lock_timeout qdir=$(printf '%q' "$qdir") waited=$waited attempts=$attempts"
+      return 1
+    fi
     if [[ -d "$lock_dir" ]] && notification_sequence_lock_stale "$lock_dir"; then
       if recover_notification_sequence_lock "$lock_dir"; then
         debug_notify "queue:seq_lock_recovered qdir=$(printf '%q' "$qdir") waited=$waited"
       fi
-      continue
     fi
     waited=$(( waited + 1 ))
     sleep 0.01
@@ -496,6 +505,7 @@ queue_notification_payload() {
     atmux_fs_write_field "$tmp_dir/bypass_idle" "1"
   fi
   mv "$tmp_dir" "$item_dir"
+  ATMUX_LAST_NOTIFICATION_QUEUE_ID="$queue_id"
   debug_notify "queue:enqueued pane=$(printf '%q' "$pane") qdir=$(printf '%q' "$qdir") queue_id=$(printf '%q' "$queue_id") submit_keys=$(printf '%q' "$submit_key_str") pre_keys=$(printf '%q' "$pre_key_str") bypass_idle=$bypass_idle $(payload_debug_summary "$payload")"
 }
 
@@ -634,19 +644,28 @@ defer_due_notification_items() {
   done
 }
 
+fail_pending_notification_item() {
+  local pane="$1"
+  local item_dir="$2"
+  local reason="$3"
+  local payload
+  [[ -d "$item_dir" ]] || return 0
+  payload="$(cat "$item_dir/payload" 2>/dev/null || true)"
+  debug_notify "worker:item_failed_pending pane=$(printf '%q' "$pane") item_dir=$(printf '%q' "$item_dir") reason=$(printf '%q' "$reason")"
+  mark_notification_failed_without_attempt "$item_dir" "$reason"
+  dispatch_delivery_failed_notice "$pane" "$item_dir" "$payload"
+  rm -rf "$item_dir"
+}
+
 fail_pending_notification_items() {
   local pane="$1"
   local payload_dir="$2"
   local reason="$3"
-  local item_dir payload
+  local item_dir
   [[ -d "$payload_dir" ]] || return 0
   while IFS= read -r item_dir; do
     [[ -n "$item_dir" && -d "$item_dir" ]] || continue
-    payload="$(cat "$item_dir/payload" 2>/dev/null || true)"
-    debug_notify "worker:item_failed_pending pane=$(printf '%q' "$pane") item_dir=$(printf '%q' "$item_dir") reason=$(printf '%q' "$reason")"
-    mark_notification_failed_without_attempt "$item_dir" "$reason"
-    dispatch_delivery_failed_notice "$pane" "$item_dir" "$payload"
-    rm -rf "$item_dir"
+    fail_pending_notification_item "$pane" "$item_dir" "$reason"
   done < <(find "$payload_dir" -mindepth 1 -maxdepth 1 -type d ! -name '.*' 2>/dev/null | sort)
 }
 
@@ -1285,15 +1304,19 @@ send_notification() {
   fi
 
   local source_root="${ATMUX_SOURCE_ROOT:-${ATMUX_HOME:-$HOME/.atmux}/src/atmux}"
-  local notify_script qdir
+  local notify_script qdir queue_id
   notify_script="$(resolve_notify_script_path "$source_root")"
   qdir="$(notify_queue_dir "$pane")"
   debug_notify "send_notification:start pane=$(printf '%q' "$pane") source_root=$(printf '%q' "$source_root") submit_keys=$(printf '%q' "$submit_key_str") $(payload_debug_summary "$payload")"
 
+  ATMUX_LAST_NOTIFICATION_QUEUE_ID=""
   queue_notification_payload "$pane" "$payload" "$submit_key_str" || return 1
+  queue_id="$ATMUX_LAST_NOTIFICATION_QUEUE_ID"
   if ! ensure_notification_worker "$pane" "$source_root"; then
     debug_notify "send_notification:worker_spawn_failed pane=$(printf '%q' "$pane")"
-    fail_pending_notification_items "$pane" "$qdir/payloads" "worker_spawn_failed"
+    if [[ -n "$queue_id" ]]; then
+      fail_pending_notification_item "$pane" "$qdir/payloads/$queue_id" "worker_spawn_failed"
+    fi
     return 1
   fi
   signal_notification_worker "$pane"

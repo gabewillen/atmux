@@ -147,12 +147,6 @@ stale_pane() {
   ! id_live "$pane" "$live_panes"
 }
 
-stale_window() {
-  local window="$1"
-  [[ -n "$window" ]] || return 1
-  ! id_live "$window" "$live_windows"
-}
-
 prune_exec_watchers() {
   local exec_dir="$1"
   local watchers_dir="$exec_dir/watchers"

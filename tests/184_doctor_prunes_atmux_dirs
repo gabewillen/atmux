@@ -1,0 +1,201 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Isolate tmux so live-pane/window checks cannot touch the developer server.
+# shellcheck source=tests/lib/isolate-tmux.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/isolate-tmux.sh"
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+ATMUX_BIN="$REPO_ROOT/bin/atmux"
+
+tmp_root="$(mktemp -d "${TMPDIR:-/tmp}/atmux-doctor.XXXXXX")"
+cleanup() {
+  rm -rf "$tmp_root"
+}
+trap cleanup EXIT
+
+seed_home() {
+  local home="$1"
+  local repo="$2"
+  local live_pid="$3"
+  local qdir="$home/notify-queue/%999999"
+  local queued_qdir="$home/notify-queue/%888888"
+  local live_qdir="$home/notify-queue/%777777"
+  local exec_root="$home/exec/$repo"
+  local issue_watcher="$home/issues/$repo/42/watchers/dead"
+  local pr_watcher="$home/pull-requests/$repo/7/watchers/dead"
+
+  mkdir -p "$exec_root/exited" "$exec_root/dead-running" "$exec_root/live-running" "$exec_root/stale-starting-pidless"
+  printf '%s\n' exited > "$exec_root/exited/state"
+  printf '%s\n' 0 > "$exec_root/exited/exit_code"
+  printf '%s\n' running > "$exec_root/dead-running/state"
+  printf '%s\n' 999999 > "$exec_root/dead-running/pid"
+  printf '%s\n' running > "$exec_root/live-running/state"
+  printf '%s\n' "$live_pid" > "$exec_root/live-running/pid"
+  printf '%s\n' starting > "$exec_root/stale-starting-pidless/state"
+
+  mkdir -p "$exec_root/live-running/watchers"
+  printf '%%999999|%s\n' "$tmp_root/dead-exec.fifo" > "$exec_root/live-running/watchers/dead"
+  printf 'echo stale\n' > "$exec_root/live-running/watchers/dead.exec"
+  mkfifo "$tmp_root/dead-exec.fifo"
+
+  mkdir -p "$home/watch-pr/demo-pr/watchers"
+  printf '%%999999|0\n' > "$home/watch-pr/demo-pr/watchers/dead"
+  printf 'echo stale\n' > "$home/watch-pr/demo-pr/watchers/dead.exec"
+  printf '%%999999|%s\n' "$tmp_root/not-a-fifo-path" > "$home/watch-pr/demo-pr/watchers/dead-with-payload"
+  printf 'not a watcher signal fifo\n' > "$tmp_root/not-a-fifo-path"
+
+  mkdir -p "$home/watch-agent-idle/${repo}--agent--worker/watchers/dead-agent"
+  printf '%s\n' 999999 > "$home/watch-agent-idle/${repo}--agent--worker/watchers/dead-agent/worker.pid"
+  printf '%s\n' @999999 > "$home/watch-agent-idle/${repo}--agent--worker/watchers/dead-agent/window_id"
+  mkdir -p "$home/watch-agent-idle/${repo}--agent--worker/watchers/dead-agent-pane-only"
+  printf '%%999999\n' > "$home/watch-agent-idle/${repo}--agent--worker/watchers/dead-agent-pane-only/pane"
+  mkdir -p "$home/watch-team-idle/${repo}--team--platform/watchers/dead-team-pane-only"
+  printf '%%999999\n' > "$home/watch-team-idle/${repo}--team--platform/watchers/dead-team-pane-only/pane"
+
+  mkdir -p "$(dirname "$issue_watcher")" "$(dirname "$pr_watcher")"
+  printf '%%999999|%s\n' "$tmp_root/dead-issue.fifo" > "$issue_watcher"
+  printf '%%999999|%s\n' "$tmp_root/dead-pr.fifo" > "$pr_watcher"
+  mkfifo "$tmp_root/dead-issue.fifo" "$tmp_root/dead-pr.fifo"
+
+  mkdir -p "$qdir/payloads" "$qdir/lock"
+  printf '%s\n' 999999 > "$qdir/worker.pid"
+  mkfifo "$qdir/wake.fifo"
+  printf '%s\n' 7 > "$qdir/next_id"
+
+  mkdir -p "$queued_qdir/payloads/000001" "$queued_qdir/lock"
+  printf '%s\n' 999999 > "$queued_qdir/worker.pid"
+  printf '<notification />\n' > "$queued_qdir/payloads/000001/payload"
+
+  mkdir -p "$live_qdir/payloads" "$live_qdir/lock"
+  printf '%s\n' "$live_pid" > "$live_qdir/worker.pid"
+  mkfifo "$live_qdir/wake.fifo"
+  printf '%s\n' 9 > "$live_qdir/next_id"
+  printf '%s\n' 'transient failure' > "$live_qdir/last_error"
+
+  mkdir -p "$home/messages/$repo/empty-message"
+}
+
+assert_exists() {
+  [[ -e "$1" || -L "$1" ]] || { echo "expected path to exist: $1" >&2; exit 1; }
+}
+
+assert_missing() {
+  [[ ! -e "$1" && ! -L "$1" ]] || { echo "expected path to be removed: $1" >&2; exit 1; }
+}
+
+sleep 30 &
+live_pid="$!"
+
+project_root="$tmp_root/project"
+mkdir -p "$project_root"
+project_root="$(cd -- "$project_root" && pwd)"
+project_home="$project_root/.atmux"
+system_home="$tmp_root/home/.atmux"
+mkdir -p "$tmp_root/home"
+
+target_socket="$project_home/tmux/server.sock"
+if (( ${#target_socket} >= 100 )); then
+  target_socket_id="$(printf '%s' "$project_home" | cksum | awk '{print $1}')"
+  target_socket="$tmp_root/tmux-sockets/$target_socket_id.sock"
+fi
+target_session="atmux-doctor-target-${RANDOM}"
+mkdir -p "$(dirname "$target_socket")"
+"$ATMUX_REAL_TMUX" -S "$target_socket" new-session -d -s "$target_session" -n "$target_session" "cat"
+target_pane="$("$ATMUX_REAL_TMUX" -S "$target_socket" list-panes -t "$target_session" -F '#{pane_id}' | head -n1)"
+
+seed_home "$project_home" "doctor_repo" "$live_pid"
+dry_out="$(HOME="$tmp_root/home" ATMUX_HOME="$project_home" ATMUX_SOURCE_ROOT="$REPO_ROOT" ATMUX_TMUX_SOCKET_DIR="$tmp_root/tmux-sockets" \
+  "$ATMUX_BIN" doctor --project --project-root "$project_root" --dry-run)"
+printf '%s\n' "$dry_out" | grep -Fq 'would remove'
+assert_exists "$project_home/exec/doctor_repo/exited"
+assert_exists "$project_home/notify-queue/%999999/worker.pid"
+
+clean_out="$(HOME="$tmp_root/home" ATMUX_HOME="$project_home" ATMUX_SOURCE_ROOT="$REPO_ROOT" ATMUX_TMUX_SOCKET_DIR="$tmp_root/tmux-sockets" ATMUX_DOCTOR_STARTING_GRACE_SECONDS=0 \
+  "$ATMUX_BIN" doctor --project --project-root "$project_root")"
+printf '%s\n' "$clean_out" | grep -Fq 'doctor: removed='
+assert_missing "$project_home/exec/doctor_repo/exited"
+assert_missing "$project_home/exec/doctor_repo/dead-running"
+assert_missing "$project_home/exec/doctor_repo/stale-starting-pidless"
+  assert_exists "$project_home/exec/doctor_repo/live-running"
+  assert_missing "$project_home/exec/doctor_repo/live-running/watchers/dead"
+  assert_missing "$project_home/exec/doctor_repo/live-running/watchers/dead.exec"
+  assert_missing "$tmp_root/dead-exec.fifo"
+assert_missing "$project_home/watch-pr/demo-pr/watchers/dead"
+assert_missing "$project_home/watch-pr/demo-pr/watchers/dead.exec"
+assert_missing "$project_home/watch-pr/demo-pr/watchers/dead-with-payload"
+assert_exists "$tmp_root/not-a-fifo-path"
+assert_missing "$project_home/watch-agent-idle/doctor_repo--agent--worker/watchers/dead-agent"
+assert_missing "$project_home/watch-agent-idle/doctor_repo--agent--worker/watchers/dead-agent-pane-only"
+assert_missing "$project_home/watch-team-idle/doctor_repo--team--platform/watchers/dead-team-pane-only"
+assert_missing "$project_home/issues/doctor_repo/42/watchers/dead"
+assert_missing "$tmp_root/dead-issue.fifo"
+assert_missing "$project_home/pull-requests/doctor_repo/7/watchers/dead"
+assert_missing "$tmp_root/dead-pr.fifo"
+assert_missing "$project_home/notify-queue/%999999"
+assert_exists "$project_home/notify-queue/%888888/payloads/000001/payload"
+assert_missing "$project_home/notify-queue/%888888/worker.pid"
+assert_exists "$project_home/notify-queue/%777777/worker.pid"
+assert_exists "$project_home/notify-queue/%777777/next_id"
+assert_exists "$project_home/notify-queue/%777777/last_error"
+assert_missing "$project_home/messages/doctor_repo/empty-message"
+
+seed_home "$system_home" "system_repo" "$live_pid"
+HOME="$tmp_root/home" ATMUX_HOME="$project_home" ATMUX_SOURCE_ROOT="$REPO_ROOT" \
+  "$ATMUX_BIN" doctor --system >/dev/null
+assert_missing "$system_home/exec/system_repo/exited"
+assert_exists "$system_home/exec/system_repo/live-running"
+
+mkdir -p "$project_home/watch-pr/live-target/watchers" "$project_home/issues/doctor_repo/live/watchers"
+mkdir -p "$project_home/watch-agent-idle/doctor_repo--agent--worker/watchers/live-agent-pane-only"
+mkdir -p "$project_home/watch-team-idle/doctor_repo--team--platform/watchers/live-team-pane-only"
+printf '%s|0\n' "$target_pane" > "$project_home/watch-pr/live-target/watchers/live"
+printf '%s|%s\n' "$target_pane" "$tmp_root/live-issue.fifo" > "$project_home/issues/doctor_repo/live/watchers/live"
+printf '%s\n' "$target_pane" > "$project_home/watch-agent-idle/doctor_repo--agent--worker/watchers/live-agent-pane-only/pane"
+printf '%s\n' "$target_pane" > "$project_home/watch-team-idle/doctor_repo--team--platform/watchers/live-team-pane-only/pane"
+mkfifo "$tmp_root/live-issue.fifo"
+HOME="$tmp_root/home" ATMUX_HOME="$tmp_root/wrong-home/.atmux" ATMUX_SOURCE_ROOT="$REPO_ROOT" ATMUX_TMUX_SOCKET_DIR="$tmp_root/tmux-sockets" \
+  "$ATMUX_BIN" doctor --project --project-root "$project_root" >/dev/null
+assert_exists "$project_home/watch-pr/live-target/watchers/live"
+assert_exists "$project_home/issues/doctor_repo/live/watchers/live"
+assert_exists "$project_home/watch-agent-idle/doctor_repo--agent--worker/watchers/live-agent-pane-only"
+assert_exists "$project_home/watch-team-idle/doctor_repo--team--platform/watchers/live-team-pane-only"
+assert_exists "$tmp_root/live-issue.fifo"
+"$ATMUX_REAL_TMUX" -S "$target_socket" kill-session -t "$target_session" >/dev/null 2>&1 || true
+
+stat_stub_dir="$tmp_root/stat-stub"
+mkdir -p "$stat_stub_dir"
+cat > "$stat_stub_dir/stat" <<'SH'
+#!/usr/bin/env bash
+if [[ "$1" == "-c" && "$2" == "%Y" ]]; then
+  date +%s
+  exit 0
+fi
+if [[ "$1" == "-f" && "$2" == "%m" ]]; then
+  printf '%%m\n'
+  exit 0
+fi
+exec /usr/bin/stat "$@"
+SH
+chmod +x "$stat_stub_dir/stat"
+mkdir -p "$project_home/exec/doctor_repo/fresh-starting-pidless"
+printf '%s\n' starting > "$project_home/exec/doctor_repo/fresh-starting-pidless/state"
+HOME="$tmp_root/home" ATMUX_HOME="$project_home" ATMUX_SOURCE_ROOT="$REPO_ROOT" ATMUX_TMUX_SOCKET_DIR="$tmp_root/tmux-sockets" PATH="$stat_stub_dir:$PATH" \
+  "$ATMUX_BIN" doctor --project --project-root "$project_root" >/dev/null
+  assert_exists "$project_home/exec/doctor_repo/fresh-starting-pidless"
+
+  mkdir -p "$project_home/exec/doctor_repo/unknown-pane-watchers/watchers"
+  printf '%s\n' running > "$project_home/exec/doctor_repo/unknown-pane-watchers/state"
+  printf '%s\n' "$live_pid" > "$project_home/exec/doctor_repo/unknown-pane-watchers/pid"
+  printf '%%999999|%s\n' "$tmp_root/unknown-doctor-exec.fifo" > "$project_home/exec/doctor_repo/unknown-pane-watchers/watchers/unknown"
+  mkfifo "$tmp_root/unknown-doctor-exec.fifo"
+  HOME="$tmp_root/home" ATMUX_HOME="$project_home" ATMUX_SOURCE_ROOT="$REPO_ROOT" ATMUX_TMUX_SOCKET="$tmp_root/missing-doctor.sock" \
+    "$ATMUX_BIN" doctor --project --project-root "$project_root" >/dev/null
+  assert_exists "$project_home/exec/doctor_repo/unknown-pane-watchers/watchers/unknown"
+  assert_exists "$tmp_root/unknown-doctor-exec.fifo"
+
+  kill "$live_pid" >/dev/null 2>&1 || true
+wait "$live_pid" >/dev/null 2>&1 || true
+
+echo "ok: doctor prunes stale project and system atmux directories"

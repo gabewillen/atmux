@@ -3,7 +3,7 @@ set -euo pipefail
 state_dir="${ATMUX_HOME:-$HOME/.atmux}/adapters/cursor-agent"
 state_file="$state_dir/state.env"
 mkdir -p "$state_dir"
-[[ -f "$state_file" ]] || printf 'MODEL=%s\nREASONING_LEVEL=%s\n' 'composer-2' 'medium' > "$state_file"
+[[ -f "$state_file" ]] || printf 'MODEL=%s\nREASONING_LEVEL=%s\n' 'composer-2.5' 'medium' > "$state_file"
 # shellcheck disable=SC1090
 source "$state_file"
 
@@ -28,7 +28,7 @@ case "${1:-}" in
   list)
     printf '%s\n' \
       composer-2-fast \
-      composer-2 \
+      composer-2.5 \
       gpt-5.3-codex \
       gpt-5.3-codex-high \
       gpt-5.3-codex-xhigh \

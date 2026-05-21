@@ -1,0 +1,337 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ATMUX_HOME="${ATMUX_HOME:-$HOME/.atmux}"
+HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=bin/(atmux)/(lib)/fs
+source "$HERE/(lib)/fs"
+# shellcheck source=bin/(atmux)/(lib)/tmux
+source "$HERE/(lib)/tmux"
+# shellcheck source=bin/(atmux)/(lib)/watcher-records
+source "$HERE/(lib)/watcher-records"
+
+usage() {
+  cat <<'USAGE'
+Usage:
+  atmux doctor [--project|--system] [--project-root <dir>] [--dry-run]
+
+Description:
+  Clean and prune stale atmux bookkeeping directories.
+
+  Project mode targets <project>/.atmux. System mode targets ~/.atmux.
+  The sweep removes stale exec metadata, dead watcher registrations, dead
+  notification-worker locks, empty queue directories, and empty message/state
+  directories. Live workers, live panes, live windows, and queued notification
+  payloads are preserved.
+
+Options:
+  --project              Clean the project-local .atmux directory (default)
+  --system               Clean the system ~/.atmux directory
+  --project-root <dir>   Project root for --project mode
+  --dry-run              Print what would be removed without deleting it
+  -h, --help             Show this help
+USAGE
+}
+
+scope="project"
+project_root=""
+dry_run=0
+removed=0
+would_remove=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --project) scope="project"; shift ;;
+    --system) scope="system"; shift ;;
+    --project-root)
+      project_root="${2:-}"
+      [[ -n "$project_root" ]] || { echo "atmux doctor: --project-root requires a value" >&2; exit 2; }
+      shift 2
+      ;;
+    --dry-run) dry_run=1; shift ;;
+    -h|--help|help) usage; exit 0 ;;
+    *)
+      echo "atmux doctor: unknown argument: $1" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+done
+
+default_project_root() {
+  if git rev-parse --show-toplevel >/dev/null 2>&1; then
+    git rev-parse --show-toplevel
+  else
+    pwd
+  fi
+}
+
+resolve_home() {
+  if [[ "$scope" == "system" ]]; then
+    printf '%s/.atmux\n' "$HOME"
+    return
+  fi
+  if [[ -z "$project_root" ]]; then
+    project_root="$(default_project_root)"
+  fi
+  project_root="$(cd -- "$project_root" 2>/dev/null && pwd)" || {
+    echo "atmux doctor: project root does not exist: $project_root" >&2
+    exit 2
+  }
+  printf '%s/.atmux\n' "$project_root"
+}
+
+target_home="$(resolve_home)"
+
+log_remove() {
+  local path="$1"
+  if (( dry_run == 1 )); then
+    printf 'would remove %s\n' "$path"
+    would_remove=$((would_remove + 1))
+  else
+    rm -rf -- "$path"
+    printf 'removed %s\n' "$path"
+    removed=$((removed + 1))
+  fi
+}
+
+remove_path() {
+  local path="$1"
+  [[ -e "$path" || -L "$path" ]] || return 0
+  log_remove "$path"
+}
+
+remove_empty_dir() {
+  local dir="$1"
+  [[ -d "$dir" ]] || return 0
+  if (( dry_run == 1 )); then
+    if ! find "$dir" -mindepth 1 -print -quit 2>/dev/null | grep -q .; then
+      log_remove "$dir"
+    fi
+    return 0
+  fi
+  if rmdir "$dir" >/dev/null 2>&1; then
+    printf 'removed %s\n' "$dir"
+    removed=$((removed + 1))
+  fi
+}
+
+target_tmux() {
+  (
+    unset ATMUX_TMUX_SOCKET
+    ATMUX_HOME="$target_home"
+    tmux "$@"
+  )
+}
+
+live_panes="$(target_tmux list-panes -a -F '#{pane_id}' 2>/dev/null || true)"
+live_windows="$(target_tmux list-windows -a -F '#{window_id}' 2>/dev/null || true)"
+now="$(date +%s)"
+
+id_live() {
+  local id="$1"
+  local haystack="$2"
+  [[ -n "$id" ]] || return 1
+  grep -Fxq -- "$id" <<<"$haystack"
+}
+
+stale_pane() {
+  local pane="$1"
+  [[ -n "$pane" ]] || return 0
+  atmux_watcher_live_ids_known "$live_panes" || return 1
+  ! id_live "$pane" "$live_panes"
+}
+
+prune_exec_watchers() {
+  local exec_dir="$1"
+  local watchers_dir="$exec_dir/watchers"
+  local watcher pane signal_path
+  [[ -d "$watchers_dir" ]] || return 0
+  while IFS= read -r watcher; do
+    [[ -e "$watcher" ]] || continue
+    case "$(basename "$watcher")" in *.exec) continue ;; esac
+    pane="$(atmux_watcher_record_pane "$watcher")"
+    signal_path="$(atmux_watcher_record_signal_path "$watcher")"
+    if stale_pane "$pane"; then
+      remove_path "$watcher"
+      remove_path "$watcher.exec"
+      if [[ -n "$signal_path" ]]; then
+        remove_path "$signal_path"
+      fi
+    fi
+  done < <(find "$watchers_dir" -mindepth 1 -maxdepth 1 -type f 2>/dev/null | sort)
+  remove_empty_dir "$watchers_dir"
+}
+
+prune_exec_dirs() {
+  local exec_root="$target_home/exec"
+  local repo_dir exec_dir state pid
+  [[ -d "$exec_root" ]] || return 0
+  while IFS= read -r repo_dir; do
+    [[ -d "$repo_dir" ]] || continue
+    while IFS= read -r exec_dir; do
+      [[ -d "$exec_dir" || -L "$exec_dir" ]] || continue
+      prune_exec_watchers "$exec_dir"
+      state="$(atmux_fs_read_trimmed "$exec_dir/state")"
+      pid="$(atmux_fs_read_trimmed "$exec_dir/pid")"
+      if [[ "$state" == "exited" || "$state" == "failed" ]]; then
+        remove_path "$exec_dir"
+      elif [[ "$state" == "running" || "$state" == "starting" ]]; then
+        if [[ -n "$pid" ]] && ! atmux_watcher_pid_is_live "$pid"; then
+          remove_path "$exec_dir"
+        elif [[ "$state" == "starting" && -z "$pid" ]] && stale_starting_exec_without_pid "$exec_dir"; then
+          remove_path "$exec_dir"
+        fi
+      fi
+    done < <(find "$repo_dir" -mindepth 1 -maxdepth 1 \( -type d -o -type l \) 2>/dev/null | sort)
+    remove_empty_dir "$repo_dir"
+  done < <(find "$exec_root" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort)
+  remove_empty_dir "$exec_root"
+}
+
+path_mtime_epoch() {
+  local path="$1"
+  stat -c '%Y' "$path" 2>/dev/null || stat -f '%m' "$path" 2>/dev/null || printf '0\n'
+}
+
+path_age_seconds() {
+  local path="$1"
+  local mtime now
+  mtime="$(path_mtime_epoch "$path")"
+  [[ "$mtime" =~ ^[0-9]+$ ]] || mtime=0
+  now="$(date +%s)"
+  printf '%s\n' "$(( now - mtime ))"
+}
+
+stale_starting_exec_without_pid() {
+  local exec_dir="$1"
+  local grace="${ATMUX_DOCTOR_STARTING_GRACE_SECONDS:-60}"
+  local marker="$exec_dir/state"
+  local age
+  [[ "$grace" =~ ^[0-9]+$ ]] || grace=60
+  [[ -e "$marker" || -L "$marker" ]] || marker="$exec_dir"
+  age="$(path_age_seconds "$marker")"
+  [[ "$age" =~ ^-?[0-9]+$ ]] || return 0
+  (( age >= grace ))
+}
+
+watcher_record_is_stale() {
+  atmux_watcher_record_is_stale "$1" "$2" "$now" "$live_panes" "$live_windows"
+}
+
+remove_watcher_path() {
+  local watcher="$1" signal_path=""
+  signal_path="$(atmux_watcher_record_signal_path "$watcher")"
+  remove_path "$watcher"
+  remove_path "${watcher}.exec"
+  if [[ -n "$signal_path" ]]; then
+    remove_path "$signal_path"
+  fi
+}
+
+prune_watchers_dir() {
+  local kind="$1"
+  local watchers_dir="$2"
+  local watcher
+  [[ -d "$watchers_dir" ]] || return 0
+  while IFS= read -r watcher; do
+    [[ -e "$watcher" ]] || continue
+    case "$(basename "$watcher")" in *.exec) continue ;; esac
+    if watcher_record_is_stale "$kind" "$watcher"; then
+      remove_watcher_path "$watcher"
+    fi
+  done < <(find "$watchers_dir" -mindepth 1 -maxdepth 1 \( -type f -o -type d \) 2>/dev/null | sort)
+  remove_empty_dir "$watchers_dir"
+}
+
+prune_watchers() {
+  local kind root watchers_dir
+  for kind in pr issues prs team-message agent-idle team-idle; do
+    root="$target_home/watch-$kind"
+    [[ -d "$root" ]] || continue
+    while IFS= read -r watchers_dir; do
+      prune_watchers_dir "$kind" "$watchers_dir"
+      remove_empty_dir "$(dirname "$watchers_dir")"
+    done < <(find "$root" -mindepth 2 -maxdepth 2 -type d -name watchers 2>/dev/null | sort)
+    remove_empty_dir "$root"
+  done
+}
+
+prune_entity_watchers() {
+  local root kind watchers_dir entity_dir repo_dir
+  for kind in issues pr; do
+    case "$kind" in
+      issues) root="$target_home/issues" ;;
+      pr) root="$target_home/pull-requests" ;;
+    esac
+    [[ -d "$root" ]] || continue
+    while IFS= read -r watchers_dir; do
+      prune_watchers_dir "$kind" "$watchers_dir"
+      entity_dir="$(dirname "$watchers_dir")"
+      repo_dir="$(dirname "$entity_dir")"
+      remove_empty_dir "$entity_dir"
+      remove_empty_dir "$repo_dir"
+    done < <(find "$root" -mindepth 3 -maxdepth 3 -type d -name watchers 2>/dev/null | sort)
+    remove_empty_dir "$root"
+  done
+}
+
+prune_notify_queues() {
+  local root="$target_home/notify-queue"
+  local qdir worker_pid payload_dir has_payloads worker_alive
+  [[ -d "$root" ]] || return 0
+  while IFS= read -r qdir; do
+    [[ -d "$qdir" ]] || continue
+    worker_pid="$(atmux_fs_read_trimmed "$qdir/worker.pid")"
+    payload_dir="$qdir/payloads"
+    has_payloads=0
+    if [[ -d "$payload_dir" ]] && find "$payload_dir" -mindepth 1 -maxdepth 1 -type d -print -quit 2>/dev/null | grep -q .; then
+      has_payloads=1
+    fi
+    worker_alive=0
+    if [[ -n "$worker_pid" ]]; then
+      if atmux_watcher_pid_is_live "$worker_pid"; then
+        worker_alive=1
+      else
+        remove_path "$qdir/worker.pid"
+        remove_path "$qdir/lock"
+        remove_path "$qdir/wake.fifo"
+      fi
+    fi
+    if (( has_payloads == 0 && worker_alive == 0 )); then
+      remove_empty_dir "$payload_dir"
+      remove_path "$qdir/next_id"
+      remove_path "$qdir/last_error"
+      remove_empty_dir "$qdir"
+    fi
+  done < <(find "$root" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort)
+  remove_empty_dir "$root"
+}
+
+prune_empty_state_dirs() {
+  local root
+  for root in messages team-messages pull-requests issues teams logs tmp; do
+    [[ -d "$target_home/$root" ]] || continue
+    while IFS= read -r dir; do
+      remove_empty_dir "$dir"
+    done < <(find "$target_home/$root" -depth -type d -empty 2>/dev/null | sort -r)
+  done
+}
+
+printf 'doctor: scope=%s home=%s\n' "$scope" "$target_home"
+if [[ ! -d "$target_home" ]]; then
+  printf 'doctor: nothing to clean; directory does not exist\n'
+  exit 0
+fi
+
+prune_exec_dirs
+prune_watchers
+prune_entity_watchers
+prune_notify_queues
+prune_empty_state_dirs
+
+if (( dry_run == 1 )); then
+  printf 'doctor: would_remove=%s\n' "$would_remove"
+else
+  printf 'doctor: removed=%s\n' "$removed"
+fi

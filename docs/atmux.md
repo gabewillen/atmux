@@ -58,7 +58,7 @@ Current built-in mapping:
 | `codex` | 60-84 | `gpt-5.5` | `high` |
 | `codex` | 85-100 | `gpt-5.5` | `extra-high` |
 | `cursor-agent` | 0-39 | `composer-2-fast` | `low` |
-| `cursor-agent` | 40-74 | `composer-2` | `medium` |
+| `cursor-agent` | 40-74 | `composer-2.5` | `medium` |
 | `cursor-agent` | 75-89 | `gpt-5.3-codex-high` | `high` |
 | `cursor-agent` | 90-100 | `gpt-5.3-codex-xhigh` | `extra-high` |
 | `gemini` | 0-39 | `gemini-3.1-flash-lite-preview` | `low` |
@@ -137,6 +137,14 @@ Current built-in mapping:
 ### `atmux watcher kill <id> [--timeout <seconds>]`
 - Removes a watcher registration by id.
 - Supports watcher ids emitted by `atmux pr watch`, `atmux issue watch --feed`, and `atmux pr watch --feed`.
+
+### `atmux doctor [--project|--system] [--project-root <dir>] [--dry-run]`
+- Cleans stale atmux bookkeeping from either a project-local `.atmux`
+  directory or the system `~/.atmux`.
+- Removes exited/dead exec metadata, dead watcher registrations, dead
+  notification-worker locks, empty queue directories, and empty state
+  directories.
+- Preserves live workers, live panes/windows, and queued notification payloads.
 
 ### `atmux issue create --title <title> --assign-to <agent> [--description "..."] [--todo "..."]`
 - Creates a filesystem issue and assigns it to the target agent/session in one shot.

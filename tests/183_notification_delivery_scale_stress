@@ -1,0 +1,218 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Isolate the tmux socket so this test can never touch the developer's
+# default tmux server. Idempotent if the runner already isolated.
+# shellcheck source=tests/lib/isolate-tmux.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/isolate-tmux.sh"
+
+# Opt-in scale test for the lower-level notification queue/delivery path.
+# It uses the same mock cat prompt harness as the notify unit tests, then
+# reports enqueue latency, full pane-delivery drain latency, and leftover
+# queue items as the burst size grows.
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+NOTIFY_SCRIPT="$REPO_ROOT/bin/(atmux)/notify"
+
+tmp_root="$(mktemp -d "${TMPDIR:-/tmp}/atmux-notify-delivery-scale.XXXXXX")"
+ATMUX_HOME="$tmp_root/.atmux"
+ATMUX_SOURCE_ROOT="$REPO_ROOT"
+export ATMUX_HOME ATMUX_SOURCE_ROOT
+
+# shellcheck source=bin/(atmux)/notify
+source "$NOTIFY_SCRIPT"
+
+repo="notifydeliver${RANDOM}"
+session="atmux-${repo}-target"
+
+cleanup() {
+  tmux kill-session -t "$session" >/dev/null 2>&1 || true
+  if [[ "${ATMUX_TEST_KEEP_ARTIFACTS:-0}" == "1" ]]; then
+    echo "retaining: $tmp_root" >&2
+  else
+    rm -rf "$tmp_root"
+  fi
+}
+trap cleanup EXIT
+
+now_ms() {
+  printf '%s000\n' "$(date +%s)"
+}
+
+elapsed_ms() {
+  local start="$1"
+  local end
+  end="$(now_ms)"
+  printf '%s\n' "$(( end - start ))"
+}
+
+strip_ws() {
+  printf '%s' "$1" | tr -d '[:space:]'
+}
+
+count_queue_items() {
+  local pane="$1" qdir payload_dir
+  qdir="$(notify_queue_dir "$pane")"
+  payload_dir="$qdir/payloads"
+  [[ -d "$payload_dir" ]] || { printf '0\n'; return; }
+  find "$payload_dir" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' '
+}
+
+dump_queue_items() {
+  local pane="$1" qdir payload_dir item state attempts next_attempt last_error
+  qdir="$(notify_queue_dir "$pane")"
+  payload_dir="$qdir/payloads"
+  [[ -d "$payload_dir" ]] || return 0
+  while IFS= read -r item; do
+    [[ -d "$item" ]] || continue
+    state="$(cat "$item/state" 2>/dev/null || true)"
+    attempts="$(cat "$item/attempts" 2>/dev/null || true)"
+    next_attempt="$(cat "$item/next_attempt_at" 2>/dev/null || true)"
+    last_error="$(cat "$item/last_error" 2>/dev/null || true)"
+    printf 'queue_item=%s state=%s attempts=%s next_attempt_at=%s last_error=%s\n' \
+      "$(basename "$item")" "${state:-<missing>}" "${attempts:-<missing>}" "${next_attempt:-<none>}" "${last_error:-<none>}" >&2
+  done < <(find "$payload_dir" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort)
+}
+
+wait_for_prompt_text() {
+  local pane="$1"
+  local needle="$2"
+  local timeout="${3:-10}"
+  local deadline snap
+  deadline=$(( $(date +%s) + timeout ))
+  while true; do
+    snap="$(tmux capture-pane -p -t "$pane" -S -10000 2>/dev/null || true)"
+    if [[ "$(strip_ws "$snap")" == *"$(strip_ws "$needle")"* ]]; then
+      return 0
+    fi
+    if (( $(date +%s) >= deadline )); then
+      return 1
+    fi
+    sleep 0.1
+  done
+}
+
+wait_for_all_markers() {
+  local pane="$1"
+  local timeout="$2"
+  local deadline snap compact marker all_ok
+  deadline=$(( $(date +%s) + timeout ))
+  while true; do
+    snap="$(tmux capture-pane -p -t "$pane" -S -50000 2>/dev/null || true)"
+    compact="$(strip_ws "$snap")"
+    all_ok=1
+    for marker in "${markers[@]}"; do
+      if [[ "$compact" != *"$(strip_ws "$marker")"* ]]; then
+        all_ok=0
+        break
+      fi
+    done
+    (( all_ok == 1 )) && return 0
+    if (( $(date +%s) >= deadline )); then
+      return 1
+    fi
+    sleep 0.15
+  done
+}
+
+wait_for_queue_empty() {
+  local pane="$1"
+  local timeout="$2"
+  local deadline
+  deadline=$(( $(date +%s) + timeout ))
+  while true; do
+    if [[ "$(count_queue_items "$pane")" == "0" ]]; then
+      return 0
+    fi
+    if (( $(date +%s) >= deadline )); then
+      return 1
+    fi
+    sleep 0.1
+  done
+}
+
+assert_under_budget() {
+  local label="$1" observed="$2" budget="$3"
+  if (( budget > 0 && observed > budget )); then
+    echo "scale breakdown: $label took ${observed}ms, budget ${budget}ms" >&2
+    exit 1
+  fi
+}
+
+tmux kill-session -t "$session" >/dev/null 2>&1 || true
+tmux new-session -d -s "$session" -n "$session" -x 160 -y 50 "cat"
+tmux set-environment -t "$session" ATMUX_ADAPTER "claude-code"
+
+pane="$(tmux list-panes -t "$session" -F '#{pane_id}' 2>/dev/null | head -n1)"
+[[ -n "$pane" ]] || { echo "pane missing" >&2; exit 1; }
+
+sleep 0.3
+tmux send-keys -t "$pane" -l "❯ "
+tmux send-keys -t "$pane" Enter
+sleep 0.3
+
+run_case() {
+  local scale="$1"
+  local enqueue_budget="$2"
+  local drain_budget="$3"
+  local wait_timeout="$4"
+  local marker payload start enqueue_ms drain_ms remaining
+  local -a pids=()
+
+  markers=()
+  for (( idx=1; idx<=scale; idx++ )); do
+    marker="notify-deliver-${scale}-${idx}-${RANDOM}"
+    markers+=("$marker")
+  done
+
+  start="$(now_ms)"
+  for marker in "${markers[@]}"; do
+    payload="$(build_notification "test" "$marker" "")"
+    send_notification "$pane" "$payload" &
+    pids+=($!)
+  done
+  for pid in "${pids[@]}"; do
+    wait "$pid"
+  done
+  enqueue_ms="$(elapsed_ms "$start")"
+
+  start="$(now_ms)"
+  if ! wait_for_all_markers "$pane" "$wait_timeout"; then
+    echo "not all notification markers delivered at scale $scale" >&2
+    tmux capture-pane -p -t "$pane" -S -500 >&2 || true
+    exit 1
+  fi
+  if ! wait_for_queue_empty "$pane" "$wait_timeout"; then
+    echo "notify queue did not drain at scale $scale" >&2
+    dump_queue_items "$pane"
+    tmux capture-pane -p -t "$pane" -S -500 >&2 || true
+    exit 1
+  fi
+  drain_ms="$(elapsed_ms "$start")"
+
+  remaining="$(count_queue_items "$pane")"
+  printf 'scale=%s notify_enqueue_ms=%s notify_deliver_drain_ms=%s remaining_queue=%s\n' \
+    "$scale" "$enqueue_ms" "$drain_ms" "$remaining"
+  assert_under_budget "notify enqueue scale=$scale" "$enqueue_ms" "$enqueue_budget"
+  assert_under_budget "notify delivery drain scale=$scale" "$drain_ms" "$drain_budget"
+
+  # Keep a fresh prompt visible for the next scale.
+  tmux send-keys -t "$pane" -l "❯ "
+  tmux send-keys -t "$pane" Enter
+  wait_for_prompt_text "$pane" "❯ " 5 || true
+}
+
+declare -a markers=()
+IFS=' ' read -r -a scales <<< "${ATMUX_NOTIFY_DELIVERY_SCALE_STEPS:-10 25 50}"
+enqueue_budget="${ATMUX_NOTIFY_DELIVERY_ENQUEUE_BUDGET_MS:-0}"
+drain_budget="${ATMUX_NOTIFY_DELIVERY_DRAIN_BUDGET_MS:-0}"
+wait_timeout="${ATMUX_NOTIFY_DELIVERY_WAIT_SECONDS:-180}"
+[[ "$wait_timeout" =~ ^[0-9]+$ ]] || wait_timeout=180
+
+for scale in "${scales[@]}"; do
+  [[ "$scale" =~ ^[0-9]+$ ]] || { echo "invalid scale: $scale" >&2; exit 2; }
+  run_case "$scale" "$enqueue_budget" "$drain_budget" "$wait_timeout"
+done
+
+echo "ok: notification delivery stress completed (${ATMUX_NOTIFY_DELIVERY_SCALE_STEPS:-10 25 50})"

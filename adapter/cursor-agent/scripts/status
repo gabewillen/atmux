@@ -4,7 +4,7 @@ state_dir="${ATMUX_HOME:-$HOME/.atmux}/adapters/cursor-agent"
 state_file="$state_dir/state.env"
 roles_dir="${ATMUX_HOME:-$HOME/.atmux}/roles"
 mkdir -p "$state_dir"
-[[ -f "$state_file" ]] || printf 'MODEL=%s\nREASONING_LEVEL=%s\n' 'composer-2' 'medium' > "$state_file"
+[[ -f "$state_file" ]] || printf 'MODEL=%s\nREASONING_LEVEL=%s\n' 'composer-2.5' 'medium' > "$state_file"
 # shellcheck disable=SC1090
 source "$state_file"
 

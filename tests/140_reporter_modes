@@ -15,7 +15,12 @@ tmp_root="$(mktemp -d "${TMPDIR:-/tmp}/atmux-reporter.XXXXXX")"
 atmux_home="$tmp_root/.atmux"
 repo="reporter${RANDOM}"
 
-cleanup() { rm -rf "$tmp_root"; }
+cleanup() {
+  if [[ -n "${reporter_session:-}" ]]; then
+    tmux kill-session -t "$reporter_session" >/dev/null 2>&1 || true
+  fi
+  rm -rf "$tmp_root"
+}
 trap cleanup EXIT
 
 # Sanitize ambient env so the test doesn't inherit agent context from
@@ -121,8 +126,11 @@ issues_xml="$(ATMUX_AGENT_NAME=tester run_atmux issue list --repo "$repo")"
 assert_contains "issue list xml: root"   '<issues repo="'    "$issues_xml"
 assert_contains "issue list xml: record" '<issue id="'       "$issues_xml"
 
-mkdir -p "$atmux_home/watch-team-idle/${repo}--team--alpha/watchers"
-printf '%%1\n' > "$atmux_home/watch-team-idle/${repo}--team--alpha/watchers/watcher-one"
+reporter_session="atmux-reporter-${RANDOM}"
+tmux new-session -d -s "$reporter_session" -n "$reporter_session" "cat"
+reporter_pane="$(tmux list-panes -t "$reporter_session" -F '#{pane_id}' | head -n1)"
+mkdir -p "$atmux_home/watch-team-idle/${repo}--team--alpha/watchers/watcher-one"
+printf '%s\n' "$reporter_pane" > "$atmux_home/watch-team-idle/${repo}--team--alpha/watchers/watcher-one/pane"
 watcher_agent_list="$(ATMUX_AGENT_NAME=tester run_atmux watcher list)"
 assert_contains     "watcher list agent raw id" "team-idle:${repo}--team--alpha:watcher-one" "$watcher_agent_list"
 assert_not_contains "watcher list agent no envelope" "<atmux command=" "$watcher_agent_list"

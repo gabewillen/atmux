@@ -16,6 +16,8 @@ source "$ATMUX_NOTIFY_DIR/(lib)/xml"
 source "$ATMUX_NOTIFY_DIR/(lib)/resolver"
 # shellcheck source=bin/(atmux)/(lib)/fs
 source "$ATMUX_NOTIFY_DIR/(lib)/fs"
+# shellcheck source=bin/(atmux)/(lib)/watcher-records
+source "$ATMUX_NOTIFY_DIR/(lib)/watcher-records"
 # shellcheck source=bin/(atmux)/(lib)/notification
 source "$ATMUX_NOTIFY_DIR/(lib)/notification"
 
@@ -1068,72 +1070,58 @@ pull_request_dir_for_id() {
   printf '%s/%s\n' "$root" "$id"
 }
 
-notify_exec_watchers() {
-  local exec_dir="$1"
+notify_watcher_records() {
+  local wdir="$1"
   local skip_pane="$2"
   local payload="$3"
-  local wdir="$exec_dir/watchers"
   [[ -d "$wdir" ]] || return 0
-  local f pane
+  local f pane live_panes live_panes_known=0
+  live_panes="$(tmux list-panes -a -F '#{pane_id}' 2>/dev/null || true)"
+  [[ -n "$live_panes" ]] && live_panes_known=1
   while IFS= read -r f; do
     [[ -n "$f" ]] || continue
     [[ -f "$f" ]] || continue
     pane="$(watcher_record_pane "$f")"
-    if [[ -n "$pane" && "$pane" != "$skip_pane" ]]; then
-      send_notification "$pane" "$payload"
+    if (( live_panes_known )) && [[ -n "$pane" ]] && ! watcher_pane_is_live "$pane" "$live_panes"; then
+      remove_watcher_record "$f"
+      continue
+    fi
+    if { (( ! live_panes_known )) || watcher_pane_is_live "$pane" "$live_panes"; } && [[ -n "$pane" && "$pane" != "$skip_pane" ]]; then
+      send_notification "$pane" "$payload" || true
     fi
     signal_watcher_event_file "$f"
   done < <(find "$wdir" -maxdepth 1 -type f 2>/dev/null)
+}
+
+notify_exec_watchers() {
+  local exec_dir="$1"
+  notify_watcher_records "$exec_dir/watchers" "$2" "$3"
+}
+
+watcher_pane_is_live() {
+  atmux_watcher_pane_is_live "$1" "$2"
+}
+
+remove_watcher_record() {
+  atmux_remove_watcher_record "$1"
 }
 
 notify_issue_watchers() {
   local issue_dir="$1"
-  local skip_pane="$2"
-  local payload="$3"
-  local wdir="$issue_dir/watchers"
-  [[ -d "$wdir" ]] || return 0
-  local f pane
-  while IFS= read -r f; do
-    [[ -n "$f" ]] || continue
-    [[ -f "$f" ]] || continue
-    pane="$(watcher_record_pane "$f")"
-    if [[ -n "$pane" && "$pane" != "$skip_pane" ]]; then
-      send_notification "$pane" "$payload"
-    fi
-    signal_watcher_event_file "$f"
-  done < <(find "$wdir" -maxdepth 1 -type f 2>/dev/null)
+  notify_watcher_records "$issue_dir/watchers" "$2" "$3"
 }
 
 notify_pull_request_watchers() {
   local pr_dir="$1"
-  local skip_pane="$2"
-  local payload="$3"
-  local wdir="$pr_dir/watchers"
-  [[ -d "$wdir" ]] || return 0
-  local f pane
-  while IFS= read -r f; do
-    [[ -n "$f" ]] || continue
-    [[ -f "$f" ]] || continue
-    pane="$(watcher_record_pane "$f")"
-    if [[ -n "$pane" && "$pane" != "$skip_pane" ]]; then
-      send_notification "$pane" "$payload"
-    fi
-    signal_watcher_event_file "$f"
-  done < <(find "$wdir" -maxdepth 1 -type f 2>/dev/null)
+  notify_watcher_records "$pr_dir/watchers" "$2" "$3"
 }
 
 watcher_record_pane() {
-  local file="$1" raw=""
-  raw="$(tr -d '\r\n' <"$file" 2>/dev/null || true)"
-  printf '%s\n' "${raw%%|*}"
+  atmux_watcher_record_pane "$1"
 }
 
 watcher_record_signal_path() {
-  local file="$1" raw="" rest=""
-  raw="$(tr -d '\r\n' <"$file" 2>/dev/null || true)"
-  [[ "$raw" == *"|"* ]] || return 0
-  rest="${raw#*|}"
-  printf '%s\n' "${rest%%|*}"
+  atmux_watcher_record_signal_path "$1"
 }
 
 signal_watcher_event_file() {

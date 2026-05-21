@@ -1,0 +1,204 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Isolate the tmux socket so this test can never touch the developer's
+# default tmux server. Idempotent if the runner already isolated.
+# shellcheck source=tests/lib/isolate-tmux.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/isolate-tmux.sh"
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+ATMUX_BIN="$REPO_ROOT/bin/atmux"
+NOTIFY_SCRIPT="$REPO_ROOT/bin/(atmux)/notify"
+
+tmp_root="$(mktemp -d "${TMPDIR:-/tmp}/atmux-stale-scale.XXXXXX")"
+ATMUX_HOME="$tmp_root/.atmux"
+ATMUX_SOURCE_ROOT="$REPO_ROOT"
+export ATMUX_HOME ATMUX_SOURCE_ROOT
+
+# shellcheck source=bin/(atmux)/notify
+source "$NOTIFY_SCRIPT"
+
+repo="scalestale${RANDOM}"
+team="platform"
+live_session="atmux-${repo}-live"
+
+cleanup() {
+  tmux kill-session -t "$live_session" >/dev/null 2>&1 || true
+  rm -rf "$tmp_root"
+}
+trap cleanup EXIT
+
+tmux new-session -d -s "$live_session" -n "$live_session" "cat"
+live_pane="$(tmux list-panes -t "$live_session" -F '#{pane_id}' 2>/dev/null | head -n1)"
+[[ -n "$live_pane" ]] || { echo "live pane missing" >&2; exit 1; }
+
+state_dir="$(team_state_dir "$repo" "$team")"
+mkdir -p "$state_dir"
+atmux_fs_write_field "$state_dir/name" "$team"
+
+now_ms() {
+  printf '%s000\n' "$(date +%s)"
+}
+
+elapsed_ms() {
+  local start="$1"
+  local end
+  end="$(now_ms)"
+  printf '%s\n' "$(( end - start ))"
+}
+
+count_entries() {
+  local dir="$1"
+  [[ -d "$dir" ]] || { printf '0\n'; return; }
+  find "$dir" -mindepth 1 -maxdepth 1 2>/dev/null | wc -l | tr -d ' '
+}
+
+seed_direct_messages() {
+  local count="$1"
+  local root="$ATMUX_HOME/messages/$repo"
+  local i dir
+  mkdir -p "$root"
+  for (( i=1; i<=count; i++ )); do
+    dir="$root/msg-$i"
+    mkdir -p "$dir"
+    printf 'sender\n' > "$dir/from"
+    printf 'other-%s\n' "$i" > "$dir/to"
+    printf 'false\n' > "$dir/reply_required"
+    printf '2026-01-01T00:00:00Z\n' > "$dir/timestamp"
+  done
+  dir="$root/live"
+  mkdir -p "$dir"
+  printf 'sender\n' > "$dir/from"
+  printf 'atmux-%s-reader\n' "$repo" > "$dir/to"
+  printf 'false\n' > "$dir/reply_required"
+  printf '2026-01-01T00:00:00Z\n' > "$dir/timestamp"
+}
+
+seed_watchers() {
+  local count="$1"
+  local pr_watchers="$ATMUX_HOME/watch-pr/scale-pr/watchers"
+  local agent_watchers="$ATMUX_HOME/watch-agent-idle/${repo}--agent--worker/watchers"
+  local i d
+  mkdir -p "$pr_watchers" "$agent_watchers"
+  printf '%s|0\n' "$live_pane" > "$pr_watchers/live"
+  for (( i=1; i<=count; i++ )); do
+    printf '%%999999|0\n' > "$pr_watchers/dead-$i"
+    printf 'cat >/dev/null\n' > "$pr_watchers/dead-$i.exec"
+    d="$agent_watchers/dead-agent-$i"
+    mkdir -p "$d"
+    printf '999999\n' > "$d/worker.pid"
+    printf '@999999\n' > "$d/window_id"
+  done
+}
+
+seed_subscribers() {
+  local count="$1"
+  local watchers_dir
+  local i d
+  watchers_dir="$(team_message_watchers_dir "$repo" "$team")"
+  mkdir -p "$watchers_dir"
+  for (( i=1; i<=count; i++ )); do
+    d="$watchers_dir/dead-sub-$i"
+    mkdir -p "$d"
+    printf '%%999999\n' > "$d/pane"
+    printf 'atmux-%s-gone-%s\n' "$repo" "$i" > "$d/session"
+    printf '%s\n' "$repo" > "$d/repo"
+    printf '%s\n' "$team" > "$d/team"
+  done
+}
+
+seed_exec_watchers() {
+  local count="$1"
+  local watchers_dir="$ATMUX_HOME/exec/$repo/123/watchers"
+  local i fifo
+  mkdir -p "$watchers_dir"
+  for (( i=1; i<=count; i++ )); do
+    fifo="$tmp_root/dead-exec-$i.fifo"
+    rm -f "$fifo"
+    mkfifo "$fifo"
+    printf '%%999999|%s\n' "$fifo" > "$watchers_dir/dead-$i"
+  done
+}
+
+assert_under_budget() {
+  local label="$1" observed="$2" budget="$3"
+  if (( budget > 0 && observed > budget )); then
+    echo "scale breakdown: $label took ${observed}ms, budget ${budget}ms" >&2
+    exit 1
+  fi
+}
+
+run_case() {
+  local scale="$1"
+  local msg_budget="$2" watcher_budget="$3" send_budget="$4" exec_budget="$5"
+  local start ms out payload
+
+  seed_direct_messages "$scale"
+  start="$(now_ms)"
+  out="$(
+    ATMUX_HOME="$ATMUX_HOME" ATMUX_REPO="$repo" ATMUX_AGENT_NAME="reader" ATMUX_SESSION_NAME="atmux-${repo}-reader" \
+      "$ATMUX_BIN" message list
+  )"
+  ms="$(elapsed_ms "$start")"
+  printf 'scale=%s message_list_ms=%s messages=%s\n' "$scale" "$ms" "$(count_entries "$ATMUX_HOME/messages/$repo")"
+  printf '%s\n' "$out" | grep -Fq 'id="live"'
+  if printf '%s\n' "$out" | grep -Fq 'msg-'; then
+    echo "message list leaked non-recipient messages at scale $scale" >&2
+    exit 1
+  fi
+  assert_under_budget "message list scale=$scale" "$ms" "$msg_budget"
+  rm -rf "$ATMUX_HOME/messages/$repo"
+
+  seed_watchers "$scale"
+  start="$(now_ms)"
+  out="$(ATMUX_HOME="$ATMUX_HOME" ATMUX_REPO="$repo" "$ATMUX_BIN" watcher list)"
+  ms="$(elapsed_ms "$start")"
+  printf 'scale=%s watcher_list_ms=%s remaining_pr=%s remaining_agent_idle=%s\n' \
+    "$scale" "$ms" \
+    "$(count_entries "$ATMUX_HOME/watch-pr/scale-pr/watchers")" \
+    "$(count_entries "$ATMUX_HOME/watch-agent-idle/${repo}--agent--worker/watchers")"
+  printf '%s\n' "$out" | grep -Fq 'pr:scale-pr:live'
+  if printf '%s\n' "$out" | grep -Fq 'dead'; then
+    echo "watcher list leaked stale records at scale $scale" >&2
+    exit 1
+  fi
+  assert_under_budget "watcher list scale=$scale" "$ms" "$watcher_budget"
+  rm -rf "$ATMUX_HOME/watch-pr/scale-pr" "$ATMUX_HOME/watch-agent-idle/${repo}--agent--worker"
+
+  seed_subscribers "$scale"
+  start="$(now_ms)"
+  out="$(
+    ATMUX_HOME="$ATMUX_HOME" ATMUX_REPO="$repo" ATMUX_AGENT_NAME="sender" ATMUX_SESSION_NAME="atmux-${repo}-sender" \
+      "$ATMUX_BIN" send --to "$team" "scale-prune"
+  )"
+  ms="$(elapsed_ms "$start")"
+  printf 'scale=%s team_send_ms=%s remaining_subscribers=%s\n' \
+    "$scale" "$ms" "$(count_entries "$(team_message_watchers_dir "$repo" "$team")")"
+  printf '%s\n' "$out" | grep -Fq 'failed="0"'
+  assert_under_budget "team send scale=$scale" "$ms" "$send_budget"
+  rm -rf "$(team_message_watchers_dir "$repo" "$team")"
+
+  seed_exec_watchers "$scale"
+  payload="$(build_notification "exec" "scale" "")"
+  start="$(now_ms)"
+  notify_exec_watchers "$ATMUX_HOME/exec/$repo/123" "" "$payload"
+  ms="$(elapsed_ms "$start")"
+  printf 'scale=%s exec_fanout_ms=%s remaining_exec_watchers=%s\n' \
+    "$scale" "$ms" "$(count_entries "$ATMUX_HOME/exec/$repo/123/watchers")"
+  assert_under_budget "exec fanout scale=$scale" "$ms" "$exec_budget"
+  rm -rf "$ATMUX_HOME/exec/$repo"
+}
+
+IFS=' ' read -r -a scales <<< "${ATMUX_STALE_SCALE_STEPS:-100 500 1000}"
+msg_budget="${ATMUX_STALE_SCALE_MESSAGE_LIST_BUDGET_MS:-0}"
+watcher_budget="${ATMUX_STALE_SCALE_WATCHER_LIST_BUDGET_MS:-0}"
+send_budget="${ATMUX_STALE_SCALE_TEAM_SEND_BUDGET_MS:-0}"
+exec_budget="${ATMUX_STALE_SCALE_EXEC_FANOUT_BUDGET_MS:-0}"
+
+for scale in "${scales[@]}"; do
+  [[ "$scale" =~ ^[0-9]+$ ]] || { echo "invalid scale: $scale" >&2; exit 2; }
+  run_case "$scale" "$msg_budget" "$watcher_budget" "$send_budget" "$exec_budget"
+done
+
+echo "ok: stale bookkeeping stress completed (${ATMUX_STALE_SCALE_STEPS:-100 500 1000})"

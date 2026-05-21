@@ -3,6 +3,10 @@ set -euo pipefail
 
 ATMUX_HOME="${ATMUX_HOME:-$HOME/.atmux}"
 HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=bin/(atmux)/(lib)/tmux
+source "$HERE/(lib)/tmux"
+# shellcheck source=bin/(atmux)/(lib)/watcher-records
+source "$HERE/(lib)/watcher-records"
 
 usage() {
   cat <<'USAGE'
@@ -29,6 +33,9 @@ USAGE
 
 list_watchers() {
   local kind dir watchers_dir watcher_file id
+  WATCHER_LIST_NOW="$(date +%s)"
+  WATCHER_LIST_LIVE_PANES="$(tmux list-panes -a -F '#{pane_id}' 2>/dev/null || true)"
+  WATCHER_LIST_LIVE_WINDOWS="$(tmux list-windows -a -F '#{window_id}' 2>/dev/null || true)"
   for kind in pr issues prs team-message agent-idle team-idle; do
     dir="$ATMUX_HOME/watch-$kind"
     [[ -d "$dir" ]] || continue
@@ -42,11 +49,19 @@ list_watchers() {
         watcher_name="$(basename "$watcher_file")"
         # Skip the .exec sidecar files emitted by --exec watchers.
         case "$watcher_name" in *.exec) continue ;; esac
+        if watcher_record_is_stale "$kind" "$watcher_file"; then
+          atmux_remove_watcher_record "$watcher_file"
+          continue
+        fi
         id="${kind}:${key}:${watcher_name}"
         printf '%s\n' "$id"
       done < <(find "$watchers_dir" -mindepth 1 -maxdepth 1 \( -type f -o -type d \) 2>/dev/null | sort)
     done < <(find "$dir" -mindepth 2 -maxdepth 2 -type d -name watchers 2>/dev/null | sort)
   done
+}
+
+watcher_record_is_stale() {
+  atmux_watcher_record_is_stale "$1" "$2" "$WATCHER_LIST_NOW" "$WATCHER_LIST_LIVE_PANES" "$WATCHER_LIST_LIVE_WINDOWS"
 }
 
 verb="${1:-}"

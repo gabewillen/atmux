@@ -119,6 +119,7 @@ MATRIX_ROWS=(
   "exec --help"
   "schedule --help"
   "notify --help"
+  "doctor --help"
   "update --help"
   "install --help"
 )

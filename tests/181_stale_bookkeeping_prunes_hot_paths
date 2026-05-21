@@ -1,0 +1,150 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Isolate the tmux socket so this test can never touch the developer's
+# default tmux server. Idempotent if the runner already isolated.
+# shellcheck source=tests/lib/isolate-tmux.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/isolate-tmux.sh"
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+ATMUX_BIN="$REPO_ROOT/bin/atmux"
+NOTIFY_SCRIPT="$REPO_ROOT/bin/(atmux)/notify"
+
+tmp_root="$(mktemp -d "${TMPDIR:-/tmp}/atmux-stale-bookkeeping.XXXXXX")"
+ATMUX_HOME="$tmp_root/.atmux"
+ATMUX_SOURCE_ROOT="$REPO_ROOT"
+export ATMUX_HOME ATMUX_SOURCE_ROOT
+
+# shellcheck source=bin/(atmux)/notify
+source "$NOTIFY_SCRIPT"
+
+repo="stale${RANDOM}"
+team="platform"
+live_session="atmux-${repo}-live"
+
+cleanup() {
+  tmux kill-session -t "$live_session" >/dev/null 2>&1 || true
+  rm -rf "$tmp_root"
+}
+trap cleanup EXIT
+
+tmux new-session -d -s "$live_session" -n "$live_session" "cat"
+live_pane="$(tmux list-panes -t "$live_session" -F '#{pane_id}' 2>/dev/null | head -n1)"
+[[ -n "$live_pane" ]] || { echo "live pane missing" >&2; exit 1; }
+
+state_dir="$(team_state_dir "$repo" "$team")"
+mkdir -p "$state_dir"
+atmux_fs_write_field "$state_dir/name" "$team"
+
+pr_watchers="$ATMUX_HOME/watch-pr/stale-pr/watchers"
+mkdir -p "$pr_watchers"
+atmux_fs_write_field "$pr_watchers/live" "${live_pane}|0"
+atmux_fs_write_field "$pr_watchers/dead" "%999999|0"
+atmux_fs_write_field "$pr_watchers/dead.exec" "cat >/dev/null"
+
+dead_fifo="$tmp_root/dead-watch.fifo"
+mkfifo "$dead_fifo"
+exec_watchers="$ATMUX_HOME/exec/$repo/123/watchers"
+mkdir -p "$exec_watchers"
+atmux_fs_write_field "$exec_watchers/dead" "%999999|$dead_fifo"
+
+issue_dir="$ATMUX_HOME/issues/$repo/456"
+issue_watchers="$issue_dir/watchers"
+victim_path="$tmp_root/not-a-fifo-path"
+mkdir -p "$issue_watchers"
+atmux_fs_write_field "$issue_watchers/dead" "%999999|$victim_path"
+atmux_fs_write_field "$victim_path" "not a watcher signal fifo"
+
+agent_idle_watcher="$ATMUX_HOME/watch-agent-idle/${repo}--agent--worker/watchers/dead-agent"
+mkdir -p "$agent_idle_watcher"
+atmux_fs_write_field "$agent_idle_watcher/worker.pid" "999999"
+atmux_fs_write_field "$agent_idle_watcher/window_id" "@999999"
+
+team_watchers="$(team_message_watchers_dir "$repo" "$team")"
+stale_sub="$team_watchers/dead-sub"
+mkdir -p "$stale_sub"
+atmux_fs_write_field "$stale_sub/pane" "%999999"
+atmux_fs_write_field "$stale_sub/session" "atmux-${repo}-gone"
+atmux_fs_write_field "$stale_sub/repo" "$repo"
+atmux_fs_write_field "$stale_sub/team" "$team"
+
+watchers="$(ATMUX_HOME="$ATMUX_HOME" ATMUX_REPO="$repo" "$ATMUX_BIN" watcher list)"
+printf '%s\n' "$watchers" | grep -Fq "pr:stale-pr:live"
+if printf '%s\n' "$watchers" | grep -Eq 'dead|dead-sub'; then
+  echo "stale watchers leaked into watcher list" >&2
+  printf '%s\n' "$watchers" >&2
+  exit 1
+fi
+[[ ! -e "$pr_watchers/dead" ]] || { echo "stale pr watcher was not pruned" >&2; exit 1; }
+[[ ! -e "$pr_watchers/dead.exec" ]] || { echo "stale pr exec sidecar was not pruned" >&2; exit 1; }
+[[ ! -e "$agent_idle_watcher" ]] || { echo "stale agent-idle watcher was not pruned" >&2; exit 1; }
+[[ ! -e "$stale_sub" ]] || { echo "stale team-message subscription was not pruned by watcher list" >&2; exit 1; }
+
+mkdir -p "$stale_sub"
+atmux_fs_write_field "$stale_sub/pane" "%999999"
+atmux_fs_write_field "$stale_sub/session" "atmux-${repo}-gone"
+atmux_fs_write_field "$stale_sub/repo" "$repo"
+atmux_fs_write_field "$stale_sub/team" "$team"
+
+send_out="$(
+  ATMUX_HOME="$ATMUX_HOME" ATMUX_REPO="$repo" ATMUX_AGENT_NAME="sender" ATMUX_SESSION_NAME="atmux-${repo}-sender" \
+    "$ATMUX_BIN" send --to "$team" "stale subscriber should be pruned"
+)"
+printf '%s\n' "$send_out" | grep -Fq 'failed="0"'
+[[ ! -e "$stale_sub" ]] || { echo "stale subscriber was not pruned during team delivery" >&2; exit 1; }
+
+payload="$(build_notification "exec" "test" "")"
+notify_exec_watchers "$ATMUX_HOME/exec/$repo/123" "" "$payload"
+[[ ! -e "$exec_watchers/dead" ]] || { echo "stale exec watcher was not pruned" >&2; exit 1; }
+[[ ! -e "$dead_fifo" ]] || { echo "stale exec watcher fifo was not pruned" >&2; exit 1; }
+
+notify_issue_watchers "$issue_dir" "" "$payload"
+[[ ! -e "$issue_watchers/dead" ]] || { echo "stale issue watcher was not pruned" >&2; exit 1; }
+[[ -e "$victim_path" ]] || { echo "non-fifo watcher payload field was incorrectly removed" >&2; exit 1; }
+
+unknown_pr_watchers="$ATMUX_HOME/watch-pr/unknown-pr/watchers"
+unknown_exec_watchers="$ATMUX_HOME/exec/$repo/789/watchers"
+unknown_agent_idle_watcher="$ATMUX_HOME/watch-agent-idle/${repo}--agent--unknown/watchers/window-only"
+unknown_sub="$team_watchers/unknown-sub"
+unknown_empty_sub="$team_watchers/empty-sub"
+mkdir -p "$unknown_pr_watchers" "$unknown_exec_watchers" "$unknown_agent_idle_watcher" "$unknown_sub"
+atmux_fs_write_field "$unknown_pr_watchers/unknown" "%999999|0"
+atmux_fs_write_field "$unknown_exec_watchers/unknown" "%999999|$tmp_root/unknown.fifo"
+mkfifo "$tmp_root/unknown.fifo"
+atmux_fs_write_field "$unknown_agent_idle_watcher/window_id" "@999999"
+atmux_fs_write_field "$unknown_sub/pane" "%999999"
+atmux_fs_write_field "$unknown_sub/session" "atmux-${repo}-unknown"
+atmux_fs_write_field "$unknown_sub/repo" "$repo"
+atmux_fs_write_field "$unknown_sub/team" "$team"
+
+missing_socket="$tmp_root/missing-tmux.sock"
+unknown_watchers="$(ATMUX_TMUX_SOCKET="$missing_socket" ATMUX_HOME="$ATMUX_HOME" ATMUX_REPO="$repo" "$ATMUX_BIN" watcher list)"
+printf '%s\n' "$unknown_watchers" | grep -Fq "pr:unknown-pr:unknown"
+printf '%s\n' "$unknown_watchers" | grep -Fq "agent-idle:${repo}--agent--unknown:window-only"
+[[ -e "$unknown_pr_watchers/unknown" ]] || { echo "watcher list pruned when pane snapshot was unavailable" >&2; exit 1; }
+[[ -e "$unknown_agent_idle_watcher" ]] || { echo "watcher list pruned window watcher when tmux snapshot was unavailable" >&2; exit 1; }
+
+unknown_subscriptions="$(ATMUX_TMUX_SOCKET="$missing_socket" ATMUX_HOME="$ATMUX_HOME" ATMUX_REPO="$repo" "$ATMUX_BIN" message subscriptions --team "$team")"
+printf '%s\n' "$unknown_subscriptions" | grep -Fq "team-message:${repo}--team--${team}:unknown-sub"
+[[ -e "$unknown_sub" ]] || { echo "message list pruned when pane snapshot was unavailable" >&2; exit 1; }
+
+rm -rf "$unknown_sub"
+mkdir -p "$unknown_empty_sub"
+atmux_fs_write_field "$unknown_empty_sub/session" "atmux-${repo}-empty"
+atmux_fs_write_field "$unknown_empty_sub/repo" "$repo"
+atmux_fs_write_field "$unknown_empty_sub/team" "$team"
+ATMUX_HOME="$ATMUX_HOME" ATMUX_REPO="$repo" "$ATMUX_BIN" message subscriptions --team "$team" >/dev/null
+[[ -e "$unknown_empty_sub" ]] || { echo "message list pruned empty subscriber" >&2; exit 1; }
+unknown_send_out="$(
+  ATMUX_TMUX_SOCKET="$missing_socket" ATMUX_HOME="$ATMUX_HOME" ATMUX_REPO="$repo" ATMUX_AGENT_NAME="sender" ATMUX_SESSION_NAME="atmux-${repo}-sender" \
+    "$ATMUX_BIN" send --to "$team" "unknown pane snapshot should not fail empty subscribers"
+)"
+printf '%s\n' "$unknown_send_out" | grep -Fq 'failed="0"'
+[[ -e "$unknown_empty_sub" ]] || { echo "empty subscriber was incorrectly pruned with unknown pane snapshot" >&2; exit 1; }
+
+( ATMUX_TMUX_SOCKET="$missing_socket"; notify_exec_watchers "$ATMUX_HOME/exec/$repo/789" "" "$payload" )
+[[ -e "$unknown_exec_watchers/unknown" ]] || { echo "notify fan-out pruned when pane snapshot was unavailable" >&2; exit 1; }
+[[ -e "$tmp_root/unknown.fifo" ]] || { echo "notify fan-out removed fifo when pane snapshot was unavailable" >&2; exit 1; }
+
+echo "ok: stale watcher/subscriber bookkeeping prunes on listing and delivery hot paths"

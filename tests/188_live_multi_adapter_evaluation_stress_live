@@ -29,6 +29,11 @@ REPORT_MD=""
 DETAIL_DIR=""
 BREAKDOWN_ROUND=""
 BREAKDOWN_REASON=""
+MANAGER_ADAPTER=""
+MANAGER_NAME=""
+MANAGER_SESSION=""
+MANAGER_PANE=""
+MANAGER_QUEUE_KEY=""
 
 declare -a SESSIONS=()
 declare -a TMP_FILES=()
@@ -167,6 +172,20 @@ capture_compact() {
   tmux capture-pane -p -t "$pane" -S -50000 2>/dev/null | tr -d '\r\n' || true
 }
 
+delivered_log_for_key() {
+  local key="$1"
+  printf '%s/delivered.tsv\n' "$(queue_dir_for_key "$key")"
+}
+
+delivered_log_has_message_id() {
+  local key="$1"
+  local message_id="$2"
+  local log_file
+  log_file="$(delivered_log_for_key "$key")"
+  [[ -f "$log_file" ]] || return 1
+  grep -Fq "atmux message read $message_id" "$log_file"
+}
+
 run_atmux_as_sender() {
   local agent_name="$1"
   shift
@@ -174,8 +193,8 @@ run_atmux_as_sender() {
     ATMUX_HOME="$ATMUX_HOME_TEST" \
     ATMUX_SOURCE_ROOT="$REPO_ROOT" \
     ATMUX_REPO="$REPO" \
-    ATMUX_AGENT_NAME="sender-$agent_name" \
-    ATMUX_SESSION_NAME="atmux-${REPO}-sender-${agent_name}" \
+    ATMUX_AGENT_NAME="$agent_name" \
+    ATMUX_SESSION_NAME="atmux-${REPO}-${agent_name}" \
     "$ATMUX_BIN" "$@"
 }
 
@@ -184,7 +203,7 @@ extract_message_id() {
 }
 
 append_summary_header() {
-  printf 'round\tscale\tadapter\tsent\tmessage_ids\tvisible_hints\tqueue_after\tsend_seconds\tdrain_seconds\tstatus\tnotes\n' > "$SUMMARY_TSV"
+  printf 'round\tscale\tadapter\tsent\tmessage_ids\tdelivered_hints\tvisible_hints\tqueue_after\tsend_seconds\tdrain_seconds\tstatus\tnotes\n' > "$SUMMARY_TSV"
 }
 
 append_list_header() {
@@ -196,11 +215,11 @@ append_command_header() {
 }
 
 append_queue_header() {
-  printf 'timestamp\tphase\tround\tscale\tadapter\tagent\tpane\tqueue_key\tqueue_items\titem\tstate\tattempts\tcreated_at\tnext_attempt_at\tworker_pid\tworker_running\tlock_present\n' > "$QUEUE_TSV"
+  printf 'timestamp\tphase\tround\tscale\tadapter\tagent\tpane\tqueue_key\tqueue_items\titem\tstate\tattempts\tcreated_at\tnext_attempt_at\tworker_pid\tworker_running\tlock_present\tpayload_type\tpayload_from\tpayload_hint\n' > "$QUEUE_TSV"
 }
 
 append_summary() {
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$@" >> "$SUMMARY_TSV"
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$@" >> "$SUMMARY_TSV"
 }
 
 append_list_metric() {
@@ -233,17 +252,16 @@ append_command_metric() {
   rmdir "$lock_dir"
 }
 
-snapshot_queue_state() {
-  local phase="$1"
-  local round="$2"
-  local scale="$3"
-  local timestamp idx adapter agent_name pane qdir queue_key payload_dir queue_items worker_pid worker_running lock_present item state attempts created_at next_attempt_at wrote_item
-  timestamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  for (( idx=0; idx<${#ADAPTERS[@]}; idx++ )); do
-    adapter="${ADAPTERS[$idx]}"
-    agent_name="${AGENT_NAMES[$idx]}"
-    pane="${PANES[$idx]}"
-    queue_key="${QUEUE_KEYS[$idx]}"
+snapshot_queue_row() {
+  local timestamp="$1"
+  local phase="$2"
+  local round="$3"
+  local scale="$4"
+  local adapter="$5"
+  local agent_name="$6"
+  local pane="$7"
+  local queue_key="$8"
+  local qdir payload_dir queue_items worker_pid worker_running lock_present item state attempts created_at next_attempt_at payload payload_type payload_from payload_hint wrote_item
     qdir="$(queue_dir_for_key "$queue_key")"
     payload_dir="$qdir/payloads"
     queue_items="$(count_queue_items_for_qdir "$qdir")"
@@ -263,17 +281,34 @@ snapshot_queue_state() {
         attempts="$(cat "$item/attempts" 2>/dev/null || true)"
         created_at="$(cat "$item/created_at" 2>/dev/null || true)"
         next_attempt_at="$(cat "$item/next_attempt_at" 2>/dev/null || true)"
-        printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+        payload="$(cat "$item/payload" 2>/dev/null || true)"
+        payload_type="$(printf '%s' "$payload" | sed -n 's/.*<notification[^>]* type="\([^"]*\)".*/\1/p' | head -n1)"
+        payload_from="$(printf '%s' "$payload" | sed -n 's/.*<notification[^>]* from="\([^"]*\)".*/\1/p' | head -n1)"
+        payload_hint="$(printf '%s' "$payload" | sed -n 's/.*<notification[^>]* hint="\([^"]*\)".*/\1/p' | head -n1)"
+        printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
           "$timestamp" "$phase" "$round" "$scale" "$adapter" "$agent_name" "$pane" "$queue_key" "$queue_items" \
           "$(basename "$item")" "${state:-unknown}" "${attempts:-unknown}" "${created_at:-unknown}" "${next_attempt_at:-none}" \
-          "${worker_pid:-none}" "$worker_running" "$lock_present" >> "$QUEUE_TSV"
+          "${worker_pid:-none}" "$worker_running" "$lock_present" "${payload_type:-unknown}" "${payload_from:-unknown}" "${payload_hint:-none}" >> "$QUEUE_TSV"
       done < <(find "$payload_dir" -mindepth 1 -maxdepth 1 -type d ! -name '.*' 2>/dev/null | sort)
     fi
     if (( wrote_item == 0 )); then
-      printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\tnone\tnone\tnone\tnone\tnone\t%s\t%s\t%s\n' \
+      printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\tnone\tnone\tnone\tnone\tnone\t%s\t%s\t%s\tnone\tnone\tnone\n' \
         "$timestamp" "$phase" "$round" "$scale" "$adapter" "$agent_name" "$pane" "$queue_key" "$queue_items" \
         "${worker_pid:-none}" "$worker_running" "$lock_present" >> "$QUEUE_TSV"
     fi
+}
+
+snapshot_queue_state() {
+  local phase="$1"
+  local round="$2"
+  local scale="$3"
+  local timestamp idx
+  timestamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  if [[ -n "$MANAGER_NAME" ]]; then
+    snapshot_queue_row "$timestamp" "$phase" "$round" "$scale" "manager:$MANAGER_ADAPTER" "$MANAGER_NAME" "$MANAGER_PANE" "$MANAGER_QUEUE_KEY"
+  fi
+  for (( idx=0; idx<${#ADAPTERS[@]}; idx++ )); do
+    snapshot_queue_row "$timestamp" "$phase" "$round" "$scale" "${ADAPTERS[$idx]}" "${AGENT_NAMES[$idx]}" "${PANES[$idx]}" "${QUEUE_KEYS[$idx]}"
   done
 }
 
@@ -328,10 +363,10 @@ write_report() {
     printf '## Evaluation notes\n\n'
     printf -- '- `message_ids < sent` means the sender path is failing before durable message creation; inspect sender stdout/stderr artifacts and async command bookkeeping.\n'
     printf -- '- `queue_after > 0` means pane delivery or verification is not draining fast enough; inspect notify queue item state, retry counts, and submit verification debug logs.\n'
-    printf -- '- `visible_hints < message_ids` with an empty queue usually means adapter UI rewrite/scrollback makes tmux capture an incomplete delivery witness; prefer durable delivered/read metadata over pane text as the long-term assertion.\n'
+    printf -- '- `delivered_hints < message_ids` means the worker has not recorded durable delivery for all first-generation messages. `visible_hints < delivered_hints` means adapter UI rewrite/scrollback made pane capture an incomplete witness.\n'
     printf -- '- High `send_seconds` at low scale points to command startup, message directory churn, or sequence-lock contention; high `drain_seconds` points to serialized pane delivery and adapter prompt/submit timing.\n\n'
     printf -- '- `agent list --all` isolates tmux session enumeration and repo filtering; `agent list --all --status` adds one passive adapter status call per listed session. If only the status form is slow, the bottleneck is adapter status capture/parsing rather than global listing.\n\n'
-    printf -- '- `commands.tsv` records every `atmux` command the evaluator runs, including boot, send, and listing calls, so external observers can plot per-command latency while the test scales.\n\n'
+    printf -- '- `commands.tsv` records every `atmux` command the evaluator runs, including boot, listing, external-to-worker, manager-to-worker, worker-to-manager, and worker-to-worker-ring send calls, so external observers can plot per-command latency while the test scales.\n\n'
     printf -- '- `queues.tsv` records per-agent queue depth, pending item state, attempts, worker PID liveness, and lock presence at evaluation checkpoints.\n\n'
 
     printf '## Improvement candidates\n\n'
@@ -400,6 +435,45 @@ boot_adapters() {
   done
 }
 
+boot_manager() {
+  local session pane out_file start seconds rc
+  MANAGER_ADAPTER="${ATMUX_LIVE_EVAL_MANAGER_ADAPTER:-${ADAPTERS[0]}}"
+  if ! require_adapter_command "$MANAGER_ADAPTER"; then
+    echo "manager adapter is unavailable: $MANAGER_ADAPTER" >&2
+    exit 1
+  fi
+  MANAGER_NAME="${ATMUX_LIVE_EVAL_MANAGER_NAME:-manager-eval}"
+  echo "--- boot manager $MANAGER_ADAPTER as $MANAGER_NAME ---" >&2
+  out_file="$DETAIL_DIR/agent-create-manager.out"
+  start="$(now_seconds)"
+  set +e
+  session="$(ATMUX_ALLOW_OUTSIDE_TMUX=1 \
+    ATMUX_HOME="$ATMUX_HOME_TEST" \
+    ATMUX_SOURCE_ROOT="$REPO_ROOT" \
+    ATMUX_REPO="$REPO" \
+    ATMUX_ROLE="manager" \
+    ATMUX_INTELLIGENCE="${ATMUX_LIVE_EVAL_INTELLIGENCE:-50}" \
+    "$ATMUX_BIN" agent create \
+      --name "$MANAGER_NAME" \
+      --role manager \
+      --intelligence "${ATMUX_LIVE_EVAL_INTELLIGENCE:-50}" \
+      --adapter auto \
+      --adapters "$MANAGER_ADAPTER" \
+      --shared-worktree 2>&1)"
+  rc=$?
+  set -e
+  seconds="$(( $(now_seconds) - start ))"
+  printf '%s\n' "$session" > "$out_file"
+  append_command_metric "boot" 0 0 "manager:$MANAGER_ADAPTER" "$seconds" "$rc" "$out_file" "atmux agent create --name $MANAGER_NAME --role manager --adapter auto --adapters $MANAGER_ADAPTER --shared-worktree"
+  [[ "$rc" == "0" && -n "$session" ]] || { echo "failed to start manager; see $out_file" >&2; exit 1; }
+  pane="$(session_pane "$session")"
+  [[ -n "$pane" ]] || { echo "missing pane for manager session $session" >&2; exit 1; }
+  MANAGER_SESSION="$session"
+  MANAGER_PANE="$pane"
+  MANAGER_QUEUE_KEY="$(queue_key_for_pane "$pane")"
+  SESSIONS+=("$session")
+}
+
 measure_agent_list() {
   local phase="$1"
   local round="$2"
@@ -456,14 +530,39 @@ measure_agent_lists() {
   measure_agent_list "$phase" "$round" "$scale" 1
 }
 
+enqueue_eval_send() {
+  local scenario="$1"
+  local round="$2"
+  local scale="$3"
+  local adapter_label="$4"
+  local sender_name="$5"
+  local target_name="$6"
+  local result_file="$7"
+  local body
+  body="atmux live-eval delivery receipt probe only. Do not reply, do not run commands, and do not take action. scenario=$scenario round=$round scale=$scale from=$sender_name to=$target_name token=$RANDOM"
+  (
+    set +e
+    one_start="$(now_seconds)"
+    out="$(run_atmux_as_sender "$sender_name" send --to "$target_name" "$body" 2>&1)"
+    rc=$?
+    one_seconds="$(( $(now_seconds) - one_start ))"
+    {
+      printf 'rc=%s\n' "$rc"
+      printf '%s\n' "$out"
+    } > "$result_file"
+    append_command_metric "$scenario" "$round" "$scale" "$adapter_label" "$one_seconds" "$rc" "$result_file" "atmux send --to $target_name"
+    exit 0
+  ) &
+}
+
 run_round() {
   local round="$1"
   local scale="$2"
   local wait_seconds="$3"
   local round_dir="$DETAIL_DIR/round-$round-scale-$scale"
-  local idx adapter agent_name pane send_idx result_file out id rc
+  local idx adapter agent_name pane send_idx result_file id rc next_idx next_agent next_adapter
   local send_start send_seconds drain_start drain_seconds status notes
-  local sent ids visible queue_after
+  local sent ids delivered visible queue_after queue_key
   local -a pids=()
 
   mkdir -p "$round_dir"
@@ -474,20 +573,23 @@ run_round() {
     adapter="${ADAPTERS[$idx]}"
     agent_name="${AGENT_NAMES[$idx]}"
     for (( send_idx=1; send_idx<=scale; send_idx++ )); do
-      result_file="$round_dir/${adapter}.${send_idx}.out"
-      (
-        set +e
-        one_start="$(now_seconds)"
-        out="$(run_atmux_as_sender "$agent_name" send --to "$agent_name" "live-eval round=$round scale=$scale adapter=$adapter item=$send_idx token=$RANDOM" 2>&1)"
-        rc=$?
-        one_seconds="$(( $(now_seconds) - one_start ))"
-        {
-          printf 'rc=%s\n' "$rc"
-          printf '%s\n' "$out"
-        } > "$result_file"
-        append_command_metric "send" "$round" "$scale" "$adapter" "$one_seconds" "$rc" "$result_file" "atmux send --to $agent_name"
-        exit 0
-      ) &
+      result_file="$round_dir/external.${adapter}.${send_idx}.out"
+      enqueue_eval_send "external-to-worker" "$round" "$scale" "$adapter" "sender-$agent_name" "$agent_name" "$result_file"
+      pids+=($!)
+
+      result_file="$round_dir/manager-worker.${adapter}.${send_idx}.out"
+      enqueue_eval_send "manager-to-worker" "$round" "$scale" "manager:$MANAGER_ADAPTER->$adapter" "$MANAGER_NAME" "$agent_name" "$result_file"
+      pids+=($!)
+
+      next_idx=$(( (idx + 1) % ${#ADAPTERS[@]} ))
+      next_agent="${AGENT_NAMES[$next_idx]}"
+      next_adapter="${ADAPTERS[$next_idx]}"
+      result_file="$round_dir/worker-ring.${next_adapter}.${send_idx}.from-${adapter}.out"
+      enqueue_eval_send "worker-to-worker-ring" "$round" "$scale" "$adapter->$next_adapter" "$agent_name" "$next_agent" "$result_file"
+      pids+=($!)
+
+      result_file="$round_dir/worker-manager.${adapter}.${send_idx}.out"
+      enqueue_eval_send "worker-to-manager" "$round" "$scale" "$adapter->manager:$MANAGER_ADAPTER" "$agent_name" "$MANAGER_NAME" "$result_file"
       pids+=($!)
     done
   done
@@ -499,18 +601,21 @@ run_round() {
   drain_start="$(now_seconds)"
   wait_for_queues_empty "$wait_seconds" || true
   drain_seconds="$(( $(now_seconds) - drain_start ))"
+  measure_agent_lists "post-drain" "$round" "$scale"
   snapshot_queue_state "post-drain" "$round" "$scale"
 
   for (( idx=0; idx<${#ADAPTERS[@]}; idx++ )); do
     adapter="${ADAPTERS[$idx]}"
     pane="${PANES[$idx]}"
-    sent="$scale"
+    sent="$(( scale * 3 ))"
     ids=0
+    delivered=0
     visible=0
     notes=""
+    queue_key="${QUEUE_KEYS[$idx]}"
     local snap
     snap="$(capture_compact "$pane")"
-    for result_file in "$round_dir/${adapter}."*.out; do
+    for result_file in "$round_dir/external.${adapter}."*.out "$round_dir/manager-worker.${adapter}."*.out "$round_dir/worker-ring.${adapter}."*.out; do
       [[ -f "$result_file" ]] || continue
       rc="$(sed -n 's/^rc=//p' "$result_file" | head -n1)"
       if [[ "$rc" != "0" ]]; then
@@ -519,6 +624,9 @@ run_round() {
       id="$(tail -n +2 "$result_file" | extract_message_id || true)"
       if [[ -n "$id" ]]; then
         ids=$(( ids + 1 ))
+        if delivered_log_has_message_id "$queue_key" "$id"; then
+          delivered=$(( delivered + 1 ))
+        fi
         if printf '%s' "$snap" | grep -Fq "atmux message read $id"; then
           visible=$(( visible + 1 ))
         fi
@@ -530,6 +638,10 @@ run_round() {
       status="send-breakdown"
       notes="${notes}missing_message_ids;"
       record_breakdown "$round" "$adapter created $ids/$sent message ids"
+    elif (( delivered < ids )); then
+      status="delivery-breakdown"
+      notes="${notes}missing_delivered_hints;"
+      record_breakdown "$round" "$adapter only recorded $delivered/$ids durable deliveries"
     elif (( queue_after > 0 )); then
       status="queue-breakdown"
       notes="${notes}queue_not_empty;"
@@ -539,8 +651,56 @@ run_round() {
       notes="${notes}pane_capture_missing_hints;"
       record_breakdown "$round" "$adapter only showed $visible/$ids read hints after queue drain"
     fi
-    append_summary "$round" "$scale" "$adapter" "$sent" "$ids" "$visible" "$queue_after" "$send_seconds" "$drain_seconds" "$status" "${notes:-none}"
+    append_summary "$round" "$scale" "$adapter" "$sent" "$ids" "$delivered" "$visible" "$queue_after" "$send_seconds" "$drain_seconds" "$status" "${notes:-none}"
   done
+  if [[ -n "$MANAGER_NAME" ]]; then
+    adapter="manager:$MANAGER_ADAPTER"
+    pane="$MANAGER_PANE"
+    sent="$(( scale * ${#ADAPTERS[@]} ))"
+    ids=0
+    delivered=0
+    visible=0
+    notes=""
+    local snap
+    snap="$(capture_compact "$pane")"
+    for result_file in "$round_dir/worker-manager."*.out; do
+      [[ -f "$result_file" ]] || continue
+      rc="$(sed -n 's/^rc=//p' "$result_file" | head -n1)"
+      if [[ "$rc" != "0" ]]; then
+        notes="${notes}send_rc_${rc};"
+      fi
+      id="$(tail -n +2 "$result_file" | extract_message_id || true)"
+      if [[ -n "$id" ]]; then
+        ids=$(( ids + 1 ))
+        if delivered_log_has_message_id "$MANAGER_QUEUE_KEY" "$id"; then
+          delivered=$(( delivered + 1 ))
+        fi
+        if printf '%s' "$snap" | grep -Fq "atmux message read $id"; then
+          visible=$(( visible + 1 ))
+        fi
+      fi
+    done
+    queue_after="$(count_queue_items_for_qdir "$(queue_dir_for_key "$MANAGER_QUEUE_KEY")")"
+    status="ok"
+    if (( ids < sent )); then
+      status="send-breakdown"
+      notes="${notes}missing_message_ids;"
+      record_breakdown "$round" "$adapter created $ids/$sent message ids"
+    elif (( delivered < ids )); then
+      status="delivery-breakdown"
+      notes="${notes}missing_delivered_hints;"
+      record_breakdown "$round" "$adapter only recorded $delivered/$ids durable deliveries"
+    elif (( queue_after > 0 )); then
+      status="queue-breakdown"
+      notes="${notes}queue_not_empty;"
+      record_breakdown "$round" "$adapter queue retained $queue_after payload(s) after scale $scale"
+    elif (( visible < ids )); then
+      status="visibility-gap"
+      notes="${notes}pane_capture_missing_hints;"
+      record_breakdown "$round" "$adapter only showed $visible/$ids read hints after queue drain"
+    fi
+    append_summary "$round" "$scale" "$adapter" "$sent" "$ids" "$delivered" "$visible" "$queue_after" "$send_seconds" "$drain_seconds" "$status" "${notes:-none}"
+  fi
   measure_agent_lists "post-round" "$round" "$scale"
 }
 
@@ -572,6 +732,7 @@ main() {
   wait_seconds="${ATMUX_LIVE_EVAL_WAIT_SECONDS:-420}"
   [[ "$wait_seconds" =~ ^[0-9]+$ ]] || wait_seconds=420
 
+  boot_manager
   boot_adapters
   measure_agent_lists "post-boot" 0 0
   snapshot_queue_state "post-boot" 0 0

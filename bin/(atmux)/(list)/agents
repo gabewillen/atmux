@@ -136,6 +136,8 @@ USAGE
     IFS= read -r repo_name
   } < <(atmux_resolve_repo_context)
 
+  prune_dead_notification_queues
+
   local mode
   mode="$(reporter_mode)"
 

@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# If a target pane exits after payloads are queued, the worker should mark the
+# pending items failed and remove them instead of leaving a stale queue forever.
+source "$(dirname "${BASH_SOURCE[0]}")/lib/isolate-tmux.sh"
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+NOTIFY_SCRIPT="$REPO_ROOT/bin/(atmux)/notify"
+
+ATMUX_HOME="$(mktemp -d "${TMPDIR:-/tmp}/atmux-notify-pane-gone.XXXXXX")"
+ATMUX_SOURCE_ROOT="$REPO_ROOT"
+export ATMUX_HOME ATMUX_SOURCE_ROOT
+
+# shellcheck source=bin/(atmux)/notify
+source "$NOTIFY_SCRIPT"
+
+pane="%gone"
+
+cleanup() {
+  rm -rf "$ATMUX_HOME"
+}
+trap cleanup EXIT
+
+tmux() {
+  if [[ "$1" == "display-message" ]]; then
+    local fmt="${@: -1}"
+    case "$fmt" in
+      "#{session_name}") printf 'mock-session\n' ;;
+      *) return 1 ;;
+    esac
+    return 0
+  fi
+  command tmux "$@"
+}
+
+pane_exists() {
+  return 1
+}
+
+payload="$(build_notification "test" "sender" "")"
+queue_notification_payload "$pane" "$payload" "Enter"
+qdir="$(notify_queue_dir "$pane")"
+
+serve_notification_queue "$pane" "$ATMUX_SOURCE_ROOT"
+
+if [[ -d "$qdir/payloads" ]] && find "$qdir/payloads" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | grep -q .; then
+  echo "expected pane-gone pending item to be failed and removed" >&2
+  find "$qdir" -maxdepth 3 -print >&2
+  exit 1
+fi
+
+echo "ok: pane-gone notification workers clear pending payloads"

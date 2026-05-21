@@ -28,6 +28,14 @@
   boots real adapters, ramps concurrent `atmux send` delivery, measures
   notification drain plus `agent list --all` latency, and writes TSV/Markdown
   bottleneck reports with per-command timing and queue-state metrics.
+- The live evaluation now covers external-to-worker, manager-to-worker,
+  worker-to-manager, and worker-to-worker-ring communication, and notification
+  workers now record durable delivery metadata and fail/clear pre-attempt
+  deferrals, pane-gone payloads, or worker-spawn failures instead of leaving
+  stale queued items at `attempts=0`.
+- `atmux agent list --all` now opportunistically prunes notification queues for
+  dead recipient sessions so global listing also cleans up stale delivery
+  bookkeeping left behind by abrupt adapter exits.
 - Added `atmux doctor` for project-local or system `.atmux` cleanup.
 - Prunes stale exec metadata, dead watcher registrations, dead notification
   worker locks, completed async-command records, empty queues, and empty state

@@ -568,6 +568,88 @@ mark_notification_delivered() {
   atmux_fs_write_field "$item_dir/delivered_at" "$(timestamp_utc)"
 }
 
+mark_notification_deferred() {
+  local item_dir="$1"
+  local reason="$2"
+  local now first_deferred
+  now="$(date +%s)"
+  first_deferred="$(read_state_field "$item_dir/first_deferred_at")"
+  if [[ ! "$first_deferred" =~ ^[0-9]+$ ]]; then
+    atmux_fs_write_field "$item_dir/first_deferred_at" "$now"
+  fi
+  atmux_fs_write_field "$item_dir/state" "waiting_$reason"
+  atmux_fs_write_field "$item_dir/last_defer_reason" "$reason"
+  atmux_fs_write_field "$item_dir/last_deferred_at" "$now"
+}
+
+notification_defer_expired() {
+  local item_dir="$1"
+  local max="${ATMUX_NOTIFY_DEFER_MAX_SECONDS:-120}"
+  local first_deferred now
+  [[ "$max" =~ ^[0-9]+$ ]] || max=120
+  first_deferred="$(read_state_field "$item_dir/first_deferred_at")"
+  [[ "$first_deferred" =~ ^[0-9]+$ ]] || return 1
+  now="$(date +%s)"
+  (( now - first_deferred >= max ))
+}
+
+mark_notification_failed_without_attempt() {
+  local item_dir="$1"
+  local reason="$2"
+  local attempts now
+  attempts="$(notification_item_attempts "$item_dir")"
+  attempts=$(( attempts + 1 ))
+  now="$(date +%s)"
+  atmux_fs_write_field "$item_dir/attempts" "$attempts"
+  atmux_fs_write_field "$item_dir/last_attempt_at" "$now"
+  atmux_fs_write_field "$item_dir/last_error" "$reason"
+  atmux_fs_write_field "$item_dir/state" "failed"
+}
+
+defer_or_fail_notification_item() {
+  local pane="$1"
+  local item_dir="$2"
+  local reason="$3"
+  local payload
+  [[ -d "$item_dir" ]] || return 0
+  mark_notification_deferred "$item_dir" "$reason"
+  if notification_defer_expired "$item_dir"; then
+    payload="$(cat "$item_dir/payload" 2>/dev/null || true)"
+    debug_notify "worker:item_defer_failed pane=$(printf '%q' "$pane") item_dir=$(printf '%q' "$item_dir") reason=$(printf '%q' "$reason")"
+    mark_notification_failed_without_attempt "$item_dir" "$reason"
+    dispatch_delivery_failed_notice "$pane" "$item_dir" "$payload"
+    rm -rf "$item_dir"
+  fi
+}
+
+defer_due_notification_items() {
+  local pane="$1"
+  local reason="$2"
+  shift 2
+  local item_dir
+  for item_dir in "$@"; do
+    [[ -d "$item_dir" ]] || continue
+    notification_item_due "$item_dir" || continue
+    defer_or_fail_notification_item "$pane" "$item_dir" "$reason"
+  done
+}
+
+fail_pending_notification_items() {
+  local pane="$1"
+  local payload_dir="$2"
+  local reason="$3"
+  local item_dir payload
+  [[ -d "$payload_dir" ]] || return 0
+  while IFS= read -r item_dir; do
+    [[ -n "$item_dir" && -d "$item_dir" ]] || continue
+    payload="$(cat "$item_dir/payload" 2>/dev/null || true)"
+    debug_notify "worker:item_failed_pending pane=$(printf '%q' "$pane") item_dir=$(printf '%q' "$item_dir") reason=$(printf '%q' "$reason")"
+    mark_notification_failed_without_attempt "$item_dir" "$reason"
+    dispatch_delivery_failed_notice "$pane" "$item_dir" "$payload"
+    rm -rf "$item_dir"
+  done < <(find "$payload_dir" -mindepth 1 -maxdepth 1 -type d ! -name '.*' 2>/dev/null | sort)
+}
+
 # Parse a notification XML's `from=` attribute. Returns empty if not
 # found or malformed.
 notification_payload_from() {
@@ -578,6 +660,31 @@ notification_payload_from() {
 notification_payload_type() {
   local payload="$1"
   printf '%s' "$payload" | sed -n 's/.*<notification[^>]* type="\([^"]*\)".*/\1/p' | head -n1
+}
+
+notification_payload_hint() {
+  local payload="$1"
+  printf '%s' "$payload" | sed -n 's/.*<notification[^>]* hint="\([^"]*\)".*/\1/p' | head -n1
+}
+
+record_notification_delivered() {
+  local item_dir="$1"
+  local payload="$2"
+  local qdir item type from hint compact log_file
+  qdir="$(cd -- "$item_dir/../.." 2>/dev/null && pwd || true)"
+  [[ -n "$qdir" ]] || return 0
+  item="$(basename "$item_dir")"
+  type="$(notification_payload_type "$payload")"
+  from="$(notification_payload_from "$payload")"
+  hint="$(notification_payload_hint "$payload")"
+  compact="$(printf '%s' "$payload" | tr '\t\r\n' '   ' | tr -s ' ')"
+  compact="${compact:0:500}"
+  log_file="$qdir/delivered.tsv"
+  if [[ ! -f "$log_file" ]]; then
+    printf 'timestamp\titem\ttype\tfrom\thint\tpayload\n' >> "$log_file"
+  fi
+  printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "$(timestamp_utc)" "$item" "${type:-}" "${from:-}" "${hint:-}" "$compact" >> "$log_file"
 }
 
 # Send a `delivery-failed` notification back to the original sender so
@@ -688,6 +795,47 @@ cleanup_notification_worker() {
     rm -f "$qdir/next_id"
     rmdir "$qdir" >/dev/null 2>&1 || true
   fi
+}
+
+notification_queue_session_from_key() {
+  local key="$1"
+  if [[ "$key" =~ ^(.+)-_([0-9]+)$ ]]; then
+    printf '%s\n' "${BASH_REMATCH[1]}"
+  fi
+}
+
+notification_queue_pane_from_key() {
+  local key="$1"
+  if [[ "$key" =~ -_([0-9]+)$ ]]; then
+    printf '%%%s\n' "${BASH_REMATCH[1]}"
+  fi
+}
+
+prune_dead_notification_queues() {
+  local root="${ATMUX_HOME:-$HOME/.atmux}/notify-queue"
+  local qdir key payload_dir session pane has_payloads
+  [[ -d "$root" ]] || return 0
+  while IFS= read -r qdir; do
+    [[ -n "$qdir" && -d "$qdir" ]] || continue
+    payload_dir="$qdir/payloads"
+    [[ -d "$payload_dir" ]] || continue
+    has_payloads=0
+    if find "$payload_dir" -mindepth 1 -maxdepth 1 -type d ! -name '.*' 2>/dev/null | grep -q .; then
+      has_payloads=1
+    fi
+    (( has_payloads == 1 )) || continue
+    notification_worker_running "$qdir" && continue
+    key="$(basename "$qdir")"
+    session="$(notification_queue_session_from_key "$key")"
+    [[ -n "$session" ]] || continue
+    if tmux has-session -t "$session" 2>/dev/null; then
+      continue
+    fi
+    pane="$(notification_queue_pane_from_key "$key")"
+    debug_notify "queue:dead_session_prune qdir=$(printf '%q' "$qdir") session=$(printf '%q' "$session") pane=$(printf '%q' "$pane")"
+    fail_pending_notification_items "${pane:-unknown}" "$payload_dir" "recipient_session_gone"
+    cleanup_notification_worker "$qdir"
+  done < <(find "$root" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort)
 }
 
 open_notification_wake_fifo() {
@@ -826,6 +974,7 @@ serve_notification_queue() {
   while true; do
     if ! pane_exists "$pane"; then
       debug_notify "worker:pane_gone pane=$(printf '%q' "$pane")"
+      fail_pending_notification_items "$pane" "$payload_dir" "pane_gone"
       break
     fi
 
@@ -888,6 +1037,7 @@ serve_notification_queue() {
     fi
     if [[ "$adapter_state" == "auto" || ( "$bootstrap_state" == "pending" && -z "$prompt_prefix" ) ]]; then
       debug_notify "worker:bootstrap_pending pane=$(printf '%q' "$pane") session=$(printf '%q' "$pane_session") command=$(printf '%q' "$pane_command") adapter=$(printf '%q' "$adapter_state") bootstrap=$(printf '%q' "$bootstrap_state")"
+      defer_due_notification_items "$pane" "bootstrap_pending" "${items[@]}"
       if (( wake_fd_open == 1 )); then
         wait_for_notification_wake_fd "$wake_timeout"
       else
@@ -913,6 +1063,7 @@ serve_notification_queue() {
     done
     if (( _has_bypass_due == 0 )) && [[ -n "$prompt_prefix" ]] && ! wait_for_prompt_ready "$pane" "$prompt_prefix"; then
       debug_notify "worker:prompt_not_ready pane=$(printf '%q' "$pane") prompt_prefix=$(printf '%q' "$prompt_prefix")"
+      defer_due_notification_items "$pane" "prompt_not_ready" "${items[@]}"
       if (( wake_fd_open == 1 )); then
         wait_for_notification_wake_fd "$wake_timeout"
       else
@@ -927,6 +1078,7 @@ serve_notification_queue() {
         saved_input="$(prompt_input_for_restore "$pane" "$prompt_prefix")" || extract_rc=$?
         if (( extract_rc != 0 )); then
           debug_notify "worker:prompt_extract_failed pane=$(printf '%q' "$pane") rc=$extract_rc"
+          defer_due_notification_items "$pane" "prompt_extract_failed" "${items[@]}"
           if (( wake_fd_open == 1 )); then
             wait_for_notification_wake_fd "$wake_timeout"
           else
@@ -965,6 +1117,7 @@ serve_notification_queue() {
       fi
       if [[ "$adapter_state" == "auto" || ( "$bootstrap_state" == "pending" && -z "$prompt_prefix" ) ]]; then
         debug_notify "worker:item_bootstrap_pending pane=$(printf '%q' "$pane") session=$(printf '%q' "$pane_session") command=$(printf '%q' "$pane_command") adapter=$(printf '%q' "$adapter_state") bootstrap=$(printf '%q' "$bootstrap_state")"
+        defer_or_fail_notification_item "$pane" "$item_dir" "bootstrap_pending"
         batch_deferred=1
         break
       fi
@@ -981,6 +1134,7 @@ serve_notification_queue() {
       debug_notify "worker:item pane=$(printf '%q' "$pane") item_dir=$(printf '%q' "$item_dir") submit_keys=$(printf '%q' "$submit_keys") pre_keys=$(printf '%q' "$pre_keys") $(payload_debug_summary "$payload")"
       if deliver_notification_to_pane "$pane" "$payload" "$submit_keys" "$prompt_prefix" "$pre_keys"; then
         mark_notification_delivered "$item_dir"
+        record_notification_delivered "$item_dir" "$payload"
         rm -rf "$item_dir"
       else
         debug_notify "worker:item_failed pane=$(printf '%q' "$pane") item_dir=$(printf '%q' "$item_dir")"
@@ -1039,6 +1193,7 @@ ensure_notification_worker() {
   local qdir
   local notify_script
   local attempt
+  local start_attempts="${ATMUX_NOTIFY_WORKER_START_ATTEMPTS:-100}"
 
   qdir="$(notify_queue_dir "$pane")"
   mkdir -p "$qdir/payloads"
@@ -1096,14 +1251,17 @@ ensure_notification_worker() {
     return 1
   fi
 
-  for (( attempt=0; attempt<20; attempt++ )); do
+  [[ "$start_attempts" =~ ^[0-9]+$ ]] || start_attempts=100
+  (( start_attempts > 0 )) || start_attempts=100
+  for (( attempt=0; attempt<start_attempts; attempt++ )); do
     if notification_worker_running "$qdir"; then
       return 0
     fi
     sleep 0.05
   done
 
-  return 0
+  debug_notify "worker:spawn_failed pane=$(printf '%q' "$pane") reason=worker_not_running_after_spawn session=$(printf '%q' "$recipient_session")"
+  return 1
 }
 
 # Send a notification to a pane in the background. Delivery is serialized per
@@ -1127,12 +1285,17 @@ send_notification() {
   fi
 
   local source_root="${ATMUX_SOURCE_ROOT:-${ATMUX_HOME:-$HOME/.atmux}/src/atmux}"
-  local notify_script
+  local notify_script qdir
   notify_script="$(resolve_notify_script_path "$source_root")"
+  qdir="$(notify_queue_dir "$pane")"
   debug_notify "send_notification:start pane=$(printf '%q' "$pane") source_root=$(printf '%q' "$source_root") submit_keys=$(printf '%q' "$submit_key_str") $(payload_debug_summary "$payload")"
 
   queue_notification_payload "$pane" "$payload" "$submit_key_str" || return 1
-  ensure_notification_worker "$pane" "$source_root"
+  if ! ensure_notification_worker "$pane" "$source_root"; then
+    debug_notify "send_notification:worker_spawn_failed pane=$(printf '%q' "$pane")"
+    fail_pending_notification_items "$pane" "$qdir/payloads" "worker_spawn_failed"
+    return 1
+  fi
   signal_notification_worker "$pane"
   debug_notify "send_notification:worker_ready pane=$(printf '%q' "$pane")"
 }

@@ -245,6 +245,17 @@ async_commands_enabled() {
   return 0
 }
 
+async_command_mode() {
+  case "${ATMUX_ASYNC_COMMANDS:-auto}" in
+    1|true|TRUE|yes|YES|on|ON|all|ALL)
+      printf 'all\n'
+      ;;
+    *)
+      printf 'auto\n'
+      ;;
+  esac
+}
+
 async_current_pane() {
   local pane="${ATMUX_TMUX_PANE:-}"
   [[ "${ATMUX_TMUX_PANE_FROM_FAKE_TMUX:-0}" != "1" ]] || return 1
@@ -255,6 +266,29 @@ async_current_pane() {
   pane="$(tmux display-message -t "$pane" -p '#{pane_id}' 2>/dev/null || true)"
   [[ -n "$pane" ]] || return 1
   printf '%s\n' "$pane"
+}
+
+async_command_writes_filesystem_by_default() {
+  local cmd="${1:-}"
+  shift || true
+
+  case "$cmd" in
+    send)
+      return 0
+      ;;
+    issue|pr)
+      case "${1:-}" in
+        create|assign|claim|comment)
+          return 0
+          ;;
+      esac
+      ;;
+    notify)
+      return 0
+      ;;
+  esac
+
+  return 1
 }
 
 should_async_command() {
@@ -269,8 +303,12 @@ should_async_command() {
   tmux has-session -t "$ATMUX_SESSION_NAME" 2>/dev/null || return 1
   async_current_pane >/dev/null || return 1
 
+  if [[ "$(async_command_mode)" != "all" ]]; then
+    async_command_writes_filesystem_by_default "$cmd" "$@" || return 1
+  fi
+
   case "$cmd" in
-    doctor|exec|install|kill|notify|role|schedule|watch|watcher)
+    doctor|exec|install|kill|role|schedule|watch|watcher)
       return 1
       ;;
     agent)

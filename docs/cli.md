@@ -28,11 +28,14 @@ Creates a filesystem-backed pull request under `<ATMUX_HOME>/pull-requests/<repo
 
 Queues a notification into another agent pane. Target resolution prefers teams, then agents/sessions. Team targets are stored under `<ATMUX_HOME>/team-messages/<repo>/<team>/`, notify every current team member, and also notify outside panes registered with `atmux message subscribe --team <team>`. `--interrupt` uses the adapter interrupt submit key when available.
 
-When an agent pane invokes an eligible `atmux` command, the dispatcher launches
-it in a detached tmux window in that agent's session and returns immediately
-with `<async .../>`. Completion is reported back to the caller as a command
+When an agent pane invokes a selected filesystem-writing command that does not
+need immediate stdout, such as `atmux send`, the dispatcher launches it in a
+detached tmux window in that agent's session and returns immediately with
+`<async .../>`. Completion is reported back to the caller as a command
 notification with the exit code and captured stdout/stderr paths. Set
-`ATMUX_ASYNC_COMMANDS=0` to force foreground command execution.
+`ATMUX_ASYNC_COMMANDS=0` to force foreground command execution, or
+`ATMUX_ASYNC_COMMANDS=all` to opt into async dispatch for other eligible
+commands.
 
 ### `atmux message read <id> [--repo <repo>] [--team <team>]`
 ### `atmux message list [--unread] [--repo <repo>] [--team <team>]`

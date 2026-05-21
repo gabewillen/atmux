@@ -1,0 +1,102 @@
+#!/usr/bin/env bash
+# Shared watcher bookkeeping helpers.
+
+if [[ -n "${__ATMUX_WATCHER_RECORDS_SOURCED:-}" ]]; then
+  return 0 2>/dev/null || true
+fi
+__ATMUX_WATCHER_RECORDS_SOURCED=1
+
+ATMUX_WATCHER_RECORDS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=bin/(atmux)/(lib)/fs
+source "$ATMUX_WATCHER_RECORDS_DIR/fs"
+
+atmux_watcher_record_raw() {
+  local file="$1"
+  atmux_fs_read_trimmed "$file"
+}
+
+atmux_watcher_record_pane() {
+  local file="$1" raw=""
+  raw="$(atmux_watcher_record_raw "$file")"
+  printf '%s\n' "${raw%%|*}"
+}
+
+atmux_watcher_record_signal_path() {
+  local file="$1" raw="" rest="" candidate=""
+  raw="$(atmux_watcher_record_raw "$file")"
+  [[ "$raw" == *"|"* ]] || return 0
+  rest="${raw#*|}"
+  candidate="${rest%%|*}"
+  [[ -n "$candidate" && -p "$candidate" ]] || return 0
+  printf '%s\n' "$candidate"
+}
+
+atmux_remove_watcher_record() {
+  local file="$1" signal_path=""
+  signal_path="$(atmux_watcher_record_signal_path "$file")"
+  rm -rf -- "$file" "${file}.exec"
+  [[ -z "$signal_path" ]] || rm -f -- "$signal_path"
+}
+
+atmux_watcher_id_is_live() {
+  local id="$1"
+  local live_ids="$2"
+  [[ -n "$id" ]] || return 1
+  [[ $'\n'"$live_ids"$'\n' == *$'\n'"$id"$'\n'* ]]
+}
+
+atmux_watcher_pane_is_live() {
+  atmux_watcher_id_is_live "$1" "$2"
+}
+
+atmux_watcher_window_is_live() {
+  atmux_watcher_id_is_live "$1" "$2"
+}
+
+atmux_watcher_pid_is_live() {
+  local pid="$1"
+  [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+  kill -0 "$pid" 2>/dev/null
+}
+
+atmux_watcher_record_is_stale() {
+  local kind="$1"
+  local watcher="$2"
+  local now="$3"
+  local live_panes="$4"
+  local live_windows="$5"
+  local raw="" pane="" expires_at="" worker_pid="" window_id=""
+
+  case "$kind" in
+    pr|issues|prs)
+      raw="$(atmux_watcher_record_raw "$watcher")"
+      pane="${raw%%|*}"
+      expires_at="${raw##*|}"
+      if [[ "$expires_at" =~ ^[0-9]+$ && "$expires_at" != "0" && "$now" -ge "$expires_at" ]]; then
+        return 0
+      fi
+      ;;
+    team-message)
+      pane="$(atmux_fs_read_trimmed "$watcher/pane")"
+      [[ -n "$pane" ]] || pane="$(atmux_watcher_record_raw "$watcher")"
+      ;;
+    agent-idle|team-idle)
+      worker_pid="$(atmux_fs_read_trimmed "$watcher/worker.pid")"
+      window_id="$(atmux_fs_read_trimmed "$watcher/window_id")"
+      if [[ -n "$worker_pid" ]] && atmux_watcher_pid_is_live "$worker_pid"; then
+        return 1
+      fi
+      if atmux_watcher_window_is_live "$window_id" "$live_windows"; then
+        return 1
+      fi
+      [[ -n "$worker_pid$window_id" ]] && return 0
+      return 1
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+
+  [[ -z "$pane" ]] && return 0
+  ! atmux_watcher_pane_is_live "$pane" "$live_panes"
+}

@@ -48,7 +48,7 @@ list_watchers() {
         # Skip the .exec sidecar files emitted by --exec watchers.
         case "$watcher_name" in *.exec) continue ;; esac
         if watcher_record_is_stale "$kind" "$watcher_file"; then
-          rm -rf "$watcher_file" "${watcher_file}.exec"
+          atmux_remove_watcher_record "$watcher_file"
           continue
         fi
         id="${kind}:${key}:${watcher_name}"
@@ -59,38 +59,7 @@ list_watchers() {
 }
 
 watcher_record_is_stale() {
-  local kind="$1"
-  local watcher_file="$2"
-  local pane="" expires_at="" raw="" worker_pid="" window_id=""
-
-  case "$kind" in
-    pr|issues|prs)
-      raw="$(atmux_fs_read_trimmed "$watcher_file")"
-      pane="${raw%%|*}"
-      expires_at="${raw##*|}"
-      if [[ -n "$expires_at" && "$expires_at" != "0" && "$expires_at" =~ ^[0-9]+$ ]] && (( WATCHER_LIST_NOW >= expires_at )); then
-        return 0
-      fi
-      ;;
-    team-message)
-      pane="$(cat "$watcher_file/pane" 2>/dev/null || cat "$watcher_file" 2>/dev/null || true)"
-      ;;
-    agent-idle|team-idle)
-      worker_pid="$(atmux_fs_read_trimmed "$watcher_file/worker.pid")"
-      window_id="$(atmux_fs_read_trimmed "$watcher_file/window_id")"
-      if [[ -n "$worker_pid" ]] && kill -0 "$worker_pid" 2>/dev/null; then
-        return 1
-      fi
-      if watcher_pane_is_live "$window_id" "$WATCHER_LIST_LIVE_WINDOWS"; then
-        return 1
-      fi
-      [[ -n "$worker_pid$window_id" ]] && return 0
-      return 1
-      ;;
-  esac
-
-  [[ -z "$pane" ]] && return 0
-  ! watcher_pane_is_live "$pane" "$WATCHER_LIST_LIVE_PANES"
+  atmux_watcher_record_is_stale "$1" "$2" "$WATCHER_LIST_NOW" "$WATCHER_LIST_LIVE_PANES" "$WATCHER_LIST_LIVE_WINDOWS"
 }
 
 verb="${1:-}"

@@ -138,6 +138,14 @@ Current built-in mapping:
 - Removes a watcher registration by id.
 - Supports watcher ids emitted by `atmux pr watch`, `atmux issue watch --feed`, and `atmux pr watch --feed`.
 
+### `atmux doctor [--project|--system] [--project-root <dir>] [--dry-run]`
+- Cleans stale atmux bookkeeping from either a project-local `.atmux`
+  directory or the system `~/.atmux`.
+- Removes exited/dead exec metadata, dead watcher registrations, dead
+  notification-worker locks, empty queue directories, and empty state
+  directories.
+- Preserves live workers, live panes/windows, and queued notification payloads.
+
 ### `atmux issue create --title <title> --assign-to <agent> [--description "..."] [--todo "..."]`
 - Creates a filesystem issue and assigns it to the target agent/session in one shot.
 

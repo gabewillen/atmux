@@ -1,0 +1,107 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Isolate tmux so live-pane/window checks cannot touch the developer server.
+# shellcheck source=tests/lib/isolate-tmux.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/isolate-tmux.sh"
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+ATMUX_BIN="$REPO_ROOT/bin/atmux"
+
+tmp_root="$(mktemp -d "${TMPDIR:-/tmp}/atmux-doctor.XXXXXX")"
+cleanup() {
+  rm -rf "$tmp_root"
+}
+trap cleanup EXIT
+
+seed_home() {
+  local home="$1"
+  local repo="$2"
+  local live_pid="$3"
+  local qdir="$home/notify-queue/%999999"
+  local queued_qdir="$home/notify-queue/%888888"
+  local exec_root="$home/exec/$repo"
+
+  mkdir -p "$exec_root/exited" "$exec_root/dead-running" "$exec_root/live-running"
+  printf '%s\n' exited > "$exec_root/exited/state"
+  printf '%s\n' 0 > "$exec_root/exited/exit_code"
+  printf '%s\n' running > "$exec_root/dead-running/state"
+  printf '%s\n' 999999 > "$exec_root/dead-running/pid"
+  printf '%s\n' running > "$exec_root/live-running/state"
+  printf '%s\n' "$live_pid" > "$exec_root/live-running/pid"
+
+  mkdir -p "$exec_root/live-running/watchers"
+  printf '%%999999|%s\n' "$tmp_root/dead-exec.fifo" > "$exec_root/live-running/watchers/dead"
+  mkfifo "$tmp_root/dead-exec.fifo"
+
+  mkdir -p "$home/watch-pr/demo-pr/watchers"
+  printf '%%999999|0\n' > "$home/watch-pr/demo-pr/watchers/dead"
+  printf 'echo stale\n' > "$home/watch-pr/demo-pr/watchers/dead.exec"
+
+  mkdir -p "$home/watch-agent-idle/${repo}--agent--worker/watchers/dead-agent"
+  printf '%s\n' 999999 > "$home/watch-agent-idle/${repo}--agent--worker/watchers/dead-agent/worker.pid"
+  printf '%s\n' @999999 > "$home/watch-agent-idle/${repo}--agent--worker/watchers/dead-agent/window_id"
+
+  mkdir -p "$qdir/payloads" "$qdir/lock"
+  printf '%s\n' 999999 > "$qdir/worker.pid"
+  mkfifo "$qdir/wake.fifo"
+  printf '%s\n' 7 > "$qdir/next_id"
+
+  mkdir -p "$queued_qdir/payloads/000001" "$queued_qdir/lock"
+  printf '%s\n' 999999 > "$queued_qdir/worker.pid"
+  printf '<notification />\n' > "$queued_qdir/payloads/000001/payload"
+
+  mkdir -p "$home/messages/$repo/empty-message"
+}
+
+assert_exists() {
+  [[ -e "$1" || -L "$1" ]] || { echo "expected path to exist: $1" >&2; exit 1; }
+}
+
+assert_missing() {
+  [[ ! -e "$1" && ! -L "$1" ]] || { echo "expected path to be removed: $1" >&2; exit 1; }
+}
+
+sleep 30 &
+live_pid="$!"
+
+project_root="$tmp_root/project"
+mkdir -p "$project_root"
+project_home="$project_root/.atmux"
+system_home="$tmp_root/home/.atmux"
+mkdir -p "$tmp_root/home"
+
+seed_home "$project_home" "doctor_repo" "$live_pid"
+dry_out="$(HOME="$tmp_root/home" ATMUX_HOME="$project_home" ATMUX_SOURCE_ROOT="$REPO_ROOT" \
+  "$ATMUX_BIN" doctor --project --project-root "$project_root" --dry-run)"
+printf '%s\n' "$dry_out" | grep -Fq 'would remove'
+assert_exists "$project_home/exec/doctor_repo/exited"
+assert_exists "$project_home/notify-queue/%999999/worker.pid"
+
+clean_out="$(HOME="$tmp_root/home" ATMUX_HOME="$project_home" ATMUX_SOURCE_ROOT="$REPO_ROOT" \
+  "$ATMUX_BIN" doctor --project --project-root "$project_root")"
+printf '%s\n' "$clean_out" | grep -Fq 'doctor: removed='
+assert_missing "$project_home/exec/doctor_repo/exited"
+assert_missing "$project_home/exec/doctor_repo/dead-running"
+assert_exists "$project_home/exec/doctor_repo/live-running"
+assert_missing "$project_home/exec/doctor_repo/live-running/watchers/dead"
+assert_missing "$tmp_root/dead-exec.fifo"
+assert_missing "$project_home/watch-pr/demo-pr/watchers/dead"
+assert_missing "$project_home/watch-pr/demo-pr/watchers/dead.exec"
+assert_missing "$project_home/watch-agent-idle/doctor_repo--agent--worker/watchers/dead-agent"
+assert_missing "$project_home/notify-queue/%999999"
+assert_exists "$project_home/notify-queue/%888888/payloads/000001/payload"
+assert_missing "$project_home/notify-queue/%888888/worker.pid"
+assert_missing "$project_home/messages/doctor_repo/empty-message"
+
+seed_home "$system_home" "system_repo" "$live_pid"
+HOME="$tmp_root/home" ATMUX_HOME="$project_home" ATMUX_SOURCE_ROOT="$REPO_ROOT" \
+  "$ATMUX_BIN" doctor --system >/dev/null
+assert_missing "$system_home/exec/system_repo/exited"
+assert_exists "$system_home/exec/system_repo/live-running"
+
+kill "$live_pid" >/dev/null 2>&1 || true
+wait "$live_pid" >/dev/null 2>&1 || true
+
+echo "ok: doctor prunes stale project and system atmux directories"

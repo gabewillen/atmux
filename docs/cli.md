@@ -97,6 +97,14 @@ Stops an `atmux exec` tracked process, waits for completion notifications and wa
 
 Removes a watcher registration by id. Supports watcher ids emitted by `atmux pr watch <url>`, `atmux issue watch --feed`, `atmux pr watch --feed`, `atmux message subscribe --team`, and automatic team-idle subscriptions from `atmux team create`.
 
+### `atmux doctor [--project|--system] [--project-root <dir>] [--dry-run]`
+
+Cleans stale atmux bookkeeping from a project-local `.atmux` directory or the
+system `~/.atmux`. It removes exited/dead exec metadata, dead watcher
+registrations, dead notification-worker locks, empty queue directories, and
+empty state directories while preserving live workers, live panes/windows, and
+queued notification payloads. Use `--dry-run` to preview the sweep.
+
 ### `atmux install [--project|--system] [--project-root <dir>] [--no-slash-commands]`
 
 Installs project-local by default into `<project>/.atmux`. Project installs write Claude Code, Gemini CLI, and Codex command files under project-local `.claude/`, `.gemini/`, and `.codex/` directories without modifying shell profiles.

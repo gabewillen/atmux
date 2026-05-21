@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.28.0 — Doctor cleanup
+
+- Added `atmux doctor` for project-local or system `.atmux` cleanup.
+- Prunes stale exec metadata, dead watcher registrations, dead notification
+  worker locks, empty queues, and empty state directories while preserving live
+  workers, live panes/windows, and queued notification payloads.
+
 ## 0.27.9 — CI fixes
 
 - Patch release for CI fixes after the notification idle-status change.

@@ -12,7 +12,7 @@ The default install is project-local: atmux lives in `<project>/.atmux`, its sou
 - **Role and team aware.** Roles define reusable prompts/hooks; teams spawn coordinated member agents.
 - **Agent-editable.** A project install keeps atmux source next to your code, so missing workflow glue can be patched locally.
 
-Current version: `0.27.9`.
+Current version: `0.28.0`.
 
 ## Install
 
@@ -169,6 +169,7 @@ Commands:
   adapter    Install adapters and run adapter contract commands.
   agent      Manage repo-scoped AI agents running under tmux.
   config     Read and write atmux configuration values.
+  doctor     Clean and prune stale atmux bookkeeping directories.
   env        Inspect ATMUX_* environment variables in the current process.
   exec       Execute a command in a new tmux window inside the current agent's session.
   install    Install atmux for a project by default, or system-wide when requested.
@@ -197,6 +198,7 @@ Run:
 | `atmux adapter install <owner/repo\|github-url>` | Install adapters and run adapter contract commands. |
 | `atmux agent create [name] --role <role> --intelligence <0-100>` | Manage repo-scoped AI agents running under tmux. |
 | `atmux config get <key> [--global]` | Read and write atmux configuration values. |
+| `atmux doctor [--project\|--system] [--project-root <dir>] [--dry-run]` | Clean and prune stale atmux bookkeeping directories. |
 | `atmux env` | Inspect ATMUX_* environment variables in the current process. |
 | `atmux exec --timeout <duration\|0\|-1> [--wait \| --shared] [--] <command> [args...]` | Execute a command in a new tmux window inside the current agent's session. |
 | `atmux install [--project\|--system] [--project-root <dir>] [--no-slash-commands]` | Install atmux for a project by default, or system-wide when requested. |

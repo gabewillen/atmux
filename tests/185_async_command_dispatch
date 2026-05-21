@@ -1,0 +1,103 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# shellcheck source=tests/lib/isolate-tmux.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/isolate-tmux.sh"
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+ATMUX_BIN="$REPO_ROOT/bin/atmux"
+
+tmp_root="$(mktemp -d "${TMPDIR:-/tmp}/atmux-async-dispatch.XXXXXX")"
+ATMUX_HOME="$tmp_root/.atmux"
+ATMUX_SOURCE_ROOT="$REPO_ROOT"
+export ATMUX_HOME ATMUX_SOURCE_ROOT
+
+repo="asyncdispatch${RANDOM}"
+sender_session="atmux-${repo}-sender"
+receiver_session="atmux-${repo}-receiver"
+
+cleanup() {
+  tmux kill-session -t "$sender_session" >/dev/null 2>&1 || true
+  tmux kill-session -t "$receiver_session" >/dev/null 2>&1 || true
+  rm -rf "$tmp_root"
+}
+trap cleanup EXIT
+
+wait_for_text() {
+  local pane="$1"
+  local needle="$2"
+  local timeout="${3:-20}"
+  local deadline snap
+  deadline=$(( $(date +%s) + timeout ))
+  while true; do
+    snap="$(tmux capture-pane -p -t "$pane" -S -20000 2>/dev/null || true)"
+    if [[ "$snap" == *"$needle"* ]]; then
+      return 0
+    fi
+    if (( $(date +%s) >= deadline )); then
+      echo "missing text in $pane: $needle" >&2
+      tmux capture-pane -p -t "$pane" -S -200 >&2 || true
+      return 1
+    fi
+    sleep 0.1
+  done
+}
+
+tmux new-session -d -s "$sender_session" -n "$sender_session" -x 140 -y 40 "cat"
+tmux new-session -d -s "$receiver_session" -n "$receiver_session" -x 140 -y 40 "cat"
+tmux set-environment -t "$sender_session" ATMUX_SESSION_NAME "$sender_session"
+tmux set-environment -t "$receiver_session" ATMUX_SESSION_NAME "$receiver_session"
+
+sender_pane="$(tmux list-panes -t "$sender_session" -F '#{pane_id}' | head -n1)"
+receiver_pane="$(tmux list-panes -t "$receiver_session" -F '#{pane_id}' | head -n1)"
+[[ -n "$sender_pane" && -n "$receiver_pane" ]] || { echo "missing test panes" >&2; exit 1; }
+
+tmux send-keys -t "$sender_pane" -l "❯ "
+tmux send-keys -t "$sender_pane" Enter
+tmux send-keys -t "$receiver_pane" -l "❯ "
+tmux send-keys -t "$receiver_pane" Enter
+
+start_ms="$(date +%s000)"
+async_out="$(
+  ATMUX_REPO="$repo" \
+  ATMUX_AGENT_NAME="sender" \
+  ATMUX_SESSION_NAME="$sender_session" \
+  ATMUX_TMUX_PANE="$sender_pane" \
+    "$ATMUX_BIN" send --to "$receiver_session" "async-dispatch-${RANDOM}"
+)"
+elapsed_ms=$(( $(date +%s000) - start_ms ))
+
+printf '%s\n' "$async_out" | grep -Fq '<async command="send '
+if (( elapsed_ms > ${ATMUX_ASYNC_DISPATCH_RETURN_BUDGET_MS:-1500} )); then
+  echo "async send returned too slowly: ${elapsed_ms}ms" >&2
+  exit 1
+fi
+
+wait_for_text "$receiver_pane" 'hint="run `atmux message read ' 20
+wait_for_text "$sender_pane" 'type="command"' 20
+wait_for_text "$sender_pane" 'command="atmux send --to ' 20
+wait_for_text "$sender_pane" 'exit_code="0"' 20
+
+list_out="$(
+  ATMUX_REPO="$repo" \
+  ATMUX_AGENT_NAME="sender" \
+  ATMUX_SESSION_NAME="$sender_session" \
+  ATMUX_TMUX_PANE="$sender_pane" \
+    "$ATMUX_BIN" message list
+)"
+printf '%s\n' "$list_out" | grep -Fq '<async command="message list"'
+wait_for_text "$sender_pane" 'command="atmux message list"' 20
+
+fail_out="$(
+  ATMUX_REPO="$repo" \
+  ATMUX_AGENT_NAME="sender" \
+  ATMUX_SESSION_NAME="$sender_session" \
+  ATMUX_TMUX_PANE="$sender_pane" \
+    "$ATMUX_BIN" send --to "missing-${RANDOM}" "async-fail-${RANDOM}"
+)"
+printf '%s\n' "$fail_out" | grep -Fq '<async command="send '
+wait_for_text "$sender_pane" 'status="failed"' 20
+wait_for_text "$sender_pane" 'exit_code="1"' 20
+
+echo "ok: async dispatcher detaches sends and notifies success/failure"

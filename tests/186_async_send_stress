@@ -1,0 +1,104 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# shellcheck source=tests/lib/isolate-tmux.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/isolate-tmux.sh"
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+ATMUX_BIN="$REPO_ROOT/bin/atmux"
+
+tmp_root="$(mktemp -d "${TMPDIR:-/tmp}/atmux-async-send-stress.XXXXXX")"
+ATMUX_HOME="$tmp_root/.atmux"
+ATMUX_SOURCE_ROOT="$REPO_ROOT"
+export ATMUX_HOME ATMUX_SOURCE_ROOT
+
+repo="asyncstress${RANDOM}"
+sender_session="atmux-${repo}-sender"
+receiver_session="atmux-${repo}-receiver"
+scale="${ATMUX_ASYNC_SEND_STRESS_SCALE:-25}"
+[[ "$scale" =~ ^[0-9]+$ ]] || { echo "invalid scale: $scale" >&2; exit 2; }
+
+cleanup() {
+  tmux kill-session -t "$sender_session" >/dev/null 2>&1 || true
+  tmux kill-session -t "$receiver_session" >/dev/null 2>&1 || true
+  rm -rf "$tmp_root"
+}
+trap cleanup EXIT
+
+count_messages() {
+  local root="$ATMUX_HOME/messages/$repo"
+  [[ -d "$root" ]] || { printf '0\n'; return; }
+  find "$root" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' '
+}
+
+count_async_finished() {
+  local root="$ATMUX_HOME/async/$repo"
+  [[ -d "$root" ]] || { printf '0\n'; return; }
+  find "$root" -mindepth 2 -maxdepth 2 -name status -exec grep -l '^success$' {} + 2>/dev/null | wc -l | tr -d ' '
+}
+
+count_queue_items() {
+  local root="$ATMUX_HOME/notify-queue"
+  [[ -d "$root" ]] || { printf '0\n'; return; }
+  find "$root" -mindepth 3 -maxdepth 3 -type d -path '*/payloads/*' 2>/dev/null | wc -l | tr -d ' '
+}
+
+wait_for_count() {
+  local label="$1"
+  local want="$2"
+  local timeout="${3:-60}"
+  local deadline got
+  deadline=$(( $(date +%s) + timeout ))
+  while true; do
+    case "$label" in
+      messages) got="$(count_messages)" ;;
+      async) got="$(count_async_finished)" ;;
+      queue) got="$(count_queue_items)" ;;
+      *) echo "unknown count label: $label" >&2; return 2 ;;
+    esac
+    [[ "$got" == "$want" ]] && return 0
+    if (( $(date +%s) >= deadline )); then
+      echo "timeout waiting for $label count=$want got=$got" >&2
+      find "$ATMUX_HOME" -maxdepth 5 -type f | sort >&2 || true
+      return 1
+    fi
+    sleep 0.2
+  done
+}
+
+tmux new-session -d -s "$sender_session" -n "$sender_session" -x 160 -y 50 "cat"
+tmux new-session -d -s "$receiver_session" -n "$receiver_session" -x 160 -y 50 "cat"
+sender_pane="$(tmux list-panes -t "$sender_session" -F '#{pane_id}' | head -n1)"
+receiver_pane="$(tmux list-panes -t "$receiver_session" -F '#{pane_id}' | head -n1)"
+tmux send-keys -t "$sender_pane" -l "❯ "
+tmux send-keys -t "$sender_pane" Enter
+tmux send-keys -t "$receiver_pane" -l "❯ "
+tmux send-keys -t "$receiver_pane" Enter
+
+start_ms="$(date +%s000)"
+for (( i=1; i<=scale; i++ )); do
+  ATMUX_ASYNC_COMMANDS=1 \
+  ATMUX_REPO="$repo" \
+  ATMUX_AGENT_NAME="sender" \
+  ATMUX_SESSION_NAME="$sender_session" \
+  ATMUX_TMUX_PANE="$sender_pane" \
+    "$ATMUX_BIN" send --to "$receiver_session" "async-stress-$i-$RANDOM" >/dev/null &
+done
+wait
+return_ms=$(( $(date +%s000) - start_ms ))
+
+wait_for_count messages "$scale" "${ATMUX_ASYNC_SEND_STRESS_WAIT_SECONDS:-90}"
+wait_for_count async "$scale" "${ATMUX_ASYNC_SEND_STRESS_WAIT_SECONDS:-90}"
+wait_for_count queue "0" "${ATMUX_ASYNC_SEND_STRESS_WAIT_SECONDS:-90}"
+
+printf 'scale=%s async_send_return_ms=%s messages=%s async_success=%s remaining_queue=%s\n' \
+  "$scale" "$return_ms" "$(count_messages)" "$(count_async_finished)" "$(count_queue_items)"
+
+return_budget="${ATMUX_ASYNC_SEND_STRESS_RETURN_BUDGET_MS:-0}"
+if (( return_budget > 0 && return_ms > return_budget )); then
+  echo "async send stress return exceeded budget: ${return_ms}ms" >&2
+  exit 1
+fi
+
+echo "ok: async send stress completed ($scale)"

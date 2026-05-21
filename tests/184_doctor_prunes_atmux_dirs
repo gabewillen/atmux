@@ -74,6 +74,10 @@ seed_home() {
   printf '%s\n' 9 > "$live_qdir/next_id"
   printf '%s\n' 'transient failure' > "$live_qdir/last_error"
 
+  mkdir -p "$home/async/$repo/done" "$home/async/$repo/running"
+  printf '%s\n' success > "$home/async/$repo/done/status"
+  printf '%s\n' running > "$home/async/$repo/running/status"
+
   mkdir -p "$home/messages/$repo/empty-message"
 }
 
@@ -139,6 +143,8 @@ assert_missing "$project_home/notify-queue/%888888/worker.pid"
 assert_exists "$project_home/notify-queue/%777777/worker.pid"
 assert_exists "$project_home/notify-queue/%777777/next_id"
 assert_exists "$project_home/notify-queue/%777777/last_error"
+assert_missing "$project_home/async/doctor_repo/done"
+assert_exists "$project_home/async/doctor_repo/running"
 assert_missing "$project_home/messages/doctor_repo/empty-message"
 
 seed_home "$system_home" "system_repo" "$live_pid"

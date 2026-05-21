@@ -1,0 +1,109 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ATMUX_HOME="${ATMUX_HOME:-$HOME/.atmux}"
+HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=bin/(atmux)/notify
+source "$HERE/notify"
+
+usage() {
+  cat <<'USAGE'
+Usage:
+  atmux (internal)/async-run <notify-pane> <command-name> <script-path> <argv-file>
+
+Description:
+  Internal helper launched in a detached tmux window by the atmux dispatcher.
+  Runs one command, captures stdout/stderr, and sends a completion notification
+  to the invoking pane.
+USAGE
+}
+
+truncate_file() {
+  local file="$1"
+  local max_bytes="${ATMUX_ASYNC_NOTIFY_BYTES:-6000}"
+  [[ "$max_bytes" =~ ^[0-9]+$ ]] || max_bytes=6000
+  [[ -s "$file" ]] || return 0
+  LC_ALL=C head -c "$max_bytes" "$file" 2>/dev/null || true
+}
+
+if [[ $# -ne 4 || "${1:-}" == "-h" || "${1:-}" == "--help" || "${1:-}" == "help" ]]; then
+  usage
+  [[ $# -eq 0 || "${1:-}" == "-h" || "${1:-}" == "--help" || "${1:-}" == "help" ]] && exit 0
+  exit 2
+fi
+
+notify_pane="$1"
+command_name="$2"
+script_path="$3"
+argv_file="$4"
+
+if [[ ! -x "$script_path" ]]; then
+  echo "async-run: script is not executable: $script_path" >&2
+  exit 2
+fi
+
+run_id="$(id)"
+repo_name="$(atmux_resolve_repo_name)"
+state_dir="$ATMUX_HOME/async/$repo_name/$run_id"
+mkdir -p "$state_dir"
+
+stdout_file="$state_dir/stdout"
+stderr_file="$state_dir/stderr"
+status_file="$state_dir/status"
+command_file="$state_dir/command"
+started_at="$(timestamp_utc)"
+
+args=()
+while IFS= read -r -d '' arg; do
+  args+=("$arg")
+done < "$argv_file"
+rm -f "$argv_file" "$argv_file.run"
+
+command_text="atmux $command_name"
+for arg in "${args[@]}"; do
+  command_text+=" $arg"
+done
+atmux_fs_write_field "$command_file" "$command_text"
+atmux_fs_write_field "$state_dir/started_at" "$started_at"
+atmux_fs_write_field "$state_dir/pid" "$$"
+atmux_fs_write_field "$status_file" "running"
+
+set +e
+ATMUX_ASYNC_CHILD=1 "$script_path" "${args[@]}" >"$stdout_file" 2>"$stderr_file"
+exit_code=$?
+set -e
+
+finished_at="$(timestamp_utc)"
+atmux_fs_write_field "$state_dir/finished_at" "$finished_at"
+atmux_fs_write_field "$state_dir/exit_code" "$exit_code"
+if [[ "$exit_code" -eq 0 ]]; then
+  atmux_fs_write_field "$status_file" "success"
+else
+  atmux_fs_write_field "$status_file" "failed"
+fi
+
+stdout_preview="$(truncate_file "$stdout_file")"
+stderr_preview="$(truncate_file "$stderr_file")"
+summary="command succeeded"
+if [[ "$exit_code" -ne 0 ]]; then
+  summary="command failed"
+fi
+if [[ -n "$stdout_preview" ]]; then
+  summary+="\nstdout:\n$stdout_preview"
+fi
+if [[ -n "$stderr_preview" ]]; then
+  summary+="\nstderr:\n$stderr_preview"
+fi
+
+payload="$(build_notification "command" "${ATMUX_SESSION_NAME:-atmux}" "" \
+  "command=$command_text" \
+  "run_id=$run_id" \
+  "exit_code=$exit_code" \
+  "status=$([[ "$exit_code" -eq 0 ]] && printf success || printf failed)" \
+  "stdout=$stdout_file" \
+  "stderr=$stderr_file" \
+  "text=$summary")"
+
+send_notification "$notify_pane" "$payload" || true
+
+exit "$exit_code"

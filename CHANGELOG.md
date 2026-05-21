@@ -4,10 +4,17 @@
 
 - Updated the Cursor adapter's medium-intelligence Composer default from
   `composer-2` to `composer-2.5`.
+- Added async command dispatch for agent pane contexts. Eligible `atmux`
+  commands now return immediately after launching in a detached tmux window and
+  send a command notification back to the caller with success/failure,
+  stdout/stderr paths, and preview text.
+- Added async send stress coverage for bursty detached `atmux send` calls,
+  message creation, command completion notifications, and queue drain.
 - Added `atmux doctor` for project-local or system `.atmux` cleanup.
 - Prunes stale exec metadata, dead watcher registrations, dead notification
-  worker locks, empty queues, and empty state directories while preserving live
-  workers, live panes/windows, and queued notification payloads.
+  worker locks, completed async-command records, empty queues, and empty state
+  directories while preserving live workers, live panes/windows, and queued
+  notification payloads.
 
 ## 0.27.9 — CI fixes
 

@@ -135,6 +135,20 @@ Filesystem-backed coordination state lives under:
 
 `atmux issue create --assign-to`, `atmux issue comment`, `atmux pr comment`, and `atmux send` write state there and notify the relevant panes.
 
+## Async Command Dispatch
+
+When a command is invoked from an agent pane, the top-level `bin/atmux`
+dispatcher runs eligible commands asynchronously by default. It writes the argv
+to `<ATMUX_HOME>/tmp/`, opens a detached tmux window in the caller's session,
+and runs `bin/(atmux)/(internal)/async-run` there. The caller gets an immediate
+`<async .../>` response.
+
+The async runner executes the command with `ATMUX_ASYNC_CHILD=1`, captures
+stdout and stderr under `<ATMUX_HOME>/async/<repo>/<run_id>/`, then queues a
+`type="command"` notification back to the caller's pane with `exit_code`,
+`status`, and the captured output paths. `ATMUX_ASYNC_COMMANDS=0` disables this
+dispatch behavior for commands that must run in the foreground.
+
 ## Release Flow
 
 Releases are tag-driven. A release tag must match `VERSION` exactly:

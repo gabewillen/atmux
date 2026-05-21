@@ -308,6 +308,26 @@ prune_notify_queues() {
   remove_empty_dir "$root"
 }
 
+prune_async_dirs() {
+  local root="$target_home/async"
+  local repo_dir run_dir status
+  [[ -d "$root" ]] || return 0
+  while IFS= read -r repo_dir; do
+    [[ -d "$repo_dir" ]] || continue
+    while IFS= read -r run_dir; do
+      [[ -d "$run_dir" ]] || continue
+      status="$(atmux_fs_read_trimmed "$run_dir/status")"
+      case "$status" in
+        success|failed)
+          remove_path "$run_dir"
+          ;;
+      esac
+    done < <(find "$repo_dir" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort)
+    remove_empty_dir "$repo_dir"
+  done < <(find "$root" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort)
+  remove_empty_dir "$root"
+}
+
 prune_empty_state_dirs() {
   local root
   for root in messages team-messages pull-requests issues teams logs tmp; do
@@ -328,6 +348,7 @@ prune_exec_dirs
 prune_watchers
 prune_entity_watchers
 prune_notify_queues
+prune_async_dirs
 prune_empty_state_dirs
 
 if (( dry_run == 1 )); then

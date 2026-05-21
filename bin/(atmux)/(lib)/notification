@@ -2,6 +2,7 @@
 # Shared notification queue and pane-delivery helpers.
 
 if [[ -n "${__ATMUX_NOTIFICATION_SOURCED:-}" ]]; then
+  # shellcheck disable=SC2317 # reachable when the library is sourced more than once
   return 0 2>/dev/null || true
 fi
 __ATMUX_NOTIFICATION_SOURCED=1
@@ -288,6 +289,13 @@ deliver_notification_to_pane() {
   submit_wait="${ATMUX_SEND_SUBMIT_WAIT_SECONDS:-0.3}"
   no_prompt_ready_wait="${ATMUX_SEND_NO_PROMPT_READY_SECONDS:-0.6}"
   interrupt_settle="${ATMUX_SEND_INTERRUPT_SETTLE_SECONDS:-0.6}"
+
+  if [[ -z "$prompt_prefix" && -z "$pre_keys" ]]; then
+    settle="${ATMUX_SEND_NO_PROMPT_SETTLE_SECONDS:-${ATMUX_SEND_SETTLE_SECONDS:-0.1}}"
+    paste_submit_wait="${ATMUX_SEND_NO_PROMPT_PASTE_TO_SUBMIT_WAIT_SECONDS:-${ATMUX_SEND_PASTE_TO_SUBMIT_WAIT_SECONDS:-0.1}}"
+    submit_wait="${ATMUX_SEND_NO_PROMPT_SUBMIT_WAIT_SECONDS:-${ATMUX_SEND_SUBMIT_WAIT_SECONDS:-0.1}}"
+    no_prompt_ready_wait="${ATMUX_SEND_NO_PROMPT_READY_SECONDS:-0.1}"
+  fi
 
   debug_notify "deliver:start pane=$(printf '%q' "$pane") submit_keys=$(printf '%q' "$submit_keys") pre_keys=$(printf '%q' "$pre_keys") $(payload_debug_summary "$payload")"
 

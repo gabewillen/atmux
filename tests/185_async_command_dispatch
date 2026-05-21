@@ -79,6 +79,16 @@ wait_for_text "$sender_pane" 'type="command"' 20
 wait_for_text "$sender_pane" 'command="atmux send --to ' 20
 wait_for_text "$sender_pane" 'exit_code="0"' 20
 
+issue_out="$(
+  ATMUX_REPO="$repo" \
+  ATMUX_AGENT_NAME="sender" \
+  ATMUX_SESSION_NAME="$sender_session" \
+  ATMUX_TMUX_PANE="$sender_pane" \
+    "$ATMUX_BIN" issue create --title "async issue ${RANDOM}"
+)"
+printf '%s\n' "$issue_out" | grep -Fq '<async command="issue create '
+wait_for_text "$sender_pane" 'command="atmux issue create ' 20
+
 list_out="$(
   ATMUX_REPO="$repo" \
   ATMUX_AGENT_NAME="sender" \
@@ -86,10 +96,27 @@ list_out="$(
   ATMUX_TMUX_PANE="$sender_pane" \
     "$ATMUX_BIN" message list
 )"
-printf '%s\n' "$list_out" | grep -Fq '<async command="message list"'
-wait_for_text "$sender_pane" 'command="atmux message list"' 20
+if printf '%s\n' "$list_out" | grep -Fq '<async '; then
+  echo "message list should not dispatch asynchronously by default" >&2
+  exit 1
+fi
 
 env_out="$(
+  ATMUX_REPO="$repo" \
+  ATMUX_AGENT_NAME="sender" \
+  ATMUX_SESSION_NAME="$sender_session" \
+  ATMUX_TMUX_PANE="$sender_pane" \
+  TMUX_PANE="$receiver_pane" \
+  ATMUX_ASYNC_SECRET_SHOULD_NOT_LEAK="secret-${RANDOM}" \
+    "$ATMUX_BIN" env
+)"
+if printf '%s\n' "$env_out" | grep -Fq '<async '; then
+  echo "env should not dispatch asynchronously by default" >&2
+  exit 1
+fi
+
+env_out="$(
+  ATMUX_ASYNC_COMMANDS=all \
   ATMUX_REPO="$repo" \
   ATMUX_AGENT_NAME="sender" \
   ATMUX_SESSION_NAME="$sender_session" \
@@ -107,7 +134,7 @@ while [[ -z "$env_command_file" ]]; do
   env_command_file="$(grep -R -l '^atmux env$' "$ATMUX_HOME/async/$repo" 2>/dev/null | head -n1 || true)"
   [[ -n "$env_command_file" ]] && break
   if (( $(date +%s) >= deadline )); then
-    echo "async env command state was not written" >&2
+    echo "async env command state was not written for explicit all mode" >&2
     exit 1
   fi
   sleep 0.1

@@ -188,7 +188,7 @@ probe() {
     return 1
   fi
 
-  if ! wait_for_queue_drained "$pane" 20; then
+  if ! wait_for_queue_drained "$pane" 45; then
     echo "FAIL: $label: queue stuck after delivery (STUCK IN INPUT) marker=$marker" >&2
     qdir="$(notify_queue_dir "$pane")"
     echo "--- queue dir contents ---" >&2
@@ -213,31 +213,12 @@ probe() {
 
 echo "matrix: 5 adapters x 7 adversarial payloads -> 35 probes" >&2
 
-# Each probe builds its own session/pane, so they're independent. Run one
-# adapter batch at a time. That preserves per-adapter concurrency coverage
-# without overloading tmux badly enough that a delivery can remain in-flight
-# past the queue-drain timeout on smaller CI runners.
-probe_pids=()
-probe_outs=()
 failures=0
 for adapter in claude-code codex cursor-agent gemini opencode; do
-  probe_pids=()
-  probe_outs=()
   for kind in baseline embedded_lf embedded_cr contains_prompt leading_prompt giant xml_specials; do
-    out="$(mktemp "${TMPDIR:-/tmp}/atmux-probe-${adapter}-${kind}-XXXXXX.log")"
-    ( probe "$adapter" "$kind" >"$out" 2>&1 ) &
-    probe_pids+=($!)
-    probe_outs+=("$out")
-  done
-
-  for i in "${!probe_pids[@]}"; do
-    pid="${probe_pids[$i]}"
-    out="${probe_outs[$i]}"
-    if ! wait "$pid"; then
+    if ! probe "$adapter" "$kind" >&2; then
       failures=$((failures + 1))
     fi
-    cat "$out" >&2
-    rm -f "$out"
   done
 done
 

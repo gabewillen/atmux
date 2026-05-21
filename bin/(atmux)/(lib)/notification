@@ -333,22 +333,22 @@ deliver_notification_to_pane() {
   local payload_len=${#payload}
   wait_for_prompt_input_settled "$pane" "$prompt_prefix" "$paste_submit_wait" "$payload_len" || return 1
 
-  # Large payloads used to need a fixed length-scaled pause because tmux can
-  # flush paste bytes in chunks. The primary guard is now event/state based:
+  # Large payloads used to need a fixed linear length-scaled pause because tmux
+  # can flush paste bytes in chunks. The primary guard is now event/state based:
   # wait_for_prompt_input_settled requires the captured prompt input to reach
-  # the full payload length and then stabilize. Keep a much smaller bonus only
-  # for fallback paths where there is no prompt surface, or for timeout cases
-  # where we could not prove the full paste landed.
+  # the full payload length and then stabilize. Keep only a small sublinear
+  # fallback bonus for no-prompt/timeout paths where we could not prove the full
+  # paste landed.
   local bonus_min="${ATMUX_SEND_PASTE_BONUS_MIN_BYTES:-1024}"
-  local per_kb="${ATMUX_SEND_PASTE_PER_KB_SECONDS:-0.025}"
-  local bonus_max="${ATMUX_SEND_PASTE_BONUS_MAX_SECONDS:-2.5}"
+  local per_kb="${ATMUX_SEND_PASTE_PER_KB_SECONDS:-0.02}"
+  local bonus_max="${ATMUX_SEND_PASTE_BONUS_MAX_SECONDS:-0.5}"
   local paste_status="${ATMUX_NOTIFY_LAST_PASTE_SETTLE_STATUS:-unknown}"
   [[ "$bonus_min" =~ ^[0-9]+$ ]] || bonus_min=1024
   if [[ "$paste_status" != "stable" ]] && (( payload_len >= bonus_min )); then
     local bonus
     bonus="$(awk -v len="$payload_len" -v rate="$per_kb" -v cap="$bonus_max" '
       BEGIN {
-        b = (len / 1024) * rate
+        b = sqrt(len / 1024) * rate
         if (b > cap) b = cap
         if (b < 0) b = 0
         printf "%.3f", b

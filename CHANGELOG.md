@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.28.2 — Narrow async defaults
+
+- Narrowed default async command dispatch to selected filesystem-writing
+  commands that do not need immediate stdout. Read/list/status and notification
+  delivery commands now stay in the foreground by default, while
+  `ATMUX_ASYNC_COMMANDS=all` remains available for the broader async dispatcher.
+- Reduced the fallback notification paste-to-enter delay for long payloads by
+  switching from linear length scaling to a small sublinear bonus.
+
 ## 0.28.1 — Async command notifications
 
 - Updated the Cursor adapter's medium-intelligence Composer default from

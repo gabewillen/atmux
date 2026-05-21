@@ -137,11 +137,14 @@ Filesystem-backed coordination state lives under:
 
 ## Async Command Dispatch
 
-When a command is invoked from an agent pane, the top-level `bin/atmux`
-dispatcher runs eligible commands asynchronously by default. It writes the argv
-to `<ATMUX_HOME>/tmp/`, opens a detached tmux window in the caller's session,
-and runs `bin/(atmux)/(internal)/async-run` there. The caller gets an immediate
-`<async .../>` response.
+When a selected filesystem-writing command that does not need immediate stdout,
+such as `atmux send`, is invoked from an agent pane, the top-level `bin/atmux`
+dispatcher runs it asynchronously by default. It writes the argv to
+`<ATMUX_HOME>/tmp/`, opens a detached tmux window in the caller's session, and
+runs `bin/(atmux)/(internal)/async-run` there. The caller gets an immediate
+`<async .../>` response. Read/list/status commands remain foreground by
+default; `ATMUX_ASYNC_COMMANDS=all` opts into the broader async dispatcher.
+The broader mode also accepts `1`, `true`, `yes`, and `on`.
 
 The async runner executes the command with `ATMUX_ASYNC_CHILD=1`, captures
 stdout and stderr under `<ATMUX_HOME>/async/<repo>/<run_id>/`, then queues a

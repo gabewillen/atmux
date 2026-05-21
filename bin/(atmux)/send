@@ -327,6 +327,8 @@ if [[ -n "$team_session" ]]; then
   subscribers_dir="$(team_message_watchers_dir "$repo_name" "$team_name")"
   if [[ -d "$subscribers_dir" ]]; then
     live_panes="$(tmux list-panes -a -F '#{pane_id}' 2>/dev/null || true)"
+    live_panes_known=0
+    [[ -n "$live_panes" ]] && live_panes_known=1
     while IFS= read -r subscriber; do
       [[ -e "$subscriber" ]] || continue
       subscriber_name="$(basename "$subscriber")"
@@ -334,7 +336,7 @@ if [[ -n "$team_session" ]]; then
       subscriber_session="$(cat "$subscriber/session" 2>/dev/null || true)"
       subscriber_repo="$(cat "$subscriber/repo" 2>/dev/null || true)"
       subscriber_team="$(cat "$subscriber/team" 2>/dev/null || true)"
-      if ! watcher_pane_is_live "$subscriber_pane" "$live_panes"; then
+      if (( live_panes_known )) && ! watcher_pane_is_live "$subscriber_pane" "$live_panes"; then
         rm -rf "$subscriber"
         continue
       fi

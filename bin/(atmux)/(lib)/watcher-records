@@ -45,6 +45,10 @@ atmux_watcher_id_is_live() {
   [[ $'\n'"$live_ids"$'\n' == *$'\n'"$id"$'\n'* ]]
 }
 
+atmux_watcher_live_ids_known() {
+  [[ -n "$1" ]]
+}
+
 atmux_watcher_pane_is_live() {
   atmux_watcher_id_is_live "$1" "$2"
 }
@@ -90,8 +94,13 @@ atmux_watcher_record_is_stale() {
         return 1
       fi
       pane="$(atmux_fs_read_trimmed "$watcher/pane")"
-      if [[ -n "$pane" ]] && atmux_watcher_pane_is_live "$pane" "$live_panes"; then
-        return 1
+      if [[ -n "$pane" ]]; then
+        if ! atmux_watcher_live_ids_known "$live_panes"; then
+          return 1
+        fi
+        if atmux_watcher_pane_is_live "$pane" "$live_panes"; then
+          return 1
+        fi
       fi
       [[ -n "$worker_pid$window_id" ]] && return 0
       return 0
@@ -102,5 +111,6 @@ atmux_watcher_record_is_stale() {
   esac
 
   [[ -z "$pane" ]] && return 0
+  atmux_watcher_live_ids_known "$live_panes" || return 1
   ! atmux_watcher_pane_is_live "$pane" "$live_panes"
 }

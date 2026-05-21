@@ -94,14 +94,24 @@ project_home="$project_root/.atmux"
 system_home="$tmp_root/home/.atmux"
 mkdir -p "$tmp_root/home"
 
+target_socket="$project_home/tmux/server.sock"
+if (( ${#target_socket} >= 100 )); then
+  target_socket_id="$(printf '%s' "$project_home" | cksum | awk '{print $1}')"
+  target_socket="$tmp_root/tmux-sockets/$target_socket_id.sock"
+fi
+target_session="atmux-doctor-target-${RANDOM}"
+mkdir -p "$(dirname "$target_socket")"
+"$ATMUX_REAL_TMUX" -S "$target_socket" new-session -d -s "$target_session" -n "$target_session" "cat"
+target_pane="$("$ATMUX_REAL_TMUX" -S "$target_socket" list-panes -t "$target_session" -F '#{pane_id}' | head -n1)"
+
 seed_home "$project_home" "doctor_repo" "$live_pid"
-dry_out="$(HOME="$tmp_root/home" ATMUX_HOME="$project_home" ATMUX_SOURCE_ROOT="$REPO_ROOT" \
+dry_out="$(HOME="$tmp_root/home" ATMUX_HOME="$project_home" ATMUX_SOURCE_ROOT="$REPO_ROOT" ATMUX_TMUX_SOCKET_DIR="$tmp_root/tmux-sockets" \
   "$ATMUX_BIN" doctor --project --project-root "$project_root" --dry-run)"
 printf '%s\n' "$dry_out" | grep -Fq 'would remove'
 assert_exists "$project_home/exec/doctor_repo/exited"
 assert_exists "$project_home/notify-queue/%999999/worker.pid"
 
-clean_out="$(HOME="$tmp_root/home" ATMUX_HOME="$project_home" ATMUX_SOURCE_ROOT="$REPO_ROOT" ATMUX_DOCTOR_STARTING_GRACE_SECONDS=0 \
+clean_out="$(HOME="$tmp_root/home" ATMUX_HOME="$project_home" ATMUX_SOURCE_ROOT="$REPO_ROOT" ATMUX_TMUX_SOCKET_DIR="$tmp_root/tmux-sockets" ATMUX_DOCTOR_STARTING_GRACE_SECONDS=0 \
   "$ATMUX_BIN" doctor --project --project-root "$project_root")"
 printf '%s\n' "$clean_out" | grep -Fq 'doctor: removed='
 assert_missing "$project_home/exec/doctor_repo/exited"
@@ -135,15 +145,6 @@ HOME="$tmp_root/home" ATMUX_HOME="$project_home" ATMUX_SOURCE_ROOT="$REPO_ROOT" 
 assert_missing "$system_home/exec/system_repo/exited"
 assert_exists "$system_home/exec/system_repo/live-running"
 
-target_socket="$project_home/tmux/server.sock"
-if (( ${#target_socket} >= 100 )); then
-  target_socket_id="$(printf '%s' "$project_home" | cksum | awk '{print $1}')"
-  target_socket="$tmp_root/tmux-sockets/$target_socket_id.sock"
-fi
-target_session="atmux-doctor-target-${RANDOM}"
-mkdir -p "$(dirname "$target_socket")"
-"$ATMUX_REAL_TMUX" -S "$target_socket" new-session -d -s "$target_session" -n "$target_session" "cat"
-target_pane="$("$ATMUX_REAL_TMUX" -S "$target_socket" list-panes -t "$target_session" -F '#{pane_id}' | head -n1)"
 mkdir -p "$project_home/watch-pr/live-target/watchers" "$project_home/issues/doctor_repo/live/watchers"
 mkdir -p "$project_home/watch-agent-idle/doctor_repo--agent--worker/watchers/live-agent-pane-only"
 mkdir -p "$project_home/watch-team-idle/doctor_repo--team--platform/watchers/live-team-pane-only"
@@ -178,7 +179,7 @@ SH
 chmod +x "$stat_stub_dir/stat"
 mkdir -p "$project_home/exec/doctor_repo/fresh-starting-pidless"
 printf '%s\n' starting > "$project_home/exec/doctor_repo/fresh-starting-pidless/state"
-HOME="$tmp_root/home" ATMUX_HOME="$project_home" ATMUX_SOURCE_ROOT="$REPO_ROOT" PATH="$stat_stub_dir:$PATH" \
+HOME="$tmp_root/home" ATMUX_HOME="$project_home" ATMUX_SOURCE_ROOT="$REPO_ROOT" ATMUX_TMUX_SOCKET_DIR="$tmp_root/tmux-sockets" PATH="$stat_stub_dir:$PATH" \
   "$ATMUX_BIN" doctor --project --project-root "$project_root" >/dev/null
 assert_exists "$project_home/exec/doctor_repo/fresh-starting-pidless"
 

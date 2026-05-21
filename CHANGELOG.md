@@ -18,6 +18,8 @@
 - Cursor Agent startup now passes `--trust` when the installed CLI supports it
   while retaining workspace trust-file seeding as a fallback, avoiding first-run
   trust prompts that block automated agent flows.
+- Updated the Cursor adapter's medium-intelligence Composer default from
+  `composer-2` to `composer-2.5`.
 - Notification delivery now treats prompt capture as the primary paste-readiness
   signal: it waits for the full inserted payload to appear and stabilize, then
   only applies a reduced length-based submit pause on fallback/timeout paths.

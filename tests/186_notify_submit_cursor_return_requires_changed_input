@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# shellcheck source=tests/lib/isolate-tmux.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/isolate-tmux.sh"
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+NOTIFY_SCRIPT="$REPO_ROOT/bin/(atmux)/notify"
+
+ATMUX_HOME="${TMPDIR:-/tmp}/atmux-notify-cursor-return-${RANDOM}"
+ATMUX_SOURCE_ROOT="$REPO_ROOT"
+ATMUX_SEND_SUBMIT_RETRY_ATTEMPTS=2
+ATMUX_SEND_SUBMIT_VERIFY_SECONDS=1
+export ATMUX_HOME ATMUX_SOURCE_ROOT ATMUX_SEND_SUBMIT_RETRY_ATTEMPTS ATMUX_SEND_SUBMIT_VERIFY_SECONDS
+# shellcheck disable=SC1090
+source "$NOTIFY_SCRIPT"
+
+prompt_prefix="›"
+prompt_input="$(build_notification "message" "stuck" "atmux message read abc --repo repo")"
+enter_count=0
+
+cleanup() {
+  rm -rf "$ATMUX_HOME"
+}
+trap cleanup EXIT
+
+tmux() {
+  if [[ "$1" == "capture-pane" ]]; then
+    printf '%s %s\n' "$prompt_prefix" "$prompt_input"
+    return 0
+  fi
+
+  if [[ "$1" == "display-message" ]]; then
+    local fmt="${*: -1}"
+    case "$fmt" in
+      "#{pane_id}") printf '%s\n' "%mock" ;;
+      "#{cursor_x}") printf '%s\n' 0 ;;
+      "#{cursor_y}") printf '%s\n' 1 ;;
+      *) return 1 ;;
+    esac
+    return 0
+  fi
+
+  if [[ "$1" == "send-keys" ]]; then
+    local key="${*: -1}"
+    [[ "$key" == "Enter" ]] && enter_count=$((enter_count + 1))
+    return 0
+  fi
+
+  command tmux "$@"
+}
+
+set +e
+submit_notification_input "%mock" "$prompt_prefix" "Enter" "0"
+rc=$?
+set -e
+
+if [[ "$rc" -eq 0 ]]; then
+  echo "expected cursor-returned submit with unchanged input to fail" >&2
+  exit 1
+fi
+
+if [[ "$enter_count" -ne 2 ]]; then
+  echo "expected submit retries before failure, got $enter_count" >&2
+  exit 1
+fi
+
+echo "ok: notification submit cursor-return requires changed input"

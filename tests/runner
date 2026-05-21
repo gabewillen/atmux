@@ -100,6 +100,17 @@ should_skip_test() {
   return 1
 }
 
+skip_message_for_test() {
+  local test_name="$1"
+  case "$test_name" in
+    *_stress)
+      printf 'set ATMUX_RUN_STRESS_TESTS=1 to include stress tests\n'
+      return 0
+      ;;
+  esac
+  printf 'set ATMUX_RUN_LIVE_ADAPTER_TESTS=1 to include live adapter tests\n'
+}
+
 # Kill any leftover detached `atmux schedule` and notify workers between
 # tests so stale notifications can't leak into a later test's pane.
 # Also re-purge the test notify queue dirs — items written before a
@@ -126,7 +137,7 @@ main() {
     [[ ! -x "$CLEANUP_ORPHANS" ]] || "$CLEANUP_ORPHANS" || true
     purge_between_tests
     if should_skip_test "$(basename "$test_script")"; then
-      log "skipping $(basename "$test_script") (set ATMUX_RUN_LIVE_ADAPTER_TESTS=1 to include live adapter tests)"
+      log "skipping $(basename "$test_script") ($(skip_message_for_test "$(basename "$test_script")"))"
       continue
     fi
     log "running $(basename "$test_script")"

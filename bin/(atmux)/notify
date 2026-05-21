@@ -1074,13 +1074,12 @@ notify_exec_watchers() {
   local payload="$3"
   local wdir="$exec_dir/watchers"
   [[ -d "$wdir" ]] || return 0
-  local f pane signal_path live_panes
+  local f pane live_panes
   live_panes="$(tmux list-panes -a -F '#{pane_id}' 2>/dev/null || true)"
   while IFS= read -r f; do
     [[ -n "$f" ]] || continue
     [[ -f "$f" ]] || continue
     pane="$(watcher_record_pane "$f")"
-    signal_path="$(watcher_record_signal_path "$f")"
     if [[ -n "$pane" ]] && ! watcher_pane_is_live "$pane" "$live_panes"; then
       remove_watcher_record "$f"
       continue
@@ -1112,13 +1111,12 @@ notify_issue_watchers() {
   local payload="$3"
   local wdir="$issue_dir/watchers"
   [[ -d "$wdir" ]] || return 0
-  local f pane signal_path live_panes
+  local f pane live_panes
   live_panes="$(tmux list-panes -a -F '#{pane_id}' 2>/dev/null || true)"
   while IFS= read -r f; do
     [[ -n "$f" ]] || continue
     [[ -f "$f" ]] || continue
     pane="$(watcher_record_pane "$f")"
-    signal_path="$(watcher_record_signal_path "$f")"
     if [[ -n "$pane" ]] && ! watcher_pane_is_live "$pane" "$live_panes"; then
       remove_watcher_record "$f"
       continue
@@ -1136,13 +1134,12 @@ notify_pull_request_watchers() {
   local payload="$3"
   local wdir="$pr_dir/watchers"
   [[ -d "$wdir" ]] || return 0
-  local f pane signal_path live_panes
+  local f pane live_panes
   live_panes="$(tmux list-panes -a -F '#{pane_id}' 2>/dev/null || true)"
   while IFS= read -r f; do
     [[ -n "$f" ]] || continue
     [[ -f "$f" ]] || continue
     pane="$(watcher_record_pane "$f")"
-    signal_path="$(watcher_record_signal_path "$f")"
     if [[ -n "$pane" ]] && ! watcher_pane_is_live "$pane" "$live_panes"; then
       remove_watcher_record "$f"
       continue

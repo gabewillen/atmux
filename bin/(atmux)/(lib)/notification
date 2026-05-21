@@ -358,31 +358,17 @@ deliver_notification_to_pane() {
 
 next_notification_queue_id() {
   local qdir="$1"
-  local lock_dir="$qdir/seq.lock"
+  local lock_dir
   local payload_dir="$qdir/payloads"
   local current="0"
   local next=1
-  local item_dir item_base item_num
 
-  mkdir -p "$qdir"
-  while ! mkdir "$lock_dir" 2>/dev/null; do
-    sleep 0.01
-  done
+  mkdir -p "$payload_dir"
+  lock_dir="$(acquire_notification_sequence_lock "$qdir")"
 
   if [[ -f "$qdir/next_id" ]]; then
     current="$(tr -d '\r\n' < "$qdir/next_id" 2>/dev/null || printf '0')"
     [[ "$current" =~ ^[0-9]+$ ]] || current="0"
-  fi
-
-  if [[ -d "$payload_dir" ]]; then
-    while IFS= read -r item_dir; do
-      item_base="$(basename "$item_dir")"
-      [[ "$item_base" =~ ^[0-9]+$ ]] || continue
-      item_num="$(( 10#$item_base ))"
-      if (( item_num > current )); then
-        current="$item_num"
-      fi
-    done < <(find "$payload_dir" -mindepth 1 -maxdepth 1 -type d 2>/dev/null)
   fi
 
   next="$(( 10#$current + 1 ))"
@@ -390,10 +376,88 @@ next_notification_queue_id() {
     next="$(( next + 1 ))"
   done
 
-  printf '%s\n' "$next" > "$qdir/next_id"
-  rmdir "$lock_dir" >/dev/null 2>&1 || true
+  printf '%s\n' "$next" > "$qdir/next_id.tmp.$$"
+  mv "$qdir/next_id.tmp.$$" "$qdir/next_id"
+  release_notification_sequence_lock "$lock_dir"
 
   printf '%010d\n' "$next"
+}
+
+notification_path_mtime() {
+  local path="$1"
+  if stat -c '%Y' "$path" >/dev/null 2>&1; then
+    stat -c '%Y' "$path"
+  elif stat -f '%m' "$path" >/dev/null 2>&1; then
+    stat -f '%m' "$path"
+  else
+    return 1
+  fi
+}
+
+notification_sequence_lock_stale() {
+  local lock_dir="$1"
+  local stale_after="${ATMUX_NOTIFY_SEQ_LOCK_STALE_SECONDS:-30}"
+  local now acquired_at age owner_pid
+
+  [[ "$stale_after" =~ ^[0-9]+$ ]] || stale_after=30
+  now="$(date +%s)"
+  [[ -d "$lock_dir" ]] || return 1
+
+  owner_pid="$(cat "$lock_dir/pid" 2>/dev/null | tr -d '\r\n' || true)"
+  if [[ -n "$owner_pid" && "$owner_pid" =~ ^[0-9]+$ ]]; then
+    if kill -0 "$owner_pid" 2>/dev/null; then
+      return 1
+    fi
+    return 0
+  fi
+
+  acquired_at="$(cat "$lock_dir/acquired_at" 2>/dev/null | tr -d '\r\n' || true)"
+  if [[ ! "$acquired_at" =~ ^[0-9]+$ ]]; then
+    acquired_at="$(notification_path_mtime "$lock_dir" 2>/dev/null || true)"
+  fi
+  [[ "$acquired_at" =~ ^[0-9]+$ ]] || return 1
+  (( stale_after > 0 )) || return 1
+  age=$(( now - acquired_at ))
+  (( age >= stale_after ))
+}
+
+recover_notification_sequence_lock() {
+  local lock_dir="$1"
+  local stale_dir="${lock_dir}.stale.$$.$RANDOM"
+
+  if mv "$lock_dir" "$stale_dir" 2>/dev/null; then
+    rm -rf "$stale_dir"
+    return 0
+  fi
+  return 1
+}
+
+acquire_notification_sequence_lock() {
+  local qdir="$1"
+  local lock_dir="$qdir/seq.lock"
+  local waited=0
+
+  mkdir -p "$qdir"
+  while ! mkdir "$lock_dir" 2>/dev/null; do
+    if [[ -d "$lock_dir" ]] && notification_sequence_lock_stale "$lock_dir"; then
+      if recover_notification_sequence_lock "$lock_dir"; then
+        debug_notify "queue:seq_lock_recovered qdir=$(printf '%q' "$qdir") waited=$waited"
+      fi
+      continue
+    fi
+    waited=$(( waited + 1 ))
+    sleep 0.01
+  done
+
+  atmux_fs_write_field "$lock_dir/pid" "$$"
+  atmux_fs_write_field "$lock_dir/acquired_at" "$(date +%s)"
+  printf '%s\n' "$lock_dir"
+}
+
+release_notification_sequence_lock() {
+  local lock_dir="$1"
+  rm -f "$lock_dir/pid" "$lock_dir/acquired_at" 2>/dev/null || true
+  rmdir "$lock_dir" >/dev/null 2>&1 || rm -rf "$lock_dir" 2>/dev/null || true
 }
 
 queue_notification_payload() {

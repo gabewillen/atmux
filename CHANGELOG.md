@@ -10,6 +10,14 @@
   stdout/stderr paths, and preview text.
 - Added async send stress coverage for bursty detached `atmux send` calls,
   message creation, command completion notifications, and queue drain.
+- Hardened notification queue id allocation under filesystem contention:
+  enqueue no longer scans every payload directory while holding the sequence
+  lock, stale sequence locks recover when their owner is gone, and stress
+  coverage now seeds thousands of stale payload directories while allocating
+  concurrently.
+- Cursor Agent startup now passes `--trust` when the installed CLI supports it
+  while retaining workspace trust-file seeding as a fallback, avoiding first-run
+  trust prompts that block automated agent flows.
 - Added `atmux doctor` for project-local or system `.atmux` cleanup.
 - Prunes stale exec metadata, dead watcher registrations, dead notification
   worker locks, completed async-command records, empty queues, and empty state

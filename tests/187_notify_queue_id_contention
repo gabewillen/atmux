@@ -1,0 +1,113 @@
+#!/usr/bin/env bash
+# shellcheck disable=SC2031 # background allocation workers cannot mutate parent variables
+set -euo pipefail
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+NOTIFY_SCRIPT="$REPO_ROOT/bin/(atmux)/notify"
+
+tmp_root="$(mktemp -d "${TMPDIR:-/tmp}/atmux-notify-id-contention.XXXXXX")"
+ATMUX_HOME="$tmp_root/.atmux"
+ATMUX_SOURCE_ROOT="$REPO_ROOT"
+export ATMUX_HOME ATMUX_SOURCE_ROOT
+
+qdir="$ATMUX_HOME/notify-queue/contention-pane"
+payload_dir="$qdir/payloads"
+scale="${ATMUX_NOTIFY_ID_CONTENTION_SCALE:-100}"
+stale_count="${ATMUX_NOTIFY_ID_CONTENTION_STALE:-5000}"
+wait_seconds="${ATMUX_NOTIFY_ID_CONTENTION_WAIT_SECONDS:-20}"
+ids_dir="$tmp_root/ids"
+
+cleanup() {
+  rm -rf "$tmp_root"
+}
+trap cleanup EXIT
+
+[[ "$scale" =~ ^[0-9]+$ ]] || { echo "invalid scale: $scale" >&2; exit 2; }
+[[ "$stale_count" =~ ^[0-9]+$ ]] || { echo "invalid stale count: $stale_count" >&2; exit 2; }
+[[ "$wait_seconds" =~ ^[0-9]+$ ]] || { echo "invalid wait seconds: $wait_seconds" >&2; exit 2; }
+
+mkdir -p "$payload_dir" "$ids_dir" "$qdir/seq.lock"
+printf '999999\n' > "$qdir/seq.lock/pid"
+printf '0\n' > "$qdir/seq.lock/acquired_at"
+
+for (( i=1; i<=stale_count; i++ )); do
+  mkdir -p "$payload_dir/$(printf '%010d' "$i")"
+done
+printf '%s\n' "$stale_count" > "$qdir/next_id"
+
+(
+  # shellcheck source=bin/(atmux)/notify
+  source "$NOTIFY_SCRIPT"
+  ATMUX_NOTIFY_SEQ_LOCK_STALE_SECONDS=0 next_notification_queue_id "$qdir" > "$ids_dir/stale-recovery"
+)
+first_after_stale="$(cat "$ids_dir/stale-recovery")"
+expected_after_stale="$(printf '%010d' "$(( stale_count + 1 ))")"
+[[ "$first_after_stale" == "$expected_after_stale" ]] || {
+  echo "expected stale-lock recovery id $expected_after_stale, got $first_after_stale" >&2
+  exit 1
+}
+
+mkdir -p "$qdir/seq.lock"
+touch -t 197001010000 "$qdir/seq.lock"
+(
+  # shellcheck source=bin/(atmux)/notify
+  source "$NOTIFY_SCRIPT"
+  ATMUX_NOTIFY_SEQ_LOCK_STALE_SECONDS=1 next_notification_queue_id "$qdir" > "$ids_dir/ownerless-recovery"
+)
+first_after_ownerless="$(cat "$ids_dir/ownerless-recovery")"
+expected_after_ownerless="$(printf '%010d' "$(( stale_count + 2 ))")"
+[[ "$first_after_ownerless" == "$expected_after_ownerless" ]] || {
+  echo "expected ownerless-lock recovery id $expected_after_ownerless, got $first_after_ownerless" >&2
+  exit 1
+}
+
+deadline=$(( $(date +%s) + wait_seconds ))
+for (( i=1; i<=scale; i++ )); do
+  (
+    # shellcheck source=bin/(atmux)/notify
+    source "$NOTIFY_SCRIPT"
+    ATMUX_NOTIFY_SEQ_LOCK_STALE_SECONDS=30 next_notification_queue_id "$qdir" > "$ids_dir/$i"
+  ) &
+done
+
+while true; do
+  running=0
+  for job in $(jobs -pr); do
+    if kill -0 "$job" 2>/dev/null; then
+      running=1
+      break
+    fi
+  done
+  (( running == 0 )) && break
+  if (( $(date +%s) >= deadline )); then
+    echo "timeout allocating queue ids under contention" >&2
+    jobs -pr | xargs -r kill 2>/dev/null || true
+    exit 1
+  fi
+  sleep 0.05
+done
+wait
+
+allocated="$(find "$ids_dir" -maxdepth 1 -type f ! -name stale-recovery ! -name ownerless-recovery 2>/dev/null | wc -l | tr -d ' ')"
+[[ "$allocated" == "$scale" ]] || { echo "expected $scale ids, got $allocated" >&2; exit 1; }
+
+duplicate_count="$(find "$ids_dir" -maxdepth 1 -type f ! -name stale-recovery ! -name ownerless-recovery -exec cat {} + | sort | uniq -d | wc -l | tr -d ' ')"
+[[ "$duplicate_count" == "0" ]] || {
+  echo "duplicate queue ids allocated" >&2
+  find "$ids_dir" -maxdepth 1 -type f ! -name stale-recovery ! -name ownerless-recovery -exec cat {} + | sort | uniq -d >&2
+  exit 1
+}
+
+min_id="$(find "$ids_dir" -maxdepth 1 -type f ! -name stale-recovery ! -name ownerless-recovery -exec cat {} + | sort | head -n1)"
+expected_min="$(printf '%010d' "$(( stale_count + 3 ))")"
+[[ "$min_id" == "$expected_min" ]] || {
+  echo "expected first allocated id $expected_min, got $min_id" >&2
+  exit 1
+}
+
+[[ ! -e "$qdir/seq.lock" ]] || { echo "sequence lock was not released" >&2; exit 1; }
+
+printf 'stale=%s concurrent=%s first=%s last=%s\n' \
+  "$stale_count" "$scale" "$min_id" "$(find "$ids_dir" -maxdepth 1 -type f ! -name stale-recovery ! -name ownerless-recovery -exec cat {} + | sort | tail -n1)"
+echo "ok: notify queue id allocation survives stale locks and contention"

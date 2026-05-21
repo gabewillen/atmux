@@ -35,7 +35,7 @@ detached tmux window in that agent's session and returns immediately with
 notification with the exit code and captured stdout/stderr paths. Set
 `ATMUX_ASYNC_COMMANDS=0` to force foreground command execution, or
 `ATMUX_ASYNC_COMMANDS=all` to opt into async dispatch for other eligible
-commands.
+commands. The broader mode also accepts `1`, `true`, `yes`, and `on`.
 
 ### `atmux message read <id> [--repo <repo>] [--team <team>]`
 ### `atmux message list [--unread] [--repo <repo>] [--team <team>]`

@@ -4,7 +4,8 @@ set -euo pipefail
 # Verifies the length-scaled paste-to-submit bonus pause introduced to fix
 # large-notification submit drops:
 #   - small payloads (< ATMUX_SEND_PASTE_BONUS_MIN_BYTES) get NO bonus pause
-#   - fallback/unknown large payloads get a bonus pause = (len/1024) * per_kb seconds
+#   - fallback/unknown large payloads get a sublinear bonus pause =
+#     sqrt(len/1024) * per_kb seconds
 #   - observed stable full-length prompt input skips the fallback bonus
 #   - bonus is capped by ATMUX_SEND_PASTE_BONUS_MAX_SECONDS
 #   - per_kb=0 disables the feature
@@ -95,7 +96,7 @@ if [[ -n "$bonus" ]]; then
   exit 1
 fi
 
-# Case 2: large payload (10 KB) with default fallback rate 0.025/KB -> ~0.250s
+# Case 2: large payload (10 KB) with default fallback rate 0.02/sqrt(KB) -> ~0.063s
 large_payload="$(printf 'a%.0s' {1..10240})"
 run_case large_default "$large_payload"
 debug_log_has_bonus || {
@@ -105,23 +106,23 @@ debug_log_has_bonus || {
 }
 bonus="$(extract_bonus)"
 [[ -n "$bonus" ]] || { echo "fail: no bonus sleep recorded for 10KB payload" >&2; exit 1; }
-# Tolerate float fuzz: expect 0.250 +/- 0.001
+# Tolerate float fuzz: expect 0.063 +/- 0.001
 case "$bonus" in
-  0.250|0.249|0.251) ;;
-  *) echo "fail: 10KB payload bonus expected ~0.250s, got $bonus" >&2; exit 1 ;;
+  0.063|0.062|0.064) ;;
+  *) echo "fail: 10KB payload bonus expected ~0.063s, got $bonus" >&2; exit 1 ;;
 esac
 
-# Case 3: large payload with custom rate -> scales linearly -----------------
+# Case 3: large payload with custom rate -> scales sublinearly ---------------
 ATMUX_SEND_PASTE_PER_KB_SECONDS=0.1 run_case large_custom "$large_payload"
 bonus="$(extract_bonus)"
 case "$bonus" in
-  1.000|0.999|1.001) ;;
-  *) echo "fail: 10KB payload at 0.1s/KB expected ~1.000s, got $bonus" >&2; exit 1 ;;
+  0.316|0.315|0.317) ;;
+  *) echo "fail: 10KB payload at 0.1s/sqrt(KB) expected ~0.316s, got $bonus" >&2; exit 1 ;;
 esac
 
 # Case 4: cap clamps a huge payload at the max ------------------------------
 huge_payload="$(printf 'b%.0s' {1..204800})"  # 200 KB
-ATMUX_SEND_PASTE_BONUS_MAX_SECONDS=2 run_case huge_capped "$huge_payload"
+ATMUX_SEND_PASTE_PER_KB_SECONDS=1 ATMUX_SEND_PASTE_BONUS_MAX_SECONDS=2 run_case huge_capped "$huge_payload"
 bonus="$(extract_bonus)"
 case "$bonus" in
   2.000|1.999|2.001) ;;

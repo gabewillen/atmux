@@ -144,6 +144,7 @@ dispatcher runs it asynchronously by default. It writes the argv to
 runs `bin/(atmux)/(internal)/async-run` there. The caller gets an immediate
 `<async .../>` response. Read/list/status commands remain foreground by
 default; `ATMUX_ASYNC_COMMANDS=all` opts into the broader async dispatcher.
+The broader mode also accepts `1`, `true`, `yes`, and `on`.
 
 The async runner executes the command with `ATMUX_ASYNC_CHILD=1`, captures
 stdout and stderr under `<ATMUX_HOME>/async/<repo>/<run_id>/`, then queues a

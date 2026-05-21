@@ -283,9 +283,6 @@ async_command_writes_filesystem_by_default() {
           ;;
       esac
       ;;
-    notify)
-      return 0
-      ;;
   esac
 
   return 1
@@ -308,7 +305,7 @@ should_async_command() {
   fi
 
   case "$cmd" in
-    doctor|exec|install|kill|role|schedule|watch|watcher)
+    doctor|exec|install|kill|notify|role|schedule|watch|watcher)
       return 1
       ;;
     agent)

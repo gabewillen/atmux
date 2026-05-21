@@ -97,7 +97,8 @@ returns `<async .../>` immediately, and sends a command notification back to the
 caller when the command succeeds or fails. Captured stdout/stderr are stored
 under `<ATMUX_HOME>/async/<repo>/<run_id>/`. Set `ATMUX_ASYNC_COMMANDS=0` to run
 commands in the foreground, or `ATMUX_ASYNC_COMMANDS=all` to opt into the
-broader async dispatcher for other eligible commands.
+broader async dispatcher for other eligible commands. The broader mode also
+accepts `1`, `true`, `yes`, and `on`.
 
 ### `atmux message read <id> [--repo <repo>] [--team <team>]`
 ### `atmux message list [--unread] [--repo <repo>] [--team <team>]`

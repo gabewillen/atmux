@@ -26,6 +26,15 @@ truncate_file() {
   LC_ALL=C head -c "$max_bytes" "$file" 2>/dev/null || true
 }
 
+async_run_id() {
+  local id
+  id="$(LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c 16 2>/dev/null || true)"
+  if [[ -z "$id" ]]; then
+    id="$(date +%s)-$$"
+  fi
+  printf '%s\n' "$id"
+}
+
 if [[ $# -ne 4 || "${1:-}" == "-h" || "${1:-}" == "--help" || "${1:-}" == "help" ]]; then
   usage
   [[ $# -eq 0 || "${1:-}" == "-h" || "${1:-}" == "--help" || "${1:-}" == "help" ]] && exit 0
@@ -42,7 +51,7 @@ if [[ ! -x "$script_path" ]]; then
   exit 2
 fi
 
-run_id="$(id)"
+run_id="$(async_run_id)"
 repo_name="$(atmux_resolve_repo_name)"
 state_dir="$ATMUX_HOME/async/$repo_name/$run_id"
 mkdir -p "$state_dir"

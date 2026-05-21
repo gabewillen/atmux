@@ -286,6 +286,13 @@ should_async_command() {
     issue|path|pane|pr|process)
       [[ "${1:-}" == "watch" ]] && return 1
       ;;
+    message)
+      case "${1:-}" in
+        subscribe|unsubscribe)
+          return 1
+          ;;
+      esac
+      ;;
   esac
 
   case "${1:-}" in
@@ -338,7 +345,8 @@ launch_async_command() {
     local __async_env_name
     for __async_env_name in \
       PATH HOME SHELL TERM USER LOGNAME LANG LC_ALL LC_CTYPE TMPDIR \
-      ATMUX_REAL_TMUX ATMUX_ALLOW_REAL_TMUX ATMUX_TMUX_SOCKET TMUX_TMPDIR; do
+      TMUX TMUX_PANE TMUX_TMPDIR \
+      ATMUX_REAL_TMUX ATMUX_ALLOW_REAL_TMUX ATMUX_TMUX ATMUX_TMUX_PANE ATMUX_TMUX_SOCKET; do
       [[ -n "${!__async_env_name+x}" ]] || continue
       printf 'export %s=%q\n' "$__async_env_name" "${!__async_env_name-}"
     done

@@ -116,6 +116,23 @@ if grep -Fq 'ATMUX_ASYNC_SECRET_SHOULD_NOT_LEAK' "$env_state_dir/stdout"; then
   echo "async runner leaked non-allowlisted ATMUX environment into child command" >&2
   exit 1
 fi
+grep -Fq "ATMUX_TMUX_PANE=$sender_pane" "$env_state_dir/stdout"
+
+team_name="asyncdispatchteam${RANDOM}"
+mkdir -p "$ATMUX_HOME/teams/$repo/$team_name"
+printf '%s\n' "$team_name" > "$ATMUX_HOME/teams/$repo/$team_name/name"
+subscribe_out="$(
+  ATMUX_REPO="$repo" \
+  ATMUX_AGENT_NAME="sender" \
+  ATMUX_SESSION_NAME="$sender_session" \
+  ATMUX_TMUX_PANE="$sender_pane" \
+    "$ATMUX_BIN" message subscribe --team "$team_name"
+)"
+if printf '%s\n' "$subscribe_out" | grep -Fq '<async '; then
+  echo "message subscribe should not dispatch asynchronously" >&2
+  exit 1
+fi
+printf '%s\n' "$subscribe_out" | grep -Fq '<subscription type="team-message"'
 
 doctor_out="$(
   ATMUX_REPO="$repo" \

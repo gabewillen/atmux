@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# shellcheck source=tests/lib/isolate-tmux.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/isolate-tmux.sh"
 
 TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -14,6 +15,7 @@ export ATMUX_HOME ATMUX_SOURCE_ROOT
 cleanup() { rm -rf "$ATMUX_HOME"; }
 trap cleanup EXIT
 
+# shellcheck source=bin/(atmux)/notify
 source "$NOTIFY_SCRIPT"
 
 sleep_count=0

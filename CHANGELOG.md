@@ -18,6 +18,12 @@
 - Cursor Agent startup now passes `--trust` when the installed CLI supports it
   while retaining workspace trust-file seeding as a fallback, avoiding first-run
   trust prompts that block automated agent flows.
+- Notification delivery now treats prompt capture as the primary paste-readiness
+  signal: it waits for the full inserted payload to appear and stabilize, then
+  only applies a reduced length-based submit pause on fallback/timeout paths.
+- Default atmux agent instructions now explicitly steer agents toward
+  event-driven watchers for rolling output, file/folder changes, pane text,
+  agent readiness, and GitHub issue/PR feeds instead of sleep-based polling.
 - Added `atmux doctor` for project-local or system `.atmux` cleanup.
 - Prunes stale exec metadata, dead watcher registrations, dead notification
   worker locks, completed async-command records, empty queues, and empty state

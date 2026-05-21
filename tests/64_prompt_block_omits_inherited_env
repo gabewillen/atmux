@@ -31,6 +31,10 @@ control_text="$(
 printf '%s\n' "$control_text" | grep -Fq '# atmux Rules'
 printf '%s\n' "$control_text" | grep -Fq "Use plain \`atmux ...\` commands; do not prefix them with inherited session environment."
 printf '%s\n' "$control_text" | grep -Fq 'ATMUX is event-driven'
+printf '%s\n' "$control_text" | grep -Fq 'atmux process watch --stdio'
+printf '%s\n' "$control_text" | grep -Fq 'atmux path watch'
+printf '%s\n' "$control_text" | grep -Fq 'atmux pr watch --feed'
+printf '%s\n' "$control_text" | grep -Fq 'GitHub events'
 printf '%s\n' "$control_text" | grep -Fq 'atmux schedule --notification'
 printf '%s\n' "$control_text" | grep -Fq 'atmux message subscribe'
 printf '%s\n' "$control_text" | grep -Fq 'atmux send --reply-required'

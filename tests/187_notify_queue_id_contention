@@ -13,8 +13,8 @@ export ATMUX_HOME ATMUX_SOURCE_ROOT
 
 qdir="$ATMUX_HOME/notify-queue/contention-pane"
 payload_dir="$qdir/payloads"
-scale="${ATMUX_NOTIFY_ID_CONTENTION_SCALE:-100}"
-stale_count="${ATMUX_NOTIFY_ID_CONTENTION_STALE:-5000}"
+scale="${ATMUX_NOTIFY_ID_CONTENTION_SCALE:-50}"
+stale_count="${ATMUX_NOTIFY_ID_CONTENTION_STALE:-2000}"
 wait_seconds="${ATMUX_NOTIFY_ID_CONTENTION_WAIT_SECONDS:-20}"
 ids_dir="$tmp_root/ids"
 

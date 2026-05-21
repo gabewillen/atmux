@@ -4,10 +4,12 @@ set -euo pipefail
 # Verifies the length-scaled paste-to-submit bonus pause introduced to fix
 # large-notification submit drops:
 #   - small payloads (< ATMUX_SEND_PASTE_BONUS_MIN_BYTES) get NO bonus pause
-#   - large payloads get a bonus pause = (len/1024) * per_kb seconds
+#   - fallback/unknown large payloads get a bonus pause = (len/1024) * per_kb seconds
+#   - observed stable full-length prompt input skips the fallback bonus
 #   - bonus is capped by ATMUX_SEND_PASTE_BONUS_MAX_SECONDS
 #   - per_kb=0 disables the feature
 
+# shellcheck source=tests/lib/isolate-tmux.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/isolate-tmux.sh"
 
 TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -29,6 +31,7 @@ export ATMUX_SEND_PASTE_TO_SUBMIT_WAIT_SECONDS=0
 export ATMUX_SEND_SUBMIT_WAIT_SECONDS=0
 export ATMUX_SEND_NO_PROMPT_READY_SECONDS=0
 
+# shellcheck source=bin/(atmux)/notify
 source "$NOTIFY_SCRIPT"
 
 # Stubs --------------------------------------------------------------------
@@ -45,13 +48,21 @@ tmux() {
   command tmux "$@"
 }
 
-wait_for_prompt_input_settled() { return 0; }
+stub_paste_status="unknown"
+wait_for_prompt_input_settled() {
+  # shellcheck disable=SC2034 # consumed by deliver_notification_to_pane after this stub returns
+  ATMUX_NOTIFY_LAST_PASTE_SETTLE_STATUS="$stub_paste_status"
+  return 0
+}
 submit_notification_input() { return 0; }
 
 run_case() {
   local label="$1"
   local payload="$2"
+  local paste_status="${3:-unknown}"
   local log_file
+  [[ -n "$label" ]] || return 2
+  stub_paste_status="$paste_status"
   log_file="$(debug_notify_log_file)"
   mkdir -p "$(dirname "$log_file")"
   : > "$SLEEP_LOG"
@@ -84,7 +95,7 @@ if [[ -n "$bonus" ]]; then
   exit 1
 fi
 
-# Case 2: large payload (10 KB) with default rate 0.05/KB -> ~0.500s --------
+# Case 2: large payload (10 KB) with default fallback rate 0.025/KB -> ~0.250s
 large_payload="$(printf 'a%.0s' {1..10240})"
 run_case large_default "$large_payload"
 debug_log_has_bonus || {
@@ -94,10 +105,10 @@ debug_log_has_bonus || {
 }
 bonus="$(extract_bonus)"
 [[ -n "$bonus" ]] || { echo "fail: no bonus sleep recorded for 10KB payload" >&2; exit 1; }
-# Tolerate float fuzz: expect 0.500 +/- 0.001
+# Tolerate float fuzz: expect 0.250 +/- 0.001
 case "$bonus" in
-  0.500|0.499|0.501) ;;
-  *) echo "fail: 10KB payload bonus expected ~0.500s, got $bonus" >&2; exit 1 ;;
+  0.250|0.249|0.251) ;;
+  *) echo "fail: 10KB payload bonus expected ~0.250s, got $bonus" >&2; exit 1 ;;
 esac
 
 # Case 3: large payload with custom rate -> scales linearly -----------------
@@ -133,4 +144,12 @@ debug_log_has_bonus || {
   exit 1
 }
 
-echo "ok: paste-to-submit length-scaled bonus respects min threshold, per-KB rate, cap, and disable=0"
+# Case 7: full-length observed prompt input skips the fallback bonus ---------
+run_case stable_full "$large_payload" stable
+if debug_log_has_bonus; then
+  echo "fail: stable full-length prompt input should skip length bonus" >&2
+  cat "$(debug_notify_log_file)" >&2
+  exit 1
+fi
+
+echo "ok: paste-to-submit length-scaled fallback bonus respects stable input, min threshold, per-KB rate, cap, and disable=0"

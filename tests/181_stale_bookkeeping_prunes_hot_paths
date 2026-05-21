@@ -134,6 +134,8 @@ mkdir -p "$unknown_empty_sub"
 atmux_fs_write_field "$unknown_empty_sub/session" "atmux-${repo}-empty"
 atmux_fs_write_field "$unknown_empty_sub/repo" "$repo"
 atmux_fs_write_field "$unknown_empty_sub/team" "$team"
+ATMUX_HOME="$ATMUX_HOME" ATMUX_REPO="$repo" "$ATMUX_BIN" message subscriptions --team "$team" >/dev/null
+[[ -e "$unknown_empty_sub" ]] || { echo "message list pruned empty subscriber" >&2; exit 1; }
 unknown_send_out="$(
   ATMUX_TMUX_SOCKET="$missing_socket" ATMUX_HOME="$ATMUX_HOME" ATMUX_REPO="$repo" ATMUX_AGENT_NAME="sender" ATMUX_SESSION_NAME="atmux-${repo}-sender" \
     "$ATMUX_BIN" send --to "$team" "unknown pane snapshot should not fail empty subscribers"

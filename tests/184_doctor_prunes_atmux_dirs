@@ -181,9 +181,19 @@ mkdir -p "$project_home/exec/doctor_repo/fresh-starting-pidless"
 printf '%s\n' starting > "$project_home/exec/doctor_repo/fresh-starting-pidless/state"
 HOME="$tmp_root/home" ATMUX_HOME="$project_home" ATMUX_SOURCE_ROOT="$REPO_ROOT" ATMUX_TMUX_SOCKET_DIR="$tmp_root/tmux-sockets" PATH="$stat_stub_dir:$PATH" \
   "$ATMUX_BIN" doctor --project --project-root "$project_root" >/dev/null
-assert_exists "$project_home/exec/doctor_repo/fresh-starting-pidless"
+  assert_exists "$project_home/exec/doctor_repo/fresh-starting-pidless"
 
-kill "$live_pid" >/dev/null 2>&1 || true
+  mkdir -p "$project_home/exec/doctor_repo/unknown-pane-watchers/watchers"
+  printf '%s\n' running > "$project_home/exec/doctor_repo/unknown-pane-watchers/state"
+  printf '%s\n' "$live_pid" > "$project_home/exec/doctor_repo/unknown-pane-watchers/pid"
+  printf '%%999999|%s\n' "$tmp_root/unknown-doctor-exec.fifo" > "$project_home/exec/doctor_repo/unknown-pane-watchers/watchers/unknown"
+  mkfifo "$tmp_root/unknown-doctor-exec.fifo"
+  HOME="$tmp_root/home" ATMUX_HOME="$project_home" ATMUX_SOURCE_ROOT="$REPO_ROOT" ATMUX_TMUX_SOCKET="$tmp_root/missing-doctor.sock" \
+    "$ATMUX_BIN" doctor --project --project-root "$project_root" >/dev/null
+  assert_exists "$project_home/exec/doctor_repo/unknown-pane-watchers/watchers/unknown"
+  assert_exists "$tmp_root/unknown-doctor-exec.fifo"
+
+  kill "$live_pid" >/dev/null 2>&1 || true
 wait "$live_pid" >/dev/null 2>&1 || true
 
 echo "ok: doctor prunes stale project and system atmux directories"

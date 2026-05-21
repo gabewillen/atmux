@@ -144,6 +144,7 @@ id_live() {
 stale_pane() {
   local pane="$1"
   [[ -n "$pane" ]] || return 0
+  atmux_watcher_live_ids_known "$live_panes" || return 1
   ! id_live "$pane" "$live_panes"
 }
 

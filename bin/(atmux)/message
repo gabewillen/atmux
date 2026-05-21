@@ -609,6 +609,7 @@ list_team_message_subscriptions() {
         agent="$(cat "$file/agent" 2>/dev/null || true)"
         sub_repo="$(cat "$file/repo" 2>/dev/null || true)"
         sub_team="$(cat "$file/team" 2>/dev/null || true)"
+        [[ -n "$pane" ]] || continue
         if (( live_panes_known )) && ! watcher_pane_is_live "$pane" "$live_panes"; then
           rm -rf "$file"
           continue

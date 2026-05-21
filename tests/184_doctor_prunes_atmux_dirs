@@ -149,6 +149,27 @@ assert_exists "$project_home/issues/doctor_repo/live/watchers/live"
 assert_exists "$tmp_root/live-issue.fifo"
 "$ATMUX_REAL_TMUX" -S "$target_socket" kill-session -t "$target_session" >/dev/null 2>&1 || true
 
+stat_stub_dir="$tmp_root/stat-stub"
+mkdir -p "$stat_stub_dir"
+cat > "$stat_stub_dir/stat" <<'SH'
+#!/usr/bin/env bash
+if [[ "$1" == "-c" && "$2" == "%Y" ]]; then
+  date +%s
+  exit 0
+fi
+if [[ "$1" == "-f" && "$2" == "%m" ]]; then
+  printf '%%m\n'
+  exit 0
+fi
+exec /usr/bin/stat "$@"
+SH
+chmod +x "$stat_stub_dir/stat"
+mkdir -p "$project_home/exec/doctor_repo/fresh-starting-pidless"
+printf '%s\n' starting > "$project_home/exec/doctor_repo/fresh-starting-pidless/state"
+HOME="$tmp_root/home" ATMUX_HOME="$project_home" ATMUX_SOURCE_ROOT="$REPO_ROOT" PATH="$stat_stub_dir:$PATH" \
+  "$ATMUX_BIN" doctor --project --project-root "$project_root" >/dev/null
+assert_exists "$project_home/exec/doctor_repo/fresh-starting-pidless"
+
 kill "$live_pid" >/dev/null 2>&1 || true
 wait "$live_pid" >/dev/null 2>&1 || true
 

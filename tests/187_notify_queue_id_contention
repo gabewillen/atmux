@@ -75,6 +75,9 @@ printf '%s\n' "$(date +%s)" > "$qdir/seq.lock/acquired_at"
 }
 rm -rf "$qdir/seq.lock"
 
+mkdir -p "$qdir/seq.lock"
+printf '999999\n' > "$qdir/seq.lock/pid"
+printf '0\n' > "$qdir/seq.lock/acquired_at"
 deadline=$(( $(date +%s) + wait_seconds ))
 for (( i=1; i<=scale; i++ )); do
   (

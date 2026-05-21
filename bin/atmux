@@ -345,7 +345,7 @@ launch_async_command() {
     local __async_env_name
     for __async_env_name in \
       PATH HOME SHELL TERM USER LOGNAME LANG LC_ALL LC_CTYPE TMPDIR \
-      TMUX TMUX_PANE TMUX_TMPDIR \
+      TMUX TMUX_TMPDIR \
       ATMUX_REAL_TMUX ATMUX_ALLOW_REAL_TMUX ATMUX_TMUX ATMUX_TMUX_PANE ATMUX_TMUX_SOCKET; do
       [[ -n "${!__async_env_name+x}" ]] || continue
       printf 'export %s=%q\n' "$__async_env_name" "${!__async_env_name-}"

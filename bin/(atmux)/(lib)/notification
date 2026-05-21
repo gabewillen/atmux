@@ -370,6 +370,7 @@ next_notification_queue_id() {
   local payload_dir="$qdir/payloads"
   local current="0"
   local next=1
+  local next_tmp
 
   mkdir -p "$payload_dir"
   lock_dir="$(acquire_notification_sequence_lock "$qdir")" || return 1
@@ -384,8 +385,9 @@ next_notification_queue_id() {
     next="$(( next + 1 ))"
   done
 
-  printf '%s\n' "$next" > "$qdir/next_id.tmp.$$"
-  mv "$qdir/next_id.tmp.$$" "$qdir/next_id"
+  next_tmp="$qdir/next_id.tmp.${BASHPID:-$$}.$RANDOM"
+  printf '%s\n' "$next" > "$next_tmp"
+  mv "$next_tmp" "$qdir/next_id"
   release_notification_sequence_lock "$lock_dir"
 
   printf '%010d\n' "$next"
@@ -416,7 +418,6 @@ notification_sequence_lock_stale() {
     if kill -0 "$owner_pid" 2>/dev/null; then
       return 1
     fi
-    return 0
   fi
 
   acquired_at="$(cat "$lock_dir/acquired_at" 2>/dev/null | tr -d '\r\n' || true)"
@@ -424,6 +425,9 @@ notification_sequence_lock_stale() {
     acquired_at="$(notification_path_mtime "$lock_dir" 2>/dev/null || true)"
   fi
   [[ "$acquired_at" =~ ^[0-9]+$ ]] || return 1
+  if [[ -n "$owner_pid" && "$owner_pid" =~ ^[0-9]+$ ]] && (( stale_after == 0 )); then
+    return 0
+  fi
   (( stale_after > 0 )) || return 1
   age=$(( now - acquired_at ))
   (( age >= stale_after ))
@@ -431,12 +435,22 @@ notification_sequence_lock_stale() {
 
 recover_notification_sequence_lock() {
   local lock_dir="$1"
-  local stale_dir="${lock_dir}.stale.$$.$RANDOM"
+  local stale_dir="${lock_dir}.stale.${BASHPID:-$$}.$RANDOM"
+  local recovery_lock="${lock_dir}.recover"
 
+  if ! mkdir "$recovery_lock" 2>/dev/null; then
+    return 1
+  fi
+  if [[ ! -d "$lock_dir" ]] || ! notification_sequence_lock_stale "$lock_dir"; then
+    rmdir "$recovery_lock" 2>/dev/null || true
+    return 1
+  fi
   if mv "$lock_dir" "$stale_dir" 2>/dev/null; then
     rm -rf "$stale_dir"
+    rmdir "$recovery_lock" 2>/dev/null || true
     return 0
   fi
+  rmdir "$recovery_lock" 2>/dev/null || true
   return 1
 }
 
@@ -445,10 +459,12 @@ acquire_notification_sequence_lock() {
   local lock_dir="$qdir/seq.lock"
   local waited=0
   local max_attempts="${ATMUX_NOTIFY_SEQ_LOCK_MAX_ATTEMPTS:-1000}"
+  local sleep_seconds="${ATMUX_NOTIFY_SEQ_LOCK_SLEEP_SECONDS:-0.002}"
   local attempts=0
 
   [[ "$max_attempts" =~ ^[0-9]+$ ]] || max_attempts=1000
   (( max_attempts > 0 )) || max_attempts=1000
+  [[ "$sleep_seconds" =~ ^[0-9]+([.][0-9]+)?$ ]] || sleep_seconds=0.002
 
   mkdir -p "$qdir"
   while ! mkdir "$lock_dir" 2>/dev/null; do
@@ -460,14 +476,18 @@ acquire_notification_sequence_lock() {
     if [[ -d "$lock_dir" ]] && notification_sequence_lock_stale "$lock_dir"; then
       if recover_notification_sequence_lock "$lock_dir"; then
         debug_notify "queue:seq_lock_recovered qdir=$(printf '%q' "$qdir") waited=$waited"
+        if mkdir "$lock_dir" 2>/dev/null; then
+          break
+        fi
+        continue
       fi
     fi
     waited=$(( waited + 1 ))
-    sleep 0.01
+    sleep "$sleep_seconds"
   done
 
-  atmux_fs_write_field "$lock_dir/pid" "$$"
-  atmux_fs_write_field "$lock_dir/acquired_at" "$(date +%s)"
+  printf '%s\n' "${BASHPID:-$$}" > "$lock_dir/pid"
+  printf '%s\n' "$(date +%s)" > "$lock_dir/acquired_at"
   printf '%s\n' "$lock_dir"
 }
 

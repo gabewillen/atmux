@@ -94,6 +94,7 @@ env_out="$(
   ATMUX_AGENT_NAME="sender" \
   ATMUX_SESSION_NAME="$sender_session" \
   ATMUX_TMUX_PANE="$sender_pane" \
+  TMUX_PANE="$receiver_pane" \
   ATMUX_ASYNC_SECRET_SHOULD_NOT_LEAK="secret-${RANDOM}" \
     "$ATMUX_BIN" env
 )"
@@ -117,6 +118,10 @@ if grep -Fq 'ATMUX_ASYNC_SECRET_SHOULD_NOT_LEAK' "$env_state_dir/stdout"; then
   exit 1
 fi
 grep -Fq "ATMUX_TMUX_PANE=$sender_pane" "$env_state_dir/stdout"
+if grep -Fxq "TMUX_PANE=$receiver_pane" "$env_state_dir/stdout"; then
+  echo "async runner forwarded caller TMUX_PANE into child command" >&2
+  exit 1
+fi
 
 team_name="asyncdispatchteam${RANDOM}"
 mkdir -p "$ATMUX_HOME/teams/$repo/$team_name"

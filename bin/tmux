@@ -63,4 +63,4 @@ if [[ -z "$atmux_bin" ]]; then
   exit 127
 fi
 
-exec "$atmux_bin" "$@"
+exec env ATMUX_ASYNC_COMMANDS=0 "$atmux_bin" "$@"

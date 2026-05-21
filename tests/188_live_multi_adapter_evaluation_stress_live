@@ -1,0 +1,606 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Live multi-adapter evaluator. This is intentionally skipped by normal CI via
+# the *_live suffix. It starts multiple real adapters at once, ramps concurrent
+# atmux sends across all of them, records latency/visibility/queue-drain
+# metrics, and writes a small report that identifies the first observed
+# breakpoint plus likely improvements.
+
+# shellcheck source=tests/lib/isolate-tmux.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/isolate-tmux.sh"
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+ATMUX_BIN="$REPO_ROOT/bin/atmux"
+
+CONTROL_FILES=(CLAUDE.md GEMINI.md AGENTS.override.md)
+CONTROL_SNAPSHOT=""
+ATMUX_HOME_TEST=""
+ARTIFACT_ROOT="${ATMUX_LIVE_EVAL_ARTIFACT_DIR:-}"
+ARTIFACT_ROOT_CREATED=0
+REPO="liveeval${RANDOM}"
+RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-$$"
+SUMMARY_TSV=""
+LIST_TSV=""
+COMMAND_TSV=""
+QUEUE_TSV=""
+REPORT_MD=""
+DETAIL_DIR=""
+BREAKDOWN_ROUND=""
+BREAKDOWN_REASON=""
+
+declare -a SESSIONS=()
+declare -a TMP_FILES=()
+declare -a ADAPTERS=()
+declare -a SKIPPED_ADAPTERS=()
+declare -a AGENT_NAMES=()
+declare -a PANES=()
+declare -a QUEUE_KEYS=()
+
+snapshot_control_files() {
+  local file
+  CONTROL_SNAPSHOT="$(mktemp -d "${TMPDIR:-/tmp}/atmux-control-files.XXXXXX")"
+  for file in "${CONTROL_FILES[@]}"; do
+    if [[ -e "$REPO_ROOT/$file" ]]; then
+      cp "$REPO_ROOT/$file" "$CONTROL_SNAPSHOT/$file"
+    else
+      touch "$CONTROL_SNAPSHOT/$file.missing"
+    fi
+  done
+}
+
+restore_control_files() {
+  local file
+  [[ -n "$CONTROL_SNAPSHOT" ]] || return 0
+  for file in "${CONTROL_FILES[@]}"; do
+    if [[ -f "$CONTROL_SNAPSHOT/$file.missing" ]]; then
+      rm -f "$REPO_ROOT/$file"
+    elif [[ -f "$CONTROL_SNAPSHOT/$file" ]]; then
+      cp "$CONTROL_SNAPSHOT/$file" "$REPO_ROOT/$file"
+    fi
+  done
+  rm -rf "$CONTROL_SNAPSHOT"
+}
+
+cleanup() {
+  local idx session tmp
+  for (( idx=0; idx<${#SESSIONS[@]}; idx++ )); do
+    session="${SESSIONS[$idx]}"
+    tmux kill-session -t "$session" >/dev/null 2>&1 || true
+  done
+  for (( idx=0; idx<${#TMP_FILES[@]}; idx++ )); do
+    tmp="${TMP_FILES[$idx]}"
+    rm -f "$tmp" 2>/dev/null || true
+  done
+  if [[ -n "$ATMUX_HOME_TEST" && -d "$ATMUX_HOME_TEST" ]]; then
+    if [[ "${ATMUX_TEST_KEEP_ARTIFACTS:-0}" == "1" ]]; then
+      echo "retaining atmux home: $ATMUX_HOME_TEST" >&2
+    else
+      rm -rf "$ATMUX_HOME_TEST"
+    fi
+  fi
+  rm -rf "$REPO_ROOT/.gemini"
+  restore_control_files
+  if (( ARTIFACT_ROOT_CREATED == 1 )); then
+    echo "live evaluation report: $REPORT_MD" >&2
+  fi
+}
+trap cleanup EXIT
+
+require_adapter_command() {
+  local adapter="$1"
+  case "$adapter" in
+    claude-code) command -v claude >/dev/null 2>&1 ;;
+    codex) command -v codex >/dev/null 2>&1 ;;
+    cursor-agent) command -v agent >/dev/null 2>&1 || command -v cursor-agent >/dev/null 2>&1 ;;
+    gemini) command -v gemini >/dev/null 2>&1 ;;
+    grok) command -v grok >/dev/null 2>&1 ;;
+    opencode) command -v opencode >/dev/null 2>&1 ;;
+    *) return 1 ;;
+  esac
+}
+
+adapter_slug() {
+  printf '%s\n' "$1" | tr -cs 'A-Za-z0-9' '-'
+}
+
+session_pane() {
+  local session="$1"
+  tmux list-panes -t "$session" -F '#{pane_id}' 2>/dev/null | head -n1
+}
+
+now_seconds() {
+  date +%s
+}
+
+count_all_queue_items() {
+  local root="$ATMUX_HOME_TEST/notify-queue"
+  [[ -d "$root" ]] || { printf '0\n'; return 0; }
+  find "$root" -mindepth 3 -maxdepth 3 -type d -path '*/payloads/*' 2>/dev/null | wc -l | tr -d ' '
+}
+
+queue_key_for_pane() {
+  local pane="$1"
+  local session
+  session="$(tmux display-message -t "$pane" -p "#{session_name}" 2>/dev/null || true)"
+  if [[ -n "$session" ]]; then
+    pane="${session}-${pane}"
+  fi
+  printf '%s' "$pane" | tr -c 'A-Za-z0-9_.-' '_'
+}
+
+queue_dir_for_key() {
+  local key="$1"
+  printf '%s/notify-queue/%s\n' "$ATMUX_HOME_TEST" "$key"
+}
+
+count_queue_items_for_qdir() {
+  local qdir="$1"
+  local payload_dir
+  payload_dir="$qdir/payloads"
+  [[ -d "$payload_dir" ]] || { printf '0\n'; return 0; }
+  find "$payload_dir" -mindepth 1 -maxdepth 1 -type d ! -name '.*' 2>/dev/null | wc -l | tr -d ' '
+}
+
+queue_has_payloads() {
+  [[ "$(count_all_queue_items)" != "0" ]]
+}
+
+wait_for_queues_empty() {
+  local timeout="$1"
+  local deadline
+  deadline=$(( $(now_seconds) + timeout ))
+  while true; do
+    if ! queue_has_payloads; then
+      return 0
+    fi
+    if (( $(now_seconds) >= deadline )); then
+      return 1
+    fi
+    sleep 0.5
+  done
+}
+
+capture_compact() {
+  local pane="$1"
+  tmux capture-pane -p -t "$pane" -S -50000 2>/dev/null | tr -d '\r\n' || true
+}
+
+run_atmux_as_sender() {
+  local agent_name="$1"
+  shift
+  ATMUX_ALLOW_OUTSIDE_TMUX=1 \
+    ATMUX_HOME="$ATMUX_HOME_TEST" \
+    ATMUX_SOURCE_ROOT="$REPO_ROOT" \
+    ATMUX_REPO="$REPO" \
+    ATMUX_AGENT_NAME="sender-$agent_name" \
+    ATMUX_SESSION_NAME="atmux-${REPO}-sender-${agent_name}" \
+    "$ATMUX_BIN" "$@"
+}
+
+extract_message_id() {
+  sed -n 's/.*message_id="\([^"]*\)".*/\1/p' | head -n1
+}
+
+append_summary_header() {
+  printf 'round\tscale\tadapter\tsent\tmessage_ids\tvisible_hints\tqueue_after\tsend_seconds\tdrain_seconds\tstatus\tnotes\n' > "$SUMMARY_TSV"
+}
+
+append_list_header() {
+  printf 'phase\tround\tscale\tcommand\tagents\tseconds\tstatus\tnotes\n' > "$LIST_TSV"
+}
+
+append_command_header() {
+  printf 'timestamp\tphase\tround\tscale\tadapter\tseconds\trc\toutput_file\tcommand\n' > "$COMMAND_TSV"
+}
+
+append_queue_header() {
+  printf 'timestamp\tphase\tround\tscale\tadapter\tagent\tpane\tqueue_key\tqueue_items\titem\tstate\tattempts\tcreated_at\tnext_attempt_at\tworker_pid\tworker_running\tlock_present\n' > "$QUEUE_TSV"
+}
+
+append_summary() {
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$@" >> "$SUMMARY_TSV"
+}
+
+append_list_metric() {
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$@" >> "$LIST_TSV"
+}
+
+append_command_metric() {
+  local timestamp phase round scale adapter seconds rc output_file command lock_dir wait_count
+  timestamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  phase="$1"
+  round="$2"
+  scale="$3"
+  adapter="$4"
+  seconds="$5"
+  rc="$6"
+  output_file="$7"
+  command="$8"
+  lock_dir="$ARTIFACT_ROOT/command-metrics.lock"
+  wait_count=0
+  while ! mkdir "$lock_dir" 2>/dev/null; do
+    wait_count=$(( wait_count + 1 ))
+    if (( wait_count > 200 )); then
+      echo "timed out waiting for command metrics lock" >&2
+      return 1
+    fi
+    sleep 0.05
+  done
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "$timestamp" "$phase" "$round" "$scale" "$adapter" "$seconds" "$rc" "$output_file" "$command" >> "$COMMAND_TSV"
+  rmdir "$lock_dir"
+}
+
+snapshot_queue_state() {
+  local phase="$1"
+  local round="$2"
+  local scale="$3"
+  local timestamp idx adapter agent_name pane qdir queue_key payload_dir queue_items worker_pid worker_running lock_present item state attempts created_at next_attempt_at wrote_item
+  timestamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  for (( idx=0; idx<${#ADAPTERS[@]}; idx++ )); do
+    adapter="${ADAPTERS[$idx]}"
+    agent_name="${AGENT_NAMES[$idx]}"
+    pane="${PANES[$idx]}"
+    queue_key="${QUEUE_KEYS[$idx]}"
+    qdir="$(queue_dir_for_key "$queue_key")"
+    payload_dir="$qdir/payloads"
+    queue_items="$(count_queue_items_for_qdir "$qdir")"
+    worker_pid="$(cat "$qdir/worker.pid" 2>/dev/null || true)"
+    worker_running=0
+    if [[ "$worker_pid" =~ ^[0-9]+$ ]] && kill -0 "$worker_pid" 2>/dev/null; then
+      worker_running=1
+    fi
+    lock_present=0
+    [[ -d "$qdir/lock" ]] && lock_present=1
+    wrote_item=0
+    if [[ -d "$payload_dir" ]]; then
+      while IFS= read -r item; do
+        [[ -n "$item" ]] || continue
+        wrote_item=1
+        state="$(cat "$item/state" 2>/dev/null || true)"
+        attempts="$(cat "$item/attempts" 2>/dev/null || true)"
+        created_at="$(cat "$item/created_at" 2>/dev/null || true)"
+        next_attempt_at="$(cat "$item/next_attempt_at" 2>/dev/null || true)"
+        printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+          "$timestamp" "$phase" "$round" "$scale" "$adapter" "$agent_name" "$pane" "$queue_key" "$queue_items" \
+          "$(basename "$item")" "${state:-unknown}" "${attempts:-unknown}" "${created_at:-unknown}" "${next_attempt_at:-none}" \
+          "${worker_pid:-none}" "$worker_running" "$lock_present" >> "$QUEUE_TSV"
+      done < <(find "$payload_dir" -mindepth 1 -maxdepth 1 -type d ! -name '.*' 2>/dev/null | sort)
+    fi
+    if (( wrote_item == 0 )); then
+      printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\tnone\tnone\tnone\tnone\tnone\t%s\t%s\t%s\n' \
+        "$timestamp" "$phase" "$round" "$scale" "$adapter" "$agent_name" "$pane" "$queue_key" "$queue_items" \
+        "${worker_pid:-none}" "$worker_running" "$lock_present" >> "$QUEUE_TSV"
+    fi
+  done
+}
+
+record_breakdown() {
+  local round="$1"
+  local reason="$2"
+  if [[ -z "$BREAKDOWN_ROUND" ]]; then
+    BREAKDOWN_ROUND="$round"
+    BREAKDOWN_REASON="$reason"
+  fi
+}
+
+write_report() {
+  local generated_at
+  generated_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  {
+    printf '# atmux live multi-adapter evaluation\n\n'
+    printf -- '- generated_at: `%s`\n' "$generated_at"
+    printf -- '- repo: `%s`\n' "$REPO"
+    printf -- '- atmux_home: `%s`\n' "$ATMUX_HOME_TEST"
+    printf -- '- adapters: `%s`\n' "${ADAPTERS[*]:-}"
+    printf -- '- skipped_adapters: `%s`\n' "${SKIPPED_ADAPTERS[*]:-none}"
+    printf -- '- scales: `%s`\n' "${ATMUX_LIVE_EVAL_SCALES:-1 2 4 8}"
+    printf -- '- wait_seconds: `%s`\n\n' "${ATMUX_LIVE_EVAL_WAIT_SECONDS:-420}"
+
+    if [[ -n "$BREAKDOWN_ROUND" ]]; then
+      printf '## First breakpoint\n\n'
+      printf -- '- round: `%s`\n' "$BREAKDOWN_ROUND"
+      printf -- '- reason: `%s`\n\n' "$BREAKDOWN_REASON"
+    else
+      printf '## First breakpoint\n\nNo breakpoint detected within configured scale.\n\n'
+    fi
+
+    printf '## Metrics\n\n'
+    printf '### Delivery\n\n'
+    printf '```tsv\n'
+    cat "$SUMMARY_TSV"
+    printf '```\n\n'
+    printf '### Listing\n\n'
+    printf '```tsv\n'
+    cat "$LIST_TSV"
+    printf '```\n\n'
+    printf '### Commands\n\n'
+    printf '```tsv\n'
+    cat "$COMMAND_TSV"
+    printf '```\n\n'
+    printf '### Queues\n\n'
+    printf '```tsv\n'
+    cat "$QUEUE_TSV"
+    printf '```\n\n'
+
+    printf '## Evaluation notes\n\n'
+    printf -- '- `message_ids < sent` means the sender path is failing before durable message creation; inspect sender stdout/stderr artifacts and async command bookkeeping.\n'
+    printf -- '- `queue_after > 0` means pane delivery or verification is not draining fast enough; inspect notify queue item state, retry counts, and submit verification debug logs.\n'
+    printf -- '- `visible_hints < message_ids` with an empty queue usually means adapter UI rewrite/scrollback makes tmux capture an incomplete delivery witness; prefer durable delivered/read metadata over pane text as the long-term assertion.\n'
+    printf -- '- High `send_seconds` at low scale points to command startup, message directory churn, or sequence-lock contention; high `drain_seconds` points to serialized pane delivery and adapter prompt/submit timing.\n\n'
+    printf -- '- `agent list --all` isolates tmux session enumeration and repo filtering; `agent list --all --status` adds one passive adapter status call per listed session. If only the status form is slow, the bottleneck is adapter status capture/parsing rather than global listing.\n\n'
+    printf -- '- `commands.tsv` records every `atmux` command the evaluator runs, including boot, send, and listing calls, so external observers can plot per-command latency while the test scales.\n\n'
+    printf -- '- `queues.tsv` records per-agent queue depth, pending item state, attempts, worker PID liveness, and lock presence at evaluation checkpoints.\n\n'
+
+    printf '## Improvement candidates\n\n'
+    printf -- '- Persist per-notification delivered metadata independently from pane capture so live tests can distinguish UI scrollback loss from delivery loss.\n'
+    printf -- '- Keep queue id allocation O(1) and audit any path that scans message, exec, or notify directories on hot delivery paths.\n'
+    printf -- '- Add backpressure telemetry: oldest queued age, retry count histogram, queue depth per pane, and send-to-delivered latency.\n'
+    printf -- '- If `drain_seconds` grows linearly, consider batching prompt capture/restore work and exposing a per-adapter submit-readiness signal instead of fixed sleeps.\n'
+    printf -- '- If one adapter consistently breaks first, tune its prompt grammar, trust/startup flags, or submit key path before changing global notification timing.\n'
+    printf -- '- If `agent list --all --status` is the first slow path, add status caching or bounded parallel passive status collection so one slow adapter cannot stall global listing.\n'
+  } > "$REPORT_MD"
+}
+
+select_adapters() {
+  local adapter
+  for adapter in ${ATMUX_LIVE_EVAL_ADAPTERS:-codex claude-code gemini cursor-agent grok opencode}; do
+    if require_adapter_command "$adapter"; then
+      ADAPTERS+=("$adapter")
+    else
+      SKIPPED_ADAPTERS+=("$adapter")
+    fi
+  done
+  local min_adapters="${ATMUX_LIVE_EVAL_MIN_ADAPTERS:-2}"
+  [[ "$min_adapters" =~ ^[0-9]+$ ]] || min_adapters=2
+  if (( ${#ADAPTERS[@]} < min_adapters )); then
+    echo "need at least $min_adapters live adapters for multi-adapter evaluation; available=${ADAPTERS[*]:-none} skipped=${SKIPPED_ADAPTERS[*]:-none}" >&2
+    exit 1
+  fi
+}
+
+boot_adapters() {
+  local idx adapter slug agent_name session pane queue_key out_file start seconds rc
+  for (( idx=0; idx<${#ADAPTERS[@]}; idx++ )); do
+    adapter="${ADAPTERS[$idx]}"
+    slug="$(adapter_slug "$adapter")"
+    agent_name="${slug}-eval"
+    echo "--- boot $adapter as $agent_name ---" >&2
+    out_file="$DETAIL_DIR/agent-create-${slug}.out"
+    start="$(now_seconds)"
+    set +e
+    session="$(ATMUX_ALLOW_OUTSIDE_TMUX=1 \
+      ATMUX_HOME="$ATMUX_HOME_TEST" \
+      ATMUX_SOURCE_ROOT="$REPO_ROOT" \
+      ATMUX_REPO="$REPO" \
+      ATMUX_ROLE="implementer" \
+      ATMUX_INTELLIGENCE="${ATMUX_LIVE_EVAL_INTELLIGENCE:-50}" \
+      "$ATMUX_BIN" agent create \
+        --name "$agent_name" \
+        --role worker \
+        --intelligence "${ATMUX_LIVE_EVAL_INTELLIGENCE:-50}" \
+        --adapter auto \
+        --adapters "$adapter" \
+        --shared-worktree 2>&1)"
+    rc=$?
+    set -e
+    seconds="$(( $(now_seconds) - start ))"
+    printf '%s\n' "$session" > "$out_file"
+    append_command_metric "boot" 0 0 "$adapter" "$seconds" "$rc" "$out_file" "atmux agent create --name $agent_name --adapter auto --adapters $adapter --shared-worktree"
+    [[ "$rc" == "0" && -n "$session" ]] || { echo "failed to start $adapter; see $out_file" >&2; exit 1; }
+    pane="$(session_pane "$session")"
+    [[ -n "$pane" ]] || { echo "missing pane for $adapter session $session" >&2; exit 1; }
+    queue_key="$(queue_key_for_pane "$pane")"
+    SESSIONS+=("$session")
+    AGENT_NAMES+=("$agent_name")
+    PANES+=("$pane")
+    QUEUE_KEYS+=("$queue_key")
+  done
+}
+
+measure_agent_list() {
+  local phase="$1"
+  local round="$2"
+  local scale="$3"
+  local status_flag="$4"
+  local label command_label out out_file start seconds rc agents status notes budget
+
+  if [[ "$status_flag" == "1" ]]; then
+    label="agent-list-status"
+    command_label="agent list --all --status"
+    budget="${ATMUX_LIVE_EVAL_AGENT_LIST_STATUS_BUDGET_SECONDS:-0}"
+  else
+    label="agent-list"
+    command_label="agent list --all"
+    budget="${ATMUX_LIVE_EVAL_AGENT_LIST_BUDGET_SECONDS:-0}"
+  fi
+  [[ "$budget" =~ ^[0-9]+$ ]] || budget=0
+
+  out_file="$DETAIL_DIR/${label}-${phase}-${round}-${scale}.xml"
+  start="$(now_seconds)"
+  set +e
+  if [[ "$status_flag" == "1" ]]; then
+    out="$(ATMUX_ALLOW_OUTSIDE_TMUX=1 ATMUX_HOME="$ATMUX_HOME_TEST" ATMUX_SOURCE_ROOT="$REPO_ROOT" ATMUX_REPO="$REPO" ATMUX_REPORTER=xml \
+      "$ATMUX_BIN" agent list --all --status 2>&1)"
+  else
+    out="$(ATMUX_ALLOW_OUTSIDE_TMUX=1 ATMUX_HOME="$ATMUX_HOME_TEST" ATMUX_SOURCE_ROOT="$REPO_ROOT" ATMUX_REPO="$REPO" ATMUX_REPORTER=xml \
+      "$ATMUX_BIN" agent list --all 2>&1)"
+  fi
+  rc=$?
+  set -e
+  seconds="$(( $(now_seconds) - start ))"
+  printf '%s\n' "$out" > "$out_file"
+  append_command_metric "$phase" "$round" "$scale" "all" "$seconds" "$rc" "$out_file" "$command_label"
+  agents="$(printf '%s\n' "$out" | grep -c '<agent ' 2>/dev/null || true)"
+  status="ok"
+  notes="none"
+  if (( rc != 0 )); then
+    status="error"
+    notes="rc_${rc}"
+    record_breakdown "$round" "$command_label failed with rc=$rc"
+  elif (( budget > 0 && seconds > budget )); then
+    status="slow"
+    notes="over_budget_${budget}s"
+    record_breakdown "$round" "$command_label took ${seconds}s over budget ${budget}s"
+  fi
+  append_list_metric "$phase" "$round" "$scale" "$command_label" "$agents" "$seconds" "$status" "$notes"
+}
+
+measure_agent_lists() {
+  local phase="$1"
+  local round="$2"
+  local scale="$3"
+  measure_agent_list "$phase" "$round" "$scale" 0
+  measure_agent_list "$phase" "$round" "$scale" 1
+}
+
+run_round() {
+  local round="$1"
+  local scale="$2"
+  local wait_seconds="$3"
+  local round_dir="$DETAIL_DIR/round-$round-scale-$scale"
+  local idx adapter agent_name pane send_idx result_file out id rc
+  local send_start send_seconds drain_start drain_seconds status notes
+  local sent ids visible queue_after
+  local -a pids=()
+
+  mkdir -p "$round_dir"
+  echo "--- round $round: scale=$scale per adapter (${#ADAPTERS[@]} adapters) ---" >&2
+  measure_agent_lists "pre-round" "$round" "$scale"
+  send_start="$(now_seconds)"
+  for (( idx=0; idx<${#ADAPTERS[@]}; idx++ )); do
+    adapter="${ADAPTERS[$idx]}"
+    agent_name="${AGENT_NAMES[$idx]}"
+    for (( send_idx=1; send_idx<=scale; send_idx++ )); do
+      result_file="$round_dir/${adapter}.${send_idx}.out"
+      (
+        set +e
+        one_start="$(now_seconds)"
+        out="$(run_atmux_as_sender "$agent_name" send --to "$agent_name" "live-eval round=$round scale=$scale adapter=$adapter item=$send_idx token=$RANDOM" 2>&1)"
+        rc=$?
+        one_seconds="$(( $(now_seconds) - one_start ))"
+        {
+          printf 'rc=%s\n' "$rc"
+          printf '%s\n' "$out"
+        } > "$result_file"
+        append_command_metric "send" "$round" "$scale" "$adapter" "$one_seconds" "$rc" "$result_file" "atmux send --to $agent_name"
+        exit 0
+      ) &
+      pids+=($!)
+    done
+  done
+  for (( idx=0; idx<${#pids[@]}; idx++ )); do
+    wait "${pids[$idx]}" || true
+  done
+  send_seconds="$(( $(now_seconds) - send_start ))"
+
+  drain_start="$(now_seconds)"
+  wait_for_queues_empty "$wait_seconds" || true
+  drain_seconds="$(( $(now_seconds) - drain_start ))"
+  snapshot_queue_state "post-drain" "$round" "$scale"
+
+  for (( idx=0; idx<${#ADAPTERS[@]}; idx++ )); do
+    adapter="${ADAPTERS[$idx]}"
+    pane="${PANES[$idx]}"
+    sent="$scale"
+    ids=0
+    visible=0
+    notes=""
+    local snap
+    snap="$(capture_compact "$pane")"
+    for result_file in "$round_dir/${adapter}."*.out; do
+      [[ -f "$result_file" ]] || continue
+      rc="$(sed -n 's/^rc=//p' "$result_file" | head -n1)"
+      if [[ "$rc" != "0" ]]; then
+        notes="${notes}send_rc_${rc};"
+      fi
+      id="$(tail -n +2 "$result_file" | extract_message_id || true)"
+      if [[ -n "$id" ]]; then
+        ids=$(( ids + 1 ))
+        if printf '%s' "$snap" | grep -Fq "atmux message read $id"; then
+          visible=$(( visible + 1 ))
+        fi
+      fi
+    done
+    queue_after="$(count_queue_items_for_qdir "$(queue_dir_for_key "${QUEUE_KEYS[$idx]}")")"
+    status="ok"
+    if (( ids < sent )); then
+      status="send-breakdown"
+      notes="${notes}missing_message_ids;"
+      record_breakdown "$round" "$adapter created $ids/$sent message ids"
+    elif (( queue_after > 0 )); then
+      status="queue-breakdown"
+      notes="${notes}queue_not_empty;"
+      record_breakdown "$round" "$adapter queue retained $queue_after payload(s) after scale $scale"
+    elif (( visible < ids )); then
+      status="visibility-gap"
+      notes="${notes}pane_capture_missing_hints;"
+      record_breakdown "$round" "$adapter only showed $visible/$ids read hints after queue drain"
+    fi
+    append_summary "$round" "$scale" "$adapter" "$sent" "$ids" "$visible" "$queue_after" "$send_seconds" "$drain_seconds" "$status" "${notes:-none}"
+  done
+  measure_agent_lists "post-round" "$round" "$scale"
+}
+
+main() {
+  local wait_seconds scale round fail_on_breakdown adapter_list
+
+  snapshot_control_files
+  select_adapters
+
+  if [[ -z "$ARTIFACT_ROOT" ]]; then
+    ARTIFACT_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/atmux-live-eval-${RUN_ID}.XXXXXX")"
+    ARTIFACT_ROOT_CREATED=1
+  else
+    mkdir -p "$ARTIFACT_ROOT"
+  fi
+  SUMMARY_TSV="$ARTIFACT_ROOT/summary.tsv"
+  LIST_TSV="$ARTIFACT_ROOT/agent-list.tsv"
+  COMMAND_TSV="$ARTIFACT_ROOT/commands.tsv"
+  QUEUE_TSV="$ARTIFACT_ROOT/queues.tsv"
+  REPORT_MD="$ARTIFACT_ROOT/report.md"
+  DETAIL_DIR="$ARTIFACT_ROOT/details"
+  mkdir -p "$DETAIL_DIR"
+  append_summary_header
+  append_list_header
+  append_command_header
+  append_queue_header
+
+  ATMUX_HOME_TEST="$(mktemp -d "${TMPDIR:-/tmp}/atmux-live-eval-home.XXXXXX")"
+  wait_seconds="${ATMUX_LIVE_EVAL_WAIT_SECONDS:-420}"
+  [[ "$wait_seconds" =~ ^[0-9]+$ ]] || wait_seconds=420
+
+  boot_adapters
+  measure_agent_lists "post-boot" 0 0
+  snapshot_queue_state "post-boot" 0 0
+
+  round=0
+  for scale in ${ATMUX_LIVE_EVAL_SCALES:-1 2 4 8}; do
+    [[ "$scale" =~ ^[0-9]+$ ]] || { echo "invalid scale: $scale" >&2; exit 2; }
+    round=$(( round + 1 ))
+    run_round "$round" "$scale" "$wait_seconds"
+    if [[ -n "$BREAKDOWN_ROUND" && "${ATMUX_LIVE_EVAL_STOP_ON_BREAKDOWN:-1}" == "1" ]]; then
+      break
+    fi
+  done
+
+  write_report
+  cat "$SUMMARY_TSV"
+  cat "$LIST_TSV"
+  echo "report=$REPORT_MD"
+
+  fail_on_breakdown="${ATMUX_LIVE_EVAL_FAIL_ON_BREAKDOWN:-0}"
+  if [[ -n "$BREAKDOWN_ROUND" && "$fail_on_breakdown" == "1" ]]; then
+    echo "live evaluation breakpoint detected: round=$BREAKDOWN_ROUND reason=$BREAKDOWN_REASON" >&2
+    exit 1
+  fi
+  adapter_list="none"
+  if (( ${#ADAPTERS[@]} > 0 )); then
+    adapter_list="${ADAPTERS[*]}"
+  fi
+  echo "ok: live multi-adapter evaluation completed ($adapter_list)"
+}
+
+main "$@"

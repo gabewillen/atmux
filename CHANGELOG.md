@@ -24,6 +24,10 @@
 - Default atmux agent instructions now explicitly steer agents toward
   event-driven watchers for rolling output, file/folder changes, pane text,
   agent readiness, and GitHub issue/PR feeds instead of sleep-based polling.
+- Added a skipped-by-default live multi-adapter evaluation stress test that
+  boots real adapters, ramps concurrent `atmux send` delivery, measures
+  notification drain plus `agent list --all` latency, and writes TSV/Markdown
+  bottleneck reports with per-command timing and queue-state metrics.
 - Added `atmux doctor` for project-local or system `.atmux` cleanup.
 - Prunes stale exec metadata, dead watcher registrations, dead notification
   worker locks, completed async-command records, empty queues, and empty state

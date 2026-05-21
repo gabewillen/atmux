@@ -21,15 +21,17 @@ seed_home() {
   local live_pid="$3"
   local qdir="$home/notify-queue/%999999"
   local queued_qdir="$home/notify-queue/%888888"
+  local live_qdir="$home/notify-queue/%777777"
   local exec_root="$home/exec/$repo"
 
-  mkdir -p "$exec_root/exited" "$exec_root/dead-running" "$exec_root/live-running"
+  mkdir -p "$exec_root/exited" "$exec_root/dead-running" "$exec_root/live-running" "$exec_root/stale-starting-pidless"
   printf '%s\n' exited > "$exec_root/exited/state"
   printf '%s\n' 0 > "$exec_root/exited/exit_code"
   printf '%s\n' running > "$exec_root/dead-running/state"
   printf '%s\n' 999999 > "$exec_root/dead-running/pid"
   printf '%s\n' running > "$exec_root/live-running/state"
   printf '%s\n' "$live_pid" > "$exec_root/live-running/pid"
+  printf '%s\n' starting > "$exec_root/stale-starting-pidless/state"
 
   mkdir -p "$exec_root/live-running/watchers"
   printf '%%999999|%s\n' "$tmp_root/dead-exec.fifo" > "$exec_root/live-running/watchers/dead"
@@ -53,6 +55,12 @@ seed_home() {
   mkdir -p "$queued_qdir/payloads/000001" "$queued_qdir/lock"
   printf '%s\n' 999999 > "$queued_qdir/worker.pid"
   printf '<notification />\n' > "$queued_qdir/payloads/000001/payload"
+
+  mkdir -p "$live_qdir/payloads" "$live_qdir/lock"
+  printf '%s\n' "$live_pid" > "$live_qdir/worker.pid"
+  mkfifo "$live_qdir/wake.fifo"
+  printf '%s\n' 9 > "$live_qdir/next_id"
+  printf '%s\n' 'transient failure' > "$live_qdir/last_error"
 
   mkdir -p "$home/messages/$repo/empty-message"
 }
@@ -81,11 +89,12 @@ printf '%s\n' "$dry_out" | grep -Fq 'would remove'
 assert_exists "$project_home/exec/doctor_repo/exited"
 assert_exists "$project_home/notify-queue/%999999/worker.pid"
 
-clean_out="$(HOME="$tmp_root/home" ATMUX_HOME="$project_home" ATMUX_SOURCE_ROOT="$REPO_ROOT" \
+clean_out="$(HOME="$tmp_root/home" ATMUX_HOME="$project_home" ATMUX_SOURCE_ROOT="$REPO_ROOT" ATMUX_DOCTOR_STARTING_GRACE_SECONDS=0 \
   "$ATMUX_BIN" doctor --project --project-root "$project_root")"
 printf '%s\n' "$clean_out" | grep -Fq 'doctor: removed='
 assert_missing "$project_home/exec/doctor_repo/exited"
 assert_missing "$project_home/exec/doctor_repo/dead-running"
+assert_missing "$project_home/exec/doctor_repo/stale-starting-pidless"
 assert_exists "$project_home/exec/doctor_repo/live-running"
 assert_missing "$project_home/exec/doctor_repo/live-running/watchers/dead"
 assert_missing "$tmp_root/dead-exec.fifo"
@@ -97,6 +106,9 @@ assert_missing "$project_home/watch-agent-idle/doctor_repo--agent--worker/watche
 assert_missing "$project_home/notify-queue/%999999"
 assert_exists "$project_home/notify-queue/%888888/payloads/000001/payload"
 assert_missing "$project_home/notify-queue/%888888/worker.pid"
+assert_exists "$project_home/notify-queue/%777777/worker.pid"
+assert_exists "$project_home/notify-queue/%777777/next_id"
+assert_exists "$project_home/notify-queue/%777777/last_error"
 assert_missing "$project_home/messages/doctor_repo/empty-message"
 
 seed_home "$system_home" "system_repo" "$live_pid"

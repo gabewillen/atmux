@@ -2,6 +2,8 @@
 
 ## 0.28.0 — Doctor cleanup
 
+- Updated the Cursor adapter's medium-intelligence Composer default from
+  `composer-2` to `composer-2.5`.
 - Added `atmux doctor` for project-local or system `.atmux` cleanup.
 - Prunes stale exec metadata, dead watcher registrations, dead notification
   worker locks, empty queues, and empty state directories while preserving live
@@ -10,8 +12,6 @@
 ## 0.27.9 — CI fixes
 
 - Patch release for CI fixes after the notification idle-status change.
-- Updated the Cursor adapter's medium-intelligence Composer default from
-  `composer-2` to `composer-2.5`.
 
 ## 0.27.8 — Notifications skip idle status
 

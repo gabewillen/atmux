@@ -49,6 +49,13 @@ exec_watchers="$ATMUX_HOME/exec/$repo/123/watchers"
 mkdir -p "$exec_watchers"
 atmux_fs_write_field "$exec_watchers/dead" "%999999|$dead_fifo"
 
+issue_dir="$ATMUX_HOME/issues/$repo/456"
+issue_watchers="$issue_dir/watchers"
+victim_path="$tmp_root/not-a-fifo-path"
+mkdir -p "$issue_watchers"
+atmux_fs_write_field "$issue_watchers/dead" "%999999|$victim_path"
+atmux_fs_write_field "$victim_path" "not a watcher signal fifo"
+
 agent_idle_watcher="$ATMUX_HOME/watch-agent-idle/${repo}--agent--worker/watchers/dead-agent"
 mkdir -p "$agent_idle_watcher"
 atmux_fs_write_field "$agent_idle_watcher/worker.pid" "999999"
@@ -91,5 +98,9 @@ payload="$(build_notification "exec" "test" "")"
 notify_exec_watchers "$ATMUX_HOME/exec/$repo/123" "" "$payload"
 [[ ! -e "$exec_watchers/dead" ]] || { echo "stale exec watcher was not pruned" >&2; exit 1; }
 [[ ! -e "$dead_fifo" ]] || { echo "stale exec watcher fifo was not pruned" >&2; exit 1; }
+
+notify_issue_watchers "$issue_dir" "" "$payload"
+[[ ! -e "$issue_watchers/dead" ]] || { echo "stale issue watcher was not pruned" >&2; exit 1; }
+[[ -e "$victim_path" ]] || { echo "non-fifo watcher payload field was incorrectly removed" >&2; exit 1; }
 
 echo "ok: stale watcher/subscriber bookkeeping prunes on listing and delivery hot paths"

@@ -37,6 +37,7 @@ seed_home() {
 
   mkdir -p "$exec_root/live-running/watchers"
   printf '%%999999|%s\n' "$tmp_root/dead-exec.fifo" > "$exec_root/live-running/watchers/dead"
+  printf 'echo stale\n' > "$exec_root/live-running/watchers/dead.exec"
   mkfifo "$tmp_root/dead-exec.fifo"
 
   mkdir -p "$home/watch-pr/demo-pr/watchers"
@@ -117,9 +118,10 @@ printf '%s\n' "$clean_out" | grep -Fq 'doctor: removed='
 assert_missing "$project_home/exec/doctor_repo/exited"
 assert_missing "$project_home/exec/doctor_repo/dead-running"
 assert_missing "$project_home/exec/doctor_repo/stale-starting-pidless"
-assert_exists "$project_home/exec/doctor_repo/live-running"
-assert_missing "$project_home/exec/doctor_repo/live-running/watchers/dead"
-assert_missing "$tmp_root/dead-exec.fifo"
+  assert_exists "$project_home/exec/doctor_repo/live-running"
+  assert_missing "$project_home/exec/doctor_repo/live-running/watchers/dead"
+  assert_missing "$project_home/exec/doctor_repo/live-running/watchers/dead.exec"
+  assert_missing "$tmp_root/dead-exec.fifo"
 assert_missing "$project_home/watch-pr/demo-pr/watchers/dead"
 assert_missing "$project_home/watch-pr/demo-pr/watchers/dead.exec"
 assert_missing "$project_home/watch-pr/demo-pr/watchers/dead-with-payload"

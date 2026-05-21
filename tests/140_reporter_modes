@@ -15,7 +15,12 @@ tmp_root="$(mktemp -d "${TMPDIR:-/tmp}/atmux-reporter.XXXXXX")"
 atmux_home="$tmp_root/.atmux"
 repo="reporter${RANDOM}"
 
-cleanup() { rm -rf "$tmp_root"; }
+cleanup() {
+  if [[ -n "${reporter_session:-}" ]]; then
+    tmux kill-session -t "$reporter_session" >/dev/null 2>&1 || true
+  fi
+  rm -rf "$tmp_root"
+}
 trap cleanup EXIT
 
 # Sanitize ambient env so the test doesn't inherit agent context from

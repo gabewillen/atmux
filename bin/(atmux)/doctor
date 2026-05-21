@@ -155,10 +155,12 @@ prune_exec_watchers() {
   [[ -d "$watchers_dir" ]] || return 0
   while IFS= read -r watcher; do
     [[ -e "$watcher" ]] || continue
+    case "$(basename "$watcher")" in *.exec) continue ;; esac
     pane="$(atmux_watcher_record_pane "$watcher")"
     signal_path="$(atmux_watcher_record_signal_path "$watcher")"
     if stale_pane "$pane"; then
       remove_path "$watcher"
+      remove_path "$watcher.exec"
       if [[ -n "$signal_path" ]]; then
         remove_path "$signal_path"
       fi

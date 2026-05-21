@@ -5,6 +5,8 @@ ATMUX_HOME="${ATMUX_HOME:-$HOME/.atmux}"
 HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=bin/(atmux)/(lib)/fs
 source "$HERE/(lib)/fs"
+# shellcheck source=bin/(atmux)/(lib)/tmux
+source "$HERE/(lib)/tmux"
 # shellcheck source=bin/(atmux)/(lib)/watcher-records
 source "$HERE/(lib)/watcher-records"
 
@@ -120,8 +122,16 @@ pid_alive() {
   kill -0 "$pid" 2>/dev/null
 }
 
-live_panes="$(tmux list-panes -a -F '#{pane_id}' 2>/dev/null || true)"
-live_windows="$(tmux list-windows -a -F '#{window_id}' 2>/dev/null || true)"
+target_tmux() {
+  (
+    unset ATMUX_TMUX_SOCKET
+    ATMUX_HOME="$target_home"
+    tmux "$@"
+  )
+}
+
+live_panes="$(target_tmux list-panes -a -F '#{pane_id}' 2>/dev/null || true)"
+live_windows="$(target_tmux list-windows -a -F '#{window_id}' 2>/dev/null || true)"
 now="$(date +%s)"
 
 id_live() {
@@ -228,23 +238,49 @@ remove_watcher_path() {
   fi
 }
 
+prune_watchers_dir() {
+  local kind="$1"
+  local watchers_dir="$2"
+  local watcher
+  [[ -d "$watchers_dir" ]] || return 0
+  while IFS= read -r watcher; do
+    [[ -e "$watcher" ]] || continue
+    case "$(basename "$watcher")" in *.exec) continue ;; esac
+    if watcher_record_is_stale "$kind" "$watcher"; then
+      remove_watcher_path "$watcher"
+    fi
+  done < <(find "$watchers_dir" -mindepth 1 -maxdepth 1 \( -type f -o -type d \) 2>/dev/null | sort)
+  remove_empty_dir "$watchers_dir"
+}
+
 prune_watchers() {
-  local kind root watchers_dir watcher
+  local kind root watchers_dir
   for kind in pr issues prs team-message agent-idle team-idle; do
     root="$target_home/watch-$kind"
     [[ -d "$root" ]] || continue
     while IFS= read -r watchers_dir; do
-      [[ -d "$watchers_dir" ]] || continue
-      while IFS= read -r watcher; do
-        [[ -e "$watcher" ]] || continue
-        case "$(basename "$watcher")" in *.exec) continue ;; esac
-        if watcher_record_is_stale "$kind" "$watcher"; then
-          remove_watcher_path "$watcher"
-        fi
-      done < <(find "$watchers_dir" -mindepth 1 -maxdepth 1 \( -type f -o -type d \) 2>/dev/null | sort)
-      remove_empty_dir "$watchers_dir"
+      prune_watchers_dir "$kind" "$watchers_dir"
       remove_empty_dir "$(dirname "$watchers_dir")"
     done < <(find "$root" -mindepth 2 -maxdepth 2 -type d -name watchers 2>/dev/null | sort)
+    remove_empty_dir "$root"
+  done
+}
+
+prune_entity_watchers() {
+  local root kind watchers_dir entity_dir repo_dir
+  for kind in issues pr; do
+    case "$kind" in
+      issues) root="$target_home/issues" ;;
+      pr) root="$target_home/pull-requests" ;;
+    esac
+    [[ -d "$root" ]] || continue
+    while IFS= read -r watchers_dir; do
+      prune_watchers_dir "$kind" "$watchers_dir"
+      entity_dir="$(dirname "$watchers_dir")"
+      repo_dir="$(dirname "$entity_dir")"
+      remove_empty_dir "$entity_dir"
+      remove_empty_dir "$repo_dir"
+    done < <(find "$root" -mindepth 3 -maxdepth 3 -type d -name watchers 2>/dev/null | sort)
     remove_empty_dir "$root"
   done
 }
@@ -299,6 +335,7 @@ fi
 
 prune_exec_dirs
 prune_watchers
+prune_entity_watchers
 prune_notify_queues
 prune_empty_state_dirs
 

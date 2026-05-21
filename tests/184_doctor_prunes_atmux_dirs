@@ -23,6 +23,8 @@ seed_home() {
   local queued_qdir="$home/notify-queue/%888888"
   local live_qdir="$home/notify-queue/%777777"
   local exec_root="$home/exec/$repo"
+  local issue_watcher="$home/issues/$repo/42/watchers/dead"
+  local pr_watcher="$home/pull-requests/$repo/7/watchers/dead"
 
   mkdir -p "$exec_root/exited" "$exec_root/dead-running" "$exec_root/live-running" "$exec_root/stale-starting-pidless"
   printf '%s\n' exited > "$exec_root/exited/state"
@@ -46,6 +48,11 @@ seed_home() {
   mkdir -p "$home/watch-agent-idle/${repo}--agent--worker/watchers/dead-agent"
   printf '%s\n' 999999 > "$home/watch-agent-idle/${repo}--agent--worker/watchers/dead-agent/worker.pid"
   printf '%s\n' @999999 > "$home/watch-agent-idle/${repo}--agent--worker/watchers/dead-agent/window_id"
+
+  mkdir -p "$(dirname "$issue_watcher")" "$(dirname "$pr_watcher")"
+  printf '%%999999|%s\n' "$tmp_root/dead-issue.fifo" > "$issue_watcher"
+  printf '%%999999|%s\n' "$tmp_root/dead-pr.fifo" > "$pr_watcher"
+  mkfifo "$tmp_root/dead-issue.fifo" "$tmp_root/dead-pr.fifo"
 
   mkdir -p "$qdir/payloads" "$qdir/lock"
   printf '%s\n' 999999 > "$qdir/worker.pid"
@@ -78,6 +85,7 @@ live_pid="$!"
 
 project_root="$tmp_root/project"
 mkdir -p "$project_root"
+project_root="$(cd -- "$project_root" && pwd)"
 project_home="$project_root/.atmux"
 system_home="$tmp_root/home/.atmux"
 mkdir -p "$tmp_root/home"
@@ -103,6 +111,10 @@ assert_missing "$project_home/watch-pr/demo-pr/watchers/dead.exec"
 assert_missing "$project_home/watch-pr/demo-pr/watchers/dead-with-payload"
 assert_exists "$tmp_root/not-a-fifo-path"
 assert_missing "$project_home/watch-agent-idle/doctor_repo--agent--worker/watchers/dead-agent"
+assert_missing "$project_home/issues/doctor_repo/42/watchers/dead"
+assert_missing "$tmp_root/dead-issue.fifo"
+assert_missing "$project_home/pull-requests/doctor_repo/7/watchers/dead"
+assert_missing "$tmp_root/dead-pr.fifo"
 assert_missing "$project_home/notify-queue/%999999"
 assert_exists "$project_home/notify-queue/%888888/payloads/000001/payload"
 assert_missing "$project_home/notify-queue/%888888/worker.pid"
@@ -116,6 +128,26 @@ HOME="$tmp_root/home" ATMUX_HOME="$project_home" ATMUX_SOURCE_ROOT="$REPO_ROOT" 
   "$ATMUX_BIN" doctor --system >/dev/null
 assert_missing "$system_home/exec/system_repo/exited"
 assert_exists "$system_home/exec/system_repo/live-running"
+
+target_socket="$project_home/tmux/server.sock"
+if (( ${#target_socket} >= 100 )); then
+  target_socket_id="$(printf '%s' "$project_home" | cksum | awk '{print $1}')"
+  target_socket="$tmp_root/tmux-sockets/$target_socket_id.sock"
+fi
+target_session="atmux-doctor-target-${RANDOM}"
+mkdir -p "$(dirname "$target_socket")"
+"$ATMUX_REAL_TMUX" -S "$target_socket" new-session -d -s "$target_session" -n "$target_session" "cat"
+target_pane="$("$ATMUX_REAL_TMUX" -S "$target_socket" list-panes -t "$target_session" -F '#{pane_id}' | head -n1)"
+mkdir -p "$project_home/watch-pr/live-target/watchers" "$project_home/issues/doctor_repo/live/watchers"
+printf '%s|0\n' "$target_pane" > "$project_home/watch-pr/live-target/watchers/live"
+printf '%s|%s\n' "$target_pane" "$tmp_root/live-issue.fifo" > "$project_home/issues/doctor_repo/live/watchers/live"
+mkfifo "$tmp_root/live-issue.fifo"
+HOME="$tmp_root/home" ATMUX_HOME="$tmp_root/wrong-home/.atmux" ATMUX_SOURCE_ROOT="$REPO_ROOT" ATMUX_TMUX_SOCKET_DIR="$tmp_root/tmux-sockets" \
+  "$ATMUX_BIN" doctor --project --project-root "$project_root" >/dev/null
+assert_exists "$project_home/watch-pr/live-target/watchers/live"
+assert_exists "$project_home/issues/doctor_repo/live/watchers/live"
+assert_exists "$tmp_root/live-issue.fifo"
+"$ATMUX_REAL_TMUX" -S "$target_socket" kill-session -t "$target_session" >/dev/null 2>&1 || true
 
 kill "$live_pid" >/dev/null 2>&1 || true
 wait "$live_pid" >/dev/null 2>&1 || true

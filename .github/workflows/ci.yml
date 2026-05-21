@@ -19,7 +19,7 @@ jobs:
       - name: Run shellcheck
         run: |
           find bin install.sh -type f -not -path '*/.git/*' \
-            | xargs shellcheck --severity=error -e SC1091
+            | xargs -n1 shellcheck --severity=error -e SC1091
 
   test-shard:
     # 16 shards in parallel. Each runs ~7 tests via round-robin

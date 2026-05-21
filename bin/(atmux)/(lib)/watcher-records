@@ -90,8 +90,13 @@ atmux_watcher_record_is_stale() {
       if [[ -n "$worker_pid" ]] && atmux_watcher_pid_is_live "$worker_pid"; then
         return 1
       fi
-      if atmux_watcher_window_is_live "$window_id" "$live_windows"; then
-        return 1
+      if [[ -n "$window_id" ]]; then
+        if ! atmux_watcher_live_ids_known "$live_windows"; then
+          return 1
+        fi
+        if atmux_watcher_window_is_live "$window_id" "$live_windows"; then
+          return 1
+        fi
       fi
       pane="$(atmux_fs_read_trimmed "$watcher/pane")"
       if [[ -n "$pane" ]]; then
@@ -102,7 +107,6 @@ atmux_watcher_record_is_stale() {
           return 1
         fi
       fi
-      [[ -n "$worker_pid$window_id" ]] && return 0
       return 0
       ;;
     *)

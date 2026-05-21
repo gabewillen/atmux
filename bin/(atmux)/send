@@ -336,6 +336,7 @@ if [[ -n "$team_session" ]]; then
       subscriber_session="$(cat "$subscriber/session" 2>/dev/null || true)"
       subscriber_repo="$(cat "$subscriber/repo" 2>/dev/null || true)"
       subscriber_team="$(cat "$subscriber/team" 2>/dev/null || true)"
+      [[ -n "$subscriber_pane" ]] || continue
       if (( live_panes_known )) && ! watcher_pane_is_live "$subscriber_pane" "$live_panes"; then
         rm -rf "$subscriber"
         continue

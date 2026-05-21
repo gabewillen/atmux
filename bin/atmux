@@ -281,7 +281,7 @@ should_async_command() {
       esac
       ;;
     adapter)
-      [[ "${1:-}" == "start" ]] && return 1
+      [[ "${2:-}" == "start" ]] && return 1
       ;;
     issue|path|pane|pr|process)
       [[ "${1:-}" == "watch" ]] && return 1

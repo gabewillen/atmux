@@ -159,6 +159,25 @@ if printf '%s\n' "$role_out" | grep -Fq '<async '; then
   exit 1
 fi
 
+mkdir -p "$ATMUX_HOME/adapters/mock"
+cat > "$ATMUX_HOME/adapters/mock/cmd" <<'ADAPTER'
+#!/usr/bin/env bash
+printf 'adapter-%s\n' "${1:-}"
+ADAPTER
+chmod +x "$ATMUX_HOME/adapters/mock/cmd"
+adapter_start_out="$(
+  ATMUX_REPO="$repo" \
+  ATMUX_AGENT_NAME="sender" \
+  ATMUX_SESSION_NAME="$sender_session" \
+  ATMUX_TMUX_PANE="$sender_pane" \
+    "$ATMUX_BIN" adapter mock start
+)"
+if printf '%s\n' "$adapter_start_out" | grep -Fq '<async '; then
+  echo "adapter start command should not dispatch asynchronously" >&2
+  exit 1
+fi
+printf '%s\n' "$adapter_start_out" | grep -Fq 'adapter-start'
+
 schedule_out="$(
   ATMUX_REPO="$repo" \
   ATMUX_AGENT_NAME="sender" \
@@ -182,5 +201,11 @@ fail_out="$(
 printf '%s\n' "$fail_out" | grep -Fq '<async command="send '
 wait_for_text "$sender_pane" 'status="failed"' 20
 wait_for_text "$sender_pane" 'exit_code="1"' 20
+wait_for_text "$sender_pane" 'stderr:' 20
+sender_snap="$(tmux capture-pane -p -t "$sender_pane" -S -20000)"
+if [[ "$sender_snap" == *'\nstderr:\n'* ]]; then
+  echo "async failure summary rendered literal newline escape sequences" >&2
+  exit 1
+fi
 
 echo "ok: async dispatcher detaches sends and notifies success/failure"

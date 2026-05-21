@@ -104,10 +104,10 @@ if [[ "$exit_code" -ne 0 ]]; then
   summary="command failed"
 fi
 if [[ -n "$stdout_preview" ]]; then
-  summary+="\nstdout:\n$stdout_preview"
+  summary+=$'\nstdout:\n'"$stdout_preview"
 fi
 if [[ -n "$stderr_preview" ]]; then
-  summary+="\nstderr:\n$stderr_preview"
+  summary+=$'\nstderr:\n'"$stderr_preview"
 fi
 
 payload="$(build_notification "command" "${ATMUX_SESSION_NAME:-atmux}" "" \

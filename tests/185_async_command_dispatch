@@ -159,6 +159,19 @@ if printf '%s\n' "$role_out" | grep -Fq '<async '; then
   exit 1
 fi
 
+schedule_out="$(
+  ATMUX_REPO="$repo" \
+  ATMUX_AGENT_NAME="sender" \
+  ATMUX_SESSION_NAME="$sender_session" \
+  ATMUX_TMUX_PANE="$sender_pane" \
+    "$ATMUX_BIN" schedule --once 5s --notification "async-schedule-${RANDOM}"
+)"
+if printf '%s\n' "$schedule_out" | grep -Fq '<async '; then
+  echo "schedule command should not dispatch asynchronously" >&2
+  exit 1
+fi
+printf '%s\n' "$schedule_out" | grep -Fq '<schedule'
+
 fail_out="$(
   ATMUX_REPO="$repo" \
   ATMUX_AGENT_NAME="sender" \

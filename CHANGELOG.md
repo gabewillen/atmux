@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.28.0 — Doctor cleanup
+## 0.28.1 — Async command notifications
 
 - Updated the Cursor adapter's medium-intelligence Composer default from
   `composer-2` to `composer-2.5`.
@@ -38,11 +38,18 @@
 - `atmux agent list --all` now opportunistically prunes notification queues for
   dead recipient sessions so global listing also cleans up stale delivery
   bookkeeping left behind by abrupt adapter exits.
+- `atmux doctor` now prunes completed async-command records while preserving
+  running async-command state.
+- Interval scheduled notifications now carry a stable `atmux process kill <pid>`
+  cancellation hint from detached execution metadata, avoiding timing races while
+  the schedule worker is starting.
+
+## 0.28.0 — Doctor cleanup
+
 - Added `atmux doctor` for project-local or system `.atmux` cleanup.
 - Prunes stale exec metadata, dead watcher registrations, dead notification
-  worker locks, completed async-command records, empty queues, and empty state
-  directories while preserving live workers, live panes/windows, and queued
-  notification payloads.
+  worker locks, empty queues, and empty state directories while preserving live
+  workers, live panes/windows, and queued notification payloads.
 
 ## 0.27.9 — CI fixes
 

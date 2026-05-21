@@ -270,7 +270,7 @@ should_async_command() {
   async_current_pane >/dev/null || return 1
 
   case "$cmd" in
-    exec|notify|watch|watcher)
+    doctor|exec|install|kill|notify|role|watch|watcher)
       return 1
       ;;
     agent)
@@ -281,7 +281,7 @@ should_async_command() {
       esac
       ;;
     adapter)
-      [[ "${2:-}" == "start" ]] && return 1
+      [[ "${1:-}" == "start" ]] && return 1
       ;;
     issue|path|pane|pr|process)
       [[ "${1:-}" == "watch" ]] && return 1
@@ -304,10 +304,14 @@ launch_async_command() {
   local cmd="$1"
   local script_path="$2"
   shift 2
-  local notify_pane session async_runner argv_file runner process_pane window
+  local notify_pane session async_runner argv_file runner process_pane window command_label
 
   notify_pane="$(async_current_pane)"
   session="$ATMUX_SESSION_NAME"
+  command_label="$cmd"
+  if [[ $# -gt 0 ]]; then
+    command_label+=" $*"
+  fi
   async_runner="${ATMUX_SOURCE_ROOT}/bin/(atmux)/(internal)/async-run"
   if [[ ! -x "$async_runner" ]]; then
     echo "atmux async: missing internal runner: $async_runner" >&2
@@ -316,7 +320,11 @@ launch_async_command() {
 
   mkdir -p "$ATMUX_HOME/tmp"
   argv_file="$(mktemp "$ATMUX_HOME/tmp/async-argv.XXXXXX")"
-  printf '%s\0' "$@" > "$argv_file"
+  if [[ $# -gt 0 ]]; then
+    printf '%s\0' "$@" > "$argv_file"
+  else
+    : > "$argv_file"
+  fi
   runner="$argv_file.run"
 
   {
@@ -327,15 +335,13 @@ launch_async_command() {
     printf 'export ATMUX_SESSION_NAME=%q\n' "${ATMUX_SESSION_NAME:-}"
     printf 'export ATMUX_AGENT_NAME=%q\n' "${ATMUX_AGENT_NAME:-}"
     printf 'export ATMUX_REPO=%q\n' "${ATMUX_REPO:-}"
-    while IFS= read -r __async_env_name; do
-      [[ -n "$__async_env_name" ]] || continue
-      case "$__async_env_name" in
-        TMUX|TMUX_PANE|_|ATMUX_ASYNC_CHILD|ATMUX_HOME|ATMUX_SOURCE_ROOT|ATMUX_SESSION_NAME|ATMUX_AGENT_NAME|ATMUX_REPO)
-          continue
-          ;;
-      esac
+    local __async_env_name
+    for __async_env_name in \
+      PATH HOME SHELL TERM USER LOGNAME LANG LC_ALL LC_CTYPE TMPDIR \
+      ATMUX_REAL_TMUX ATMUX_ALLOW_REAL_TMUX ATMUX_TMUX_SOCKET TMUX_TMPDIR; do
+      [[ -n "${!__async_env_name+x}" ]] || continue
       printf 'export %s=%q\n' "$__async_env_name" "${!__async_env_name-}"
-    done < <(compgen -e)
+    done
     printf 'exec %q %q %q %q %q\n' "$async_runner" "$notify_pane" "$cmd" "$script_path" "$argv_file"
   } > "$runner"
   chmod +x "$runner"
@@ -343,7 +349,7 @@ launch_async_command() {
   window="atmux-${cmd}-$$"
   process_pane="$(tmux new-window -a -d -t "$session:" -n "$window" -P -F '#{pane_id}' "$runner")"
   printf '<async command="%s" pane="%s" session="%s" />\n' \
-    "$(atmux_xml_escape "$cmd $*")" \
+    "$(atmux_xml_escape "$command_label")" \
     "$(atmux_xml_escape "$process_pane")" \
     "$(atmux_xml_escape "$session")"
 }

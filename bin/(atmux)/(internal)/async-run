@@ -60,16 +60,22 @@ done < "$argv_file"
 rm -f "$argv_file" "$argv_file.run"
 
 command_text="atmux $command_name"
-for arg in "${args[@]}"; do
-  command_text+=" $arg"
-done
+if (( ${#args[@]} > 0 )); then
+  for arg in "${args[@]}"; do
+    command_text+=" $arg"
+  done
+fi
 atmux_fs_write_field "$command_file" "$command_text"
 atmux_fs_write_field "$state_dir/started_at" "$started_at"
 atmux_fs_write_field "$state_dir/pid" "$$"
 atmux_fs_write_field "$status_file" "running"
 
 set +e
-ATMUX_ASYNC_CHILD=1 "$script_path" "${args[@]}" >"$stdout_file" 2>"$stderr_file"
+if (( ${#args[@]} > 0 )); then
+  ATMUX_ASYNC_CHILD=1 "$script_path" "${args[@]}" >"$stdout_file" 2>"$stderr_file"
+else
+  ATMUX_ASYNC_CHILD=1 "$script_path" >"$stdout_file" 2>"$stderr_file"
+fi
 exit_code=$?
 set -e
 

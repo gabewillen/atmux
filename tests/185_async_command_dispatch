@@ -89,6 +89,59 @@ list_out="$(
 printf '%s\n' "$list_out" | grep -Fq '<async command="message list"'
 wait_for_text "$sender_pane" 'command="atmux message list"' 20
 
+env_out="$(
+  ATMUX_REPO="$repo" \
+  ATMUX_AGENT_NAME="sender" \
+  ATMUX_SESSION_NAME="$sender_session" \
+  ATMUX_TMUX_PANE="$sender_pane" \
+  ATMUX_ASYNC_SECRET_SHOULD_NOT_LEAK="secret-${RANDOM}" \
+    "$ATMUX_BIN" env
+)"
+printf '%s\n' "$env_out" | grep -Fq '<async command="env"'
+wait_for_text "$sender_pane" 'command="atmux env"' 20
+
+env_command_file=""
+deadline=$(( $(date +%s) + 20 ))
+while [[ -z "$env_command_file" ]]; do
+  env_command_file="$(grep -R -l '^atmux env$' "$ATMUX_HOME/async/$repo" 2>/dev/null | head -n1 || true)"
+  [[ -n "$env_command_file" ]] && break
+  if (( $(date +%s) >= deadline )); then
+    echo "async env command state was not written" >&2
+    exit 1
+  fi
+  sleep 0.1
+done
+env_state_dir="$(dirname "$env_command_file")"
+if grep -Fq 'ATMUX_ASYNC_SECRET_SHOULD_NOT_LEAK' "$env_state_dir/stdout"; then
+  echo "async runner leaked non-allowlisted ATMUX environment into child command" >&2
+  exit 1
+fi
+
+doctor_out="$(
+  ATMUX_REPO="$repo" \
+  ATMUX_AGENT_NAME="sender" \
+  ATMUX_SESSION_NAME="$sender_session" \
+  ATMUX_TMUX_PANE="$sender_pane" \
+    "$ATMUX_BIN" doctor --project --project-root "$tmp_root" --dry-run
+)"
+if printf '%s\n' "$doctor_out" | grep -Fq '<async '; then
+  echo "doctor command should not dispatch asynchronously" >&2
+  exit 1
+fi
+printf '%s\n' "$doctor_out" | grep -Fq 'doctor:'
+
+role_out="$(
+  ATMUX_REPO="$repo" \
+  ATMUX_AGENT_NAME="sender" \
+  ATMUX_SESSION_NAME="$sender_session" \
+  ATMUX_TMUX_PANE="$sender_pane" \
+    "$ATMUX_BIN" role list
+)"
+if printf '%s\n' "$role_out" | grep -Fq '<async '; then
+  echo "role command should not dispatch asynchronously" >&2
+  exit 1
+fi
+
 fail_out="$(
   ATMUX_REPO="$repo" \
   ATMUX_AGENT_NAME="sender" \

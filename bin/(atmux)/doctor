@@ -200,7 +200,7 @@ prune_exec_dirs() {
 
 path_mtime_epoch() {
   local path="$1"
-  stat -f '%m' "$path" 2>/dev/null || stat -c '%Y' "$path" 2>/dev/null || printf '0\n'
+  stat -c '%Y' "$path" 2>/dev/null || stat -f '%m' "$path" 2>/dev/null || printf '0\n'
 }
 
 path_age_seconds() {

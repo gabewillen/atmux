@@ -178,12 +178,40 @@ prune_exec_dirs() {
       elif [[ "$state" == "running" || "$state" == "starting" ]]; then
         if [[ -n "$pid" ]] && ! pid_alive "$pid"; then
           remove_path "$exec_dir"
+        elif [[ "$state" == "starting" && -z "$pid" ]] && stale_starting_exec_without_pid "$exec_dir"; then
+          remove_path "$exec_dir"
         fi
       fi
     done < <(find "$repo_dir" -mindepth 1 -maxdepth 1 \( -type d -o -type l \) 2>/dev/null | sort)
     remove_empty_dir "$repo_dir"
   done < <(find "$exec_root" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort)
   remove_empty_dir "$exec_root"
+}
+
+path_mtime_epoch() {
+  local path="$1"
+  stat -f '%m' "$path" 2>/dev/null || stat -c '%Y' "$path" 2>/dev/null || printf '0\n'
+}
+
+path_age_seconds() {
+  local path="$1"
+  local mtime now
+  mtime="$(path_mtime_epoch "$path")"
+  [[ "$mtime" =~ ^[0-9]+$ ]] || mtime=0
+  now="$(date +%s)"
+  printf '%s\n' "$(( now - mtime ))"
+}
+
+stale_starting_exec_without_pid() {
+  local exec_dir="$1"
+  local grace="${ATMUX_DOCTOR_STARTING_GRACE_SECONDS:-60}"
+  local marker="$exec_dir/state"
+  local age
+  [[ "$grace" =~ ^[0-9]+$ ]] || grace=60
+  [[ -e "$marker" || -L "$marker" ]] || marker="$exec_dir"
+  age="$(path_age_seconds "$marker")"
+  [[ "$age" =~ ^-?[0-9]+$ ]] || return 0
+  (( age >= grace ))
 }
 
 watcher_record_is_stale() {
@@ -223,7 +251,7 @@ prune_watchers() {
 
 prune_notify_queues() {
   local root="$target_home/notify-queue"
-  local qdir worker_pid payload_dir has_payloads
+  local qdir worker_pid payload_dir has_payloads worker_alive
   [[ -d "$root" ]] || return 0
   while IFS= read -r qdir; do
     [[ -d "$qdir" ]] || continue
@@ -233,12 +261,17 @@ prune_notify_queues() {
     if [[ -d "$payload_dir" ]] && find "$payload_dir" -mindepth 1 -maxdepth 1 -type d -print -quit 2>/dev/null | grep -q .; then
       has_payloads=1
     fi
-    if [[ -n "$worker_pid" ]] && ! pid_alive "$worker_pid"; then
-      remove_path "$qdir/worker.pid"
-      remove_path "$qdir/lock"
-      remove_path "$qdir/wake.fifo"
+    worker_alive=0
+    if [[ -n "$worker_pid" ]]; then
+      if pid_alive "$worker_pid"; then
+        worker_alive=1
+      else
+        remove_path "$qdir/worker.pid"
+        remove_path "$qdir/lock"
+        remove_path "$qdir/wake.fifo"
+      fi
     fi
-    if (( has_payloads == 0 )); then
+    if (( has_payloads == 0 && worker_alive == 0 )); then
       remove_empty_dir "$payload_dir"
       remove_path "$qdir/next_id"
       remove_path "$qdir/last_error"

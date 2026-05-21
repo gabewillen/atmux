@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Global listing should opportunistically prune notification queues whose
+# recipient session has disappeared and no worker is alive.
+source "$(dirname "${BASH_SOURCE[0]}")/lib/isolate-tmux.sh"
+
+TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$TESTS_DIR/.." && pwd)"
+ATMUX_BIN="$REPO_ROOT/bin/atmux"
+
+ATMUX_HOME="$(mktemp -d "${TMPDIR:-/tmp}/atmux-list-prune.XXXXXX")"
+ATMUX_SOURCE_ROOT="$REPO_ROOT"
+export ATMUX_HOME ATMUX_SOURCE_ROOT
+
+repo_name="prune_notify_${RANDOM}"
+live_session="atmux-${repo_name}-live"
+dead_session="atmux-${repo_name}-dead"
+qdir="$ATMUX_HOME/notify-queue/${dead_session}-_9"
+
+cleanup() {
+  tmux kill-session -t "$live_session" >/dev/null 2>&1 || true
+  rm -rf "$ATMUX_HOME"
+}
+trap cleanup EXIT
+
+tmux new-session -d -s "$live_session" -n "$live_session" "cat"
+tmux set-environment -t "$live_session" ATMUX_REPO "$repo_name"
+tmux set-environment -t "$live_session" ATMUX_AGENT_NAME "live"
+tmux set-environment -t "$live_session" ATMUX_SESSION_NAME "$live_session"
+
+mkdir -p "$qdir/payloads/0000000001"
+printf '<notification type="message" from="%s" />\n' "$live_session" > "$qdir/payloads/0000000001/payload"
+printf 'queued\n' > "$qdir/payloads/0000000001/state"
+printf '0\n' > "$qdir/payloads/0000000001/attempts"
+
+ATMUX_REPO="$repo_name" ATMUX_REPORTER=xml "$ATMUX_BIN" agent list --all >/dev/null
+
+if [[ -d "$qdir/payloads" ]] && find "$qdir/payloads" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | grep -q .; then
+  echo "expected agent list to prune dead-session notification payloads" >&2
+  find "$qdir" -maxdepth 3 -print >&2
+  exit 1
+fi
+
+echo "ok: agent list prunes dead-session notification queues"

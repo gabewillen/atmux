@@ -69,6 +69,26 @@ detect_stuck_prompt() {
   return 1
 }
 
+agent_pane_allows_idle() {
+  local pane="$1"
+  local source_root="${ATMUX_SOURCE_ROOT:-${ATMUX_HOME}/src/atmux}"
+  local adapter status_script status_xml state
+
+  adapter="$(resolve_adapter_for_pane "$pane" 2>/dev/null || true)"
+  [[ -n "$adapter" ]] || return 0
+
+  status_script="$(resolve_status_script_for_adapter "$adapter" "$source_root" 2>/dev/null || true)"
+  [[ -n "$status_script" ]] || return 0
+
+  status_xml="$(ATMUX_HOME="$ATMUX_HOME" ATMUX_SOURCE_ROOT="$source_root" ATMUX_STATUS_PASSIVE=1 \
+    ATMUX_TARGET_PANE="$pane" "$status_script" 2>/dev/null || true)"
+  state="$(status_state_from_xml "$status_xml")"
+  case "$state" in
+    busy) return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
 emit_idle_notification() {
   local agent="$1" idle_seconds="$2" exec_cmd="$3"
   local xml
@@ -86,7 +106,7 @@ main() {
   local idle_seconds="30"
   local timeout_sec=""
   local interval="2"
-  local lines="80"
+  local capture_lines="80"
   local exec_cmd=""
   local once=0
 
@@ -109,7 +129,7 @@ main() {
         shift 2
         ;;
       --lines)
-        lines="${2:-}"
+        capture_lines="${2:-}"
         shift 2
         ;;
       --exec)
@@ -215,6 +235,10 @@ main() {
     fi
 
     if (( last_change_ts > 0 && idle_notified == 0 && idle_for >= idle_seconds )); then
+      if ! agent_pane_allows_idle "$pane"; then
+        last_change_ts="$now"
+        continue
+      fi
       emit_idle_notification "$agent" "$idle_seconds" "$exec_cmd"
       (( repeat == 1 )) || exit 0
       idle_notified=1
@@ -238,7 +262,7 @@ main() {
     fi
     last_change_ts="$(date +%s)"
     idle_notified=0
-    snap="$(tmux capture-pane -p -t "$pane" -S "-$lines" 2>/dev/null | tr -d '\r' || true)"
+    snap="$(tmux capture-pane -p -t "$pane" -S "-$capture_lines" 2>/dev/null | tr -d '\r' || true)"
     recent="$(printf '%s\n' "$snap" | tail -n 30)"
     if detect_stuck_prompt "$recent"; then
       emit_idle_notification "$agent" "$idle_seconds" "$exec_cmd"

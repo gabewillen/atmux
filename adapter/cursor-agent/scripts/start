@@ -105,6 +105,11 @@ arg_present() {
   return 1
 }
 
+cursor_agent_supports_arg() {
+  local needle="$1"
+  "$agent_bin" --help 2>/dev/null | grep -Eq -- "(^|[[:space:]])${needle}([[:space:],]|$)"
+}
+
 normalize_model() {
   local m="${1:-}"
   if [[ "$m" =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]*$ ]]; then
@@ -155,6 +160,9 @@ printf 'MODEL=%s\nREASONING_LEVEL=%s\n' "$MODEL" "$REASONING_LEVEL" > "$state_fi
 args=("$@")
 if ! arg_present --model "${args[@]-}"; then
   args=(--model "$MODEL" "${args[@]-}")
+fi
+if cursor_agent_supports_arg --trust && ! arg_present --trust "${args[@]-}"; then
+  args=(--trust "${args[@]-}")
 fi
 
 ensure_cursor_atmux_allowlist

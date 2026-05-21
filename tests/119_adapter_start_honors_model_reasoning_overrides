@@ -9,6 +9,7 @@
 # inspect the captured argv. Mirrors 80_gemini_intelligence_model_selection.
 set -euo pipefail
 
+# shellcheck source=tests/lib/isolate-tmux.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/isolate-tmux.sh"
 
 TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -29,6 +30,10 @@ mkdir -p "$tmp_dir/home/.local/bin" "$tmp_dir/home/.cursor/bin"
 # name so the start script's `command -v` check passes.
 cat > "$tmp_dir/bin/_record" <<'SH'
 #!/usr/bin/env bash
+if [[ "${1:-}" == "--help" && -n "${ATMUX_FAKE_AGENT_HELP:-}" ]]; then
+  printf '%s\n' "$ATMUX_FAKE_AGENT_HELP"
+  exit 0
+fi
 printf '%s\n' "$@" > "$ATMUX_FAKE_ARGS"
 SH
 chmod +x "$tmp_dir/bin/_record"
@@ -79,6 +84,7 @@ run_start() {
       TMUX_TMPDIR="${TMUX_TMPDIR:-}" \
       ATMUX_HOME="$home_dir" \
       ATMUX_FAKE_ARGS="$args_file" \
+      ATMUX_FAKE_AGENT_HELP=$'Usage: agent [options]\n  --model <model>\n  --trust\n' \
       "${env_pairs[@]+"${env_pairs[@]}"}" \
       "$start_script" "${start_argv[@]+"${start_argv[@]}"}" >/dev/null 2>&1
   )
@@ -183,11 +189,17 @@ assert_arg_present "$af" 'model_reasoning_effort="xhigh"' codextra-overrides
 # === cursor-agent =====================================================
 af="$(run_start cursor-agent int-only ATMUX_INTELLIGENCE=80)"
 assert_arg_eq "$af" --model gpt-5.3-codex-high cursor-int-only
+assert_arg_present "$af" --trust cursor-int-only
 
 af="$(run_start cursor-agent override \
         ATMUX_INTELLIGENCE=80 \
         ATMUX_MODEL=probe-cursor-model)"
 assert_arg_eq "$af" --model probe-cursor-model cursor-override
+assert_arg_present "$af" --trust cursor-override
+
+af="$(run_start cursor-agent cli-trust ATMUX_INTELLIGENCE=50 -- --trust)"
+n_trust="$(grep -c -Fx -- '--trust' "$af" || true)"
+[[ "$n_trust" -eq 1 ]] || { echo "fail: cursor-agent must not duplicate --trust (got $n_trust)" >&2; exit 1; }
 
 # === opencode ========================================================
 af="$(run_start opencode int-only ATMUX_INTELLIGENCE=50)"

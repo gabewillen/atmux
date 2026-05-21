@@ -1,9 +1,51 @@
 # Changelog
 
-## 0.28.0 — Doctor cleanup
+## 0.28.1 — Async command notifications
 
 - Updated the Cursor adapter's medium-intelligence Composer default from
   `composer-2` to `composer-2.5`.
+- Added async command dispatch for agent pane contexts. Eligible `atmux`
+  commands now return immediately after launching in a detached tmux window and
+  send a command notification back to the caller with success/failure,
+  stdout/stderr paths, and preview text.
+- Added async send stress coverage for bursty detached `atmux send` calls,
+  message creation, command completion notifications, and queue drain.
+- Hardened notification queue id allocation under filesystem contention:
+  enqueue no longer scans every payload directory while holding the sequence
+  lock, stale sequence locks recover when their owner is gone, and stress
+  coverage now seeds thousands of stale payload directories while allocating
+  concurrently.
+- Cursor Agent startup now passes `--trust` when the installed CLI supports it
+  while retaining workspace trust-file seeding as a fallback, avoiding first-run
+  trust prompts that block automated agent flows.
+- Updated the Cursor adapter's medium-intelligence Composer default from
+  `composer-2` to `composer-2.5`.
+- Notification delivery now treats prompt capture as the primary paste-readiness
+  signal: it waits for the full inserted payload to appear and stabilize, then
+  only applies a reduced length-based submit pause on fallback/timeout paths.
+- Default atmux agent instructions now explicitly steer agents toward
+  event-driven watchers for rolling output, file/folder changes, pane text,
+  agent readiness, and GitHub issue/PR feeds instead of sleep-based polling.
+- Added a skipped-by-default live multi-adapter evaluation stress test that
+  boots real adapters, ramps concurrent `atmux send` delivery, measures
+  notification drain plus `agent list --all` latency, and writes TSV/Markdown
+  bottleneck reports with per-command timing and queue-state metrics.
+- The live evaluation now covers external-to-worker, manager-to-worker,
+  worker-to-manager, and worker-to-worker-ring communication, and notification
+  workers now record durable delivery metadata and fail/clear pre-attempt
+  deferrals, pane-gone payloads, or worker-spawn failures instead of leaving
+  stale queued items at `attempts=0`.
+- `atmux agent list --all` now opportunistically prunes notification queues for
+  dead recipient sessions so global listing also cleans up stale delivery
+  bookkeeping left behind by abrupt adapter exits.
+- `atmux doctor` now prunes completed async-command records while preserving
+  running async-command state.
+- Interval scheduled notifications now carry a stable `atmux process kill <pid>`
+  cancellation hint from detached execution metadata, avoiding timing races while
+  the schedule worker is starting.
+
+## 0.28.0 — Doctor cleanup
+
 - Added `atmux doctor` for project-local or system `.atmux` cleanup.
 - Prunes stale exec metadata, dead watcher registrations, dead notification
   worker locks, empty queues, and empty state directories while preserving live

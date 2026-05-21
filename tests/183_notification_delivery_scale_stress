@@ -37,7 +37,7 @@ cleanup() {
 trap cleanup EXIT
 
 now_ms() {
-  perl -MTime::HiRes=time -e 'printf "%d\n", time() * 1000'
+  printf '%s000\n' "$(date +%s)"
 }
 
 elapsed_ms() {

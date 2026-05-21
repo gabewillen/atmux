@@ -38,7 +38,7 @@ mkdir -p "$state_dir"
 atmux_fs_write_field "$state_dir/name" "$team"
 
 now_ms() {
-  perl -MTime::HiRes=time -e 'printf "%d\n", time() * 1000'
+  printf '%s000\n' "$(date +%s)"
 }
 
 elapsed_ms() {
@@ -115,6 +115,7 @@ seed_exec_watchers() {
   mkdir -p "$watchers_dir"
   for (( i=1; i<=count; i++ )); do
     fifo="$tmp_root/dead-exec-$i.fifo"
+    rm -f "$fifo"
     mkfifo "$fifo"
     printf '%%999999|%s\n' "$fifo" > "$watchers_dir/dead-$i"
   done

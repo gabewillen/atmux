@@ -1074,17 +1074,18 @@ notify_exec_watchers() {
   local payload="$3"
   local wdir="$exec_dir/watchers"
   [[ -d "$wdir" ]] || return 0
-  local f pane live_panes
+  local f pane signal_path live_panes
   live_panes="$(tmux list-panes -a -F '#{pane_id}' 2>/dev/null || true)"
   while IFS= read -r f; do
     [[ -n "$f" ]] || continue
     [[ -f "$f" ]] || continue
     pane="$(watcher_record_pane "$f")"
-    if ! watcher_pane_is_live "$pane" "$live_panes"; then
+    signal_path="$(watcher_record_signal_path "$f")"
+    if [[ -n "$pane" ]] && ! watcher_pane_is_live "$pane" "$live_panes"; then
       remove_watcher_record "$f"
       continue
     fi
-    if [[ "$pane" != "$skip_pane" ]]; then
+    if watcher_pane_is_live "$pane" "$live_panes" && [[ "$pane" != "$skip_pane" ]]; then
       send_notification "$pane" "$payload"
     fi
     signal_watcher_event_file "$f"
@@ -1111,17 +1112,18 @@ notify_issue_watchers() {
   local payload="$3"
   local wdir="$issue_dir/watchers"
   [[ -d "$wdir" ]] || return 0
-  local f pane live_panes
+  local f pane signal_path live_panes
   live_panes="$(tmux list-panes -a -F '#{pane_id}' 2>/dev/null || true)"
   while IFS= read -r f; do
     [[ -n "$f" ]] || continue
     [[ -f "$f" ]] || continue
     pane="$(watcher_record_pane "$f")"
-    if ! watcher_pane_is_live "$pane" "$live_panes"; then
+    signal_path="$(watcher_record_signal_path "$f")"
+    if [[ -n "$pane" ]] && ! watcher_pane_is_live "$pane" "$live_panes"; then
       remove_watcher_record "$f"
       continue
     fi
-    if [[ "$pane" != "$skip_pane" ]]; then
+    if watcher_pane_is_live "$pane" "$live_panes" && [[ "$pane" != "$skip_pane" ]]; then
       send_notification "$pane" "$payload"
     fi
     signal_watcher_event_file "$f"
@@ -1134,17 +1136,18 @@ notify_pull_request_watchers() {
   local payload="$3"
   local wdir="$pr_dir/watchers"
   [[ -d "$wdir" ]] || return 0
-  local f pane live_panes
+  local f pane signal_path live_panes
   live_panes="$(tmux list-panes -a -F '#{pane_id}' 2>/dev/null || true)"
   while IFS= read -r f; do
     [[ -n "$f" ]] || continue
     [[ -f "$f" ]] || continue
     pane="$(watcher_record_pane "$f")"
-    if ! watcher_pane_is_live "$pane" "$live_panes"; then
+    signal_path="$(watcher_record_signal_path "$f")"
+    if [[ -n "$pane" ]] && ! watcher_pane_is_live "$pane" "$live_panes"; then
       remove_watcher_record "$f"
       continue
     fi
-    if [[ "$pane" != "$skip_pane" ]]; then
+    if watcher_pane_is_live "$pane" "$live_panes" && [[ "$pane" != "$skip_pane" ]]; then
       send_notification "$pane" "$payload"
     fi
     signal_watcher_event_file "$f"

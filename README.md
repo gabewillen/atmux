@@ -110,7 +110,7 @@ The `--intelligence 0–100` flag selects a model and reasoning level via the ad
 | `codextra` | 60–84 | `gpt-5.5` | `high` |
 | `codextra` | 85–100 | `gpt-5.5` | `extra-high` |
 | `cursor-agent` | 0–39 | `composer-2-fast` | `low` |
-| `cursor-agent` | 40–74 | `composer-2` | `medium` |
+| `cursor-agent` | 40–74 | `composer-2.5` | `medium` |
 | `cursor-agent` | 75–89 | `gpt-5.3-codex-high` | `high` |
 | `cursor-agent` | 90–100 | `gpt-5.3-codex-xhigh` | `extra-high` |
 | `gemini` | 0–39 | `gemini-3.1-flash-lite-preview` | `low` |

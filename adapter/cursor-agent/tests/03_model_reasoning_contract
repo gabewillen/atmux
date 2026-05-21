@@ -10,7 +10,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-expected_list=$'composer-2-fast\ncomposer-2\ngpt-5.3-codex\ngpt-5.3-codex-high\ngpt-5.3-codex-xhigh\nauto'
+expected_list=$'composer-2-fast\ncomposer-2.5\ngpt-5.3-codex\ngpt-5.3-codex-high\ngpt-5.3-codex-xhigh\nauto'
 model_list="$(ATMUX_HOME="$atmux_home" "$ADAPTER_DIR/scripts/model" list)"
 [[ "$model_list" == "$expected_list" ]] || { echo "unexpected model list: $model_list" >&2; exit 1; }
 
